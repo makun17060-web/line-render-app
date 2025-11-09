@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>住所入力（LIFF）</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 16px; }
+    h1 { font-size: 18px; margin: 8px 0 16px; }
+    label { display:block; margin:8px 0 4px; font-size: 14px; }
+    input { width:100%; padding:10px; border:1px solid #ccc; border-radius:8px; box-sizing:border-box; }
+    button { padding: 12px 16px; border:none; border-radius: 8px; margin-top: 16px; }
+    .primary { background:#06C755; color:white; font-weight:600; width:100%; }
+    .note { font-size:12px; color:#444; margin-top:10px; }
+    .ok { color: #0a7a3c; }
+    .err { color: #b00020; white-space: pre-line; }
+  </style>
+</head>
+<body>
+  <h1>お届け先の入力</h1>
+  <div id="status" class="note">LIFF 初期化中...</div>
+
+  <form id="f">
+    <label>お名前</label>
+    <input id="name" required />
+    <label>電話番号</label>
+    <input id="phone" required />
+    <label>郵便番号</label>
+    <input id="postal" placeholder="例: 123-4567" required />
+    <label>都道府県</label>
+    <input id="prefecture" required />
+    <label>市区町村</label>
+    <input id="city" required />
+    <label>番地・建物名</label>
+    <input id="address1" required />
+    <label>部屋番号など（任意）</label>
+    <input id="address2" />
+    <button type="submit" class="primary">この内容で送信</button>
+  </form>
+
+  <p class="note">※ LINE 内のブラウザで開くと、自動的にユーザーIDと紐づきます。</p>
+
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script>
+    const $ = (id)=>document.getElementById(id);
+    const status = $("status");
+    let userId = "";
+
+    async function init() {
+      try {
+        const cfg = await fetch("/api/liff/config").then(r=>r.json());
+        if (!cfg.liffId) throw new Error("LIFF ID がサーバーに設定されていません (.env LIFF_ID)");
+        await liff.init({ liffId: cfg.liffId });
+        if (!liff.isLoggedIn()) liff.login();
+        const prof = await liff.getProfile();
+        userId = prof.userId || "";
+        status.textContent = "LIFF 認証OK";
+      } catch (e) {
+        status.className = "note err";
+        status.textContent = "LIFF 初期化エラー: " + (e.message || e);
+      }
+    }
+
+    $("f").addEventListener("submit", async (ev)=>{
+      ev.preventDefault();
+      status.className = "note";
+      status.textContent = "送信中...";
+
+      const payload = {
+        userId,
+        name: $("name").value.trim(),
+        phone: $("phone").value.trim(),
+        postal: $("postal").value.trim(),
+        prefecture: $("prefecture").value.trim(),
+        city: $("city").value.trim(),
+        address1: $("address1").value.trim(),
+        address2: $("address2").value.trim(),
+      };
+      try {
+        const r = await fetch("/api/liff/address", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        }).then(r=>r.json());
+
+        if (r.ok) {
+          status.className = "note ok";
+          status.textContent = "登録しました。画面を閉じてLINEトークに戻ってください。";
+          try { if (liff.isInClient()) liff.closeWindow(); } catch {}
+        } else {
+          throw new Error(r.error || "unknown_error");
+        }
+      } catch (e) {
+        status.className = "note err";
+        status.textContent = "送信エラー: " + (e.message || e);
+      }
+    });
+
+    init();
+  </script>
+</body>
+</html>

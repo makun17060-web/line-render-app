@@ -1,14 +1,10 @@
-cat > /data/products.json << 'EOF'
 [
   { "id": "kusuke-250",        "name": "久助（えびせん）",     "price": 250,  "stock": 20, "desc": "お得な割れせん。" },
-
   { "id": "nori-akasha-340",   "name": "のりあかしゃ",         "price": 340,  "stock": 20, "desc": "海苔の風味豊かなえびせんべい" },
   { "id": "uzu-akasha-340",    "name": "うずあかしゃ",         "price": 340,  "stock": 10, "desc": "渦を巻いたえびせんべい" },
   { "id": "shio-akasha-340",   "name": "潮あかしゃ",           "price": 340,  "stock": 5,  "desc": "えびせんべいにあおさをトッピング" },
   { "id": "matsu-akasha-340",  "name": "松あかしゃ",           "price": 340,  "stock": 30, "desc": "海老をたっぷり使用した高級えびせんべい" },
   { "id": "iso-akasha-340",    "name": "磯あかしゃ",           "price": 340,  "stock": 30, "desc": "海老せんべいに高級海苔をトッピング" },
   { "id": "goma-akasha-340",   "name": "ごまあかしゃ",         "price": 340,  "stock": 30, "desc": "海老せんべいに風味豊かなごまをトッピング" },
-
   { "id": "original-set-2000", "name": "磯屋オリジナルセット", "price": 2000, "stock": 30, "desc": "6袋をセットにしたオリジナル" }
 ]
-EOF

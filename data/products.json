@@ -1,3 +1,4 @@
+cat > /data/products.json << 'EOF'
 [
   { "id": "kusuke-250",        "name": "久助（えびせん）",     "price": 250,  "stock": 20, "desc": "お得な割れせん。" },
 
@@ -10,3 +11,4 @@
 
   { "id": "original-set-2000", "name": "磯屋オリジナルセット", "price": 2000, "stock": 30, "desc": "6袋をセットにしたオリジナル" }
 ]
+EOF

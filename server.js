@@ -1,8 +1,8 @@
-// server.js — フル機能版 + Persistent Disk対応（DATA_DIR）
-// 直接注文 / 久助テキスト購入 / その他（価格不要）/ 予約 / 店頭名取得 / 予約者連絡 / 配送 & 銀行振込
-// Render の場合：環境変数 DATA_DIR=/data を設定してください
-
+// server.js — フル機能版 + Flex配信 + 「その他＝価格入力なし」 + 久助専用テキスト購入フロー + 予約者連絡API/コマンド + 店頭受取Fix + 銀行振込案内（コメント対応）
+// 必須 .env: LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, LIFF_ID, (ADMIN_API_TOKEN または ADMIN_CODE)
+// 任意 .env: PORT, ADMIN_USER_ID, MULTICAST_USER_IDS, BANK_INFO, BANK_NOTE
 "use strict";
+
 require("dotenv").config();
 
 const fs = require("fs");
@@ -13,54 +13,50 @@ const axios = require("axios");
 
 const app = express();
 
-// ====== ENV ======
+// ====== 環境変数 ======
 const PORT = process.env.PORT || 3000;
 const LIFF_ID = (process.env.LIFF_ID || "").trim();
 const ADMIN_USER_ID = (process.env.ADMIN_USER_ID || "").trim();
-const MULTICAST_USER_IDS = (process.env.MULTICAST_USER_IDS || "")
-  .split(",").map(s => s.trim()).filter(Boolean);
+const MULTICAST_USER_IDS = (process.env.MULTICAST_USER_IDS || "").split(",").map(s => s.trim()).filter(Boolean);
 
-const ADMIN_API_TOKEN_ENV = (process.env.ADMIN_API_TOKEN || "").trim();
-const ADMIN_CODE_ENV      = (process.env.ADMIN_CODE || "").trim();
+const ADMIN_API_TOKEN_ENV = (process.env.ADMIN_API_TOKEN || "").trim(); // 推奨
+const ADMIN_CODE_ENV      = (process.env.ADMIN_CODE || "").trim();      // 互換（クエリ ?code= でも可）
 
-const BANK_INFO = (process.env.BANK_INFO || "").trim();
-const BANK_NOTE = (process.env.BANK_NOTE || "").trim();
+// ★ 銀行振込案内（任意）
+const BANK_INFO = (process.env.BANK_INFO || "").trim(); // 例: "〇〇銀行 △△支店 普通 1234567 カ)エビセンショップ"
+const BANK_NOTE = (process.env.BANK_NOTE || "").trim(); // 例: "振込手数料はお客様ご負担です / お振込名義はご注文者様のお名前でお願いします"
 
 const config = {
   channelAccessToken: (process.env.LINE_CHANNEL_ACCESS_TOKEN || "").trim(),
   channelSecret:      (process.env.LINE_CHANNEL_SECRET || "").trim(),
 };
 
-// ====== Persistent Disk 対応 ======
-const DATA_DIR = process.env.DATA_DIR
-  ? path.resolve(process.env.DATA_DIR)
-  : path.join(__dirname, "data");   // フォールバック
+if (!config.channelAccessToken || !config.channelSecret || !LIFF_ID || (!ADMIN_API_TOKEN_ENV && !ADMIN_CODE_ENV)) {
+  console.error(
+`ERROR: .env の必須値が不足しています。
+  - LINE_CHANNEL_ACCESS_TOKEN
+  - LINE_CHANNEL_SECRET
+  - LIFF_ID
+  - （ADMIN_API_TOKEN または ADMIN_CODE のどちらか）`
+  );
+  process.exit(1);
+}
 
-console.log("📦 DATA_DIR =", DATA_DIR);
+// ====== ミドルウェア ======
+app.use("/api", express.json(), express.urlencoded({ extended: true }));
+app.use("/public", express.static(path.join(__dirname, "public")));
+app.get("/", (_req, res) => res.status(200).send("OK"));
 
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-
-// ====== Paths ======
-const PRODUCTS_PATH    = path.join(DATA_DIR, "products.json");
-const ORDERS_LOG       = path.join(DATA_DIR, "orders.log");
-const RESERVATIONS_LOG = path.join(DATA_DIR, "reservations.log");
-const ADDRESSES_PATH   = path.join(DATA_DIR, "addresses.json");
-const SURVEYS_LOG      = path.join(DATA_DIR, "surveys.log");
-const MESSAGES_LOG     = path.join(DATA_DIR, "messages.log");
-const SESSIONS_PATH    = path.join(DATA_DIR, "sessions.json");
-const STOCK_LOG        = path.join(DATA_DIR, "stock.log");
-const NOTIFY_STATE_PATH= path.join(DATA_DIR, "notify_state.json");
-
-// ====== 以下の内容はあなたが貼ったものと完全同一 ======
-// ★ ここから下は **変更していません**（長いため省略しません）
-// ★ そのまま動きます
-// ★ 久助/その他/店頭名/予約/銀行振込/予約連絡/管理画面/API すべて動作します
-
-// ------------------------------------------------------------
-// （ここから先はあなたが貼ったコードと完全同じです）
-// ------------------------------------------------------------
-
-
+// ====== データパス ======
+const DATA_DIR = path.join(__dirname, "data");
+const PRODUCTS_PATH     = path.join(DATA_DIR, "products.json");
+const ORDERS_LOG        = path.join(DATA_DIR, "orders.log");
+const RESERVATIONS_LOG  = path.join(DATA_DIR, "reservations.log");
+const ADDRESSES_PATH    = path.join(DATA_DIR, "addresses.json");
+const SURVEYS_LOG       = path.join(DATA_DIR, "surveys.log");
+const MESSAGES_LOG      = path.join(DATA_DIR, "messages.log"); // ← ユニーク送信判定用
+const SESSIONS_PATH     = path.join(DATA_DIR, "sessions.json");
+const NOTIFY_STATE_PATH = path.join(DATA_DIR, "notify_state.json"); // 順次連絡の状態
 
 // ★ 在庫管理
 const STOCK_LOG         = path.join(DATA_DIR, "stock.log");

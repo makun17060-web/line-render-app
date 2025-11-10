@@ -47,42 +47,92 @@ app.use("/api", express.json(), express.urlencoded({ extended: true }));
 app.use("/public", express.static(path.join(__dirname, "public")));
 app.get("/", (_req, res) => res.status(200).send("OK"));
 
-// ====== データパス ======
-const DATA_DIR = path.join(__dirname, "data");
+// ====== データパス（Render Persistent Disk 対応） ======
+const CANDIDATE_DATA_DIRS = [
+  process.env.DATA_DIR && process.env.DATA_DIR.trim(),
+  "/data",                            // Render の Persistent Disk のデフォルトマウント先
+  path.join(__dirname, "data")        // リポジトリ直下（フォールバック）
+].filter(Boolean);
+
+let DATA_DIR = null;
+for (const p of CANDIDATE_DATA_DIRS) {
+  try {
+    fs.mkdirSync(p, { recursive: true });
+    fs.accessSync(p, fs.constants.R_OK | fs.constants.W_OK);
+    DATA_DIR = p;
+    break;
+  } catch {}
+}
+if (!DATA_DIR) {
+  console.error("ERROR: 書き込み可能な DATA_DIR が見つかりません。");
+  process.exit(1);
+}
+console.log(`📦 DATA_DIR=${DATA_DIR}`);
+
 const PRODUCTS_PATH     = path.join(DATA_DIR, "products.json");
 const ORDERS_LOG        = path.join(DATA_DIR, "orders.log");
 const RESERVATIONS_LOG  = path.join(DATA_DIR, "reservations.log");
 const ADDRESSES_PATH    = path.join(DATA_DIR, "addresses.json");
 const SURVEYS_LOG       = path.join(DATA_DIR, "surveys.log");
-const MESSAGES_LOG      = path.join(DATA_DIR, "messages.log"); // ← ユニーク送信判定用
+const MESSAGES_LOG      = path.join(DATA_DIR, "messages.log");
 const SESSIONS_PATH     = path.join(DATA_DIR, "sessions.json");
-const NOTIFY_STATE_PATH = path.join(DATA_DIR, "notify_state.json"); // 順次連絡の状態
+const NOTIFY_STATE_PATH = path.join(DATA_DIR, "notify_state.json");
 
-// ★ 在庫管理
+// ★ 在庫管理ログ
 const STOCK_LOG         = path.join(DATA_DIR, "stock.log");
-const LOW_STOCK_THRESHOLD = 5; // しきい値（例：残り5で通知）
+
+// 初期ファイル生成（存在しない時のみ）＋空ファイル対策
+function ensureJSONFile(filePath, initialValue) {
+  try {
+    if (!fs.existsSync(filePath) || fs.readFileSync(filePath, "utf8").trim() === "") {
+      fs.writeFileSync(filePath, JSON.stringify(initialValue, null, 2), "utf8");
+      console.log(`ℹ️ 初期化: ${filePath}`);
+      return;
+    }
+    // 既存が壊れていないか簡易チェック
+    JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    fs.writeFileSync(filePath, JSON.stringify(initialValue, null, 2), "utf8");
+    console.log(`ℹ️ 破損検知→初期化: ${filePath}`);
+  }
+}
+
+ensureJSONFile(ADDRESSES_PATH, {});
+ensureJSONFile(SESSIONS_PATH, {});
+ensureJSONFile(NOTIFY_STATE_PATH, {});
+ensureJSONFile(SURVEYS_LOG, "");    // 行ログは空文字でOK
+ensureJSONFile(MESSAGES_LOG, "");
+ensureJSONFile(ORDERS_LOG, "");
+ensureJSONFile(RESERVATIONS_LOG, "");
+ensureJSONFile(STOCK_LOG, "");
+
+// products.json は「無い場合のみ」サンプル作成（既存は絶対に上書きしない）
+if (!fs.existsSync(PRODUCTS_PATH)) {
+  const sample = [
+    { id: "kusuke-250",        name: "久助（えびせん）",     price: 250,  stock: 20, desc: "お得な割れせん。" },
+    { id: "nori-akasha-340",   name: "のりあかしゃ",         price: 340,  stock: 20, desc: "海苔の風味豊かなえびせんべい" },
+    { id: "uzu-akasha-340",    name: "うずあかしゃ",         price: 340,  stock: 10, desc: "渦を巻いたえびせんべい" },
+    { id: "shio-akasha-340",   name: "潮あかしゃ",           price: 340,  stock: 5,  desc: "えびせんべいにあおさをトッピング" },
+    { id: "matsu-akasha-340",  name: "松あかしゃ",           price: 340,  stock: 30, desc: "海老をたっぷり使用した高級えびせんべい" },
+    { id: "iso-akasha-340",    name: "磯あかしゃ",           price: 340,  stock: 30, desc: "海老せんべいに高級海苔をトッピング" },
+    { id: "goma-akasha-340",   name: "ごまあかしゃ",         price: 340,  stock: 30, desc: "海老せんべいに風味豊かなごまをトッピング" },
+    { id: "original-set-2000", name: "磯屋オリジナルセット", price: 2000, stock: 30, desc: "6袋をセットにしたオリジナル" }
+  ];
+  fs.writeFileSync(PRODUCTS_PATH, JSON.stringify(sample, null, 2), "utf8");
+  console.log(`ℹ️ 初期 products.json を作成: ${PRODUCTS_PATH}`);
+}
+
+// ====== 在庫関連の定数（ここにまとめる） ======
+const LOW_STOCK_THRESHOLD = 5;
 const PRODUCT_ALIASES = {
   "久助": "kusuke-250",
   "くすけ": "kusuke-250",
   "kusuke": "kusuke-250",
   "kusuke-250": "kusuke-250",
 };
-// ★ 直接注文の一覧から隠す商品（久助だけ非表示）
+// 久助は一覧から非表示（テキスト直入力導線のため）
 const HIDE_PRODUCT_IDS = new Set(["kusuke-250"]);
 
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-if (!fs.existsSync(PRODUCTS_PATH)) {
-  const sample = [
-    { id: "kusuke-250",      name: "久助（えびせん）",     price: 250, stock: 20, desc: "お得な割れせん。" },
-    { id: "nori-square-300", name: "四角のりせん",         price: 300, stock: 10, desc: "のり香る角せん。" },
-    { id: "premium-ebi-400", name: "プレミアムえびせん",   price: 400, stock: 5,  desc: "贅沢な旨み。" }
-  ];
-  fs.writeFileSync(PRODUCTS_PATH, JSON.stringify(sample, null, 2), "utf8");
-  console.log(`ℹ️ ${PRODUCTS_PATH} を自動作成しました。`);
-}
-if (!fs.existsSync(ADDRESSES_PATH)) fs.writeFileSync(ADDRESSES_PATH, JSON.stringify({}, null, 2), "utf8");
-if (!fs.existsSync(SESSIONS_PATH)) fs.writeFileSync(SESSIONS_PATH, JSON.stringify({}, null, 2), "utf8");
-if (!fs.existsSync(NOTIFY_STATE_PATH)) fs.writeFileSync(NOTIFY_STATE_PATH, JSON.stringify({}, null, 2), "utf8");
 
 // ====== ユーティリティ ======
 const safeReadJSON = (p, fb) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return fb; } };

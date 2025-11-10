@@ -1316,6 +1316,229 @@ async function handleEvent(ev) {
     if (ev.replyToken) { try { await client.replyMessage(ev.replyToken, { type: "text", text: "エラーが発生しました。もう一度お試しください。" }); } catch {} }
   }
 }
+// ====== Admin UI (single-file, same-origin) ======
+app.get("/admin", (_req, res) => {
+  const html = `
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin — リッチ配信/セグメント配信</title>
+<style>
+  body{font-family:system-ui, sans-serif;max-width:980px;margin:24px auto;padding:0 16px;}
+  h1{font-size:20px;margin:0 0 12px}
+  section{border:1px solid #ddd;border-radius:12px;padding:16px;margin:16px 0}
+  label{display:block;margin:8px 0 4px}
+  input[type=text],textarea{width:100%;padding:8px;border:1px solid #ccc;border-radius:8px;font-family:inherit}
+  button{padding:10px 14px;border:0;border-radius:10px;cursor:pointer}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  .row > *{flex:1}
+  pre{background:#f7f7f7;padding:12px;border-radius:8px;overflow:auto}
+  small{color:#666}
+</style>
+<h1>管理画面（リッチ配信 / セグメント配信）</h1>
+
+<section>
+  <div class="row">
+    <div>
+      <label>Admin Token（.env: ADMIN_API_TOKEN）</label>
+      <input id="token" type="text" placeholder="例：sk_live_xxx">
+      <small>すべてのAPI呼び出しに使用します。未入力だと失敗します。</small>
+    </div>
+    <div>
+      <label>除外ID（カンマ区切り）</label>
+      <input id="excludeIds" type="text" placeholder="例：kusuke-250">
+      <small>products.json からカルーセルを作る際に除外したい productId を指定。</small>
+    </div>
+  </div>
+  <div class="row">
+    <button id="loadBtn">商品を読み込む</button>
+    <button id="buildBtn">Flex（カルーセル）生成</button>
+  </div>
+  <div>
+    <label>生成済み Flex JSON</label>
+    <textarea id="flexJson" rows="12" spellcheck="false"></textarea>
+    <small>altText と contents を含む 1メッセージ分。複数ページに分割したい場合は pages に分割されます。</small>
+  </div>
+</section>
+
+<section>
+  <h2 style="font-size:18px;margin:0 0 8px">配信</h2>
+  <div class="row">
+    <div>
+      <label>ユーザーID（カンマ区切り）</label>
+      <input id="userIds" type="text" placeholder="例：Uxxxxxxxxx, Uyyyyyyyyy">
+      <small>空欄なら <b>全体配信（broadcast）</b> になります。</small>
+    </div>
+  </div>
+  <div class="row">
+    <button id="sendFlexBtn">Flex を配信</button>
+    <button id="sendTextBtn">テキストを配信</button>
+  </div>
+  <label>テキスト本文（テキスト配信用）</label>
+  <textarea id="textBody" rows="4" placeholder="配信テキスト"></textarea>
+  <div id="log"></div>
+</section>
+
+<section>
+  <details>
+    <summary>デバッグ / 現在の products を確認</summary>
+    <pre id="prodView">（未取得）</pre>
+  </details>
+</section>
+
+<script>
+const $ = (id)=>document.getElementById(id);
+const api = (p, opt={}) => fetch(p, opt).then(r => {
+  if(!r.ok) throw new Error(\`HTTP \${r.status}\`);
+  return r.json();
+});
+
+let products = [];
+let pages = []; // 分割したFlexメッセージ群
+
+function log(msg, ok=true){
+  const d = document.createElement('div');
+  d.style.margin = '8px 0';
+  d.style.color = ok ? '#0b7' : '#c00';
+  d.textContent = (ok?'✓ ':'✗ ') + msg;
+  $('log').prepend(d);
+}
+
+$('loadBtn').onclick = async ()=>{
+  try{
+    const t = $('token').value.trim();
+    if(!t) return alert('ADMIN_API_TOKEN を入力してください');
+    const url = '/api/admin/products';
+    const res = await fetch(url, {
+      headers: { 'Authorization': 'Bearer ' + t }
+    });
+    const j = await res.json();
+    if(!j.ok) throw new Error(JSON.stringify(j));
+    products = j.items || [];
+    $('prodView').textContent = JSON.stringify(products, null, 2);
+    log(\`商品 \${products.length} 件を取得\`);
+  }catch(e){ log('商品取得エラー: '+e.message, false); }
+};
+
+$('buildBtn').onclick = ()=>{
+  if(!products.length) return alert('先に「商品を読み込む」を押してください');
+  const exclude = new Set(($('excludeIds').value||'').split(',').map(s=>s.trim()).filter(Boolean));
+  const visible = products.filter(p => !exclude.has(p.id));
+  // 1バブル = 1商品、最後に「その他（自由入力）」を1バブル追加する想定
+  const bubbles = visible.map(p => ({
+    type: "bubble",
+    body: { type: "box", layout: "vertical", spacing: "sm", contents: [
+      { type:"text", text:p.name, weight:"bold", size:"md", wrap:true },
+      { type:"text", text:\`価格：\${(p.price||0).toLocaleString('ja-JP')}円　在庫：\${p.stock??0}\`, size:"sm", wrap:true },
+      p.desc ? { type:"text", text:p.desc, size:"sm", wrap:true } : { type:"box", layout:"vertical", contents:[] }
+    ]},
+    footer: { type:"box", layout:"horizontal", spacing:"md", contents:[
+      { type:"button", style:"primary", action:{ type:"postback", label:"数量を選ぶ", data:\`order_qty?id=\${encodeURIComponent(p.id)}&qty=1\` } }
+    ]}
+  }));
+  // その他（自由入力）
+  bubbles.push({
+    type: "bubble",
+    body: { type:"box", layout:"vertical", spacing:"sm", contents:[
+      { type:"text", text:"その他（自由入力）", weight:"bold", size:"md" },
+      { type:"text", text:"商品名と個数だけ入力します。価格入力は不要です。", size:"sm", wrap:true }
+    ]},
+    footer: { type:"box", layout:"vertical", spacing:"md", contents:[
+      { type:"button", style:"primary",   action:{ type:"postback", label:"商品名を入力する", data:"other_start" } },
+      { type:"button", style:"secondary", action:{ type:"postback", label:"← 戻る", data:"order_back" } }
+    ]}
+  });
+
+  // 10バブルずつページング（安全値）
+  const chunkSize = 10;
+  pages = [];
+  for(let i=0;i<bubbles.length;i+=chunkSize){
+    const chunk = bubbles.slice(i, i+chunkSize);
+    pages.push({
+      type: "flex",
+      altText: "商品一覧",
+      contents: chunk.length===1 ? chunk[0] : { type:"carousel", contents: chunk }
+    });
+  }
+  // 1ページ目をテキストエリアに表示
+  $('flexJson').value = JSON.stringify(pages[0], null, 2);
+  log(\`Flex を \${pages.length}ページ生成\`);
+};
+
+$('sendFlexBtn').onclick = async ()=>{
+  try{
+    const t = $('token').value.trim();
+    if(!t) return alert('ADMIN_API_TOKEN を入力してください');
+    const userIds = $('userIds').value.split(',').map(s=>s.trim()).filter(Boolean);
+
+    // 入力欄に直接 JSON があればそれを送る。空なら pages を送る。
+    const bodyText = $('flexJson').value.trim();
+    let msg = null;
+    if(bodyText){
+      const j = JSON.parse(bodyText);
+      if(!j.altText || !j.contents) throw new Error('altText と contents を含む JSON を入れてください');
+      msg = [j]; // 単ページ
+    }else{
+      if(!pages.length) throw new Error('先に「Flex（カルーセル）生成」してください');
+      msg = pages; // 生成した複数ページ
+    }
+
+    if(userIds.length){
+      // セグメント配信（複数ページは順番に送る）
+      for(const one of msg){
+        const r = await fetch('/api/admin/segment/send-flex', {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+t },
+          body: JSON.stringify({ userIds, altText: one.altText, contents: one.contents })
+        });
+        const j = await r.json();
+        if(!j.ok) throw new Error(JSON.stringify(j));
+      }
+      log(\`セグメント配信: \${userIds.length}人\`);
+    }else{
+      // 全体配信
+      for(const one of msg){
+        const r = await fetch('/api/admin/broadcast-flex', {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+t },
+          body: JSON.stringify({ altText: one.altText, contents: one.contents })
+        });
+        const j = await r.json();
+        if(!j.ok) throw new Error(JSON.stringify(j));
+      }
+      log('全体配信（broadcast）完了');
+    }
+  }catch(e){ log('Flex配信エラー: '+e.message, false); }
+};
+
+$('sendTextBtn').onclick = async ()=>{
+  try{
+    const t = $('token').value.trim();
+    if(!t) return alert('ADMIN_API_TOKEN を入力してください');
+    const userIds = $('userIds').value.split(',').map(s=>s.trim()).filter(Boolean);
+    const txt = $('textBody').value.trim();
+    if(!txt) return alert('本文を入力してください');
+
+    if(userIds.length){
+      const r = await fetch('/api/admin/segment/send', {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+t },
+        body: JSON.stringify({ userIds, message: txt })
+      });
+      const j = await r.json();
+      if(!j.ok) throw new Error(JSON.stringify(j));
+      log(\`テキスト（セグメント）: \${userIds.length}人\`);
+    }else{
+      // 全体テキスト配信は「broadcast API」がないため、必要なら /api/admin/broadcast-flex で
+      // テキストを Flex にラップするか、管理者向け「一斉連絡」仕様を別途作る必要があります。
+      alert('全体テキスト一斉は未対応です。Flex で配信してください。');
+    }
+  }catch(e){ log('テキスト配信エラー: '+e.message, false); }
+};
+</script>
+  `;
+  res.type("html").send(html);
+});
 
 // ====== Health checks ======
 app.get("/health", (_req, res) => res.status(200).type("text/plain").send("OK"));

@@ -1,60 +1,89 @@
-<!-- ===== Admin Console: public/admin.html ===== -->
-<div class="row"><button class="secondary" id="btnHealth">/api/health</button></div>
-<pre id="healthOut" hidden></pre>
-</div>
-</section>
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LINE 管理画面</title>
+  <style>
+    body{margin:0;background:#0b1020;color:#e6ebff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans JP",sans-serif}
+    header{padding:16px 20px;border-bottom:1px solid #1f2744;background:linear-gradient(180deg,#121a33,#0b1020);position:sticky;top:0}
+    h1{margin:0;font-size:18px}
+    main{padding:20px;display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
+    .card{background:#131a2e;border:1px solid #243057;border-radius:14px;padding:14px}
+    .card h2{margin:0 0 8px;font-size:16px;color:#9fb1ff}
+    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
+    input,textarea{background:#0f1630;color:#e6ebff;border:1px solid #2a3760;border-radius:10px;padding:10px 12px;outline:none;width:100%}
+    textarea{min-height:100px}
+    button{background:#6aa3ff;color:#06102b;border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}
+    button.secondary{background:#26345d;color:#cfe0ff;border:1px solid #3a4a7b}
+    pre{white-space:pre-wrap;word-break:break-all;background:#0f1630;color:#cfe0ff;border:1px solid #2a3760;border-radius:10px;padding:10px;max-height:320px;overflow:auto}
+    .muted{color:#7b88b8;font-size:12px}
+    .pill{display:inline-block;background:#20305c;color:#cfe0ff;border:1px solid #35477b;padding:3px 8px;border-radius:999px;font-size:12px}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>LINE 管理画面（配信・セグメント・ログ）</h1>
+    <div class="muted">このページのURL：<code>/public/admin.html</code>（例：<code>https://<your-app>.onrender.com/public/admin.html</code>）</div>
+  </header>
+  <main>
+    <!-- 認証・状態 -->
+    <section class="card">
+      <h2>認証・状態</h2>
+      <div class="row"><input id="token" type="text" placeholder="ADMIN_API_TOKEN を貼り付け"></div>
+      <div class="row">
+        <button id="btnPing">Ping（認証確認）</button>
+        <button class="secondary" id="btnHealth">/api/health</button>
+      </div>
+      <pre id="healthOut" hidden></pre>
+    </section>
 
+    <!-- 商品 → Flex生成/配信 -->
+    <section class="card">
+      <h2>商品 → リッチ（Flex）自動生成・配信</h2>
+      <div class="row">
+        <button id="btnLoadProducts">/api/admin/products を取得</button>
+        <span id="prodCount" class="muted"></span>
+      </div>
+      <div class="row"><input id="hideIds" type="text" placeholder="一覧から隠すID（例: kusuke-250,foo-123）"></div>
+      <div class="row"><input id="altText" type="text" placeholder="altText（例：商品一覧）"></div>
+      <div class="row">
+        <button id="btnBuildFlex">Flex を生成（プレビュー）</button>
+      </div>
+      <pre id="flexPreview" hidden></pre>
+      <div class="row"><input id="userIds" type="text" placeholder="セグメント userId（カンマ区切り）。空なら broadcast"></div>
+      <div class="row"><button id="btnSendFlex">この Flex を配信</button><span id="sendFlexRes" class="muted"></span></div>
+    </section>
 
-<!-- 商品 → 自動カルーセル生成（プレビュー＆配信） -->
-<section class="card" id="sec-products">
-<h2>商品一覧 → リッチメッセージ（Flex）自動生成</h2>
-<div class="row"><button id="btnLoadProducts">/data/products.json を取得</button><span id="prodCount" class="muted"></span></div>
-<div class="grid two">
-<div>
-<label class="muted">オプション</label>
-<div class="row"><input type="text" id="hideIds" placeholder="一覧から隠すID（例: kusuke-250,foo-123）"></div>
-<div class="row"><input type="text" id="altText" placeholder="altText（必須）：商品一覧"></div>
-<div class="row"><button id="btnBuildFlex">Flex を生成（プレビュー）</button></div>
-</div>
-<div>
-<label class="muted">Flex JSON プレビュー</label>
-<pre id="flexPreview"></pre>
-</div>
-</div>
-<div class="row">
-<input id="userIds" type="text" placeholder="セグメント配信用 userId（カンマ区切り）。空なら broadcast" />
-<button class="secondary" id="btnAutofillUsers">自動取得して差し込み</button>
-</div>
-<div class="row"><button id="btnSendFlex">この Flex を配信</button><span id="sendFlexRes" class="muted"></span></div>
-</section>
+    <!-- テキスト配信 -->
+    <section class="card">
+      <h2>テキスト配信（セグメント / ブロードキャスト）</h2>
+      <div class="row"><textarea id="textMessage" placeholder="配信する本文"></textarea></div>
+      <div class="row"><input id="textUserIds" type="text" placeholder="userId（カンマ区切り）。空なら broadcast"></div>
+      <div class="row"><button id="btnSendText">送信</button><span id="sendTextRes" class="muted"></span></div>
+    </section>
 
+    <!-- ユーザー収集 -->
+    <section class="card">
+      <h2>userId 収集</h2>
+      <div class="row"><button id="btnActiveUsers">直近アクティブユーザー取得</button><span class="muted">/api/admin/active-chatters?list=true</span></div>
+      <pre id="usersOut" hidden></pre>
+    </section>
 
-<!-- テキスト配信（セグメント / ブロードキャスト） -->
-<section class="card" id="sec-text">
-<h2>テキスト配信（セグメント / ブロードキャスト）</h2>
-<div class="row"><textarea id="textMessage" placeholder="配信する本文"></textarea></div>
-<div class="row"><input id="textUserIds" type="text" placeholder="userId（カンマ区切り）。空なら broadcast" />
-<button class="secondary" id="btnAutofillUsers2">自動取得して差し込み</button>
-</div>
-<div class="row">
-<button id="btnSendText">送信</button>
-<span id="sendTextRes" class="muted"></span>
-</div>
-<div class="muted">セグメント送信は /api/admin/segment/send、ブロードキャストは /v2/bot/message/broadcast を使用します。</div>
-</section>
+    <!-- メッセージログ（tail相当） -->
+    <section class="card">
+      <h2>メッセージログ（/data/messages.log）</h2>
+      <div class="row">
+        <button id="btnLoadLog">最新200件を取得</button>
+        <button class="secondary" id="btnAutoRefresh">10秒ごと更新</button>
+        <span id="autoStatus" class="pill">OFF</span>
+      </div>
+      <pre id="logOut" hidden></pre>
+      <div class="muted">※サーバーの /api/admin/messages を叩いています。ボタンはこのセクション内にあります。</div>
+    </section>
+  </main>
 
-
-<!-- ユーザー収集 & メッセージログ -->
-<section class="card" id="sec-logs">
-<h2>メッセージログ（/data/messages.log の tail）</h2>
-<div class="row"><button id="btnLoadLog">最新200件を取得</button><button class="secondary" id="btnAutoRefresh">10秒ごと更新</button><span id="autoStatus" class="pill">OFF</span></div>
-<pre id="logOut" hidden></pre>
-<div class="muted">この画面は /api/admin/messages を叩いており、サーバー側で tail 相当を返しています。</div>
-</section>
-</main>
-
-
-<!-- 外部JS -->
-<script src="./admin.js"></script>
+  <script src="/public/admin.js"></script>
 </body>
 </html>
+HTML

@@ -1,6 +1,16 @@
-// server.js — フル機能版 + Flex配信 + 「その他＝価格入力なし」 + 久助専用テキスト購入フロー + 予約者連絡API/コマンド + 店頭受取Fix + 銀行振込案内（コメント対応）
+// server.js — フル機能版
+// - Flex配信
+// - 「その他＝価格入力なし」
+// - 久助専用テキスト購入フロー（一覧からは非表示）
+// - 予約者連絡 API/コマンド（順次 or 一括）
+// - 店頭受取（現金のみ）Fix
+// - 銀行振込案内（コメント対応）
+// - Persistent Disk 対応（/data を優先。なければ ./data）
+// - env 周りリファクタ & ヘルスチェック拡充
+//
 // 必須 .env: LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, LIFF_ID, (ADMIN_API_TOKEN または ADMIN_CODE)
-// 任意 .env: PORT, ADMIN_USER_ID, MULTICAST_USER_IDS, BANK_INFO, BANK_NOTE
+// 任意 .env: PORT, ADMIN_USER_ID, MULTICAST_USER_IDS, BANK_INFO, BANK_NOTE, DATA_DIR（任意で上書き）
+
 "use strict";
 
 require("dotenv").config();
@@ -14,17 +24,20 @@ const axios = require("axios");
 const app = express();
 
 // ====== 環境変数 ======
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT || 3000);
 const LIFF_ID = (process.env.LIFF_ID || "").trim();
 const ADMIN_USER_ID = (process.env.ADMIN_USER_ID || "").trim();
-const MULTICAST_USER_IDS = (process.env.MULTICAST_USER_IDS || "").split(",").map(s => s.trim()).filter(Boolean);
+const MULTICAST_USER_IDS = (process.env.MULTICAST_USER_IDS || "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
 
 const ADMIN_API_TOKEN_ENV = (process.env.ADMIN_API_TOKEN || "").trim(); // 推奨
 const ADMIN_CODE_ENV      = (process.env.ADMIN_CODE || "").trim();      // 互換（クエリ ?code= でも可）
 
 // ★ 銀行振込案内（任意）
 const BANK_INFO = (process.env.BANK_INFO || "").trim(); // 例: "〇〇銀行 △△支店 普通 1234567 カ)エビセンショップ"
-const BANK_NOTE = (process.env.BANK_NOTE || "").trim(); // 例: "振込手数料はお客様ご負担です / お振込名義はご注文者様のお名前でお願いします"
+const BANK_NOTE = (process.env.BANK_NOTE || "").trim(); // 例: "振込手数料はお客様ご負担です..."
 
 const config = {
   channelAccessToken: (process.env.LINE_CHANNEL_ACCESS_TOKEN || "").trim(),
@@ -47,19 +60,69 @@ app.use("/api", express.json(), express.urlencoded({ extended: true }));
 app.use("/public", express.static(path.join(__dirname, "public")));
 app.get("/", (_req, res) => res.status(200).send("OK"));
 
-// ====== データパス ======
-const DATA_DIR = path.join(__dirname, "data");
+// ====== Persistent Disk / データパス ======
+function pickWritableDir(candidates) {
+  for (const dir of candidates) {
+    if (!dir) continue;
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.accessSync(dir, fs.constants.W_OK);
+      return dir;
+    } catch {}
+  }
+  const fallback = path.join(__dirname, "data");
+  fs.mkdirSync(fallback, { recursive: true });
+  return fallback;
+}
+
+const DATA_DIR = pickWritableDir([
+  (process.env.DATA_DIR || "").trim(),
+  (process.env.RENDER_DATA_DIR || "").trim(),
+  "/data",
+  path.join(__dirname, "data"),
+]);
+
 const PRODUCTS_PATH     = path.join(DATA_DIR, "products.json");
 const ORDERS_LOG        = path.join(DATA_DIR, "orders.log");
 const RESERVATIONS_LOG  = path.join(DATA_DIR, "reservations.log");
 const ADDRESSES_PATH    = path.join(DATA_DIR, "addresses.json");
 const SURVEYS_LOG       = path.join(DATA_DIR, "surveys.log");
-const MESSAGES_LOG      = path.join(DATA_DIR, "messages.log"); // ← ユニーク送信判定用
+const MESSAGES_LOG      = path.join(DATA_DIR, "messages.log"); // ← ユーザー動作ログ（text/postback）
 const SESSIONS_PATH     = path.join(DATA_DIR, "sessions.json");
 const NOTIFY_STATE_PATH = path.join(DATA_DIR, "notify_state.json"); // 順次連絡の状態
-
-// ★ 在庫管理
 const STOCK_LOG         = path.join(DATA_DIR, "stock.log");
+
+// 初期ファイル生成ヘルパー
+function initJSON(p, v){ if (!fs.existsSync(p)) fs.writeFileSync(p, JSON.stringify(v, null, 2), "utf8"); }
+function initLog(p){ if (!fs.existsSync(p)) fs.writeFileSync(p, "", "utf8"); }
+
+// 初回生成：products.json は「磯屋」仕様の8種を投入（既存があれば保持）
+if (!fs.existsSync(PRODUCTS_PATH)) {
+  const sample = [
+    { id: "kusuke-250",        name: "久助（えびせん）",     price: 250,  stock: 30, desc: "お得な割れせん。" },
+    { id: "nori-akasha-340",   name: "のりあかしゃ",         price: 340,  stock: 20, desc: "海苔の風味豊かなえびせんべい" },
+    { id: "uzu-akasha-340",    name: "うずあかしゃ",         price: 340,  stock: 10, desc: "渦を巻いたえびせんべい" },
+    { id: "shio-akasha-340",   name: "潮あかしゃ",           price: 340,  stock: 5,  desc: "えびせんべいにあおさをトッピング" },
+    { id: "matsu-akasha-340",  name: "松あかしゃ",           price: 340,  stock: 30, desc: "海老をたっぷり使用した高級えびせんべい" },
+    { id: "iso-akasha-340",    name: "磯あかしゃ",           price: 340,  stock: 30, desc: "海老せんべいに高級海苔をトッピング" },
+    { id: "goma-akasha-340",   name: "ごまあかしゃ",         price: 340,  stock: 30, desc: "海老せんべいに風味豊かなごまをトッピング" },
+    { id: "original-set-2000", name: "磯屋オリジナルセット", price: 2000, stock: 30, desc: "6袋をセットにしたオリジナル" },
+  ];
+  fs.writeFileSync(PRODUCTS_PATH, JSON.stringify(sample, null, 2), "utf8");
+  console.log(`ℹ️ ${PRODUCTS_PATH} を自動作成しました。`);
+}
+
+// その他初期ファイル
+initJSON(ADDRESSES_PATH, {});
+initJSON(SESSIONS_PATH, {});
+initJSON(NOTIFY_STATE_PATH, {});
+initLog(ORDERS_LOG);
+initLog(RESERVATIONS_LOG);
+initLog(SURVEYS_LOG);
+initLog(MESSAGES_LOG);
+initLog(STOCK_LOG);
+
+// ====== 在庫管理（設定） ======
 const LOW_STOCK_THRESHOLD = 5; // しきい値（例：残り5で通知）
 const PRODUCT_ALIASES = {
   "久助": "kusuke-250",
@@ -70,21 +133,7 @@ const PRODUCT_ALIASES = {
 // ★ 直接注文の一覧から隠す商品（久助だけ非表示）
 const HIDE_PRODUCT_IDS = new Set(["kusuke-250"]);
 
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-if (!fs.existsSync(PRODUCTS_PATH)) {
-  const sample = [
-    { id: "kusuke-250",      name: "久助（えびせん）",     price: 250, stock: 20, desc: "お得な割れせん。" },
-    { id: "nori-square-300", name: "四角のりせん",         price: 300, stock: 10, desc: "のり香る角せん。" },
-    { id: "premium-ebi-400", name: "プレミアムえびせん",   price: 400, stock: 5,  desc: "贅沢な旨み。" }
-  ];
-  fs.writeFileSync(PRODUCTS_PATH, JSON.stringify(sample, null, 2), "utf8");
-  console.log(`ℹ️ ${PRODUCTS_PATH} を自動作成しました。`);
-}
-if (!fs.existsSync(ADDRESSES_PATH)) fs.writeFileSync(ADDRESSES_PATH, JSON.stringify({}, null, 2), "utf8");
-if (!fs.existsSync(SESSIONS_PATH)) fs.writeFileSync(SESSIONS_PATH, JSON.stringify({}, null, 2), "utf8");
-if (!fs.existsSync(NOTIFY_STATE_PATH)) fs.writeFileSync(NOTIFY_STATE_PATH, JSON.stringify({}, null, 2), "utf8");
-
-// ====== ユーティリティ ======
+// ====== 小ユーティリティ ======
 const safeReadJSON = (p, fb) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return fb; } };
 const readProducts   = () => safeReadJSON(PRODUCTS_PATH, []);
 const writeProducts  = (data) => fs.writeFileSync(PRODUCTS_PATH, JSON.stringify(data, null, 2), "utf8");
@@ -105,7 +154,7 @@ const parse = (data) => {
 };
 const uniq = (arr) => Array.from(new Set((arr||[]).filter(Boolean)));
 
-// ====== 在庫ユーティリティ（修正版） ======
+// ====== 在庫ユーティリティ ======
 function findProductById(pid) {
   const products = readProducts();
   const idx = products.findIndex(p => p.id === pid);
@@ -387,7 +436,7 @@ function paymentFlex(id, qty, method, region) {
   };
 }
 
-function confirmFlex(product, qty, method, region, payment, LIFF_ID) {
+function confirmFlex(product, qty, method, region, payment, liffId) {
   if (typeof product?.id === "string" && product.id.startsWith("other:")) {
     const parts = product.id.split(":");
     const encName = parts[1] || "";
@@ -431,7 +480,7 @@ function confirmFlex(product, qty, method, region, payment, LIFF_ID) {
   if (method === "delivery") {
     footerButtons.unshift({
       type: "button", style: "secondary",
-      action: { type: "uri", label: "住所を入力（LIFF）", uri: `https://liff.line.me/${LIFF_ID}?${qstr({ from: "address", need: "shipping" })}` }
+      action: { type: "uri", label: "住所を入力（LIFF）", uri: `https://liff.line.me/${liffId}?${qstr({ from: "address", need: "shipping" })}` }
     });
   }
 
@@ -528,7 +577,7 @@ app.get("/api/admin/surveys/summary", (req, res) => {
   res.json({ ok: true, version: SURVEY_VERSION, total: 0, summary: { q1:[], q2:[], q3:[] } });
 });
 
-// ====== 順次通知（予約者）API ======
+// ====== 予約者：順次通知 API ======
 function buildReservationQueue(productId) {
   const all = readLogLines(RESERVATIONS_LOG, 200000)
     .filter(r => r && r.productId === productId && r.userId && r.ts)
@@ -609,7 +658,7 @@ app.post("/api/admin/reservations/notify-stop", (req, res) => {
   res.json({ ok:true, stopped: pid || true });
 });
 
-// ★ 在庫管理 API
+// ====== 在庫管理 API ======
 app.get("/api/admin/products", (req, res) => {
   if (!requireAdmin(req, res)) return;
   const items = readProducts().map(p => ({ id:p.id, name:p.name, price:p.price, stock:p.stock ?? 0, desc:p.desc || "" }));
@@ -640,7 +689,7 @@ app.post("/api/admin/stock/add", (req, res) => {
   }catch(e){ res.status(400).json({ ok:false, error:String(e.message||e) }); }
 });
 
-// ★ 予約者に一括連絡 API
+// ====== 予約者に一括連絡 API ======
 app.post("/api/admin/reservations/notify", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try{
@@ -670,7 +719,7 @@ app.post("/api/admin/reservations/notify", async (req, res) => {
   }
 });
 
-// 対象人数（フォロワー/配信可能） — LINE Insight API
+// ====== Insight API ======
 function yyyymmddJST(offsetDays = -1) {
   const now = new Date();
   const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
@@ -713,7 +762,7 @@ app.get("/admin/audience-count", (req, res) => {
   res.redirect(301, "/api/admin/audience-count" + qs);
 });
 
-// ====== ユニーク送信者数（Active Chatters） ======
+// ====== ユニーク送信者数（Active Chatters） & メッセージログ ======
 app.get("/api/admin/active-chatters", (req, res) => {
   if (!requireAdmin(req, res)) return;
 
@@ -739,80 +788,15 @@ app.get("/api/admin/active-chatters", (req, res) => {
     users: listFlag ? Array.from(set) : undefined
   });
 });
-
-// ====== セグメント配信 ======
-app.post("/api/admin/segment/preview", (req, res) => {
+// メッセージログ（text/postback）の tail を見るための簡易 API
+app.get("/api/admin/messages", (req, res) => {
   if (!requireAdmin(req, res)) return;
-  const t = (req.body?.type || "").trim();
-
-  try{
-    if (t === "activeChatters") {
-      const limit = Math.min(200000, Number(req.body?.limit || 50000));
-      let items = readLogLines(MESSAGES_LOG, limit);
-      if (req.body?.date) {
-        const r = jstRangeFromYmd(String(req.body.date));
-        items = filterByIsoRange(items, x => x.ts, r.from, r.to);
-      }
-      const ids = uniq(items.filter(x=>x && x.type==="text" && x.userId).map(x=>x.userId));
-      return res.json({ ok:true, type:t, total: ids.length, userIds: ids });
-    }
-
-    if (t === "survey") {
-      const limit = Math.min(200000, Number(req.body?.limit || 50000));
-      let items = readLogLines(SURVEYS_LOG, limit);
-      if (req.body?.date) {
-        const r = jstRangeFromYmd(String(req.body.date));
-        items = filterByIsoRange(items, x => x.ts, r.from, r.to);
-      }
-      const q1 = Array.isArray(req.body?.q1codes) ? req.body.q1codes : null;
-      const q2 = Array.isArray(req.body?.q2codes) ? req.body.q2codes : null;
-      const q3 = Array.isArray(req.body?.q3codes) ? req.body.q3codes : null;
-
-      const pass = (a, qkey, allow) => {
-        if (!allow || allow.length===0) return true;
-        const code = a?.[qkey]?.code || "";
-        return allow.includes(code);
-      };
-      const ids = uniq(items.filter(it=>{
-        const a = it?.answers || {};
-        return pass(a,"q1",q1) && pass(a,"q2",q2) && pass(a,"q3",q3);
-      }).map(it=>it.userId));
-      return res.json({ ok:true, type:t, total: ids.length, userIds: ids });
-    }
-
-    if (t === "orders") {
-      const limit = Math.min(200000, Number(req.body?.limit || 50000));
-      let items = readLogLines(ORDERS_LOG, limit);
-      if (req.body?.date) {
-        const r = jstRangeFromYmd(String(req.body.date));
-        items = filterByIsoRange(items, x => x.ts, r.from, r.to);
-      }
-      const pids = Array.isArray(req.body?.productIds) ? req.body.productIds : null;
-      const method = (req.body?.method || "").trim();
-      const payment= (req.body?.payment || "").trim();
-
-      const ids = uniq(items.filter(o=>{
-        if (pids && pids.length>0 && !pids.includes(o.productId)) return false;
-        if (method && o.method !== method) return false;
-        if (payment && o.payment !== payment) return false;
-        return !!o.userId;
-      }).map(o=>o.userId));
-      return res.json({ ok:true, type:t, total: ids.length, userIds: ids });
-    }
-
-    if (t === "addresses") {
-      const book = readAddresses();
-      const ids = uniq(Object.keys(book || {}));
-      return res.json({ ok:true, type:t, total: ids.length, userIds: ids });
-    }
-
-    return res.status(400).json({ ok:false, error:"unknown_type" });
-  }catch(e){
-    console.error("segment preview error:", e);
-    return res.status(500).json({ ok:false, error:"server_error" });
-  }
+  const limit = Math.min(200000, Number(req.query.limit || 2000));
+  const items = readLogLines(MESSAGES_LOG, limit);
+  res.json({ ok:true, items, path: MESSAGES_LOG });
 });
 
+// ====== Flex配信 ======
 app.post("/api/admin/segment/send", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   const userIds = Array.isArray(req.body?.userIds) ? uniq(req.body.userIds) : [];
@@ -840,8 +824,6 @@ app.post("/api/admin/segment/send", async (req, res) => {
 
   return res.json({ ok:true, requested:userIds.length, sent:okCount, failed:ngCount, batches:results.length, results });
 });
-
-// ====== Flex配信 ======
 app.post("/api/admin/segment/send-flex", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
@@ -899,6 +881,7 @@ app.post("/webhook", line.middleware(config), async (req, res) => {
 // ====== イベント処理 ======
 async function handleEvent(ev) {
   try {
+    // ---- message:text ----
     if (ev.type === "message" && ev.message?.type === "text") {
       try {
         const rec = { ts: new Date().toISOString(), userId: ev.source?.userId || "", type: "text", len: (ev.message.text || "").length };
@@ -911,6 +894,7 @@ async function handleEvent(ev) {
       const text = (ev.message.text || "").trim();
       const t = text.replace(/\s+/g, " ").trim();
 
+      // 久助（テキスト直打ちフロー）
       const kusukeRe = /^久助(?:\s+(\d+))?$/i;
       const km = kusukeRe.exec(text);
       if (km) {
@@ -937,6 +921,7 @@ async function handleEvent(ev) {
         return;
       }
 
+      // その他（自由入力）
       if (sess?.await === "otherName") {
         const name = (text || "").slice(0, 50).trim();
         if (!name) {
@@ -962,6 +947,7 @@ async function handleEvent(ev) {
         return;
       }
 
+      // 管理者テキストコマンド
       if (ev.source?.userId && ADMIN_USER_ID && ev.source.userId === ADMIN_USER_ID) {
         if (t === "在庫一覧") {
           const items = readProducts().map(p => `・${p.name}（${p.id}）：${Number(p.stock||0)}個`).join("\n");
@@ -1106,6 +1092,7 @@ async function handleEvent(ev) {
         }
       }
 
+      // 一般ユーザー
       if (text === "直接注文") {
         return client.replyMessage(ev.replyToken, productsFlex(readProducts()));
       }
@@ -1115,7 +1102,15 @@ async function handleEvent(ev) {
       return client.replyMessage(ev.replyToken, { type: "text", text: "「直接注文」と送ると、商品一覧が表示されます。\n久助は「久助 2」のように、商品名＋半角個数でご入力ください。" });
     }
 
+    // ---- postback ----
     if (ev.type === "postback") {
+      // Richメニュー/ボタンのタップもここに来る（URI は来ない）
+      try {
+        const d_ = String(ev.postback?.data || "");
+        const rec = { ts: new Date().toISOString(), userId: ev.source?.userId || "", type: "postback", data: d_.slice(0, 200) };
+        fs.appendFileSync(MESSAGES_LOG, JSON.stringify(rec) + "\n", "utf8");
+      } catch {}
+
       const d = ev.postback?.data || "";
 
       if (d === "other_start") {
@@ -1304,6 +1299,7 @@ async function handleEvent(ev) {
         return;
       }
 
+      // 簡易アンケート
       if (d.startsWith("survey_q2?")) {
         return client.replyMessage(ev.replyToken, { type:"text", text:"アンケートQ2（準備中）" });
       }
@@ -1330,6 +1326,18 @@ app.get("/api/health", (_req, res) => {
     ok: true,
     time: new Date().toISOString(),
     node: process.version,
+    dataDir: DATA_DIR,
+    files: {
+      products: PRODUCTS_PATH,
+      ordersLog: ORDERS_LOG,
+      reservationsLog: RESERVATIONS_LOG,
+      addresses: ADDRESSES_PATH,
+      surveysLog: SURVEYS_LOG,
+      messagesLog: MESSAGES_LOG,
+      sessions: SESSIONS_PATH,
+      notifyState: NOTIFY_STATE_PATH,
+      stockLog: STOCK_LOG,
+    },
     env: {
       PORT: !!process.env.PORT,
       LINE_CHANNEL_ACCESS_TOKEN: !!process.env.LINE_CHANNEL_ACCESS_TOKEN,
@@ -1339,6 +1347,8 @@ app.get("/api/health", (_req, res) => {
       ADMIN_CODE: !!ADMIN_CODE_ENV,
       BANK_INFO: !!BANK_INFO,
       BANK_NOTE: !!BANK_NOTE,
+      DATA_DIR: process.env.DATA_DIR || null,
+      RENDER_DATA_DIR: process.env.RENDER_DATA_DIR || null,
     }
   });
 });
@@ -1346,6 +1356,9 @@ app.get("/api/health", (_req, res) => {
 // ====== 起動 ======
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server started on port ${PORT}`);
-  console.log("   Webhook: POST /webhook");
-  console.log("   LIFF address page: /public/liff-address.html  (open via https://liff.line.me/LIFF_ID)");
+  console.log(`   DATA_DIR: ${DATA_DIR}`);
+  console.log(`   Webhook: POST /webhook`);
+  console.log(`   LIFF address page: /public/liff-address.html  (open via https://liff.line.me/${LIFF_ID})`);
+  console.log(`   例）Render シェルでログを見る:`);
+  console.log(`       tail -f ${path.join(DATA_DIR, "messages.log")} ${path.join(DATA_DIR, "orders.log")}`);
 });

@@ -1,4 +1,6 @@
-<!DOCTYPE html><html lang="ja"><head>
+<!DOCTYPE html>
+<html lang="ja">
+<head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>LINE 管理画面</title>
@@ -7,10 +9,10 @@
   header{padding:16px 20px;border-bottom:1px solid #223055;background:#121a33;position:sticky;top:0}
   h1{margin:0;font-size:18px}
   main{padding:18px;display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
-  .card{background:#131a2e;border:1px solid #243057;border-radius:14px;padding:14px}
-  .card h2{margin:0 0 8px 0;font-size:15px;color:#9fb1ff}
+  .card{background:#131a2e;border:11px solid #243057;border-radius:14px;padding:14px}
+  .card h2{margin:0 0 8px;font-size:15px;color:#9fb1ff}
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
-  input[type=text],textarea{background:#0f1630;color:#e6ebff;border:1px solid #2a3760;border-radius:10px;padding:10px 12px;outline:none;width:100%}
+  input[type=text],textarea{background:#0f1630;color:#e6ebff;border:1px solid #2a3760;border-radius:10px;padding:10px 12px;width:100%}
   textarea{min-height:90px;resize:vertical}
   button{background:#6aa3ff;color:#07152e;border:0;border-radius:10px;padding:9px 12px;font-weight:700;cursor:pointer}
   button.secondary{background:#26345d;color:#cfe0ff;border:1px solid #3a4a7b}
@@ -18,56 +20,71 @@
   pre{white-space:pre-wrap;background:#0f1630;border:1px solid #2a3760;border-radius:10px;padding:10px;max-height:320px;overflow:auto}
   .pill{display:inline-block;background:#20305c;border:1px solid #35477b;padding:3px 8px;border-radius:999px;font-size:12px;margin-left:8px}
 </style>
-</head><body>
-  <header><h1>LINE 管理画面（配信 / セグメント / ログ）</h1>
-    <div class="muted">トークンは <code>ADMIN_API_TOKEN</code>。URL は <code>/public/admin.html</code> で開きます。</div>
-  </header>
-  <main>
-    <section class="card">
-      <h2>認証・状態</h2>
-      <div class="row"><input id="token" type="text" placeholder="ADMIN_API_TOKEN を貼り付け" /></div>
-      <div class="row"><button id="btnPing">Ping</button><span id="pingRes" class="muted"></span></div>
-      <div class="row"><button class="secondary" id="btnHealth">/api/health</button></div>
-      <pre id="healthOut" hidden></pre>
-    </section>
+</head>
 
-    <section class="card">
-      <h2>商品 → Flex（自動カルーセル）</h2>
-      <div class="row">
-        <button id="btnLoadProducts">商品読み込み</button>
-        <label class="muted"><input type="checkbox" id="hideKusuke" /> 久助を非表示</label>
-        <span id="prodCount" class="muted"></span>
-      </div>
-      <div class="row"><input id="altText" type="text" placeholder="altText（例：商品一覧）"></div>
-      <div class="row"><button id="btnBuildFlex">Flex 生成（プレビュー）</button></div>
-      <pre id="flexPreview" hidden></pre>
-      <div class="row">
-        <input id="userIds" type="text" placeholder="セグメント userId（カンマ区切り）。空ならブロードキャスト" />
-      </div>
-      <div class="row">
-        <button id="btnFillActive">直近のアクティブユーザーを自動入力</button>
-        <span class="muted">/api/admin/active-chatters?list=true</span>
-      </div>
-      <div class="row"><button id="btnSendFlex">この Flex を配信</button><span id="sendFlexRes" class="muted"></span></div>
-    </section>
+<body>
+<header>
+<h1>LINE 管理画面</h1>
+<div class="muted">URL → https://<あなたのドメイン>/public/admin.html</div>
+</header>
 
-    <section class="card">
-      <h2>テキスト配信</h2>
-      <div class="row"><textarea id="textMessage" placeholder="本文"></textarea></div>
-      <div class="row"><input id="textUserIds" type="text" placeholder="userId（カンマ区切り）。空ならブロードキャスト" /></div>
-      <div class="row"><button id="btnSendText">送信</button><span id="sendTextRes" class="muted"></span></div>
-    </section>
+<main>
 
-    <section class="card">
-      <h2>メッセージログ（/data/messages.log の tail）</h2>
-      <div class="row">
-        <button id="btnLoadLog">最新200件を取得</button>
-        <button class="secondary" id="btnAutoRefresh">10秒ごと更新</button>
-        <span id="autoStatus" class="pill">OFF</span>
-      </div>
-      <pre id="logOut" hidden></pre>
-      <div class="muted">※ この画面は /api/admin/messages を叩いています（サーバー側で tail 相当）。</div>
-    </section>
-  </main>
-  <script src="/public/admin.js"></script>
-</body></html>
+<section class="card">
+<h2>認証</h2>
+<div class="row"><input id="token" type="text" placeholder="ADMIN_API_TOKEN を貼り付け" /></div>
+<div class="row">
+<button id="btnPing">Ping</button><span id="pingRes" class="muted"></span>
+</div>
+<div class="row"><button class="secondary" id="btnHealth">/api/health</button></div>
+<pre id="healthOut" hidden></pre>
+</section>
+
+<section class="card">
+<h2>商品 → Flex 自動生成 / 配信</h2>
+<div class="row">
+<button id="btnLoadProducts">商品読み込み</button>
+<label class="muted"><input type="checkbox" id="hideKusuke" /> 久助を非表示</label>
+<span id="prodCount" class="muted"></span>
+</div>
+
+<div class="row"><input id="altText" type="text" placeholder="altText（例：商品一覧）"></div>
+
+<div class="row"><button id="btnBuildFlex">Flex 生成（プレビュー）</button></div>
+<pre id="flexPreview" hidden></pre>
+
+<div class="row">
+<input id="userIds" type="text" placeholder="セグメント userId（カンマ区切り）。空なら全体配信" />
+</div>
+<div class="row">
+<button id="btnFillActive">直近アクティブ → 自動入力</button>
+</div>
+
+<div class="row">
+<button id="btnSendFlex">この Flex を配信</button><span id="sendFlexRes" class="muted"></span>
+</div>
+</section>
+
+<section class="card">
+<h2>テキスト配信</h2>
+<div class="row"><textarea id="textMessage" placeholder="本文"></textarea></div>
+<div class="row"><input id="textUserIds" type="text" placeholder="セグメント userId（カンマ区切り）。空なら全体配信" /></div>
+<div class="row"><button id="btnSendText">送信</button><span id="sendTextRes" class="muted"></span></div>
+</section>
+
+<section class="card">
+<h2>メッセージログ（/data/messages.log の tail）</h2>
+<div class="row">
+<button id="btnLoadLog">最新200件を取得</button>
+<button class="secondary" id="btnAutoRefresh">10秒ごと更新</button>
+<span id="autoStatus" class="pill">OFF</span>
+</div>
+<pre id="logOut" hidden></pre>
+</section>
+
+</main>
+
+<script src="/public/admin.js"></script>
+</body>
+</html>
+HTML

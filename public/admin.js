@@ -105,6 +105,27 @@
     const j = await r.json();
     show($('#usersOut'), j);
   };
+// 直近アクティブユーザー → userIds に自動入力
+$('#btnSetToUserIds').onclick = ()=>{
+  try {
+    const txt = $('#usersOut').textContent.trim();
+    if (!txt) return alert('先に「直近アクティブユーザー取得」を押してください');
+
+    const data = JSON.parse(txt);
+
+    // data が配列か、 { items:[] } 形式か両対応
+    const list = Array.isArray(data) ? data :
+      (Array.isArray(data.items) ? data.items :
+      (Array.isArray(data.userIds) ? data.userIds : []));
+
+    if (!list.length) return alert('userId が見つかりません');
+
+    $('#userIds').value = list.join(', ');
+    alert(`userIds に ${list.length}件 セットしました ✅`);
+  } catch(e){
+    alert('ログ形式が読み取れません。\n先に「直近アクティブユーザー取得」を押してください。');
+  }
+};
 
   // メッセージログ（tail相当）
   async function loadLog(){

@@ -1,4 +1,3 @@
-cat > public/admin.js <<'JS'
 (function(){
   const $ = (sel)=>document.querySelector(sel);
   const show = (el, data)=>{ el.hidden=false; el.textContent = typeof data==='string' ? data : JSON.stringify(data,null,2); };

@@ -1,3 +1,4 @@
+<!-- ===== Admin Console: public/admin.html ===== -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -9,7 +10,7 @@
     html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic UI",sans-serif;}
     header{padding:18px 20px;border-bottom:1px solid #1f2744;background:linear-gradient(180deg,#121a33,#0b1020);position:sticky;top:0;z-index:2}
     h1{margin:0;font-size:18px;letter-spacing:.5px}
-    main{padding:22px;display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));}
+    main{padding:22px;display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));}
     .card{background:var(--card);border:1px solid #243057;border-radius:16px;padding:16px;box-shadow:0 10px 24px rgba(0,0,0,.18)}
     .card h2{margin:0 0 10px 0;font-size:16px;color:var(--sub)}
     .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
@@ -19,115 +20,194 @@
     button.secondary{background:#26345d;color:#cfe0ff;border:1px solid #3a4a7b}
     .muted{color:var(--muted);font-size:12px}
     code.inline{background:#0f1630;padding:2px 6px;border:1px solid #26345d;border-radius:6px}
-    .pill{display:inline-block;background:#20305c;color:#cfe0ff;border:1px solid #35477b;padding:3px 8px;border-radius:999px;font-size:12px;margin-left:8px}
-    pre{white-space:pre-wrap;word-break:break-all;background:#0f1630;color:#cfe0ff;border:1px solid #2a3760;border-radius:10px;padding:10px;max-height:360px;overflow:auto}
-    .ok{color:#6ae07b}.ng{color:#ff7280}
-    .label{font-size:12px;color:#9fb1ff;margin-bottom:2px}
+    .grid{display:grid;gap:8px}
+    .two{grid-template-columns:1fr 1fr}
+    pre{white-space:pre-wrap;word-break:break-all;background:#0f1630;color:#cfe0ff;border:1px solid #2a3760;border-radius:10px;padding:10px;max-height:320px;overflow:auto}
+    .pill{display:inline-block;background:#20305c;color:#cfe0ff;border:1px solid #35477b;padding:3px 8px;border-radius:999px;font-size:12px;margin-right:6px}
   </style>
 </head>
 <body>
   <header>
     <h1>LINE 管理画面（リッチ配信 / セグメント / ログ）</h1>
-    <div class="muted">このページは <code class="inline">/public/admin.html</code> です。サーバーの <code class="inline">ADMIN_API_TOKEN</code> を使って認証します。</div>
+    <div class="muted">このファイルは <code class="inline">/public/admin.html</code> で配信、スクリプトは <code class="inline">/public/admin.js</code> を読み込みます。</div>
   </header>
-
   <main>
     <!-- 認証・状態 -->
-    <section class="card">
+    <section class="card" id="sec-auth">
       <h2>認証・状態</h2>
-      <div class="row" style="width:100%">
-        <div style="flex:1 1 320px">
-          <div class="label">ADMIN_API_TOKEN</div>
-          <input id="token" type="text" placeholder="ADMIN_API_TOKEN を貼り付け" />
-        </div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <button id="btnSaveToken">保存</button>
-          <button id="btnPing">Ping</button>
-          <span id="pingRes" class="pill">未実行</span>
-        </div>
+      <div class="grid">
+        <div class="row"><input id="token" type="text" placeholder="ADMIN_API_TOKEN を貼り付け" /></div>
+        <div class="row"><button id="btnPing">Ping（認証確認）</button><span id="pingRes" class="muted"></span></div>
+        <div class="row"><button class="secondary" id="btnHealth">/api/health</button></div>
+        <pre id="healthOut" hidden></pre>
       </div>
-      <div class="row"><button id="btnHealth" class="secondary">/api/health を表示</button></div>
-      <pre id="healthOut" hidden></pre>
-      <div class="muted">※ Ping が OK にならないと、配信やログ取得が失敗します（Authorization: Bearer <code class="inline">ADMIN_API_TOKEN</code>）。</div>
     </section>
 
-    <!-- 商品 → Flex 自動生成 -->
-    <section class="card">
+    <!-- 商品 → 自動カルーセル生成（プレビュー＆配信） -->
+    <section class="card" id="sec-products">
       <h2>商品一覧 → リッチメッセージ（Flex）自動生成</h2>
-      <div class="row">
-        <button id="btnLoadProducts">商品を読み込む（/api/admin/products）</button>
-        <span id="prodCount" class="pill">0 件</span>
-      </div>
-      <div class="row" style="width:100%">
-        <div style="flex:1 1 240px">
-          <div class="label">一覧から隠すID（カンマ区切り）</div>
-          <input id="hideIds" type="text" placeholder="例: kusuke-250">
+      <div class="row"><button id="btnLoadProducts">/data/products.json を取得</button><span id="prodCount" class="muted"></span></div>
+      <div class="grid two">
+        <div>
+          <label class="muted">オプション</label>
+          <div class="row"><input type="text" id="hideIds" placeholder="一覧から隠すID（例: kusuke-250,foo-123）"></div>
+          <div class="row"><input type="text" id="altText" placeholder="altText（必須）：商品一覧"></div>
+          <div class="row"><button id="btnBuildFlex">Flex を生成（プレビュー）</button></div>
         </div>
-        <div style="flex:1 1 240px">
-          <div class="label">altText（必須）</div>
-          <input id="altText" type="text" placeholder="商品一覧">
-        </div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <button id="btnBuildFlex">Flex 生成（プレビュー）</button>
-          <button id="btnChunkOn" class="secondary">ページ分割 ON</button>
-          <span id="chunkStatus" class="pill">OFF</span>
-        </div>
-      </div>
-      <pre id="flexPreview" hidden></pre>
-
-      <div class="row" style="width:100%">
-        <div style="flex:1 1 100%">
-          <div class="label">セグメント配信用 userId（カンマ区切り）。空なら broadcast</div>
-          <input id="userIds" type="text" placeholder="例: Uxxxxxxxxx,Uyyyyyyyyy">
+        <div>
+          <label class="muted">Flex JSON プレビュー</label>
+          <pre id="flexPreview"></pre>
         </div>
       </div>
       <div class="row">
-        <button id="btnActiveUsers">直近のアクティブユーザー取得（ユニーク）</button>
-        <button id="btnFillToUserIds" class="secondary">userIds に自動入力</button>
-        <span id="usersCount" class="pill">0 ユーザー</span>
+        <input id="userIds" type="text" placeholder="セグメント配信用 userId（カンマ区切り）。空なら broadcast" />
+        <button class="secondary" id="btnAutofillUsers">自動取得して差し込み</button>
       </div>
-      <pre id="usersOut" hidden></pre>
-
-      <div class="row">
-        <button id="btnSendFlex">この Flex を配信</button>
-        <span id="sendFlexRes" class="pill">未送信</span>
-      </div>
-      <div class="muted">※ セグメント送信は /api/admin/segment/send-flex、ブロードキャストは /api/admin/broadcast-flex を使用します。</div>
+      <div class="row"><button id="btnSendFlex">この Flex を配信</button><span id="sendFlexRes" class="muted"></span></div>
     </section>
 
-    <!-- テキスト配信（Flexで送る簡易版） -->
-    <section class="card">
-      <h2>テキストを送る（簡易）</h2>
-      <div class="row" style="width:100%">
-        <textarea id="textMessage" placeholder="配信する本文（ブロードキャスト：userIds 空のとき）"></textarea>
-      </div>
-      <div class="row">
-        <div style="flex:1 1 100%">
-          <div class="label">userId（カンマ区切り）。空ならブロードキャスト</div>
-          <input id="textUserIds" type="text" placeholder="例: Uxxxxxxxxx">
-        </div>
+    <!-- テキスト配信（セグメント / ブロードキャスト） -->
+    <section class="card" id="sec-text">
+      <h2>テキスト配信（セグメント / ブロードキャスト）</h2>
+      <div class="row"><textarea id="textMessage" placeholder="配信する本文"></textarea></div>
+      <div class="row"><input id="textUserIds" type="text" placeholder="userId（カンマ区切り）。空なら broadcast" />
+        <button class="secondary" id="btnAutofillUsers2">自動取得して差し込み</button>
       </div>
       <div class="row">
         <button id="btnSendText">送信</button>
-        <span id="sendTextRes" class="pill">未送信</span>
+        <span id="sendTextRes" class="muted"></span>
       </div>
-      <div class="muted">※ テキストは「テキスト入りの簡易Flex」として送ります（/api/admin/broadcast-flex または /api/admin/segment/send）。</div>
+      <div class="muted">セグメント送信は /api/admin/segment/send、ブロードキャストは /v2/bot/message/broadcast を使用します。</div>
     </section>
 
-    <!-- メッセージログ（tail 相当） -->
-    <section class="card">
+    <!-- ユーザー収集 & メッセージログ -->
+    <section class="card" id="sec-logs">
       <h2>メッセージログ（/data/messages.log の tail）</h2>
-      <div class="row">
-        <button id="btnLoadLog">最新200件を取得</button>
-        <button id="btnAutoRefresh" class="secondary">10秒ごと更新</button>
-        <span id="autoStatus" class="pill">OFF</span>
-      </div>
+      <div class="row"><button id="btnLoadLog">最新200件を取得</button><button class="secondary" id="btnAutoRefresh">10秒ごと更新</button><span id="autoStatus" class="pill">OFF</span></div>
       <pre id="logOut" hidden></pre>
-      <div class="muted">※ ここは /api/admin/messages を叩いており、サーバー側で tail 相当を返しています。<br>※ 管理画面から送信したメッセージは Webhook を通らないため、<b>messages.log には出ません</b>（ユーザーが送った<small>/ボタンの postback</small>のみ記録）。</div>
+      <div class="muted">この画面は /api/admin/messages を叩いており、サーバー側で tail 相当を返しています。</div>
     </section>
   </main>
 
-  <script src="/public/admin.js"></script>
+  <!-- 外部JS -->
+  <script src="./admin.js"></script>
 </body>
 </html>
-HTML
+
+
+<!-- ===== public/admin.js ===== -->
+(() => {
+  const $ = (sel) => document.querySelector(sel);
+  const out = (el, data, show=true) => { el.hidden = !show; el.textContent = (typeof data === 'string') ? data : JSON.stringify(data, null, 2); };
+  const hdr = () => ({ 'Authorization': 'Bearer ' + ($('#token').value || '').trim(), 'Content-Type': 'application/json' });
+
+  // Ping / Health
+  $('#btnPing')?.addEventListener('click', async () => {
+    $('#pingRes').textContent = '…';
+    try { const r = await fetch('/api/admin/ping', { headers: hdr() }); const j = await r.json(); $('#pingRes').textContent = j.ok ? 'OK' : ('NG: ' + (j.error||'')); }
+    catch(e){ $('#pingRes').textContent = 'ERR ' + e; }
+  });
+  $('#btnHealth')?.addEventListener('click', async () => {
+    try { const r = await fetch('/api/health'); const j = await r.json(); out($('#healthOut'), j, true); }
+    catch(e){ out($('#healthOut'), String(e), true); }
+  });
+
+  // Products → Flex
+  let products = [];
+  const yen = (n) => Number(n||0).toLocaleString('ja-JP') + '円';
+  $('#btnLoadProducts')?.addEventListener('click', async () => {
+    const r = await fetch('/api/admin/products', { headers: hdr() });
+    const j = await r.json();
+    if (!j.ok){ alert('取得失敗: ' + (j.error||'')); return; }
+    products = j.items || [];
+    $('#prodCount').textContent = `取得 ${products.length} 件`;
+  });
+  function buildFlexFromProducts(list){
+    const hide = ($('#hideIds').value||'').split(',').map(s=>s.trim()).filter(Boolean);
+    const visible = list.filter(p => !hide.includes(p.id));
+    const bubbles = visible.map(p => ({
+      type:'bubble',
+      body:{ type:'box', layout:'vertical', spacing:'sm', contents:[
+        { type:'text', text:p.name, weight:'bold', size:'md', wrap:true },
+        { type:'text', text:`価格：${yen(p.price)}　在庫：${p.stock ?? 0}`, size:'sm', wrap:true },
+        p.desc ? { type:'text', text:p.desc, size:'sm', wrap:true } : { type:'box', layout:'vertical', contents:[] }
+      ]},
+      footer:{ type:'box', layout:'horizontal', spacing:'md', contents:[
+        { type:'button', style:'primary', action:{ type:'postback', label:'数量を選ぶ', data:`order_qty?id=${encodeURIComponent(p.id)}&qty=1` } }
+      ]}
+    }));
+    bubbles.push({
+      type:'bubble',
+      body:{ type:'box', layout:'vertical', spacing:'sm', contents:[
+        { type:'text', text:'その他（自由入力）', weight:'bold', size:'md' },
+        { type:'text', text:'商品名と個数だけ入力します。価格入力は不要です。', size:'sm', wrap:true }
+      ]},
+      footer:{ type:'box', layout:'vertical', spacing:'md', contents:[
+        { type:'button', style:'primary', action:{ type:'postback', label:'商品名を入力する', data:'other_start' } },
+        { type:'button', style:'secondary', action:{ type:'postback', label:'← 戻る', data:'order_back' } }
+      ]}
+    });
+    return {
+      type:'flex',
+      altText: ($('#altText').value||'商品一覧').slice(0,400),
+      contents: (bubbles.length===1) ? bubbles[0] : { type:'carousel', contents:bubbles }
+    };
+  }
+  $('#btnBuildFlex')?.addEventListener('click', () => {
+    if (!products.length){ alert('先に商品を取得してください'); return; }
+    const msg = buildFlexFromProducts(products);
+    out($('#flexPreview'), msg, true);
+  });
+
+  // セグメント or Broadcast でFlex送信
+  $('#btnSendFlex')?.addEventListener('click', async () => {
+    try{
+      if (!products.length){ alert('先に商品を取得してください'); return; }
+      const payload = buildFlexFromProducts(products);
+      const ids = ($('#userIds').value||'').split(',').map(s=>s.trim()).filter(Boolean);
+      const url = ids.length ? '/api/admin/segment/send-flex' : '/api/admin/broadcast-flex';
+      const body = ids.length ? { userIds: ids, altText: payload.altText, contents: payload.contents } : { altText: payload.altText, contents: payload.contents };
+      const r = await fetch(url, { method:'POST', headers: hdr(), body: JSON.stringify(body) });
+      const j = await r.json();
+      $('#sendFlexRes').textContent = j.ok ? 'OK' : ('NG: ' + (j.error||'') );
+    }catch(e){ $('#sendFlexRes').textContent = 'ERR ' + e; }
+  });
+
+  // テキスト送信
+  $('#btnSendText')?.addEventListener('click', async () => {
+    const msg = ($('#textMessage').value||'').trim();
+    if (!msg){ alert('本文が空です'); return; }
+    const ids = ($('#textUserIds').value||'').split(',').map(s=>s.trim()).filter(Boolean);
+    if (ids.length){
+      const r = await fetch('/api/admin/segment/send', { method:'POST', headers: hdr(), body: JSON.stringify({ userIds: ids, message: msg }) });
+      const j = await r.json(); $('#sendTextRes').textContent = j.ok ? 'OK' : ('NG: ' + (j.error||''));
+    } else {
+      // テキスト単体の broadcast は SDK 経由にしているため、既存の broadcast-flex API を流用（Bubbleにテキスト一発）
+      const fakeFlex = { type:'bubble', body:{ type:'box', layout:'vertical', contents:[{ type:'text', text: msg, wrap:true }] } };
+      const r = await fetch('/api/admin/broadcast-flex', { method:'POST', headers: hdr(), body: JSON.stringify({ altText:'お知らせ', contents: fakeFlex }) });
+      const j = await r.json(); $('#sendTextRes').textContent = j.ok ? 'OK' : ('NG: ' + (j.error||''));
+    }
+  });
+
+  // userId 自動取得 → 入力欄に差し込み
+  async function autofill(targetSel){
+    const r = await fetch('/api/admin/active-chatters?list=true', { headers: hdr() });
+    const j = await r.json();
+    const ids = (j && j.users) ? j.users : [];
+    $(targetSel).value = ids.join(',');
+  }
+  $('#btnAutofillUsers')?.addEventListener('click', () => autofill('#userIds'));
+  $('#btnAutofillUsers2')?.addEventListener('click', () => autofill('#textUserIds'));
+
+  // メッセージログ（tail）
+  let auto=false, timer=null;
+  async function loadLog(){
+    const r = await fetch('/api/admin/messages?limit=200', { headers: hdr() });
+    const j = await r.json(); out($('#logOut'), j, true);
+  }
+  $('#btnLoadLog')?.addEventListener('click', loadLog);
+  $('#btnAutoRefresh')?.addEventListener('click', () => {
+    auto = !auto; $('#autoStatus').textContent = auto ? 'ON' : 'OFF';
+    if (auto){ loadLog(); timer = setInterval(loadLog, 10000); } else { clearInterval(timer); }
+  });
+})();

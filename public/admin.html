@@ -1,92 +1,194 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>LINE 管理画面</title>
-  <style>
-    body{margin:0;background:#0b1020;color:#e6ebff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans JP",sans-serif}
-    header{padding:16px 20px;border-bottom:1px solid #1f2744;background:linear-gradient(180deg,#121a33,#0b1020);position:sticky;top:0}
-    h1{margin:0;font-size:18px}
-    main{padding:20px;display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
-    .card{background:#131a2e;border:1px solid #243057;border-radius:14px;padding:14px}
-    .card h2{margin:0 0 8px;font-size:16px;color:#9fb1ff}
-    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
-    input,textarea{background:#0f1630;color:#e6ebff;border:1px solid #2a3760;border-radius:10px;padding:10px 12px;outline:none;width:100%}
-    textarea{min-height:100px}
-    button{background:#6aa3ff;color:#06102b;border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}
-    button.secondary{background:#26345d;color:#cfe0ff;border:1px solid #3a4a7b}
-    pre{white-space:pre-wrap;word-break:break-all;background:#0f1630;color:#cfe0ff;border:1px solid #2a3760;border-radius:10px;padding:10px;max-height:320px;overflow:auto}
-    .muted{color:#7b88b8;font-size:12px}
-    .pill{display:inline-block;background:#20305c;color:#cfe0ff;border:1px solid #35477b;padding:3px 8px;border-radius:999px;font-size:12px}
-  </style>
-</head>
-<body>
-  <header>
-    <h1>LINE 管理画面（配信・セグメント・ログ）</h1>
-    <div class="muted">このページのURL：<code>/public/admin.html</code>（例：<code>https://<your-app>.onrender.com/public/admin.html</code>）</div>
+<!DOCTYPE html><html lang="ja"><head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LINE 管理画面</title>
+<style>
+  body{margin:0;background:#0b1020;color:#e6ebff;font-family:system-ui,"Noto Sans JP",sans-serif}
+  header{padding:16px 20px;border-bottom:1px solid #223055;background:#121a33;position:sticky;top:0}
+  h1{margin:0;font-size:18px}
+  main{padding:18px;display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
+  .card{background:#131a2e;border:1px solid #243057;border-radius:14px;padding:14px}
+  .card h2{margin:0 0 8px 0;font-size:15px;color:#9fb1ff}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
+  input[type=text],textarea{background:#0f1630;color:#e6ebff;border:1px solid #2a3760;border-radius:10px;padding:10px 12px;outline:none;width:100%}
+  textarea{min-height:90px;resize:vertical}
+  button{background:#6aa3ff;color:#07152e;border:0;border-radius:10px;padding:9px 12px;font-weight:700;cursor:pointer}
+  button.secondary{background:#26345d;color:#cfe0ff;border:1px solid #3a4a7b}
+  .muted{color:#8ea1de;font-size:12px}
+  pre{white-space:pre-wrap;background:#0f1630;border:1px solid #2a3760;border-radius:10px;padding:10px;max-height:320px;overflow:auto}
+  .pill{display:inline-block;background:#20305c;border:1px solid #35477b;padding:3px 8px;border-radius:999px;font-size:12px;margin-left:8px}
+</style>
+</head><body>
+  <header><h1>LINE 管理画面（配信 / セグメント / ログ）</h1>
+    <div class="muted">トークンは <code>ADMIN_API_TOKEN</code>。URL は <code>/public/admin.html</code> で開きます。</div>
   </header>
   <main>
-    <!-- 認証・状態 -->
     <section class="card">
       <h2>認証・状態</h2>
-      <div class="row"><input id="token" type="text" placeholder="ADMIN_API_TOKEN を貼り付け"></div>
-      <div class="row">
-        <button id="btnPing">Ping（認証確認）</button>
-        <button class="secondary" id="btnHealth">/api/health</button>
-      </div>
+      <div class="row"><input id="token" type="text" placeholder="ADMIN_API_TOKEN を貼り付け" /></div>
+      <div class="row"><button id="btnPing">Ping</button><span id="pingRes" class="muted"></span></div>
+      <div class="row"><button class="secondary" id="btnHealth">/api/health</button></div>
       <pre id="healthOut" hidden></pre>
     </section>
 
-    <!-- 商品 → Flex生成/配信 -->
     <section class="card">
-      <h2>商品 → リッチ（Flex）自動生成・配信</h2>
+      <h2>商品 → Flex（自動カルーセル）</h2>
       <div class="row">
-        <button id="btnLoadProducts">/api/admin/products を取得</button>
+        <button id="btnLoadProducts">商品読み込み</button>
+        <label class="muted"><input type="checkbox" id="hideKusuke" /> 久助を非表示</label>
         <span id="prodCount" class="muted"></span>
       </div>
-      <div class="row"><input id="hideIds" type="text" placeholder="一覧から隠すID（例: kusuke-250,foo-123）"></div>
       <div class="row"><input id="altText" type="text" placeholder="altText（例：商品一覧）"></div>
-      <div class="row">
-        <button id="btnBuildFlex">Flex を生成（プレビュー）</button>
-      </div>
+      <div class="row"><button id="btnBuildFlex">Flex 生成（プレビュー）</button></div>
       <pre id="flexPreview" hidden></pre>
-      <div class="row"><input id="userIds" type="text" placeholder="セグメント userId（カンマ区切り）。空なら broadcast"></div>
+      <div class="row">
+        <input id="userIds" type="text" placeholder="セグメント userId（カンマ区切り）。空ならブロードキャスト" />
+      </div>
+      <div class="row">
+        <button id="btnFillActive">直近のアクティブユーザーを自動入力</button>
+        <span class="muted">/api/admin/active-chatters?list=true</span>
+      </div>
       <div class="row"><button id="btnSendFlex">この Flex を配信</button><span id="sendFlexRes" class="muted"></span></div>
     </section>
 
-    <!-- テキスト配信 -->
     <section class="card">
-      <h2>テキスト配信（セグメント / ブロードキャスト）</h2>
-      <div class="row"><textarea id="textMessage" placeholder="配信する本文"></textarea></div>
-      <div class="row"><input id="textUserIds" type="text" placeholder="userId（カンマ区切り）。空なら broadcast"></div>
+      <h2>テキスト配信</h2>
+      <div class="row"><textarea id="textMessage" placeholder="本文"></textarea></div>
+      <div class="row"><input id="textUserIds" type="text" placeholder="userId（カンマ区切り）。空ならブロードキャスト" /></div>
       <div class="row"><button id="btnSendText">送信</button><span id="sendTextRes" class="muted"></span></div>
     </section>
 
-    <!-- ユーザー収集 -->
     <section class="card">
-      <h2>userId 収集</h2>
-      <div class="row"><button id="btnActiveUsers">直近アクティブユーザー取得</button><span class="muted">/api/admin/active-chatters?list=true</span></div>
-      <pre id="usersOut" hidden></pre>
-      <div class="row">
-    <button id="btnSetToUserIds">→ userIds にセット</button>
-  </div>
-    </section>
-
-    <!-- メッセージログ（tail相当） -->
-    <section class="card">
-      <h2>メッセージログ（/data/messages.log）</h2>
+      <h2>メッセージログ（/data/messages.log の tail）</h2>
       <div class="row">
         <button id="btnLoadLog">最新200件を取得</button>
         <button class="secondary" id="btnAutoRefresh">10秒ごと更新</button>
         <span id="autoStatus" class="pill">OFF</span>
       </div>
       <pre id="logOut" hidden></pre>
-      <div class="muted">※サーバーの /api/admin/messages を叩いています。ボタンはこのセクション内にあります。</div>
+      <div class="muted">※ この画面は /api/admin/messages を叩いています（サーバー側で tail 相当）。</div>
     </section>
   </main>
-
   <script src="/public/admin.js"></script>
-</body>
-</html>
+</body></html>
 HTML
+
+# 3) 管理画面の JS
+cat > public/admin.js <<'JS'
+(()=>{
+
+const $ = (sel)=>document.querySelector(sel);
+const show = (el, data)=>{ el.hidden=false; el.textContent = typeof data==='string'? data : JSON.stringify(data,null,2); };
+const hdr = ()=>({ 'Authorization':'Bearer '+(($('#token').value||'').trim()), 'Content-Type':'application/json' });
+
+/* 認証・状態 */
+$('#btnPing').onclick = async ()=>{
+  $('#pingRes').textContent = '…';
+  try{
+    const r = await fetch('/api/admin/ping', { headers: hdr() });
+    const j = await r.json();
+    $('#pingRes').textContent = j.ok? 'OK' : 'NG';
+  }catch(e){ $('#pingRes').textContent = 'ERR'; }
+};
+$('#btnHealth').onclick = async ()=>{
+  const r = await fetch('/api/health');
+  show($('#healthOut'), await r.json());
+};
+
+/* 商品 → Flex 生成 */
+let PRODUCTS = [];
+$('#btnLoadProducts').onclick = async ()=>{
+  const r = await fetch('/api/admin/products', { headers: hdr() });
+  const j = await r.json();
+  if(!j.ok) return alert('取得失敗: '+(j.error||''));
+  PRODUCTS = j.items||[];
+  if($('#hideKusuke').checked) PRODUCTS = PRODUCTS.filter(x=>x.id!=='kusuke-250');
+  $('#prodCount').textContent = `取得 ${PRODUCTS.length} 件`;
+};
+
+const yen = (n)=>`${Number(n||0).toLocaleString('ja-JP')}円`;
+function buildFlex(list){
+  const bubbles = list.map(p=>({
+    type:'bubble',
+    body:{ type:'box', layout:'vertical', spacing:'sm', contents:[
+      { type:'text', text:p.name, weight:'bold', size:'md', wrap:true },
+      { type:'text', text:`価格：${yen(p.price)}　在庫：${p.stock??0}`, size:'sm', wrap:true },
+      p.desc? { type:'text', text:p.desc, size:'sm', wrap:true } : { type:'box', layout:'vertical', contents:[] }
+    ]},
+    footer:{ type:'box', layout:'horizontal', spacing:'md', contents:[
+      { type:'button', style:'primary', action:{ type:'postback', label:'数量を選ぶ', data:`order_qty?id=${encodeURIComponent(p.id)}&qty=1` } }
+    ]}
+  }));
+  // その他（自由入力）
+  bubbles.push({
+    type:'bubble',
+    body:{ type:'box', layout:'vertical', spacing:'sm', contents:[
+      { type:'text', text:'その他（自由入力）', weight:'bold', size:'md' },
+      { type:'text', text:'商品名と個数だけ入力します。価格入力は不要です。', size:'sm', wrap:true }
+    ]},
+    footer:{ type:'box', layout:'vertical', spacing:'md', contents:[
+      { type:'button', style:'primary', action:{ type:'postback', label:'商品名を入力する', data:'other_start' } },
+      { type:'button', style:'secondary', action:{ type:'postback', label:'← 戻る', data:'order_back' } }
+    ]}
+  });
+  return { type:'flex', altText: ($('#altText').value||'商品一覧').slice(0,400), contents:(bubbles.length===1? bubbles[0] : { type:'carousel', contents:bubbles }) };
+}
+
+$('#btnBuildFlex').onclick = ()=>{
+  if(!PRODUCTS.length) return alert('先に商品を読み込んでください');
+  const msg = buildFlex(PRODUCTS);
+  show($('#flexPreview'), msg);
+};
+
+/* 配信（Flex） */
+$('#btnSendFlex').onclick = async ()=>{
+  if(!PRODUCTS.length) return alert('先に商品を読み込んでください');
+  const msg = buildFlex(PRODUCTS);
+  const ids = ($('#userIds').value||'').split(',').map(s=>s.trim()).filter(Boolean);
+  const url = ids.length? '/api/admin/segment/send-flex' : '/api/admin/broadcast-flex';
+  const body = ids.length? { userIds: ids, altText: msg.altText, contents: msg.contents } : { altText: msg.altText, contents: msg.contents };
+  const r = await fetch(url, { method:'POST', headers: hdr(), body: JSON.stringify(body) });
+  const j = await r.json();
+  $('#sendFlexRes').textContent = j.ok? 'OK' : ('NG: '+(j.error||'')); 
+};
+
+/* セグメント userId を自動入力（直近アクティブ） */
+$('#btnFillActive').onclick = async ()=>{
+  const r = await fetch('/api/admin/active-chatters?list=true', { headers: hdr() });
+  const j = await r.json();
+  const list = Array.isArray(j.users)? j.users : [];
+  if(!list.length) return alert('直近のユーザーが見つかりません');
+  $('#userIds').value = list.join(',');
+  alert(`${list.length}件を userIds にセットしました`);
+};
+
+/* テキスト配信 */
+$('#btnSendText').onclick = async ()=>{
+  const msg = ($('#textMessage').value||'').trim();
+  if(!msg) return alert('本文が空です');
+  const ids = ($('#textUserIds').value||'').split(',').map(s=>s.trim()).filter(Boolean);
+  if(ids.length){
+    const r = await fetch('/api/admin/segment/send', { method:'POST', headers: hdr(), body: JSON.stringify({ userIds: ids, message: msg }) });
+    const j = await r.json(); $('#sendTextRes').textContent = j.ok? 'OK' : ('NG: '+(j.error||'')); 
+  }else{
+    // テキストは broadcast の簡易代替として Flexに詰めて送る
+    const bubble = { type:'bubble', body:{ type:'box', layout:'vertical', contents:[{ type:'text', text: msg, wrap:true }] } };
+    const r = await fetch('/api/admin/broadcast-flex', { method:'POST', headers: hdr(), body: JSON.stringify({ altText:'テキスト', contents:bubble }) });
+    const j = await r.json(); $('#sendTextRes').textContent = j.ok? 'OK' : ('NG: '+(j.error||'')); 
+  }
+};
+
+/* メッセージログ（tail） */
+let auto=false, timer=null;
+async function loadLog(){
+  const r = await fetch('/api/admin/messages?limit=200', { headers: hdr() });
+  const j = await r.json(); show($('#logOut'), j);
+}
+$('#btnLoadLog').onclick = loadLog;
+$('#btnAutoRefresh').onclick = ()=>{
+  auto = !auto; $('#autoStatus').textContent = auto? 'ON':'OFF';
+  if(auto){ loadLog(); timer=setInterval(loadLog, 10000); } else { clearInterval(timer); }
+};
+
+})();
+JS

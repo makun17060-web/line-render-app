@@ -1,264 +1,216 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8" />
-  <title>Flex メッセージ管理</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    :root { --gap: 12px; }
-    html,body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif; }
-    body { max-width: 920px; margin: 20px auto; padding: 0 16px; }
-    h1 { font-size: 20px; margin: 0 0 8px; }
-    h2 { font-size: 16px; margin: 24px 0 8px; }
-    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin-top: var(--gap); }
-    .row { display: grid; grid-template-columns: 1fr 2fr; gap: var(--gap); align-items: start; }
-    .row > label { margin-top: 10px; font-size: 14px; color: #333; }
-    input[type="text"], textarea { width: 100%; box-sizing: border-box; border: 1px solid #ccc; border-radius: 8px; padding: 10px; font-size: 14px; }
-    textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; min-height: 220px; }
-    .help { font-size: 12px; color: #666; margin-top: 6px; white-space: pre-line; }
-    .btns { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
-    button { padding: 10px 14px; border: 0; border-radius: 8px; cursor: pointer; }
-    .primary { background: #06C755; color: #fff; font-weight: 600; }
-    .secondary { background: #eee; }
-    .danger { background: #e53935; color: #fff; }
-    .ok { color: #0a7a3c; }
-    .err { color: #b00020; white-space: pre-line; }
-    .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--gap); }
-    @media (max-width: 800px) { .row, .grid { grid-template-columns: 1fr; } }
-    pre { background:#fafafa; border:1px solid #eee; border-radius:10px; padding:12px; overflow:auto; }
-  </style>
+<meta charset="utf-8">
+<title>Flex配信 管理</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.5;margin:24px;max-width:1000px}
+  h1{font-size:20px;margin:0 0 12px}
+  fieldset{border:1px solid #ddd;border-radius:8px;padding:12px;margin:12px 0}
+  label{display:block;margin:6px 0}
+  input[type=text],textarea{width:100%;box-sizing:border-box;padding:8px;border:1px solid #ccc;border-radius:6px}
+  textarea{height:160px}
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+  .row > *{flex:1 1 300px}
+  .btn{padding:10px 16px;border-radius:8px;border:0;cursor:pointer}
+  .btn-primary{background:#2563eb;color:#fff}
+  .btn-secondary{background:#e5e7eb}
+  .muted{color:#666;font-size:12px}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#eef;border:1px solid #cdd}
+  .card{border:1px solid #eee;border-radius:10px;padding:10px;margin:6px 0}
+  code{background:#f6f8fa;padding:2px 6px;border-radius:6px}
+</style>
 </head>
 <body>
-  <h1>Flex メッセージ管理（管理者用）</h1>
+<h1>Flex配信 管理（products.json → 自動カルーセル）</h1>
 
-  <div class="card">
-    <div class="row">
-      <label for="token">管理トークン（ADMIN_API_TOKEN）</label>
-      <div>
-        <input id="token" type="text" placeholder="Render の ADMIN_API_TOKEN を入力" />
-        <div class="btns">
-          <button class="secondary" id="pingBtn">接続テスト（/api/admin/ping）</button>
-          <span id="pingResult" class="help"></span>
-        </div>
-      </div>
-    </div>
+<fieldset>
+  <legend>認証</legend>
+  <label>管理トークン（<code>ADMIN_API_TOKEN</code>）を入力
+    <input type="text" id="token" placeholder="例: eyJhbGciOi... （保存されます）">
+  </label>
+  <div class="row">
+    <button class="btn btn-secondary" id="saveToken">保存</button>
+    <button class="btn btn-secondary" id="clearToken">削除</button>
+    <span class="muted">※ Authorization: Bearer に乗せて管理APIへ送信します。</span>
   </div>
+</fieldset>
 
-  <div class="card">
-    <h2>配信モード</h2>
-    <div class="grid">
-      <div>
-        <input type="radio" name="mode" id="modeBroadcast" value="broadcast" checked />
-        <label for="modeBroadcast"><b>全体配信</b>（/api/admin/broadcast-flex）</label>
-        <div class="help">フォロワー全員へ配信します。</div>
-      </div>
-      <div>
-        <input type="radio" name="mode" id="modeSegment" value="segment" />
-        <label for="modeSegment"><b>セグメント配信</b>（/api/admin/segment/send-flex）</label>
-        <div class="help">指定した userId リストへ配信します（1行につき1 userId）。</div>
-      </div>
-    </div>
-
-    <div id="segmentBox" style="display:none; margin-top:12px;">
-      <label for="userIds"><b>ユーザーID一覧</b></label>
-      <textarea id="userIds" placeholder="例：
-Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-Uyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"></textarea>
-      <div class="help">最大500件ごとにサーバー側で分割送信されます。</div>
-    </div>
+<fieldset>
+  <legend>商品読み込み</legend>
+  <div class="row">
+    <button class="btn btn-secondary" id="loadProducts">/api/admin/products を読み込む</button>
+    <label style="align-self:center"><input type="checkbox" id="hideKusuke" checked> 久助（<code>kusuke-250</code>）を一覧から除外</label>
   </div>
+  <div id="prodCount" class="muted"></div>
+  <div id="prodList"></div>
+</fieldset>
 
-  <div class="card">
-    <h2>Flex コンテンツ</h2>
-    <div class="row">
-      <label for="altText">代替テキスト（altText）</label>
-      <input id="altText" type="text" placeholder="通知等で表示される短い説明（必須、<= 400文字）" />
-    </div>
-
-    <div class="row" style="margin-top:12px;">
-      <label for="contents">Flex JSON（bubble または carousel）</label>
-      <textarea id="contents" placeholder='{
-  "type": "bubble",
-  "body": { "type": "box", "layout": "vertical",
-    "contents": [
-      { "type": "text", "text": "サンプル", "weight": "bold", "size": "lg" },
-      { "type": "text", "text": "本文テキスト", "wrap": true }
-    ]
-  }
-}'></textarea>
-    </div>
-
-    <div class="btns">
-      <button class="secondary" id="tplSimple">テンプレ：シンプル告知</button>
-      <button class="secondary" id="tplCarousel">テンプレ：2商品カルーセル</button>
-      <button class="danger" id="clearBtn">クリア</button>
-    </div>
-
-    <div class="btns">
-      <button class="primary" id="validateBtn">JSON 検証</button>
-      <button class="primary" id="sendBtn">配信</button>
-    </div>
-
-    <div id="feedback" class="help"></div>
+<fieldset>
+  <legend>Flex 自動生成</legend>
+  <div class="row">
+    <label>altText
+      <input type="text" id="altText" value="商品一覧">
+    </label>
+    <label>1メッセージの最大バブル数
+      <input type="text" id="chunkSize" value="10">
+    </label>
   </div>
+  <div class="row">
+    <button class="btn btn-secondary" id="buildFlex">カルーセルを生成</button>
+    <span class="muted">※ 端末/サイズ制限に備えて分割送信できます。</span>
+  </div>
+  <label>生成結果（送信プレビュー・編集可）
+    <textarea id="flexOut"></textarea>
+  </label>
+</fieldset>
 
-  <div class="card">
-    <h2>API 仕様メモ</h2>
-    <pre>
-POST /api/admin/broadcast-flex
-Authorization: Bearer &lt;ADMIN_API_TOKEN&gt;
-Body: { "altText": "...", "contents": { "type": "bubble|carousel", ... } }
+<fieldset>
+  <legend>配信</legend>
+  <div class="row">
+    <label>送信先ユーザーID（改行区切り、空なら <span class="pill">broadcast</span>）
+      <textarea id="userIds" placeholder="Uxxxxxxxxx...&#10;Uyyyyyyyyy..."></textarea>
+    </label>
+  </div>
+  <div class="row">
+    <button class="btn btn-primary" id="sendNow">送信</button>
+    <span class="muted">※ 空欄＝全体配信（broadcast）。値あり＝指定ユーザー配信（multicast）。</span>
+  </div>
+  <div id="sendResult" class="card muted"></div>
+</fieldset>
 
-POST /api/admin/segment/send-flex
-Authorization: Bearer &lt;ADMIN_API_TOKEN&gt;
-Body: {
-  "userIds": ["Uxxx","Uyyy", ...],
-  "altText": "...",
-  "contents": { "type": "bubble|carousel", ... }
+<fieldset>
+  <legend>ヘルスチェック</legend>
+  <div class="row">
+    <button class="btn btn-secondary" id="ping">/api/admin/ping</button>
+  </div>
+  <pre id="pingOut" class="card"></pre>
+</fieldset>
+
+<script>
+const $ = sel => document.querySelector(sel);
+
+function saveToken(){ localStorage.setItem('adminToken', $('#token').value.trim()); alert('保存しました'); }
+function loadToken(){ $('#token').value = localStorage.getItem('adminToken') || ''; }
+function clearToken(){ localStorage.removeItem('adminToken'); $('#token').value=''; }
+
+async function call(path, method='GET', body){
+  const token = ($('#token').value || '').trim();
+  const opt = { method, headers: {'Content-Type':'application/json'} };
+  if (token) opt.headers['Authorization'] = 'Bearer ' + token;
+  if (body) opt.body = JSON.stringify(body);
+  const r = await fetch(path, opt);
+  const txt = await r.text();
+  let data;
+  try{ data = JSON.parse(txt); }catch{ data = { raw: txt }; }
+  if (!r.ok) throw { status:r.status, data };
+  return data;
 }
-    </pre>
-  </div>
 
-  <script>
-    const $ = (id)=>document.getElementById(id);
-    const byName = (n)=>document.querySelector('input[name="'+n+'"]:checked');
+let loadedProducts = [];
 
-    // モード切替
-    function refreshMode(){
-      const mode = byName("mode").value;
-      $("segmentBox").style.display = (mode === "segment") ? "block" : "none";
+function productToBubble(p){
+  return {
+    type: "bubble",
+    body: {
+      type: "box", layout: "vertical", spacing: "sm",
+      contents: [
+        { type: "text", text: p.name, weight: "bold", size: "md", wrap: true },
+        { type: "text", text: `価格：${(p.price||0).toLocaleString('ja-JP')}円　在庫：${p.stock ?? 0}`, size: "sm", wrap: true },
+        p.desc ? { type: "text", text: p.desc, size: "sm", wrap: true } : { type: "box", layout: "vertical", contents: [] }
+      ]
+    },
+    footer: {
+      type: "box", layout: "horizontal", spacing: "md",
+      contents: [
+        { type: "button", style: "primary",
+          action: { type: "postback", label: "数量を選ぶ", data: `order_qty?id=${encodeURIComponent(p.id)}&qty=1` } }
+      ]
     }
-    document.querySelectorAll('input[name="mode"]').forEach(el => el.addEventListener('change', refreshMode));
+  };
+}
 
-    // テンプレ
-    $("tplSimple").addEventListener("click", () => {
-      $("altText").value = "お知らせ：本日限定セール";
-      $("contents").value = JSON.stringify({
-        type: "bubble",
-        body: {
-          type: "box", layout: "vertical", spacing: "md",
-          contents: [
-            { type: "text", text: "本日限定セール！", weight: "bold", size: "lg" },
-            { type: "text", text: "人気の「松あかしゃ」「のりあかしゃ」が10%OFF。", wrap: true }
-          ]
-        }
-      }, null, 2);
-    });
+function chunk(array, size){ const out=[]; for(let i=0;i<array.length;i+=size) out.push(array.slice(i,i+Number(size))); return out; }
 
-    $("tplCarousel").addEventListener("click", () => {
-      $("altText").value = "商品のお知らせ";
-      $("contents").value = JSON.stringify({
-        type: "carousel",
-        contents: [
-          {
-            type: "bubble",
-            body: { type: "box", layout: "vertical", spacing: "sm",
-              contents: [
-                { type: "text", text: "松あかしゃ", weight: "bold", size: "md" },
-                { type: "text", text: "海老をたっぷり使用した高級えびせんべい", size: "sm", wrap: true }
-              ]},
-            footer: { type: "box", layout: "horizontal", contents: [
-              { type: "button", style: "primary", action: { type: "message", label: "注文", text: "直接注文" } }
-            ]}
-          },
-          {
-            type: "bubble",
-            body: { type: "box", layout: "vertical", spacing: "sm",
-              contents: [
-                { type: "text", text: "のりあかしゃ", weight: "bold", size: "md" },
-                { type: "text", text: "海苔の風味豊かなえびせんべい", size: "sm", wrap: true }
-              ]},
-            footer: { type: "box", layout: "horizontal", contents: [
-              { type: "button", style: "primary", action: { type: "message", label: "注文", text: "直接注文" } }
-            ]}
-          }
-        ]
-      }, null, 2);
-    });
+async function onLoadProducts(){
+  try{
+    const res = await call('/api/admin/products');
+    loadedProducts = res.items || [];
+    const hide = $('#hideKusuke').checked;
+    const visible = hide ? loadedProducts.filter(p=>p.id!=='kusuke-250') : loadedProducts.slice();
+    $('#prodCount').textContent = `読み込み: 全${loadedProducts.length}件 / 表示${visible.length}件`;
+    $('#prodList').innerHTML = visible.map(p=>(
+      `<div class="card"><strong>${p.name}</strong> <span class="muted">(${p.id})</span><br>価格: ${p.price} / 在庫: ${p.stock}<br><span class="muted">${(p.desc||'').replace(/</g,'&lt;')}</span></div>`
+    )).join('');
+  }catch(e){
+    alert('読み込み失敗: ' + (e.data?.error || e.status));
+  }
+}
 
-    $("clearBtn").addEventListener("click", () => {
-      $("altText").value = "";
-      $("contents").value = "";
-      $("userIds").value = "";
-      $("feedback").textContent = "";
-    });
+function onBuildFlex(){
+  const hide = $('#hideKusuke').checked;
+  const visible = hide ? loadedProducts.filter(p=>p.id!=='kusuke-250') : loadedProducts.slice();
+  const bubbles = visible.map(productToBubble);
+  // 「その他（自由入力）」は配信用には通常不要なので追加しない
+  const chunkSize = Math.max(1, parseInt($('#chunkSize').value || '10', 10));
+  const groups = chunk(bubbles, chunkSize);
+  const msgs = groups.map(g => ({
+    type: "flex",
+    altText: ($('#altText').value || '商品一覧').slice(0,400),
+    contents: g.length === 1 ? g[0] : { type:"carousel", contents: g }
+  }));
+  $('#flexOut').value = JSON.stringify(msgs, null, 2);
+}
 
-    // 検証
-    $("validateBtn").addEventListener("click", () => {
-      try {
-        const obj = JSON.parse($("contents").value || "{}");
-        if (!obj || (obj.type !== "bubble" && obj.type !== "carousel")) {
-          throw new Error('contents.type は "bubble" または "carousel" である必要があります');
-        }
-        const alt = ($("altText").value || "").trim();
-        if (!alt) throw new Error("altText は必須です");
-        if (alt.length > 400) throw new Error("altText は400文字以内にしてください");
-        $("feedback").className = "help ok";
-        $("feedback").textContent = "✅ 検証OK";
-      } catch (e) {
-        $("feedback").className = "help err";
-        $("feedback").textContent = "❌ " + (e.message || e);
+async function onSend(){
+  const payloadText = $('#flexOut').value.trim();
+  if (!payloadText) return alert('先に「カルーセルを生成」してください。');
+  let msgs;
+  try{ msgs = JSON.parse(payloadText); }catch{ return alert('JSONの形式が不正です'); }
+  if (!Array.isArray(msgs)) msgs = [msgs];
+
+  const ids = ($('#userIds').value || '').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+  try{
+    let res;
+    if (ids.length === 0){
+      // 全体配信: 1メッセージずつ broadcast
+      for (const m of msgs){
+        res = await call('/api/admin/broadcast-flex', 'POST', { altText: m.altText, contents: m.contents });
       }
-    });
-
-    // 配信
-    $("sendBtn").addEventListener("click", async () => {
-      $("feedback").className = "help";
-      $("feedback").textContent = "送信中...";
-
-      const token = ($("token").value || "").trim();
-      if (!token) { $("feedback").className = "help err"; $("feedback").textContent = "ADMIN_API_TOKEN を入力してください"; return; }
-
-      let contents;
-      try { contents = JSON.parse($("contents").value || "{}"); }
-      catch (e) { $("feedback").className = "help err"; $("feedback").textContent = "JSON 解析に失敗しました"; return; }
-
-      const altText = ($("altText").value || "").trim();
-      if (!altText) { $("feedback").className = "help err"; $("feedback").textContent = "altText は必須です"; return; }
-
-      const mode = byName("mode").value;
-
-      let url, body;
-      if (mode === "broadcast") {
-        url = "/api/admin/broadcast-flex";
-        body = { altText, contents };
-      } else {
-        url = "/api/admin/segment/send-flex";
-        const ids = ($("userIds").value || "").split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-        if (ids.length === 0) { $("feedback").className = "help err"; $("feedback").textContent = "userId を1つ以上入力してください"; return; }
-        body = { userIds: ids, altText, contents };
+    }else{
+      // 指定ユーザー: まとめて multicast
+      // LINEの上限の都合で 500件ずつに分けるのはサーバ側実装（/api/admin/segment/send-flex）
+      // フロント側は最初のメッセージだけ送る（分割済みmsgsを逐次送信）
+      for (const m of msgs){
+        res = await call('/api/admin/segment/send-flex', 'POST', { userIds: ids, altText: m.altText, contents: m.contents });
       }
+    }
+    $('#sendResult').textContent = JSON.stringify(res, null, 2);
+    alert('送信リクエストを受け付けました。');
+  }catch(e){
+    $('#sendResult').textContent = JSON.stringify(e.data || e, null, 2);
+    alert('送信エラー: ' + (e.data?.error || e.status));
+  }
+}
 
-      try {
-        const r = await fetch(url, {
-          method: "POST",
-          headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" },
-          body: JSON.stringify(body)
-        });
-        const text = await r.text();
-        $("feedback").className = r.ok ? "help ok" : "help err";
-        $("feedback").textContent = (r.ok ? "✅ OK:\n" : "❌ NG:\n") + text;
-      } catch (e) {
-        $("feedback").className = "help err";
-        $("feedback").textContent = "送信エラー: " + (e.message || e);
-      }
-    });
+async function onPing(){
+  try{
+    const res = await call('/api/admin/ping');
+    $('#pingOut').textContent = JSON.stringify(res, null, 2);
+  }catch(e){
+    $('#pingOut').textContent = JSON.stringify(e.data || e, null, 2);
+  }
+}
 
-    // Ping
-    $("pingBtn").addEventListener("click", async ()=>{
-      const token = ($("token").value || "").trim();
-      if (!token) { $("pingResult").textContent = "ADMIN_API_TOKEN を入力してください"; return; }
-      $("pingResult").textContent = "確認中...";
-      try{
-        const r = await fetch("/api/admin/ping", { headers: { "Authorization": "Bearer " + token } });
-        $("pingResult").textContent = r.ok ? "OK" : ("NG: HTTP " + r.status);
-      }catch(e){
-        $("pingResult").textContent = "エラー: " + (e.message || e);
-      }
-    });
-
-    // 初期
-    refreshMode();
-  </script>
+$('#saveToken').onclick = saveToken;
+$('#clearToken').onclick = clearToken;
+$('#loadProducts').onclick = onLoadProducts;
+$('#buildFlex').onclick = onBuildFlex;
+$('#sendNow').onclick = onSend;
+$('#ping').onclick = onPing;
+loadToken();
+</script>
 </body>
 </html>
+HTML

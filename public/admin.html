@@ -1,43 +1,4 @@
 <!-- ===== Admin Console: public/admin.html ===== -->
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>LINE 管理画面（配信・ログ・在庫）</title>
-<style>
-:root { --bg:#0b1020; --card:#131a2e; --ink:#e6ebff; --sub:#9fb1ff; --muted:#7b88b8; --acc:#6aa3ff; }
-html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic UI",sans-serif;}
-header{padding:18px 20px;border-bottom:1px solid #1f2744;background:linear-gradient(180deg,#121a33,#0b1020);position:sticky;top:0;z-index:2}
-h1{margin:0;font-size:18px;letter-spacing:.5px}
-main{padding:22px;display:grid;gap:18px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));}
-.card{background:var(--card);border:1px solid #243057;border-radius:16px;padding:16px;box-shadow:0 10px 24px rgba(0,0,0,.18)}
-.card h2{margin:0 0 10px 0;font-size:16px;color:var(--sub)}
-.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
-input[type="text"],input[type="number"],textarea{background:#0f1630;color:var(--ink);border:1px solid #2a3760;border-radius:10px;padding:10px 12px;outline:none;width:100%}
-textarea{min-height:96px;resize:vertical}
-button{background:var(--acc);color:#06102b;border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}
-button.secondary{background:#26345d;color:#cfe0ff;border:1px solid #3a4a7b}
-.muted{color:var(--muted);font-size:12px}
-code.inline{background:#0f1630;padding:2px 6px;border:1px solid #26345d;border-radius:6px}
-.grid{display:grid;gap:8px}
-.two{grid-template-columns:1fr 1fr}
-pre{white-space:pre-wrap;word-break:break-all;background:#0f1630;color:#cfe0ff;border:1px solid #2a3760;border-radius:10px;padding:10px;max-height:320px;overflow:auto}
-.pill{display:inline-block;background:#20305c;color:#cfe0ff;border:1px solid #35477b;padding:3px 8px;border-radius:999px;font-size:12px;margin-right:6px}
-</style>
-</head>
-<body>
-<header>
-<h1>LINE 管理画面（リッチ配信 / セグメント / ログ）</h1>
-<div class="muted">このファイルは <code class="inline">/public/admin.html</code> で配信、スクリプトは <code class="inline">/public/admin.js</code> を読み込みます。</div>
-</header>
-<main>
-<!-- 認証・状態 -->
-<section class="card" id="sec-auth">
-<h2>認証・状態</h2>
-<div class="grid">
-<div class="row"><input id="token" type="text" placeholder="ADMIN_API_TOKEN を貼り付け" /></div>
-<div class="row"><button id="btnPing">Ping（認証確認）</button><span id="pingRes" class="muted"></span></div>
 <div class="row"><button class="secondary" id="btnHealth">/api/health</button></div>
 <pre id="healthOut" hidden></pre>
 </div>
@@ -49,4 +10,51 @@ pre{white-space:pre-wrap;word-break:break-all;background:#0f1630;color:#cfe0ff;b
 <h2>商品一覧 → リッチメッセージ（Flex）自動生成</h2>
 <div class="row"><button id="btnLoadProducts">/data/products.json を取得</button><span id="prodCount" class="muted"></span></div>
 <div class="grid two">
+<div>
+<label class="muted">オプション</label>
+<div class="row"><input type="text" id="hideIds" placeholder="一覧から隠すID（例: kusuke-250,foo-123）"></div>
+<div class="row"><input type="text" id="altText" placeholder="altText（必須）：商品一覧"></div>
+<div class="row"><button id="btnBuildFlex">Flex を生成（プレビュー）</button></div>
+</div>
+<div>
+<label class="muted">Flex JSON プレビュー</label>
+<pre id="flexPreview"></pre>
+</div>
+</div>
+<div class="row">
+<input id="userIds" type="text" placeholder="セグメント配信用 userId（カンマ区切り）。空なら broadcast" />
+<button class="secondary" id="btnAutofillUsers">自動取得して差し込み</button>
+</div>
+<div class="row"><button id="btnSendFlex">この Flex を配信</button><span id="sendFlexRes" class="muted"></span></div>
+</section>
+
+
+<!-- テキスト配信（セグメント / ブロードキャスト） -->
+<section class="card" id="sec-text">
+<h2>テキスト配信（セグメント / ブロードキャスト）</h2>
+<div class="row"><textarea id="textMessage" placeholder="配信する本文"></textarea></div>
+<div class="row"><input id="textUserIds" type="text" placeholder="userId（カンマ区切り）。空なら broadcast" />
+<button class="secondary" id="btnAutofillUsers2">自動取得して差し込み</button>
+</div>
+<div class="row">
+<button id="btnSendText">送信</button>
+<span id="sendTextRes" class="muted"></span>
+</div>
+<div class="muted">セグメント送信は /api/admin/segment/send、ブロードキャストは /v2/bot/message/broadcast を使用します。</div>
+</section>
+
+
+<!-- ユーザー収集 & メッセージログ -->
+<section class="card" id="sec-logs">
+<h2>メッセージログ（/data/messages.log の tail）</h2>
+<div class="row"><button id="btnLoadLog">最新200件を取得</button><button class="secondary" id="btnAutoRefresh">10秒ごと更新</button><span id="autoStatus" class="pill">OFF</span></div>
+<pre id="logOut" hidden></pre>
+<div class="muted">この画面は /api/admin/messages を叩いており、サーバー側で tail 相当を返しています。</div>
+</section>
+</main>
+
+
+<!-- 外部JS -->
 <script src="./admin.js"></script>
+</body>
+</html>

@@ -46,6 +46,54 @@ if (!config.channelAccessToken || !config.channelSecret || !LIFF_ID || (!ADMIN_A
 app.use("/api", express.json(), express.urlencoded({ extended: true }));
 app.use("/public", express.static(path.join(__dirname, "public")));
 app.get("/", (_req, res) => res.status(200).send("OK"));
+// ====== データディレクトリ（/data を優先。なければ ./data） ======
+function pickDataDir() {
+  try {
+    // Render の Persistent Disk は /data にマウントされる
+    if (fs.existsSync("/data") && fs.statSync("/data").isDirectory()) {
+      return "/data";
+    }
+  } catch (_) {}
+  return path.join(__dirname, "data");
+}
+
+const DATA_DIR = process.env.DATA_DIR || pickDataDir();
+
+// パス定義（すべて DATA_DIR 配下）
+const PRODUCTS_PATH     = path.join(DATA_DIR, "products.json");
+const ORDERS_LOG        = path.join(DATA_DIR, "orders.log");
+const RESERVATIONS_LOG  = path.join(DATA_DIR, "reservations.log");
+const ADDRESSES_PATH    = path.join(DATA_DIR, "addresses.json");
+const SURVEYS_LOG       = path.join(DATA_DIR, "surveys.log");
+const MESSAGES_LOG      = path.join(DATA_DIR, "messages.log");
+const SESSIONS_PATH     = path.join(DATA_DIR, "sessions.json");
+const NOTIFY_STATE_PATH = path.join(DATA_DIR, "notify_state.json");
+const STOCK_LOG         = path.join(DATA_DIR, "stock.log");
+
+// 初期化：存在しなければ空ファイルを作る（★上書きはしない）
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+function ensureFile(p, initialContent) {
+  if (!fs.existsSync(p)) {
+    fs.writeFileSync(p, initialContent, "utf8");
+  }
+}
+
+ensureFile(ADDRESSES_PATH,    "{}");
+ensureFile(SESSIONS_PATH,     "{}");
+ensureFile(NOTIFY_STATE_PATH, "{}");
+
+// products.json は「なければサンプルを作る」。あれば絶対に上書きしない
+if (!fs.existsSync(PRODUCTS_PATH)) {
+  const sample = [
+    { id: "kusuke-250",      name: "久助（えびせん）",     price: 250, stock: 20, desc: "お得な割れせん。" },
+    { id: "nori-akasha-340", name: "のりあかしゃ",         price: 340, stock: 20, desc: "海苔の風味豊かなえびせんべい" },
+    { id: "uzu-akasha-340",  name: "うずあかしゃ",         price: 340, stock: 10, desc: "渦を巻いたえびせんべい" },
+    { id: "matsu-akasha-340",name: "松あかしゃ",           price: 340, stock: 30, desc: "海老をたっぷり使用した高級えびせんべい" }
+  ];
+  fs.writeFileSync(PRODUCTS_PATH, JSON.stringify(sample, null, 2), "utf8");
+  console.log(`ℹ️ 初期 products.json を作成: ${PRODUCTS_PATH}`);
+}
 
 // ====== データパス ======
 const DEFAULT_DATA_DIR = path.join(__dirname, "data");

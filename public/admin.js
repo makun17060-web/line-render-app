@@ -1,4 +1,19 @@
 <!-- ===== public/admin.js ===== -->
+footer:{ type:'box', layout:'vertical', spacing:'md', contents:[
+{ type:'button', style:'primary', action:{ type:'postback', label:'商品名を入力する', data:'other_start' } },
+{ type:'button', style:'secondary', action:{ type:'postback', label:'← 戻る', data:'order_back' } }
+]}
+});
+return {
+type:'flex',
+altText: ($('#altText').value||'商品一覧').slice(0,400),
+contents: (bubbles.length===1) ? bubbles[0] : { type:'carousel', contents:bubbles }
+};
+}
+$('#btnBuildFlex')?.addEventListener('click', () => {
+if (!products.length){ alert('先に商品を取得してください'); return; }
+const msg = buildFlexFromProducts(products);
+out($('#flexPreview'), msg, true);
 });
 
 

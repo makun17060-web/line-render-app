@@ -47,27 +47,18 @@ app.use("/api", express.json(), express.urlencoded({ extended: true }));
 app.use("/public", express.static(path.join(__dirname, "public")));
 app.get("/", (_req, res) => res.status(200).send("OK"));
 
-// ====== データパス（Render Persistent Disk 対応） ======
-const CANDIDATE_DATA_DIRS = [
-  process.env.DATA_DIR && process.env.DATA_DIR.trim(),
-  "/data",                            // Render の Persistent Disk のデフォルトマウント先
-  path.join(__dirname, "data")        // リポジトリ直下（フォールバック）
-].filter(Boolean);
+// ====== データパス ======
+const DEFAULT_DATA_DIR = path.join(__dirname, "data");
+// Render の永続ディスクがあれば優先。環境変数 DATA_DIR も使えるようにする
 
-let DATA_DIR = null;
-for (const p of CANDIDATE_DATA_DIRS) {
-  try {
-    fs.mkdirSync(p, { recursive: true });
-    fs.accessSync(p, fs.constants.R_OK | fs.constants.W_OK);
-    DATA_DIR = p;
-    break;
-  } catch {}
-}
-if (!DATA_DIR) {
-  console.error("ERROR: 書き込み可能な DATA_DIR が見つかりません。");
-  process.exit(1);
-}
-console.log(`📦 DATA_DIR=${DATA_DIR}`);
+  || (fs.existsSync("/var/data") ? "/var/data" : DEFAULT_DATA_DIR);
+// Prefer Render persistent disk if available
+const DATA_DIR =
+  process.env.DATA_DIR && fs.existsSync(process.env.DATA_DIR)
+    ? process.env.DATA_DIR
+    : (fs.existsSync("/data") ? "/data" : path.join(__dirname, "data"));
+
+console.log("[DATA_DIR]", DATA_DIR);
 
 const PRODUCTS_PATH     = path.join(DATA_DIR, "products.json");
 const ORDERS_LOG        = path.join(DATA_DIR, "orders.log");
@@ -77,9 +68,8 @@ const SURVEYS_LOG       = path.join(DATA_DIR, "surveys.log");
 const MESSAGES_LOG      = path.join(DATA_DIR, "messages.log");
 const SESSIONS_PATH     = path.join(DATA_DIR, "sessions.json");
 const NOTIFY_STATE_PATH = path.join(DATA_DIR, "notify_state.json");
+const STOCK_LOG         = path.join(DATA_DIR, "stock.log"); // ← STOCK_LOG も DATA_DIR を使う
 
-// ★ 在庫管理ログ
-const STOCK_LOG         = path.join(DATA_DIR, "stock.log");
 
 // 初期ファイル生成（存在しない時のみ）＋空ファイル対策
 function ensureJSONFile(filePath, initialValue) {

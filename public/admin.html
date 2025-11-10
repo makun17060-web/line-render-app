@@ -1,0 +1,809 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>配信用 管理画面（Flex／リッチメッセージ）</title>
+<style>
+  :root { --bg:#0b1220; --panel:#111a2b; --muted:#7f8ea3; --text:#e6edf3; --accent:#3fa8ff; }
+  body{margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,"ヒラギノ角ゴ ProN","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif}
+  header{padding:16px 20px;border-bottom:1px solid #1d2a42}
+  h1{font-size:18px;margin:0}
+  main{max-width:1100px;margin:20px auto;padding:0 16px;display:grid;gap:14px}
+  .panel{background:var(--panel);border:1px solid #1d2a42;border-radius:14px;padding:14px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  label{font-size:12px;color:var(--muted)}
+  input[type=text],textarea,select{background:#0e1626;color:var(--text);border:1px solid #22314f;border-radius:10px;padding:10px;font-size:14px;outline:none;min-width:180px}
+  textarea{width:100%;min-height:140px}
+  button{background:var(--accent);color:#001428;border:none;border-radius:10px;padding:10px 14px;font-weight:600;cursor:pointer}
+  button.secondary{background:#233250;color:#cfe7ff}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .mono{font-family:ui-monospace,SFMono-Regular,Consolas,Menlo,monospace;font-size:12px;line-height:1.5}
+  .muted{color:var(--muted)}
+  .pill{display:inline-block;padding:2px 8px;border:1px solid #2a3d61;border-radius:999px;font-size:12px;color:#cfe7ff}
+  .footer{opacity:.8}
+</style>
+</head>
+<body>
+<header>
+  <h1>配信用 管理画面（Flex／リッチメッセージ）</h1>
+  <div class="muted">Render / Node + LINE Messaging API（トークン必須）</div>
+</header>
+
+<main>
+  <section class="panel">
+    <div class="row">
+      <label>管理トークン（<span class="pill">ADMIN_API_TOKEN</span>）</label>
+      <input id="token" type="text" placeholder="例: sk_live_xxx" style="flex:1">
+      <button id="saveTok">保存</button>
+      <button id="clearTok" class="secondary">削除</button>
+    </div>
+    <div class="muted" style="margin-top:6px">※ ブラウザの localStorage に保存します。サーバーには送信しません（API呼出時のヘッダにのみ使用）。</div>
+  </section>
+
+  <section class="panel">
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <div><strong>商品データ</strong>（/api/admin/products を取得）</div>
+        <div class="muted">/data/products.json を反映。下のオプションで Flex を自動生成。</div>
+      </div>
+      <div class="row">
+        <button id="loadProducts">商品を読み込む</button>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:10px">
+      <label><input type="checkbox" id="includeHidden"> 久助など非表示商品も含める</label>
+      <label><input type="checkbox" id="addOther" checked> 最後に「その他（自由入力）」バブルを追加</label>
+      <label>カルーセル1通あたり最大 <input id="chunk" type="text" value="10" style="width:60px"> バブル（最大12）</label>
+    </div>
+
+    <div class="row" style="margin-top:6px">
+      <label>ボタンラベル <input id="ctaLabel" type="text" value="数量を選ぶ" style="width:140px"></label>
+      <label>既定数量 <input id="defaultQty" type="text" value="1" style="width:60px"></label>
+      <label>altText <input id="altText" type="text" value="商品一覧" style="width:220px"></label>
+    </div>
+  </section>
+
+  <section class="panel grid">
+    <div>
+      <div class="row" style="justify-content:space-between">
+        <strong>プレビュー（Flex JSON）</strong>
+        <button id="build">カルーセルを生成</button>
+      </div>
+      <textarea id="preview" class="mono" placeholder="ここに Flex JSON が表示されます"></textarea>
+    </div>
+    <div>
+      <div class="row" style="justify-content:space-between">
+        <strong>配信</strong>
+        <div class="muted">※ セグメント配信の1リクエスト上限は 500 ユーザー</div>
+      </div>
+      <div style="margin-top:8px">
+        <div class="row">
+          <button id="sendBroadcast">全員に一斉配信（broadcast-flex）</button>
+          <span class="muted">（配信1通＝プレビューの1メッセージ単位。複数メッセージは順次送信）</span>
+        </div>
+        <hr style="border-color:#1d2a42;margin:12px 0">
+        <div class="row"><label>ユーザーID（カンマ／改行区切り）</label></div>
+        <textarea id="userIds" class="mono" placeholder="Uxxxxxxxx..., Uyyyyyyyy..."></textarea>
+        <div class="row" style="margin-top:8px">
+          <button id="sendSegment">指定ユーザーに配信（segment/send-flex）</button>
+          <button id="testSelf" class="secondary">自分だけにテスト送信（ADMIN_USER_ID宛）</button>
+        </div>
+        <div id="log" class="mono muted" style="margin-top:8px;white-space:pre-wrap"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel footer">
+    <div>ヒント：</div>
+    <ul>
+      <li>Render の <code>/api/health</code> で <code>files.products</code> を確認（現在は <code>/data/products.json</code>）。</li>
+      <li>上部「久助など非表示商品も含める」をOFFにすると <code>kusuke-250</code> を除外します。</li>
+      <li>バブルが多い場合は自動でメッセージ分割して送信します（既定10／最大12）。</li>
+    </ul>
+  </section>
+</main>
+
+<script>
+const $ = (id)=>document.getElementById(id);
+const LS_KEY = "admin_api_token";
+const HIDE_SET = new Set(["kusuke-250"]); // 既定：久助は非表示
+
+function saveToken(){ localStorage.setItem(LS_KEY, $("token").value.trim()); }
+function loadToken(){ const t = localStorage.getItem(LS_KEY)||""; $("token").value=t; return t; }
+function clearToken(){ localStorage.removeItem(LS_KEY); $("token").value=""; }
+
+function authHeaders(){
+  const t = ($("token").value||"").trim();
+  if(!t) throw new Error("管理トークン（ADMIN_API_TOKEN）を入力してください。");
+  return { "Authorization":"Bearer "+t, "Content-Type":"application/json" };
+}
+
+async function apiGet(url){
+  const r = await fetch(url, { headers: authHeaders() });
+  if(!r.ok){ throw new Error("GET "+url+" failed: "+r.status); }
+  return await r.json();
+}
+async function apiPost(url, body){
+  const r = await fetch(url, { method:"POST", headers: authHeaders(), body: JSON.stringify(body) });
+  const txt = await r.text();
+  let json; try{ json = JSON.parse(txt); }catch{ json = { raw: txt }; }
+  if(!r.ok){ throw new Error((json && (json.error||json.message)) || ("POST "+url+" failed: "+r.status)); }
+  return json;
+}
+
+// State
+let PRODUCTS = [];
+function log(msg){ $("log").textContent = (msg? String(msg): ""); }
+
+// UI bind
+$("saveTok").onclick = ()=>{ saveToken(); alert("保存しました"); };
+$("clearTok").onclick = ()=>{ clearToken(); alert("削除しました"); };
+$("loadProducts").onclick = async ()=>{
+  try{
+    log("読み込み中…");
+    const res = await apiGet("/api/admin/products");
+    PRODUCTS = (res.items||[]);
+    log("読み込み完了：製品 "+PRODUCTS.length+" 件");
+  }catch(e){ log("エラー: "+e.message); }
+};
+$("build").onclick = ()=>{
+  try{
+    const msgs = buildFlexMessagesFromProducts(PRODUCTS,{
+      includeHidden: $("includeHidden").checked,
+      addOther: $("addOther").checked,
+      chunkSize: Math.max(1, Math.min(12, Number($("chunk").value)||10)),
+      ctaLabel: $("ctaLabel").value || "数量を選ぶ",
+      defaultQty: Math.max(1, Math.min(99, Number($("defaultQty").value)||1)),
+      altText: $("altText").value || "商品一覧"
+    });
+    $("preview").value = JSON.stringify(msgs, null, 2);
+    log("生成完了：メッセージ "+msgs.length+" 通（カルーセル分割済み）");
+  }catch(e){ log("エラー: "+e.message); }
+};
+$("sendBroadcast").onclick = async ()=>{
+  try{
+    const msgs = JSON.parse($("preview").value||"[]");
+    if(!Array.isArray(msgs) || msgs.length===0) throw new Error("プレビューが空です。先に生成してください。");
+    log("送信中…");
+    for(const m of msgs){
+      await apiPost("/api/admin/broadcast-flex",{ altText: m.altText, contents: m.contents });
+    }
+    log("完了：broadcast-flex で "+msgs.length+" 通 送信しました。");
+  }catch(e){ log("エラー: "+e.message); }
+};
+$("sendSegment").onclick = async ()=>{
+  try{
+    const msgs = JSON.parse($("preview").value||"[]");
+    if(!Array.isArray(msgs) || msgs.length===0) throw new Error("プレビューが空です。先に生成してください。");
+    const raw = $("userIds").value||"";
+    const ids = Array.from(new Set(raw.split(/[\s,]+/).map(s=>s.trim()).filter(Boolean)));
+    if(ids.length===0) throw new Error("ユーザーIDが空です。");
+    // 500件ずつ送信（APIの推奨仕様に合わせる）
+    let batches = 0, totalSent = 0;
+    for(let i=0;i<ids.length;i+=500){
+      const slice = ids.slice(i,i+500);
+      for(const m of msgs){
+        await apiPost("/api/admin/segment/send-flex",{ userIds: slice, altText: m.altText, contents: m.contents });
+        totalSent += slice.length; batches++;
+      }
+    }
+    log("完了：segment/send-flex バッチ "+batches+"、合計送信 "+totalSent+" 件");
+  }catch(e){ log("エラー: "+e.message); }
+};
+$("testSelf").onclick = async ()=>{
+  try{
+    // 自分宛のテストは「セグメント配信」で ADMIN_USER_ID を1件指定して送ります
+    const t = ($("token").value||"").trim(); if(!t) throw new Error("トークン未入力");
+    const res = await apiGet("/api/health"); // ADMIN_USER_IDを知るため
+    const admin = (res && res.env && res.env.ADMIN_USER_ID) ? res.env.ADMIN_USER_ID : null;
+    if(!admin){ throw new Error("ADMIN_USER_ID が .env に設定されていません。"); }
+    const msgs = JSON.parse($("preview").value||"[]");
+    if(!Array.isArray(msgs) || msgs.length===0) throw new Error("プレビューが空です。先に生成してください。");
+    for(const m of msgs){
+      await apiPost("/api/admin/segment/send-flex",{ userIds:[admin], altText: m.altText, contents: m.contents });
+    }
+    log("完了：管理者（ADMIN_USER_ID）宛にテスト送信しました。");
+  }catch(e){ log("エラー: "+e.message); }
+};
+
+// ===== Flex 生成（products.json -> carousel bubbles） =====
+function buildFlexMessagesFromProducts(all, opt){
+  const {
+    includeHidden=false, addOther=true, chunkSize=10, ctaLabel="数量を選ぶ",
+    defaultQty=1, altText="商品一覧"
+  } = opt||{};
+
+  let products = (all||[]);
+  if(!includeHidden){
+    products = products.filter(p => !HIDE_SET.has(p.id));
+  }
+
+  const bubbles = products.map(p => ({
+    type: "bubble",
+    body: {
+      type: "box", layout: "vertical", spacing: "sm",
+      contents: [
+        { type: "text", text: p.name, weight: "bold", size: "md", wrap: true },
+        { type: "text", text: `価格：${(Number(p.price)||0).toLocaleString("ja-JP")}円　在庫：${Number(p.stock||0)}`, size: "sm", wrap: true },
+        p.desc ? { type: "text", text: String(p.desc), size: "sm", wrap: true } : { type: "box", layout: "vertical", contents: [] }
+      ]
+    },
+    footer: {
+      type: "box", layout: "horizontal", spacing: "md",
+      contents: [
+        { type: "button", style: "primary",
+          action: { type: "postback", label: String(ctaLabel), data: `order_qty?id=${encodeURIComponent(p.id)}&qty=${encodeURIComponent(String(defaultQty))}` } }
+      ]
+    }
+  }));
+
+  if(addOther){
+    bubbles.push({
+      type: "bubble",
+      body: { type: "box", layout:"vertical", spacing:"sm",
+        contents:[
+          { type:"text", text:"その他（自由入力）", weight:"bold", size:"md" },
+          { type:"text", text:"商品名と個数だけ入力します。価格入力は不要です。", size:"sm", wrap:true }
+        ]
+      },
+      footer: { type:"box", layout:"vertical", spacing:"md",
+        contents:[
+          { type:"button", style:"primary", action:{ type:"postback", label:"商品名を入力する", data:"other_start" } },
+          { type:"button", style:"secondary", action:{ type:"postback", label:"← 戻る", data:"order_back" } }
+        ]
+      }
+    });
+  }
+
+  const msgs = [];
+  for(let i=0;i<bubbles.length;i+=chunkSize){
+    const chunk = bubbles.slice(i,i+chunkSize);
+    msgs.push({
+      type:"flex",
+      altText,
+      contents: (chunk.length===1? chunk[0] : { type:"carousel", contents: chunk })
+    });
+  }
+  return msgs;
+}
+
+// 初期化
+loadToken();
+</script>
+</body>
+</html>
+HTML
+置いたらそのまま使えます。
+URL: https://<あなたの Render ドメイン>/public/admin.html
+
+② 使い方（3ステップ）
+ページ上部に ADMIN_API_TOKEN を貼り付け →「保存」
+
+「商品を読み込む」→「カルーセルを生成」で JSON プレビューを確認
+
+既定では 久助（kusuke-250）を除外しています。含めたい場合は「久助など非表示商品も含める」にチェック
+
+バブルが多い場合は 10件ごとに自動分割（最大12まで上げられます）
+
+「全員に一斉配信」または「指定ユーザーに配信」を実行
+
+指定ユーザーの場合は カンマ or 改行で複数IDを貼り付け可。500件ずつ自動分割して送信します
+
+「自分だけにテスト送信」は、.env の ADMIN_USER_ID 宛に送ります（未設定ならエラー表示）
+
+③ 補足と安全ポイント
+権限制御：ページ自体は公開でも、APIはすべて ADMIN_API_TOKEN を要求するため安全です。
+
+Kusuke非表示の整合：Botの「直接注文」と同じ動きを既定にしました（久助は除外、チェックで含められる）。
+
+メッセージ分割：カルーセル上限・端末差による切り捨て対策として、複数メッセージに自動分割して送っています。
+
+即時反映：/data/products.json を更新すれば、ページの「商品を読み込む」で最新が反映されます。サーバー再起動不要。
+
+必要なら、この管理画面にテンプレ文面（季節の告知／在庫僅少アラートなど）をボタンで差し込みする機能や、画像リッチメッセージ（イメージマップ）生成も追加できます。欲しいUI項目があれば、そのまま拡張して納品します！
+
+
+
+
+
+
+
+あなた:
+renderのshellにはどれを貼る？
+
+
+
+ChatGPT:
+
+思考時間: 33s
+いいね、Render環境用に「管理画面（ブラウザで開ける簡易ツール）」を用意します。
+この管理画面は /data/products.json を読み込んで自動で Flex カルーセルを生成し、指定ユーザーへのマルチキャストや全友だちへのブロードキャストを実行できます（すでにあなたの server.js にある API を利用：/api/admin/products, /api/admin/segment/send-flex, /api/admin/broadcast-flex）。
+
+以下を Render の Shell にそのまま貼り付けてください（今回の質問「renderのshellにはどれを貼る？」はこの2ファイルです）。
+
+1) 管理画面ファイルを作成（admin.html / admin.js）
+⚠️ Shell で作った public/* は再デプロイで消えます。まずは動作確認用に作り、後でリポジトリにもコミットしてください。
+
+admin.html
+bash
+コードをコピーする
+mkdir -p public
+cat > public/admin.html <<'HTML'
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Flex配信 管理画面</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 16px; line-height: 1.6; }
+    .row { margin-bottom: 16px; }
+    textarea, input, button, select { font-size: 14px; }
+    textarea { width: 100%; min-height: 140px; }
+    pre { background: #f6f8fa; padding: 12px; overflow: auto; }
+    .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 12px; background: #fff; }
+    .muted { color:#666; font-size:12px }
+    .ok { color: #0a7; }
+    .error { color: #b00; white-space: pre-wrap; }
+    .flex { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    label { display:block; font-weight:600; margin-bottom:4px; }
+    .pill { padding:2px 8px; border:1px solid #ccc; border-radius:999px; font-size:12px; }
+  </style>
+</head>
+<body>
+  <h1>Flex配信 管理画面</h1>
+  <div class="row muted">このページは <code>/public/admin.html</code> として配信されています。</div>
+
+  <div class="grid">
+    <div class="card">
+      <label>管理トークン（ADMIN_API_TOKEN）</label>
+      <input id="token" type="password" placeholder="例: sk_live_xxx" style="width:100%" />
+      <div class="muted">HTTP ヘッダ <code>Authorization: Bearer &lt;token&gt;</code> で送信します。</div>
+    </div>
+
+    <div class="card">
+      <div class="flex">
+        <button id="btnLoad">① 商品を読み込む</button>
+        <span class="pill" id="statusProducts">未読込</span>
+      </div>
+      <div class="muted">/api/admin/products から products.json の内容を取得します。</div>
+      <label style="margin-top:8px">フィルタ</label>
+      <div class="flex">
+        <label class="flex" style="gap:6px"><input type="checkbox" id="excludeKusuke" checked />久助（kusuke-250）を除外</label>
+        <label class="flex" style="gap:6px"><input type="checkbox" id="addOther" checked />「その他（自由入力）」を追加</label>
+      </div>
+      <div class="row"><pre id="previewProducts" style="min-height:80px">[]</pre></div>
+      <div class="muted">読み込んだ件数: <span id="countProducts">0</span></div>
+    </div>
+
+    <div class="card">
+      <div class="flex">
+        <button id="btnBuild">② カルーセル生成</button>
+        <span class="pill" id="statusFlex">未生成</span>
+      </div>
+      <div class="muted">products.json から Flex カルーセル JSON を生成します。</div>
+      <label style="margin-top:8px">Alt Text（<= 400文字）</label>
+      <input id="altText" value="商品一覧" style="width:100%" />
+      <div class="row"><label>生成された Flex（編集可）</label>
+      <textarea id="flexJson"></textarea></div>
+      <div class="muted">分割送信（安全策）: <input type="number" id="chunkSize" value="10" min="1" max="12" style="width:80px" /> バブル/メッセージ</div>
+    </div>
+
+    <div class="card">
+      <label>ユーザーID（改行区切り）</label>
+      <textarea id="userIds" placeholder="Uxxxxxxxxx（1行1ID）。空欄なら Broadcast を使って全友だちへ。"></textarea>
+      <div class="flex">
+        <button id="btnSendMulticast">③ 指定ユーザーに送信（Multicast）</button>
+        <button id="btnSendBroadcast">③ 全友だちに送信（Broadcast）</button>
+      </div>
+      <div id="sendResult" class="row muted"></div>
+      <div class="muted">※ Multicast は 500件ずつ送ります（server.js 実装）。</div>
+    </div>
+  </div>
+
+  <h2 style="margin-top:24px">ログ</h2>
+  <div id="log" class="muted"></div>
+
+  <script src="./admin.js"></script>
+</body>
+</html>
+HTML
+admin.js
+bash
+コードをコピーする
+cat > public/admin.js <<'JS'
+(async function(){
+  const $ = (id)=>document.getElementById(id);
+  const log = (m,cls="")=>{
+    const d=document.createElement("div");
+    d.textContent = `[${new Date().toLocaleString()}] ${m}`;
+    if (cls) d.className=cls;
+    $("log").prepend(d);
+  };
+
+  const state = {
+    products: [],
+    flexMessages: [], // 分割後の複数メッセージ
+  };
+
+  // API 呼び出しヘルパ
+  async function api(path, opts={}){
+    const token = $("token").value.trim();
+    const headers = opts.headers || {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(path, { ...opts, headers });
+    const json = await res.json().catch(()=> ({}));
+    if (!res.ok || json.ok === false){
+      throw new Error(JSON.stringify(json.error || json.detail || json || {status:res.status}, null, 2));
+    }
+    return json;
+  }
+
+  // ① 商品読み込み
+  $("btnLoad").onclick = async ()=>{
+    try{
+      const json = await api("/api/admin/products");
+      const items = Array.isArray(json.items) ? json.items : [];
+      // フィルタ
+      const excludeKusuke = $("excludeKusuke").checked;
+      const filtered = excludeKusuke ? items.filter(p=>p.id!=="kusuke-250") : items;
+      state.products = filtered;
+      $("previewProducts").textContent = JSON.stringify(filtered, null, 2);
+      $("countProducts").textContent = String(filtered.length);
+      $("statusProducts").textContent = "読込済み";
+      $("statusProducts").className = "pill ok";
+      log(`products 読み込み: ${filtered.length}件`);
+    }catch(e){
+      $("statusProducts").textContent = "エラー";
+      $("statusProducts").className = "pill error";
+      log(`products 読み込みエラー: ${e.message}`, "error");
+    }
+  };
+
+  // Flex バブル生成（商品→バブル）
+  function bubbleFromProduct(p){
+    return {
+      type: "bubble",
+      body: {
+        type: "box", layout: "vertical", spacing: "sm",
+        contents: [
+          { type: "text", text: p.name, weight: "bold", size: "md", wrap: true },
+          { type: "text", text: `価格：${Number(p.price).toLocaleString("ja-JP")}円　在庫：${Number(p.stock||0)}`, size: "sm", wrap: true },
+          p.desc ? { type:"text", text: String(p.desc), size:"sm", wrap:true } : { type:"box", layout:"vertical", contents:[] }
+        ]
+      },
+      footer: {
+        type: "box", layout: "horizontal", spacing: "md",
+        contents: [
+          { type: "button", style: "primary",
+            action: { type: "postback", label: "数量を選ぶ", data: `order_qty?id=${encodeURIComponent(p.id)}&qty=1` } }
+        ]
+      }
+    };
+  }
+
+  function otherBubble(){
+    return {
+      type: "bubble",
+      body: {
+        type: "box", layout:"vertical", spacing:"sm",
+        contents: [
+          { type:"text", text:"その他（自由入力）", weight:"bold", size:"md" },
+          { type:"text", text:"商品名と個数だけ入力。価格入力は不要です。", size:"sm", wrap:true }
+        ]
+      },
+      footer: {
+        type:"box", layout:"vertical", spacing:"md",
+        contents:[
+          { type:"button", style:"primary",   action:{ type:"postback", label:"商品名を入力する", data:"other_start" } },
+          { type:"button", style:"secondary", action:{ type:"postback", label:"← 戻る", data:"order_back" } }
+        ]
+      }
+    };
+  }
+
+  // ② カルーセル生成
+  $("btnBuild").onclick = ()=>{
+    try{
+      const products = state.products || [];
+      const bubbles = products.map(bubbleFromProduct);
+      if ($("addOther").checked) bubbles.push(otherBubble());
+
+      const chunk = Math.max(1, Math.min(12, Number($("chunkSize").value||10)));
+      const flexMsgs = [];
+      for (let i=0; i<bubbles.length; i+=chunk){
+        const slice = bubbles.slice(i, i+chunk);
+        flexMsgs.push({
+          type: "flex",
+          altText: $("altText").value.trim() || "商品一覧",
+          contents: slice.length===1 ? slice[0] : { type:"carousel", contents: slice }
+        });
+      }
+      state.flexMessages = flexMsgs;
+      $("flexJson").value = JSON.stringify(
+        flexMsgs.length===1 ? flexMsgs[0] : flexMsgs,
+        null, 2
+      );
+      $("statusFlex").textContent = `生成済み (${flexMsgs.length}通)`;
+      $("statusFlex").className = "pill ok";
+      log(`Flex 生成: bubbles=${bubbles.length}, 分割=${flexMsgs.length}`);
+    }catch(e){
+      $("statusFlex").textContent = "エラー";
+      $("statusFlex").className = "pill error";
+      log(`Flex 生成エラー: ${e.message}`, "error");
+    }
+  };
+
+  // ③ 送信（Multicast / Broadcast）
+  async function sendFlex(mode){
+    try{
+      // テキストエリアが手編集されている可能性に対応
+      let payload;
+      try{
+        payload = JSON.parse($("flexJson").value);
+      }catch{
+        // 生成済み配列を使う（未生成ならエラー）
+        payload = state.flexMessages;
+      }
+      // 単数/複数どちらでも送れるよう正規化
+      const flexArray = Array.isArray(payload) ? payload : [payload];
+
+      if (mode === "multicast"){
+        const ids = $("userIds").value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+        if (ids.length===0) { alert("ユーザーIDを1件以上入力してください。"); return; }
+
+        // /api/admin/segment/send-flex は altText/contents を1通ぶん求めるので
+        // 分割メッセージは順に投げる
+        let sent = 0;
+        for (const fm of flexArray){
+          const body = { userIds: ids, altText: fm.altText, contents: fm.contents };
+          const res = await api("/api/admin/segment/send-flex", {
+            method:"POST",
+            headers:{ "Content-Type":"application/json" },
+            body: JSON.stringify(body)
+          });
+          sent += res.sent || 0;
+          log(`Multicast: batch sent=${res.sent} / requested=${res.requested}`);
+        }
+        $("sendResult").innerHTML = `<span class="ok">Multicast 送信完了（分割 ${flexArray.length} 通、合計 ${sent} 件）</span>`;
+      } else {
+        // broadcast
+        for (const fm of flexArray){
+          await api("/api/admin/broadcast-flex", {
+            method:"POST",
+            headers:{ "Content-Type":"application/json" },
+            body: JSON.stringify({ altText: fm.altText, contents: fm.contents })
+          });
+          log("Broadcast: 1通 送信完了");
+        }
+        $("sendResult").innerHTML = `<span class="ok">Broadcast 送信完了（分割 ${flexArray.length} 通）</span>`;
+      }
+    }catch(e){
+      $("sendResult").innerHTML = `<div class="error">送信エラー:\n${e.message}</div>`;
+      log(`送信エラー: ${e.message}`, "error");
+    }
+  }
+
+  $("btnSendMulticast").onclick = ()=>sendFlex("multicast");
+  $("btnSendBroadcast").onclick = ()=>sendFlex("broadcast");
+})();
+JS
+2) 使い方
+Render のダッシュボード → Shell を開き、上の2つのコマンドを順に貼り付ける
+
+ブラウザで https://<あなたのサービスURL>/public/admin.html を開く
+
+ADMIN_API_TOKEN を入力
+
+「① 商品を読み込む」→ 現在の /data/products.json が表示される
+
+「久助を除外」「その他を追加」はチェックのままでOK
+
+「② カルーセル生成」→ Flex JSON が生成される（長い場合は自動分割）
+
+送信先を選ぶ：
+
+指定ユーザーに配信：ユーザーIDを改行区切りで入力 →「③ 指定ユーザーに送信」
+
+全友だちへ配信：ユーザーID欄は空のまま →「③ 全友だちに送信」
+
+送信 API は、あなたの server.js が既に持っている次を使用します：
+
+/api/admin/segment/send-flex（Multicast, 500件ずつ）
+
+/api/admin/broadcast-flex（Broadcast 全体配信）
+
+商品取得は /api/admin/products
+
+3) よくあるハマり＆確認ポイント
+Tokenエラー → 401/unauthorized：ADMIN_API_TOKEN が .env に入っているか確認
+
+products.json の場所 → /api/health の files.products が正（今回 /data/products.json）
+
+分割数 → 端末差でカルーセルが見切れるのを防ぐため、デフォルト 10バブル/通 に設定
+
+久助を一覧に出す/出さない → 画面のチェックで切替可能（実サーバー側は非表示仕様のままでもOK）
+
+必要なら、画像付きの「リッチメッセージ（Rich Message）」（イメージマップ）対応の別UIも追加できますが、まずは Flex の配信管理が手早く・確実です。
+他にも「テキスト配信」「セグメント抽出（予約者だけ等）」のボタンも足せます。欲しい項目があれば言ってください！
+
+
+
+
+
+
+
+あなた:
+貼れないんですけど
+
+
+
+ChatGPT:
+
+思考時間: 53s
+了解！Render環境で「products.json を読んで、自動で Flex カルーセルを作って友だちに配信できる管理」を、“いま貼り付けにくい”状況でも動くシェルだけで即実行できる形で用意しました。
+（＝管理画面HTMLを作らなくても、Render の Shell から1〜2行コマンドで「自動カルーセル生成 → 配信」まで完結します）
+
+① まずは「動作確認＆全員配信（broadcast）」の最短コマンド
+ポイント
+
+/data/products.json を読み込み
+
+既定では「久助（kusuke-250）を一覧から除外」
+
+Flex カルーセルを自動生成して /api/admin/broadcast-flex で全員配信
+
+文字数やサイズの安全を見て最大10バブルに分割して複数メッセージ送信
+
+Render の Shell で以下をそのまま貼ってください（1 コマンド）：
+
+bash
+コードをコピーする
+node -e '
+const fs=require("fs");
+const path="/data/products.json";
+const data=JSON.parse(fs.readFileSync(path,"utf8"));
+const HIDE=new Set(["kusuke-250"]);  // ← 久助を含めたい場合は行ごと削除 or 空に
+const yen=n=>`${Number(n||0).toLocaleString("ja-JP")}円`;
+const prods=data.filter(p=>!HIDE.has(p.id));
+if(prods.length===0){ console.error("表示対象の商品がありません"); process.exit(1); }
+const bubbles=prods.map(p=>({
+  type:"bubble",
+  body:{type:"box",layout:"vertical",spacing:"sm",contents:[
+    {type:"text",text:p.name,weight:"bold",size:"md",wrap:true},
+    {type:"text",text:`価格：${yen(p.price)}　在庫：${p.stock??0}`,size:"sm",wrap:true},
+    p.desc?{type:"text",text:p.desc,size:"sm",wrap:true}:{type:"box",layout:"vertical",contents:[]}
+  ]},
+  footer:{type:"box",layout:"horizontal",spacing:"md",contents:[
+    {type:"button",style:"primary",action:{type:"postback",label:"数量を選ぶ",data:`order_qty?id=${encodeURIComponent(p.id)}&qty=1`}}
+  ]}
+}));
+// 「その他（自由入力）」を最後に足す（価格入力なし仕様）
+bubbles.push({
+  type:"bubble",
+  body:{type:"box",layout:"vertical",spacing:"sm",contents:[
+    {type:"text",text:"その他（自由入力）",weight:"bold",size:"md"},
+    {type:"text",text:"商品名と個数だけ入力します。価格入力は不要です。",size:"sm",wrap:true}
+  ]},
+  footer:{type:"box",layout:"vertical",spacing:"md",contents:[
+    {type:"button",style:"primary",action:{type:"postback",label:"商品名を入力する",data:"other_start"}},
+    {type:"button",style:"secondary",action:{type:"postback",label:"← 戻る",data:"order_back"}}
+  ]}
+});
+
+// 10バブルずつに分割して複数メッセージを作成
+const chunk=(arr,n)=>arr.reduce((a,_,i)=>i%n?a:(a.push(arr.slice(i,i+n)),a),[]);
+const msgs=chunk(bubbles,10).map(ch=>({type:"flex",altText:"商品一覧",contents:ch.length===1?ch[0]:{type:"carousel",contents:ch}}));
+
+// 標準出力へ JSON（/api へ渡すため）
+console.log(JSON.stringify({msgs},null,2));
+' | jq -c '.msgs[]' | while read -r msg; do
+  curl -sS -X POST "http://localhost:${PORT:-3000}/api/admin/broadcast-flex" \
+    -H "Authorization: Bearer ${ADMIN_API_TOKEN}" \
+    -H "Content-Type: application/json" \
+    --data "{\"altText\":\"商品一覧\",\"contents\":$(echo "$msg" | jq -r '.contents')}"
+  echo
+done
+久助も出したい場合は、コマンド中の
+const HIDE=new Set(["kusuke-250"]); → const HIDE=new Set([]); に変更してください。
+
+送信後、LINEで配信が届くはずです。各カードの「数量を選ぶ」ボタンは、すでにあなたの /webhook にポストバックされ、既存の注文フローに連結します。
+
+② 特定ユーザー配信（セグメント配信）にしたい場合
+すでに予約者や一部ユーザーの userId リストがある場合は、/api/admin/segment/send-flex を使います。
+Render の Shell で：
+
+bash
+コードをコピーする
+# 例：送信先 userId を配列で指定
+USER_IDS='["Uxxxxxxxxxxxxxx","Uyyyyyyyyyyyyyy"]'
+
+node -e '
+const fs=require("fs");
+const data=JSON.parse(fs.readFileSync("/data/products.json","utf8"));
+const HIDE=new Set(["kusuke-250"]);
+const yen=n=>`${Number(n||0).toLocaleString("ja-JP")}円`;
+const prods=data.filter(p=>!HIDE.has(p.id));
+const bubbles=prods.map(p=>({
+  type:"bubble",
+  body:{type:"box",layout:"vertical",spacing:"sm",contents:[
+    {type:"text",text:p.name,weight:"bold",size:"md",wrap:true},
+    {type:"text",text:`価格：${yen(p.price)}　在庫：${p.stock??0}`,size:"sm",wrap:true},
+    p.desc?{type:"text",text:p.desc,size:"sm",wrap:true}:{type:"box",layout:"vertical",contents:[]}
+  ]},
+  footer:{type:"box",layout:"horizontal",spacing:"md",contents:[
+    {type:"button",style:"primary",action:{type:"postback",label:"数量を選ぶ",data:`order_qty?id=${encodeURIComponent(p.id)}&qty=1`}}
+  ]}
+}));
+bubbles.push({
+  type:"bubble",
+  body:{type:"box",layout:"vertical",spacing:"sm",contents:[
+    {type:"text",text:"その他（自由入力）",weight:"bold",size:"md"},
+    {type:"text",text:"商品名と個数だけ入力します。価格入力は不要です。",size:"sm",wrap:true}
+  ]},
+  footer:{type:"box",layout:"vertical",spacing:"md",contents:[
+    {type:"button",style:"primary",action:{type:"postback",label:"商品名を入力する",data:"other_start"}},
+    {type:"button",style:"secondary",action:{type:"postback",label:"← 戻る",data:"order_back"}}
+  ]}
+});
+const contents=bubbles.length===1?bubbles[0]:{type:"carousel",contents:bubbles};
+console.log(JSON.stringify({altText:"商品一覧",contents},null,2));
+' > /tmp/flex.json
+
+curl -sS -X POST "http://localhost:${PORT:-3000}/api/admin/segment/send-flex" \
+  -H "Authorization: Bearer ${ADMIN_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  --data "{\"userIds\":${USER_IDS},\"altText\":\"商品一覧\",\"contents\":$(jq -c '.contents' /tmp/flex.json)}"
+echo
+③ 「貼れない」対策：最小改変のコツ
+1 行コマンドにまとめています。貼り付け不可な場合は、以下も試せます：
+
+右クリック→Paste ではなく、キーボードの Ctrl+Shift+V（ブラウザによっては有効）
+
+ブラウザを変える（Chrome/Edge）
+
+コマンドを2〜3行に分割して貼る（上の例は while 以降をもう一度貼り付けてもOK）
+
+どうしても無理な場合：ローカルで JSON を作って、Render Shell で
+
+bash
+コードをコピーする
+cat > /tmp/flex.json <<'JSON'
+{ ...ここに JSON... }
+JSON
+としてから curl で /api/admin/broadcast-flex に投げればOKです。
+
+④ 将来のための「ブラウザ管理画面」も欲しい場合（任意）
+/public/admin-flex.html を 1 ファイル置くだけで、TOKEN 入力 → クリックで配信できる簡易GUIも作れます。
+
+ただし Render の Shell に長文HTMLを貼るのが難しいとのことなので、まずは上のシェル版で “当面の配信” をこなして、後で余裕ができた時に GUI 版を導入しましょう。
+
+ご希望なら、**超短縮版（最小 1 画面）**の HTML をお渡しします。貼りやすいように base64→デコード で 2〜3行に収める形で用意します。
+
+うまくいったかチェック
+https://…/api/admin/products?code=YOUR_ADMIN_CODE で 8件あるか確認（久助は存在、一覧は非表示仕様）
+
+上の ① コマンド 実行 → 自分の LINE に配信が届く
+
+バブルが 7品 + その他 で表示（久助除外のため）
+
+「数量を選ぶ」→ 既存の注文フローに遷移すること
+
+必要なら、「久助も一覧に出す」「商品を価格帯でページ分け」「在庫0は自動で表示除外」「配信対象を予約者だけに自動抽出」など、追加パターンもすぐ作ります。
+
+
+
+
+
+
+
+
+
+
+
+
+
+ChatGPT の回答は必ずしも正しいとは限りません。重要な情報は確認するようにしてください。

@@ -6,7 +6,7 @@
   <title>LINE 管理画面</title>
   <style>
     body{margin:0;background:#0b1020;color:#e6ebff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans JP",sans-serif}
-    header{padding:16px 20px;border-bottom:1px solid #1f2744;background:linear-gradient(180deg,#121a33,#0b1020);position:sticky;top:0}
+    header{padding:16px 20px;border-bottom:1px solid #1f2744;background:linear-gradient(180deg,#121a33,#0b1020);position:sticky;top:0;z-index:10}
     h1{margin:0;font-size:18px}
     main{padding:20px;display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
     .card{background:#131a2e;border:1px solid #243057;border-radius:14px;padding:14px}
@@ -19,13 +19,20 @@
     pre{white-space:pre-wrap;word-break:break-all;background:#0f1630;color:#cfe0ff;border:1px solid #2a3760;border-radius:10px;padding:10px;max-height:320px;overflow:auto}
     .muted{color:#7b88b8;font-size:12px}
     .pill{display:inline-block;background:#20305c;color:#cfe0ff;border:1px solid #35477b;padding:3px 8px;border-radius:999px;font-size:12px}
+    .drop{border:2px dashed #3a4a7b;border-radius:12px;padding:12px;text-align:center}
+    .drop.drag{background:#0f1630}
+    .hint{font-size:12px;color:#9fb1ff}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .kvs{display:grid;grid-template-columns:140px 1fr;gap:6px;align-items:center}
+    .badge{display:inline-block;background:#20305c;border:1px solid #35477b;border-radius:999px;padding:2px 8px;font-size:12px;margin-left:6px}
   </style>
 </head>
-<body>
+<body data-liff-id="">
   <header>
-    <h1>LINE 管理画面（配信・セグメント・ログ）</h1>
-    <div class="muted">このページのURL：<code>/public/admin.html</code>（例：<code>https://<your-app>.onrender.com/public/admin.html</code>）</div>
+    <h1>LINE 管理画面（配信・セグメント・ログ・画像）</h1>
+    <div class="muted">このページのURL：<code>/public/admin.html</code>（例：<code>https://&lt;your-app&gt;.onrender.com/public/admin.html</code>）</div>
   </header>
+
   <main>
     <!-- 認証・状態 -->
     <section class="card">
@@ -46,12 +53,41 @@
         <span id="prodCount" class="muted"></span>
       </div>
       <div class="row"><input id="hideIds" type="text" placeholder="一覧から隠すID（例: kusuke-250,foo-123）"></div>
-      <div class="row"><input id="altText" type="text" placeholder="altText（例：商品一覧）"></div>
+
       <div class="row">
-        <button id="btnBuildFlex">Flex を生成（プレビュー）</button>
+        <input id="altText" type="text" placeholder="altText（例：商品一覧）">
       </div>
+
+      <div class="row">
+        <div class="grid2" style="width:100%">
+          <div>
+            <div class="muted">画像URL（productId → imageURL の行ごと）。例：<code>kusuke-250 https://…/kusuke.jpg</code></div>
+            <textarea id="imageMap" placeholder="productId 画像URL（空白区切り）を1行ずつ"></textarea>
+            <div class="muted">※ <b>products.json の image フィールド</b>があればそれも使います</div>
+          </div>
+          <div>
+            <div class="drop" id="dropZone">ここに画像をドラッグ＆ドロップ（productIdを尋ねます）</div>
+            <div class="muted">アップロード先 <code>/api/admin/upload</code> を試行。未実装ならプレビューのみ（公開URLを入力してください）。</div>
+            <div id="uploadNote" class="hint" hidden></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row"><button id="btnBuildFlex">Flex を生成（プレビュー）</button></div>
       <pre id="flexPreview" hidden></pre>
-      <div class="row"><input id="userIds" type="text" placeholder="セグメント userId（カンマ区切り）。空なら broadcast"></div>
+
+      <div class="row kvs">
+        <label for="userIds">userId（セグメント）</label>
+        <input id="userIds" type="text" list="uidList" placeholder="カンマ区切り。空なら broadcast">
+        <label for="textUserIds">テキスト送信用 userId</label>
+        <input id="textUserIds" type="text" list="uidList" placeholder="カンマ区切り。空なら broadcast（Flexでラップ）">
+      </div>
+      <datalist id="uidList"></datalist>
+      <div class="row">
+        <button id="btnLoadActive">直近アクティブユーザー取得</button>
+        <span id="activeInfo" class="muted"></span>
+      </div>
+
       <div class="row"><button id="btnSendFlex">この Flex を配信</button><span id="sendFlexRes" class="muted"></span></div>
     </section>
 
@@ -59,15 +95,8 @@
     <section class="card">
       <h2>テキスト配信（セグメント / ブロードキャスト）</h2>
       <div class="row"><textarea id="textMessage" placeholder="配信する本文"></textarea></div>
-      <div class="row"><input id="textUserIds" type="text" placeholder="userId（カンマ区切り）。空なら broadcast"></div>
+      <div class="row"><input id="textUserIds" type="text" list="uidList" placeholder="userId（カンマ区切り）。空なら broadcast"></div>
       <div class="row"><button id="btnSendText">送信</button><span id="sendTextRes" class="muted"></span></div>
-    </section>
-
-    <!-- ユーザー収集 -->
-    <section class="card">
-      <h2>userId 収集</h2>
-      <div class="row"><button id="btnActiveUsers">直近アクティブユーザー取得</button><span class="muted">/api/admin/active-chatters?list=true</span></div>
-      <pre id="usersOut" hidden></pre>
     </section>
 
     <!-- メッセージログ（tail相当） -->
@@ -79,11 +108,10 @@
         <span id="autoStatus" class="pill">OFF</span>
       </div>
       <pre id="logOut" hidden></pre>
-      <div class="muted">※サーバーの /api/admin/messages を叩いています。ボタンはこのセクション内にあります。</div>
+      <div class="muted">※サーバーの /api/admin/messages を叩いています。</div>
     </section>
   </main>
 
   <script src="/public/admin.js"></script>
 </body>
 </html>
-HTML

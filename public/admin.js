@@ -1,10 +1,9 @@
-// ====== 既存：管理UI本体 ======
 (function(){
   const $ = (sel)=>document.querySelector(sel);
   const show = (el, data)=>{ el.hidden=false; el.textContent = typeof data==='string' ? data : JSON.stringify(data,null,2); };
-  const auth = ()=>({ 'Authorization':'Bearer ' + ($('#token').value||'').trim(), 'Content-Type':'application/json' });
+  const auth = ()=>({ 'Authorization':'Bearer ' + (($('#token').value)||'').trim(), 'Content-Type':'application/json' });
 
-  // 認証・状態
+  // ===== 認証・状態 =====
   $('#btnPing').onclick = async ()=>{
     try{
       const r = await fetch('/api/admin/ping', { headers: auth() });
@@ -19,7 +18,7 @@
     }catch(e){ show($('#healthOut'), String(e)); }
   };
 
-  // 商品取得 → Flex生成
+  // ===== 商品取得 → Flex生成 =====
   let products = [];
   $('#btnLoadProducts').onclick = async ()=>{
     const r = await fetch('/api/admin/products', { headers: auth() });
@@ -31,7 +30,7 @@
 
   function yen(n){ return Number(n||0).toLocaleString('ja-JP')+'円'; }
   function buildFlex(){
-    const hideRaw = ($('#hideIds').value||'').split(',').map(s=>s.trim()).filter(Boolean);
+    const hideRaw = (($('#hideIds').value)||'').split(',').map(s=>s.trim()).filter(Boolean);
     const visible = products.filter(p=>!hideRaw.includes(p.id));
     const bubbles = visible.map(p=>({
       type:'bubble',
@@ -58,7 +57,7 @@
     });
     return {
       type:'flex',
-      altText: ($('#altText').value||'商品一覧').slice(0,400),
+      altText: (($('#altText').value)||'商品一覧').slice(0,400),
       contents: bubbles.length===1 ? bubbles[0] : { type:'carousel', contents:bubbles }
     };
   }
@@ -67,11 +66,11 @@
     show($('#flexPreview'), buildFlex());
   };
 
-  // 配信（Flex）
+  // ===== 配信（Flex） =====
   $('#btnSendFlex').onclick = async ()=>{
     if (!products.length) return alert('先に商品を取得してください');
     const payload = buildFlex();
-    const ids = ($('#userIds').value||'').split(',').map(s=>s.trim()).filter(Boolean);
+    const ids = (($('#userIds').value)||'').split(',').map(s=>s.trim()).filter(Boolean);
     const url = ids.length ? '/api/admin/segment/send-flex' : '/api/admin/broadcast-flex';
     const body = ids.length ? { userIds: ids, altText: payload.altText, contents: payload.contents }
                             : { altText: payload.altText, contents: payload.contents };
@@ -80,34 +79,37 @@
     $('#sendFlexRes').textContent = j.ok ? 'OK' : ('NG: ' + (j.error||''));
   };
 
-  // テキスト配信
+  // ===== テキスト配信 =====
   $('#btnSendText').onclick = async ()=>{
-    const msg = ($('#textMessage').value||'').trim();
+    const msg = (($('#textMessage').value)||'').trim();
     if (!msg) return alert('本文が空です');
-    const ids = ($('#textUserIds').value||'').split(',').map(s=>s.trim()).filter(Boolean);
+    const ids = (($('#textUserIds').value)||'').split(',').map(s=>s.trim()).filter(Boolean);
     if (ids.length){
       const r = await fetch('/api/admin/segment/send', { method:'POST', headers: auth(), body: JSON.stringify({ userIds: ids, message: msg }) });
       const j = await r.json();
       $('#sendTextRes').textContent = j.ok ? 'OK' : ('NG: ' + (j.error||''));
     } else {
-      // ブロードキャストは Flex 経由でテキストを包む（既存API流用）
+      // ブロードキャストは Flex 経由でテキストを包む
       const r = await fetch('/api/admin/broadcast-flex', {
         method:'POST', headers: auth(),
-        body: JSON.stringify({ altText:'テキスト', contents:{ type:'bubble', body:{ type:'box', layout:'vertical', contents:[{ type:'text', text: msg, wrap:true }] } } })
+        body: JSON.stringify({
+          altText:'テキスト',
+          contents:{ type:'bubble', body:{ type:'box', layout:'vertical', contents:[{ type:'text', text: msg, wrap:true }] } }
+        })
       });
       const j = await r.json();
       $('#sendTextRes').textContent = j.ok ? 'OK' : ('NG: ' + (j.error||''));
     }
   };
 
-  // ユーザー収集
+  // ===== ユーザー収集 =====
   $('#btnActiveUsers').onclick = async ()=>{
     const r = await fetch('/api/admin/active-chatters?list=true', { headers: auth() });
     const j = await r.json();
     show($('#usersOut'), j);
   };
 
-  // メッセージログ（tail相当）
+  // ===== メッセージログ（tail相当） =====
   async function loadLog(){
     const r = await fetch('/api/admin/messages?limit=200', { headers: auth() });
     const j = await r.json();
@@ -120,26 +122,18 @@
     auto = !auto; $('#autoStatus').textContent = auto ? 'ON' : 'OFF';
     if (auto){ loadLog(); timer = setInterval(loadLog, 10000); } else { clearInterval(timer); }
   };
-})();
 
-// ====== 追加：userId 自動入力スニペット（<script>タグ不要）======
-(function(){
-  // ページ内の userId 入力欄（Flex送信用 / テキスト送信用）
+  // ======== ここから「userId 自動入力」機能を追加 ========
+
   const USER_IDS_INPUT_SELECTOR = "#userIds";
   const TEXT_USER_IDS_INPUT_SELECTOR = "#textUserIds";
-
-  // URLパラメータ名: ?userId= / ?uid= / ?me=1
-  const PARAM_NAMES = ["userId", "uid", "me"];
-
-  // ローカル保存キー
+  const PARAM_NAMES = ["userId", "uid", "me"]; // ?userId= / ?uid= / ?me=1
   const LS_KEY = "admin_user_ids";
 
-  const $ = (sel) => document.querySelector(sel);
-  const setIfExists = (sel, value) => { const el = $(sel); if (el && value) el.value = value; };
-  const saveLocal = (value) => { try { localStorage.setItem(LS_KEY, value); } catch(_){} };
+  const setIfExists = (sel, value) => { const el = $(sel); if (el && value!=null) el.value = value; };
+  const saveLocal = (value) => { try { localStorage.setItem(LS_KEY, value||""); } catch(_){} };
   const loadLocal = () => { try { return localStorage.getItem(LS_KEY) || ""; } catch(_) { return ""; } };
 
-  // URL から userId 候補を拾う
   const getFromUrl = () => {
     const u = new URL(location.href);
     for (const key of PARAM_NAMES) {
@@ -149,7 +143,6 @@
         if (v) return v.trim();
       }
     }
-    // #userId= / #uid= にも対応
     const hash = (u.hash || "").replace(/^#/, "");
     const parts = new URLSearchParams(hash);
     for (const key of PARAM_NAMES) {
@@ -162,20 +155,19 @@
     return "";
   };
 
-  // 画面へ反映
   const applyUserIds = (ids) => {
+    if (!ids) return;
     setIfExists(USER_IDS_INPUT_SELECTOR, ids);
     setIfExists(TEXT_USER_IDS_INPUT_SELECTOR, ids);
     saveLocal(ids);
     const sendFlexRes = document.getElementById("sendFlexRes");
-    if (sendFlexRes && ids) sendFlexRes.textContent = `userId 自動入力: ${ids}`;
+    if (sendFlexRes) sendFlexRes.textContent = `userId 自動入力: ${ids}`;
     const sendTextRes = document.getElementById("sendTextRes");
-    if (sendTextRes && ids) sendTextRes.textContent = `userId 自動入力: ${ids}`;
+    if (sendTextRes) sendTextRes.textContent = `userId 自動入力: ${ids}`;
   };
 
-  // LIFF から取得（任意）: <body data-liff-id="YOUR_LIFF_ID">
   const tryLiff = async () => {
-    const liffId = document.body && document.body.dataset && document.body.dataset.liffId;
+    const liffId = document.body?.dataset?.liffId;
     if (!liffId) return "";
     try {
       if (typeof window.liff === "undefined") {
@@ -190,56 +182,50 @@
       if (!liff.isLoggedIn()) { liff.login({}); return ""; }
       try {
         const prof = await liff.getProfile();
-        if (prof && prof.userId) return prof.userId;
+        if (prof?.userId) return prof.userId;
       } catch(_){}
       try {
         const token = liff.getDecodedIDToken();
-        if (token && token.sub) return token.sub;
+        if (token?.sub) return token.sub;
       } catch(_){}
-    } catch(e) { console.warn("LIFF 取得失敗:", e); }
+    } catch(e){ console.warn("LIFF 取得失敗:", e); }
     return "";
   };
 
-  // /api で逆引き（任意）
   const tryWhoAmI = async () => {
-    try {
+    try{
       const res = await fetch("/api/admin/whoami", { credentials: "include" });
       if (!res.ok) return "";
       const j = await res.json();
-      if (j && j.userId) return j.userId;
-    } catch(_){}
+      if (j?.userId) return j.userId;
+    }catch(_){}
     return "";
   };
 
-  // 起動処理
-  document.addEventListener("DOMContentLoaded", async () => {
-    // 1) URL 指定最優先
+  document.addEventListener("DOMContentLoaded", async ()=>{
+    // 1) URL優先
     let candidate = getFromUrl();
-    if (candidate) { applyUserIds(candidate === "me" ? "me" : candidate); return; }
+    if (candidate){ applyUserIds(candidate); return; }
 
     // 2) ローカル保存
     candidate = loadLocal();
-    if (candidate) { applyUserIds(candidate); }
+    if (candidate) applyUserIds(candidate);
 
-    // 3) LIFF
+    // 3) LIFF（任意）
     const fromLiff = await tryLiff();
-    if (fromLiff) { applyUserIds(fromLiff); return; }
+    if (fromLiff){ applyUserIds(fromLiff); return; }
 
-    // 4) whoami
+    // 4) whoami（任意）
     const fromApi = await tryWhoAmI();
-    if (fromApi) { applyUserIds(fromApi); return; }
-
-    // 5) 何もなければ手入力
+    if (fromApi){ applyUserIds(fromApi); return; }
   });
 
-  // 入力の変更を自動保存
-  const hookInput = (sel) => {
+  const hookInput = (sel)=>{
     const el = $(sel);
     if (!el) return;
-    el.addEventListener("input", () => saveLocal(el.value.trim()));
+    el.addEventListener("input", ()=> saveLocal(el.value.trim()));
   };
   hookInput(USER_IDS_INPUT_SELECTOR);
   hookInput(TEXT_USER_IDS_INPUT_SELECTOR);
 
-  // メモ: ?me=1 で開く → "me" をサーバー側で操作者の userId に置換する実装にしておくとテスト配信が楽です
-})();
+})(); // ← IIFE の閉じカッコ/セミコロン忘れ注意

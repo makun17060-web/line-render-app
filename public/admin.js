@@ -343,3 +343,113 @@
   });
 
 })();
+// === 他ユーザーの userId を自動候補化＆自動入力 =========================
+(function(){
+  const $ = (sel)=>document.querySelector(sel);
+  const LS_KEY = "admin_user_ids";
+
+  // datalist を動的に用意して #userIds / #textUserIds に関連付け
+  function ensureDatalist(){
+    let dl = document.getElementById("uids");
+    if(!dl){
+      dl = document.createElement("datalist");
+      dl.id = "uids";
+      document.body.appendChild(dl);
+    }
+    const in1 = document.getElementById("userIds");
+    const in2 = document.getElementById("textUserIds");
+    if(in1) in1.setAttribute("list","uids");
+    if(in2) in2.setAttribute("list","uids");
+    return dl;
+  }
+
+  // /api/admin/active-chatters?list=true から候補取得
+  async function fetchActiveUserIds(){
+    const tokenEl = document.getElementById("token");
+    const token = (tokenEl?.value||"").trim();
+    if(!token) return [];
+    const r = await fetch("/api/admin/active-chatters?list=true", {
+      headers: { "Authorization":"Bearer "+token }
+    });
+    const j = await r.json();
+    return (j && j.ok && Array.isArray(j.users)) ? j.users : [];
+  }
+
+  // 候補を datalist に反映
+  function fillDatalist(ids){
+    const dl = ensureDatalist();
+    dl.innerHTML = "";
+    ids.forEach(id=>{
+      const opt = document.createElement("option");
+      opt.value = id;
+      dl.appendChild(opt);
+    });
+  }
+
+  // まだ未入力なら、先頭のIDを自動入力（複数ほしいなら上位N件をカンマ連結）
+  function autofillIfEmpty(ids, topN = 1){
+    const in1 = document.getElementById("userIds");
+    const in2 = document.getElementById("textUserIds");
+    const joined = ids.slice(0, topN).join(", ");
+    if(in1 && !in1.value && joined){ in1.value = joined; }
+    if(in2 && !in2.value && joined){ in2.value = joined; }
+    if(joined){ try{ localStorage.setItem(LS_KEY, joined); }catch{} }
+  }
+
+  // token が入力されたら自動取得して候補化
+  function hookTokenWatcher(){
+    const tokenEl = document.getElementById("token");
+    if(!tokenEl) return;
+    let timer = null;
+    const kick = async ()=>{
+      try{
+        const ids = await fetchActiveUserIds();
+        fillDatalist(ids);
+        // すでに自分のIDが自動で入っている環境では、他のIDがあれば1件だけ差し替えたい場合はここで制御
+        // 例: 2件自動入力したい→ autofillIfEmpty(ids, 2)
+        autofillIfEmpty(ids, 1);
+        const usersOut = document.getElementById("usersOut");
+        if(usersOut){ usersOut.hidden = false; usersOut.textContent = JSON.stringify(ids, null, 2); }
+      }catch(e){ /* 無視（権限/通信エラーなど） */ }
+    };
+    const schedule = ()=>{ clearTimeout(timer); timer = setTimeout(kick, 400); };
+    ["change","blur","keyup","input"].forEach(ev => tokenEl.addEventListener(ev, schedule));
+  }
+
+  // 既存の「直近アクティブユーザー取得」ボタンにフックして、自動で入力欄へ反映
+  function hookActiveUsersButton(){
+    const btn = document.getElementById("btnActiveUsers");
+    if(!btn) return;
+    const orig = btn.onclick;
+    btn.onclick = async (ev)=>{
+      if(typeof orig === "function"){ try{ await orig(ev); }catch{} }
+      try{
+        const ids = await fetchActiveUserIds();
+        fillDatalist(ids);
+        // ここでは上位3人を入れてみる例（必要に応じて 1 に変更）
+        autofillIfEmpty(ids, 3);
+      }catch(_){}
+    };
+  }
+
+  // URL パラメータ ?userIds=Uxxx,Uyyy を優先して自動反映（任意）
+  function applyFromUrl(){
+    const u = new URL(location.href);
+    const p = u.searchParams.get("userIds") || u.searchParams.get("uids");
+    if(!p) return false;
+    const val = p.split(",").map(s=>s.trim()).filter(Boolean).join(", ");
+    const in1 = document.getElementById("userIds");
+    const in2 = document.getElementById("textUserIds");
+    if(in1) in1.value = val;
+    if(in2) in2.value = val;
+    try{ localStorage.setItem(LS_KEY, val); }catch{}
+    return true;
+  }
+
+  document.addEventListener("DOMContentLoaded", ()=>{
+    ensureDatalist();
+    applyFromUrl();         // URL で指定があればそれを優先
+    hookTokenWatcher();     // token 入力後に自動取得
+    hookActiveUsersButton();// 既存ボタン経由のときも自動で入力
+  });
+})();

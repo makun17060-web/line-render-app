@@ -140,11 +140,7 @@ initLog(SURVEYS_LOG);
 initLog(MESSAGES_LOG);
 initLog(STOCK_LOG);
 
-// 画像アップロード先（公開用）
-const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-// /uploads 配下を公開（https://<host>/uploads/... で見える）
-app.use("/uploads", express.static(UPLOAD_DIR));
+
 
 // multer 設定
 const storage = multer.diskStorage({

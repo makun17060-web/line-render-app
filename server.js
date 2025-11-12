@@ -121,8 +121,6 @@ app.use("/public", express.static(path.join(__dirname, "public"))); // admin.htm
 app.use("/uploads", express.static(UPLOADS_DIR, { maxAge: "7d", immutable: true })); // 画像配信
 app.get("/", (_req, res) => res.status(200).send("OK"));
 // ====== 画像アップロード機能 ======
-const multer = require("multer");
-
 const uploadDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 

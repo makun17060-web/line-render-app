@@ -87,7 +87,36 @@
       </div>
       <div class="row"><button id="btnSendText">送信</button><span id="sendTextRes" class="muted"></span></div>
     </section>
+<!-- 商品画像（ドラッグ＆ドロップ対応） -->
+<section class="card">
+  <h2>商品画像（ドラッグ＆ドロップで追加）</h2>
+  <div class="row">
+    <button id="btnReloadProductsForImages">商品一覧を再取得</button>
+    <span class="muted">画像と商品IDを紐づけます（ローカル保存）</span>
+  </div>
 
+  <div class="row">
+    <select id="imageTarget" title="画像を紐づける商品ID">
+      <option value="">（先に商品を取得してください）</option>
+    </select>
+  </div>
+
+  <div id="dropZone"
+       style="border:1px dashed #3a4a7b;border-radius:10px;padding:20px;text-align:center">
+    ここに画像をドラッグ＆ドロップ（またはクリック）<br>
+    <span class="muted">JPG/PNG（最大5MB程度目安）</span>
+    <input id="filePick" type="file" accept="image/*" hidden>
+  </div>
+
+  <div class="row">
+    <button class="secondary" id="btnClearImage">この商品の画像を解除</button>
+  </div>
+
+  <div class="muted">登録済みサムネイル（クリックでコピー）</div>
+  <div id="thumbGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px"></div>
+</section>
+
+    
     <!-- ユーザー収集 -->
     <section class="card">
       <h2>userId 収集（直近アクティブ）</h2>

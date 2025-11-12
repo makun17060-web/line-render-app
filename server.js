@@ -61,6 +61,25 @@ app.post("/api/upload-image", upload.single("image"), async (req, res) => {
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
+// ====== 画像URLを商品にセットするAPI ======
+app.post("/api/admin/products/set-image", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const { productId, imageUrl } = req.body || {};
+    if (!productId || !imageUrl) {
+      return res.status(400).json({ ok: false, error: "productId and imageUrl required" });
+    }
+    const items = readProducts();
+    const idx = items.findIndex(p => p.id === productId);
+    if (idx < 0) return res.status(404).json({ ok: false, error: "product_not_found" });
+
+    items[idx].image = String(imageUrl);
+    writeProducts(items);
+    return res.json({ ok: true, item: items[idx] });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 
 // ====== 環境変数 ======

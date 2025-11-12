@@ -16,7 +16,6 @@ const multer = require("multer");
 
 const app = express();
 // ====== 画像アップロードAPI ======
-const multer = require("multer");
 
 // アップロード先フォルダを指定（存在しない場合は自動で作成）
 const uploadDir = path.join(__dirname, "public/uploads");

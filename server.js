@@ -3,7 +3,7 @@
 // 必須 .env: LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, LIFF_ID, (ADMIN_API_TOKEN または ADMIN_CODE)
 // 任意 .env: PORT, ADMIN_USER_ID, MULTICAST_USER_IDS, BANK_INFO, BANK_NOTE, DATA_DIR（任意で上書き）
 
-"use strict";画像アップロードAPI
+"use strict";// 画像アップロードAPI
 
 require("dotenv").config();
 

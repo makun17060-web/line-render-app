@@ -15,28 +15,45 @@ const axios = require("axios");
 const multer = require("multer");
 
 const app = express();
-// ====== 画像アップロードAPI ======
-
-// アップロード先フォルダを指定（存在しない場合は自動で作成）
+// ====== 画像アップロードAPI（LINE用リサイズ対応） ======
+const multer = require("multer");
+const sharp = require("sharp"); // ← 追加
 const uploadDir = path.join(__dirname, "public/uploads");
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
-// ファイル保存設定
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname);
     const name = path.basename(file.originalname, ext);
-    cb(null, name + "-" + Date.now() + ext);
+    cb(null, `${name}-${Date.now()}${ext}`);
   },
 });
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: { fileSize: 2 * 1024 * 1024 } // 最大2MB
+});
 
-// POST /api/upload-image
-app.post("/api/upload-image", upload.single("image"), (req, res) => {
-  if (!req.file) return res.status(400).json({ ok: false, error: "no file" });
-  const url = `/uploads/${req.file.filename}`;
-  res.json({ ok: true, url });
+app.post("/api/upload-image", upload.single("image"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ ok: false, error: "no file" });
+
+    const inputPath = req.file.path;
+    const ext = path.extname(req.file.filename);
+    const base = path.basename(req.file.filename, ext);
+    const outputPath = path.join(uploadDir, `${base}-resized${ext}`);
+
+    // LINE用に自動リサイズ（最大800x800）
+    await sharp(inputPath)
+      .resize(800, 800, { fit: "inside" })
+      .toFile(outputPath);
+
+    const url = `/uploads/${path.basename(outputPath)}`;
+    res.json({ ok: true, url });
+  } catch (e) {
+    console.error("upload resize error:", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 

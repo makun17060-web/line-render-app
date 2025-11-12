@@ -61,6 +61,33 @@ app.post("/api/upload-image", upload.single("image"), async (req, res) => {
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
+// ====== 商品画像を products.json に保存するAPI ======
+app.post("/api/admin/products/set-image", express.json(), (req, res) => {
+  try {
+    const { productId, imageUrl } = req.body;
+    if (!productId || !imageUrl) {
+      return res.status(400).json({ ok: false, error: "missing productId or imageUrl" });
+    }
+
+    const filePath = path.join(__dirname, "data/products.json");
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ ok: false, error: "products.json not found" });
+    }
+
+    const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const products = Array.isArray(data) ? data : data.items || [];
+    const target = products.find(p => p.id === productId);
+    if (!target) return res.status(404).json({ ok: false, error: "product not found" });
+
+    target.image = imageUrl;
+    fs.writeFileSync(filePath, JSON.stringify(products, null, 2));
+    res.json({ ok: true, productId, imageUrl });
+  } catch (e) {
+    console.error("set-image error:", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ====== 画像URLを商品にセットするAPI ======
 app.post("/api/admin/products/set-image", (req, res) => {
   if (!requireAdmin(req, res)) return;

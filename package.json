@@ -1,17 +1,19 @@
 {
-  "name": "line-render-app",
+  "name": "line-ebisen-admin",
   "version": "1.0.0",
   "private": true,
-  "main": "server.js",
   "type": "commonjs",
+  "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
   "engines": {
     "node": ">=18 <23"
   },
   "dependencies": {
-    "@line/bot-sdk": "^7.5.2",
+    "@line/bot-sdk": "^9.0.3",
+    "axios": "^1.7.7",
     "dotenv": "^16.4.5",
     "express": "^4.21.1",
     "fs-extra": "^11.2.0",

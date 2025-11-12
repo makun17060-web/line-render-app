@@ -330,42 +330,37 @@ function normalizeUserIds(list){
 }
 
 function productsFlex(allProducts) {
-  // ★ 久助は一覧から除外（既存仕様維持）
   const products = (allProducts || []).filter(p => !HIDE_PRODUCT_IDS.has(p.id));
 
-  const bubbles = products.map(p => {
-    const base = {
-      type: "bubble",
-      body: {
-        type: "box", layout: "vertical", spacing: "sm",
-        contents: [
-          { type: "text", text: p.name, weight: "bold", size: "md", wrap: true },
-          { type: "text", text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`, size: "sm", wrap: true },
-          p.desc ? { type: "text", text: p.desc, size: "sm", wrap: true } : { type: "box", layout: "vertical", contents: [] }
-        ]
-      },
-      footer: {
-        type: "box", layout: "horizontal", spacing: "md",
-        contents: [
-          { type: "button", style: "primary",
-            action: { type: "postback", label: "数量を選ぶ", data: `order_qty?${qstr({ id: p.id, qty: 1 })}` } }
-        ]
-      }
-    };
-    // 画像があれば hero を付ける
-    if (p.image) {
-      base.hero = {
+  const bubbles = products.map(p => ({
+    type: "bubble",
+    ...(p.image ? {
+      hero: {
         type: "image",
-        url: p.image,
+        url: p.image,        // ここに /uploads/xxx-800.webp?v=... が入る
         size: "full",
-        aspectRatio: "1:1",     // 正方形推奨（異形でもOK）
-        aspectMode: "cover"
-      };
+        aspectMode: "cover",
+        aspectRatio: "1:1"
+      }
+    } : {}),
+    body: {
+      type: "box", layout: "vertical", spacing: "sm",
+      contents: [
+        { type: "text", text: p.name, weight: "bold", size: "md", wrap: true },
+        { type: "text", text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`, size: "sm", wrap: true },
+        p.desc ? { type: "text", text: p.desc, size: "sm", wrap: true } : { type: "box", layout: "vertical", contents: [] }
+      ]
+    },
+    footer: {
+      type: "box", layout: "horizontal", spacing: "md",
+      contents: [
+        { type: "button", style: "primary",
+          action: { type: "postback", label: "数量を選ぶ", data: `order_qty?${qstr({ id: p.id, qty: 1 })}` } }
+      ]
     }
-    return base;
-  });
+  }));
 
-  // 「その他（自由入力）」は画像なし
+  // その他バブル
   bubbles.push({
     type: "bubble",
     body: {

@@ -12,7 +12,7 @@ const path = require("path");
 const express = require("express");
 const line = require("@line/bot-sdk");
 const axios = require("axios");
-const multer = require("multer");
+
 
 const app = express();
 // ====== 画像アップロードAPI（LINE用リサイズ対応） ======

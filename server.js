@@ -143,7 +143,7 @@ initLog(STOCK_LOG);
 
 
 
-const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } }); // 最大5MB
+
 
 // ====== 在庫・別名 ======
 const LOW_STOCK_THRESHOLD = 5;
@@ -276,8 +276,7 @@ const storage = multer.diskStorage({
     cb(null, base + ext);
   }
 });
-const upload = multer({
-  storage,
+
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
   fileFilter: (_req, file, cb) => {
     const ok = /^image\/(png|jpe?g|gif|webp|svg\+xml)$/.test(file.mimetype);

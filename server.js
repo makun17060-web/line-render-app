@@ -10,6 +10,7 @@ const path = require("path");
 const express = require("express");
 const line = require("@line/bot-sdk");
 const axios = require("axios");
+const multer = require("multer"); // ← 追加
 
 const app = express();
 
@@ -83,6 +84,30 @@ if (!fs.existsSync(PRODUCTS_PATH)) {
 if (!fs.existsSync(ADDRESSES_PATH)) fs.writeFileSync(ADDRESSES_PATH, JSON.stringify({}, null, 2), "utf8");
 if (!fs.existsSync(SESSIONS_PATH)) fs.writeFileSync(SESSIONS_PATH, JSON.stringify({}, null, 2), "utf8");
 if (!fs.existsSync(NOTIFY_STATE_PATH)) fs.writeFileSync(NOTIFY_STATE_PATH, JSON.stringify({}, null, 2), "utf8");
+// ====== 画像アップロード設定 ======
+const UPLOAD_DIR = path.join(__dirname, "uploads");
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+// 静的配信（/uploads/... で参照可能）
+app.use("/uploads", express.static(UPLOAD_DIR));
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    const base = Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+    cb(null, base + ext);
+  }
+});
+const imageFilter = (_req, file, cb) => {
+  const ok = /image\/(jpeg|png|webp|gif)/i.test(file.mimetype);
+  cb(ok ? null : new Error("unsupported_file_type"), ok);
+};
+const upload = multer({
+  storage,
+  fileFilter: imageFilter,
+  limits: { fileSize: 5 * 1024 * 1024 } // 5MB
+});
 
 // ====== ユーティリティ ======
 const safeReadJSON = (p, fb) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return fb; } };
@@ -526,7 +551,82 @@ app.get("/api/admin/surveys", (req, res) => {
 app.get("/api/admin/surveys/summary", (req, res) => {
   if (!requireAdmin(req, res)) return;
   res.json({ ok: true, version: SURVEY_VERSION, total: 0, summary: { q1:[], q2:[], q3:[] } });
+  // ====== 画像アップロード / 画像管理 API（要トークン） ======
+
+// 単一画像アップロード：multipart/form-data, field name: "file"
+app.post("/api/admin/upload-image", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  upload.single("file")(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({ ok:false, error: String(err.message || err) });
+    }
+    if (!req.file) return res.status(400).json({ ok:false, error:"file_required" });
+    const filename = req.file.filename;
+    const url = `/uploads/${filename}`;
+    res.json({ ok:true, filename, url, size: req.file.size, mime: req.file.mimetype });
+  });
 });
+
+// 画像一覧（簡易）
+app.get("/api/admin/images", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const files = fs.readdirSync(UPLOAD_DIR).filter(f => !f.startsWith("."));
+    const items = files.map(f => ({ filename: f, url: `/uploads/${f}` }));
+    res.json({ ok:true, items });
+  } catch (e) {
+    res.status(500).json({ ok:false, error:String(e.message||e) });
+  }
+});
+
+// 画像削除（物理ファイル削除）
+app.delete("/api/admin/images/:filename", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const filename = (req.params.filename || "").replace(/[^\w.\-]/g, "");
+    const p = path.join(UPLOAD_DIR, filename);
+    if (fs.existsSync(p)) fs.unlinkSync(p);
+    res.json({ ok:true, deleted: filename });
+  } catch (e) {
+    res.status(500).json({ ok:false, error:String(e.message||e) });
+  }
+});
+
+// 商品に画像URLをひも付け
+app.post("/api/admin/products/:id/image", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const pid = resolveProductId((req.params.id || "").trim());
+    const url = (req.body?.url || "").trim();
+    if (!url) return res.status(400).json({ ok:false, error:"url_required" });
+    const products = readProducts();
+    const i = products.findIndex(p => p.id === pid);
+    if (i < 0) return res.status(404).json({ ok:false, error:"product_not_found" });
+    products[i].imageUrl = url;
+    writeProducts(products);
+    res.json({ ok:true, product: products[i] });
+  } catch (e) {
+    res.status(500).json({ ok:false, error:String(e.message||e) });
+  }
+});
+
+// 商品の画像ひも付け解除（imageUrl削除）
+app.delete("/api/admin/products/:id/image", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const pid = resolveProductId((req.params.id || "").trim());
+    const products = readProducts();
+    const i = products.findIndex(p => p.id === pid);
+    if (i < 0) return res.status(404).json({ ok:false, error:"product_not_found" });
+    delete products[i].imageUrl;
+    writeProducts(products);
+    res.json({ ok:true, product: products[i] });
+  } catch (e) {
+    res.status(500).json({ ok:false, error:String(e.message||e) });
+  }
+});
+
+
 
 // ====== 順次通知（予約者）API ======
 function buildReservationQueue(productId) {

@@ -1,19 +1,12 @@
-// server.js — フル機能版 + 画像アップロード対応（multer）
-// - Flex配信（商品画像 hero 表示対応）
+// server.js — 画像対応フル機能版
+// - Flex配信（商品画像対応：hero）
 // - 「その他＝価格入力なし」
 // - 久助専用テキスト購入フロー（一覧からは非表示）
-// - 予約者連絡 API/コマンド（順次 / 一括）
-// - 店頭受取（現金のみ）Fix
-// - 銀行振込案内（コメント対応）
-// - Persistent Disk 対応（/data を優先）
-// - ヘルスチェック拡充
-// - 画像アップロード: POST /api/admin/upload-image  （要トークン）
-//   - フィールド名: image（ファイル） / productId（任意）
-//   - 保存先: <DATA_DIR>/uploads  を /uploads に静的配信
-//   - 自動で products.json の該当商品に image URL を保存（productId があれば）
-//
-// 必須 .env: LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, LIFF_ID, (ADMIN_API_TOKEN または ADMIN_CODE)
-// 任意 .env: PORT, ADMIN_USER_ID, MULTICAST_USER_IDS, BANK_INFO, BANK_NOTE, DATA_DIR
+// - 予約者連絡 API/コマンド（順次 or 一括）
+// - 店頭受取（現金のみ）Fix / 銀行振込案内
+// - Persistent Disk 対応（/data を優先。なければ ./data）
+// - 画像アップロードAPI（multer） + /uploads 静的配信
+// - /api/admin/whoami（任意で userId 自動入力補助）
 
 "use strict";
 
@@ -24,7 +17,7 @@ const path = require("path");
 const express = require("express");
 const line = require("@line/bot-sdk");
 const axios = require("axios");
-const multer = require("multer"); // ★ 追加：画像アップロード
+const multer = require("multer");
 
 const app = express();
 
@@ -85,6 +78,10 @@ const DATA_DIR = pickWritableDir([
   path.join(__dirname, "data"),
 ]);
 
+const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+app.use("/uploads", express.static(UPLOADS_DIR)); // ← 画像静的配信
+
 const PRODUCTS_PATH     = path.join(DATA_DIR, "products.json");
 const ORDERS_LOG        = path.join(DATA_DIR, "orders.log");
 const RESERVATIONS_LOG  = path.join(DATA_DIR, "reservations.log");
@@ -95,17 +92,10 @@ const SESSIONS_PATH     = path.join(DATA_DIR, "sessions.json");
 const NOTIFY_STATE_PATH = path.join(DATA_DIR, "notify_state.json");
 const STOCK_LOG         = path.join(DATA_DIR, "stock.log");
 
-// ====== 画像アップロード保存先（静的配信） ======
-const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-// /uploads で公開
-app.use("/uploads", express.static(UPLOAD_DIR));
-
-// 初期ファイル生成ヘルパー
+// 初期ファイル
 function initJSON(p, v){ if (!fs.existsSync(p)) fs.writeFileSync(p, JSON.stringify(v, null, 2), "utf8"); }
 function initLog(p){ if (!fs.existsSync(p)) fs.writeFileSync(p, "", "utf8"); }
 
-// 初回 products.json 作成（image は空文字で用意）
 if (!fs.existsSync(PRODUCTS_PATH)) {
   const sample = [
     { id: "kusuke-250",        name: "久助（えびせん）",     price: 250,  stock: 30, desc: "お得な割れせん。", image: "" },
@@ -121,7 +111,6 @@ if (!fs.existsSync(PRODUCTS_PATH)) {
   console.log(`ℹ️ ${PRODUCTS_PATH} を自動作成しました。`);
 }
 
-// その他初期ファイル
 initJSON(ADDRESSES_PATH, {});
 initJSON(SESSIONS_PATH, {});
 initJSON(NOTIFY_STATE_PATH, {});
@@ -131,7 +120,7 @@ initLog(SURVEYS_LOG);
 initLog(MESSAGES_LOG);
 initLog(STOCK_LOG);
 
-// ====== 在庫管理（設定） ======
+// ====== 設定 ======
 const LOW_STOCK_THRESHOLD = 5;
 const PRODUCT_ALIASES = {
   "久助": "kusuke-250",
@@ -139,10 +128,10 @@ const PRODUCT_ALIASES = {
   "kusuke": "kusuke-250",
   "kusuke-250": "kusuke-250",
 };
-// 直接注文の一覧から隠す商品（久助は非表示）
+// 一覧から隠す（久助はテキスト直打ち）
 const HIDE_PRODUCT_IDS = new Set(["kusuke-250"]);
 
-// ====== ユーティリティ ======
+// ====== 小ユーティリティ ======
 const safeReadJSON = (p, fb) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return fb; } };
 const readProducts   = () => safeReadJSON(PRODUCTS_PATH, []);
 const writeProducts  = (data) => fs.writeFileSync(PRODUCTS_PATH, JSON.stringify(data, null, 2), "utf8");
@@ -169,14 +158,19 @@ function findProductById(pid) {
   const idx = products.findIndex(p => p.id === pid);
   return { products, idx, product: idx >= 0 ? products[idx] : null };
 }
-function resolveProductId(token) { return PRODUCT_ALIASES[token] || token; }
-function writeStockLog(entry) { try { fs.appendFileSync(STOCK_LOG, JSON.stringify({ ts:new Date().toISOString(), ...entry }) + "\n", "utf8"); } catch {} }
+function resolveProductId(token) {
+  return PRODUCT_ALIASES[token] || token;
+}
+function writeStockLog(entry) {
+  try { fs.appendFileSync(STOCK_LOG, JSON.stringify({ ts:new Date().toISOString(), ...entry }) + "\n", "utf8"); } catch {}
+}
 function setStock(productId, qty, actor = "system") {
   const q = Math.max(0, Number(qty)||0);
   const { products, idx, product } = findProductById(productId);
   if (idx < 0) throw new Error("product_not_found");
   const before = Number(product.stock || 0);
-  products[idx].stock = q; writeProducts(products);
+  products[idx].stock = q;
+  writeProducts(products);
   writeStockLog({ action:"set", productId, before, after:q, delta:(q-before), actor });
   return { before, after:q };
 }
@@ -186,7 +180,8 @@ function addStock(productId, delta, actor = "system") {
   if (idx < 0) throw new Error("product_not_found");
   const before = Number(product.stock || 0);
   const after = Math.max(0, before + d);
-  products[idx].stock = after; writeProducts(products);
+  products[idx].stock = after;
+  writeProducts(products);
   writeStockLog({ action:"add", productId, before, after, delta:d, actor });
   return { before, after };
 }
@@ -232,8 +227,8 @@ function readLogLines(filePath, limit = 100) {
 
 function jstRangeFromYmd(ymd) {
   const y = Number(ymd.slice(0,4)), m = Number(ymd.slice(4,6))-1, d = Number(ymd.slice(6,8));
-  const startJST = new Date(Date.UTC(y, m, d, -9, 0, 0));
-  const endJST   = new Date(Date.UTC(y, m, d+1, -9, 0, 0));
+  const startJST = new Date(Date.UTC(y, m, d, -9, 0, 0));   // JST 00:00
+  const endJST   = new Date(Date.UTC(y, m, d+1, -9, 0, 0)); // 翌日 JST 00:00
   return { from: startJST.toISOString(), to: endJST.toISOString() };
 }
 function filterByIsoRange(items, getTs, fromIso, toIso) {
@@ -246,7 +241,7 @@ function filterByIsoRange(items, getTs, fromIso, toIso) {
   });
 }
 
-// ====== 配送料 & 代引き ======
+// ====== 送料 & 代引 ======
 const SHIPPING_BY_REGION = {
   "北海道": 1100, "東北": 900, "関東": 800, "中部": 800,
   "近畿": 900, "中国": 1000, "四国": 1000, "九州": 1100, "沖縄": 1400
@@ -256,81 +251,77 @@ const COD_FEE = 330;
 // ====== LINE client ======
 const client = new line.Client(config);
 
-// ====== Flex送信ユーティリティ ======
-function ensureAltText(altText) {
-  const s = String(altText || "").trim();
-  if (!s) throw new Error("altText is required");
-  if (s.length > 400) throw new Error("altText too long (<=400)");
-  return s;
-}
-function validateFlexContents(contents) {
-  if (!contents || typeof contents !== "object") throw new Error("contents must be object");
-  const t = contents.type;
-  if (t !== "bubble" && t !== "carousel") throw new Error('contents.type must be "bubble" or "carousel"');
-  return contents;
-}
-
-// ====== 商品UI（Flex：画像 hero 対応） ======
-function bubbleForProduct(p) {
-  const bodyContents = [
-    { type: "text", text: p.name, weight: "bold", size: "md", wrap: true },
-    { type: "text", text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`, size: "sm", wrap: true },
-    p.desc ? { type: "text", text: p.desc, size: "sm", wrap: true } : { type: "box", layout: "vertical", contents: [] }
-  ];
-
-  const b = {
-    type: "bubble",
-    body: { type: "box", layout: "vertical", spacing: "sm", contents: bodyContents },
-    footer: {
-      type: "box", layout: "horizontal", spacing: "md",
-      contents: [
-        { type: "button", style: "primary",
-          action: { type: "postback", label: "数量を選ぶ", data: `order_qty?${qstr({ id: p.id, qty: 1 })}` } }
-      ]
-    }
-  };
-
-  // 画像があれば hero に掲載
-  if (p.image) {
-    b.hero = {
-      type: "image",
-      url: p.image,           // 例: https://<host>/uploads/xxx.jpg
-      size: "full",
-      aspectRatio: "20:13",   // よくあるサイズ
-      aspectMode: "cover"
-    };
+// ====== 画像アップロード（multer） ======
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    const base = path.basename(file.originalname || "image", ext).replace(/[^a-zA-Z0-9_-]/g, "_");
+    const name = `${Date.now()}_${base}${ext || ".png"}`;
+    cb(null, name);
   }
-  return b;
-}
+});
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+});
 
+// ====== Flex（商品画像対応：hero） ======
 function productsFlex(allProducts) {
-  // 久助は一覧から除外
   const products = (allProducts || []).filter(p => !HIDE_PRODUCT_IDS.has(p.id));
 
-  const bubbles = products.map(bubbleForProduct);
+  const bubbles = products.map(p => {
+    const bodyContents = [
+      { type: "text", text: p.name, weight: "bold", size: "md", wrap: true },
+      { type: "text", text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`, size: "sm", wrap: true },
+      p.desc ? { type: "text", text: p.desc, size: "sm", wrap: true }
+             : { type: "box", layout: "vertical", contents: [] }
+    ];
 
-  // 「その他（自由入力）」：価格入力なし
+    const bubble = {
+      type: "bubble",
+      body: { type: "box", layout: "vertical", spacing: "sm", contents: bodyContents },
+      footer: {
+        type: "box", layout: "horizontal", spacing: "md",
+        contents: [
+          { type: "button", style: "primary",
+            action: { type: "postback", label: "数量を選ぶ", data: `order_qty?${qstr({ id: p.id, qty: 1 })}` } }
+        ]
+      }
+    };
+
+    // 画像があれば hero に表示（1:1 / cover）
+    if (p.image && /^https?:\/\//.test(p.image) || (typeof p.image === "string" && p.image.startsWith("/uploads/"))) {
+      bubble.hero = {
+        type: "image",
+        url: p.image,
+        size: "full",
+        aspectRatio: "1:1",
+        aspectMode: "cover"
+      };
+    }
+    return bubble;
+  });
+
+  // その他（自由入力）
   bubbles.push({
     type: "bubble",
-    body: {
-      type: "box", layout: "vertical", spacing: "sm",
+    body: { type: "box", layout: "vertical", spacing: "sm",
       contents: [
         { type: "text", text: "その他（自由入力）", weight: "bold", size: "md" },
         { type: "text", text: "商品名と個数だけ入力します。価格入力は不要です。", size: "sm", wrap: true }
-      ]
-    },
-    footer: {
-      type: "box", layout: "vertical", spacing: "md",
+      ]},
+    footer: { type: "box", layout: "vertical", spacing: "md",
       contents: [
         { type: "button", style: "primary",
           action: { type: "postback", label: "商品名を入力する", data: "other_start" } },
         { type: "button", style: "secondary",
           action: { type: "postback", label: "← 戻る", data: "order_back" } }
-      ]
-    }
+      ]}
   });
 
-  return { type: "flex", altText: "商品一覧", contents: bubbles.length === 1 ? bubbles[0] : { type: "carousel", contents: bubbles } };
+  return { type: "flex", altText: "商品一覧",
+    contents: bubbles.length === 1 ? bubbles[0] : { type: "carousel", contents: bubbles } };
 }
 
 function qtyFlex(id, qty = 1) {
@@ -406,7 +397,6 @@ function regionFlex(id, qty) {
   };
 }
 
-// ★ 店頭受取＝現金のみ に対応
 function paymentFlex(id, qty, method, region) {
   if (method === "pickup") {
     return {
@@ -504,24 +494,13 @@ function confirmFlex(product, qty, method, region, payment, liffId) {
     });
   }
 
-  const bubble = {
-    type: "bubble",
-    body: { type: "box", layout: "vertical", spacing: "md", contents: bodyContents },
-    footer: { type: "box", layout: "vertical", spacing: "md", contents: footerButtons }
+  return {
+    type: "flex", altText: "注文内容の最終確認",
+    contents: { type: "bubble",
+      body: { type: "box", layout: "vertical", spacing: "md", contents: bodyContents },
+      footer: { type: "box", layout: "vertical", spacing: "md", contents: footerButtons }
+    }
   };
-
-  // 確認画面にも画像があれば hero で表示
-  if (product.image) {
-    bubble.hero = {
-      type: "image",
-      url: product.image,
-      size: "full",
-      aspectRatio: "20:13",
-      aspectMode: "cover"
-    };
-  }
-
-  return { type: "flex", altText: "注文内容の最終確認", contents: bubble };
 }
 
 function reserveOffer(product, needQty, stock) {
@@ -549,9 +528,9 @@ function reserveOffer(product, needQty, stock) {
 // ====== アンケート簡易スタブ ======
 const SURVEY_VERSION = 2;
 const SURVEY_SCHEMA = { q1:{options:[]}, q2:{options:[]}, q3:{options:[]} };
-function labelOf(q, code){ return code; }
+function labelOf(_q, code){ return code; }
 
-// ====== /api: 住所（LIFF） & LIFF ID / whoami ======
+// ====== LIFF / whoami ======
 app.post("/api/liff/address", async (req, res) => {
   try {
     const { userId, name, phone, postal, prefecture, city, address1, address2 } = req.body || {};
@@ -566,123 +545,17 @@ app.post("/api/liff/address", async (req, res) => {
 });
 app.get("/api/liff/config", (_req, res) => res.json({ liffId: LIFF_ID }));
 
-// 利用中の管理者ID（UI の「me」解決や自動入力向け）
+// 任意：操作者の userId を返す（同一オリジン/セッションで認証できる場合に活用）
 app.get("/api/admin/whoami", (req, res) => {
   if (!requireAdmin(req, res)) return;
-  res.json({ ok: true, userId: ADMIN_USER_ID || null });
+  // ここでは簡易に「管理者ID」を返す（本番はCookie/JWTで紐付けが望ましい）
+  return res.json({ ok: true, userId: ADMIN_USER_ID || null });
 });
 
 // ====== 管理API（要トークン） ======
 app.get("/api/admin/ping", (req, res) => { if (!requireAdmin(req, res)) return; res.json({ ok: true, ping: "pong" }); });
 
-// 注文/予約/住所/アンケート一覧
-app.get("/api/admin/orders", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  const limit = Math.min(5000, Number(req.query.limit || 1000));
-  let items = readLogLines(ORDERS_LOG, limit);
-  let range = {};
-  if (req.query.date) range = jstRangeFromYmd(String(req.query.date));
-  if (req.query.from || req.query.to) range = { from: req.query.from, to: req.query.to };
-  if (range.from || range.to) items = filterByIsoRange(items, x => x.ts, range.from, range.to);
-  res.json({ ok: true, items });
-});
-app.get("/api/admin/reservations", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  const limit = Math.min(5000, Number(req.query.limit || 1000));
-  let items = readLogLines(RESERVATIONS_LOG, limit);
-  let range = {};
-  if (req.query.date) range = jstRangeFromYmd(String(req.query.date));
-  if (req.query.from || req.query.to) range = { from: req.query.from, to: req.query.to };
-  if (range.from || range.to) items = filterByIsoRange(items, x => x.ts, range.from, range.to);
-  res.json({ ok: true, items });
-});
-app.get("/api/admin/addresses", (req, res) => { if (!requireAdmin(req, res)) return; res.json({ ok: true, items: readAddresses() }); });
-app.get("/api/admin/surveys", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  const limit = Math.min(5000, Number(req.query.limit || 2000));
-  let items = readLogLines(SURVEYS_LOG, limit);
-  let range = {};
-  if (req.query.date) range = jstRangeFromYmd(String(req.query.date));
-  if (req.query.from || req.query.to) range = { from: req.query.from, to: req.query.to };
-  if (range.from || range.to) items = filterByIsoRange(items, x => x.ts, range.from, range.to);
-  res.json({ ok: true, items });
-});
-app.get("/api/admin/surveys/summary", (req, res) => { if (!requireAdmin(req, res)) return; res.json({ ok: true, version: SURVEY_VERSION, total: 0, summary: { q1:[], q2:[], q3:[] } }); });
-
-// ====== 予約者：順次通知 API ======
-function buildReservationQueue(productId) {
-  const all = readLogLines(RESERVATIONS_LOG, 200000)
-    .filter(r => r && r.productId === productId && r.userId && r.ts)
-    .sort((a,b) => new Date(a.ts) - new Date(b.ts));
-  const seen = new Set(); const ids = [];
-  for (const r of all) { if (!seen.has(r.userId)) { seen.add(r.userId); ids.push(r.userId); } }
-  return ids;
-}
-app.post("/api/admin/reservations/notify-start", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    const pid = resolveProductId(String(req.body?.productId || "").trim());
-    const message = String(req.body?.message || "").trim();
-    if (!pid)  return res.status(400).json({ ok:false, error:"productId required" });
-    if (!message) return res.status(400).json({ ok:false, error:"message required" });
-
-    const userIds = buildReservationQueue(pid);
-    const state = readNotifyState();
-    state[pid] = { idx: 0, userIds, message, updatedAt: new Date().toISOString() };
-    state.__lastPid = pid;
-    writeNotifyState(state);
-
-    if (userIds.length === 0) return res.json({ ok:true, info:"no_reservers", sent:false });
-
-    try {
-      await client.pushMessage(userIds[0], { type:"text", text: message });
-      state[pid].idx = 1; state[pid].updatedAt = new Date().toISOString(); writeNotifyState(state);
-      return res.json({ ok:true, productId: pid, sentTo: userIds[0], index: 1, total: userIds.length });
-    } catch (e) {
-      return res.status(500).json({ ok:false, error:"push_failed", detail: e?.response?.data || String(e) });
-    }
-  } catch (e) {
-    return res.status(500).json({ ok:false, error:String(e) });
-  }
-});
-app.post("/api/admin/reservations/notify-next", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    const pidRaw = (req.body?.productId ?? readNotifyState().__lastPid ?? "").toString().trim();
-    const pid = resolveProductId(pidRaw);
-    const n = Math.max(1, Math.min(100, Number(req.body?.count || 1)));
-    const state = readNotifyState();
-    const st = state[pid];
-    if (!pid || !st) return res.status(400).json({ ok:false, error:"not_started" });
-
-    const { userIds, message } = st; let { idx } = st;
-    const total = userIds.length;
-    if (idx >= total) return res.json({ ok:true, done:true, index: idx, total });
-
-    const sentTo = [];
-    for (let i=0; i<n && idx < total; i++, idx++) {
-      const uid = userIds[idx];
-      try { await client.pushMessage(uid, { type:"text", text: message }); sentTo.push(uid); }
-      catch (e) { console.error("notify-next push error:", e?.response?.data || e); }
-    }
-    state[pid].idx = idx; state[pid].updatedAt = new Date().toISOString(); writeNotifyState(state);
-
-    return res.json({ ok:true, productId: pid, sent: sentTo.length, sentTo, index: idx, total });
-  } catch (e) {
-    return res.status(500).json({ ok:false, error:String(e) });
-  }
-});
-app.post("/api/admin/reservations/notify-stop", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  const pid = resolveProductId(String(req.body?.productId || "").trim());
-  const state = readNotifyState();
-  if (pid && state[pid]) { delete state[pid]; }
-  if (state.__lastPid === pid) delete state.__lastPid;
-  writeNotifyState(state);
-  res.json({ ok:true, stopped: pid || true });
-});
-
-// ====== 在庫 / 商品 API ======
+// 商品一覧
 app.get("/api/admin/products", (req, res) => {
   if (!requireAdmin(req, res)) return;
   const items = readProducts().map(p => ({
@@ -691,6 +564,37 @@ app.get("/api/admin/products", (req, res) => {
   res.json({ ok:true, items });
 });
 
+// 商品画像URLの設定
+app.post("/api/admin/products/image", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const { productId, imageUrl } = req.body || {};
+    if (!productId || !imageUrl) return res.status(400).json({ ok:false, error:"productId and imageUrl required" });
+    const { products, idx, product } = findProductById(productId);
+    if (idx < 0) return res.status(404).json({ ok:false, error:"product_not_found" });
+    products[idx].image = String(imageUrl);
+    writeProducts(products);
+    res.json({ ok:true, product: products[idx] });
+  } catch (e) {
+    res.status(500).json({ ok:false, error:String(e.message||e) });
+  }
+});
+
+// 画像アップロード
+app.post("/api/admin/upload-image", (req, res, next) => {
+  if (!requireAdmin(req, res)) return;
+  next();
+}, upload.single("image"), (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ ok:false, error:"no_file" });
+    const url = `/uploads/${req.file.filename}`;
+    res.json({ ok:true, url, filename: req.file.filename });
+  } catch (e) {
+    res.status(500).json({ ok:false, error:String(e.message||e) });
+  }
+});
+
+// 在庫ログ
 app.get("/api/admin/stock/logs", (req, res) => {
   if (!requireAdmin(req, res)) return;
   const limit = Math.min(10000, Number(req.query.limit || 200));
@@ -716,73 +620,7 @@ app.post("/api/admin/stock/add", (req, res) => {
   }catch(e){ res.status(400).json({ ok:false, error:String(e.message||e) }); }
 });
 
-// ====== 画像アップロード API（★新規） ======
-// 1) multer 設定（拡張子と mimetype を簡易チェック）
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
-  filename: (_req, file, cb) => {
-    const ext = (path.extname(file.originalname) || "").toLowerCase();
-    const base = Date.now() + "-" + Math.random().toString(36).slice(2,8);
-    cb(null, base + ext);
-  }
-});
-const upload = multer({
-  storage,
-  limits: { fileSize: 8 * 1024 * 1024 }, // 8MB
-  fileFilter: (_req, file, cb) => {
-    const ok = /^image\/(png|jpe?g|webp)$/.test(file.mimetype);
-    cb(ok ? null : new Error("unsupported_type"));
-  }
-}).single("image");
-
-// 2) POST /api/admin/upload-image  （FormData: image, productId?）
-//    返り値: { ok, url, file, productId? }
-app.post("/api/admin/upload-image", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  upload(req, res, (err) => {
-    if (err) return res.status(400).json({ ok:false, error: String(err.message || err) });
-    if (!req.file) return res.status(400).json({ ok:false, error: "file_required" });
-
-    // 公開URL（例: https://.../uploads/xxxx.jpg）
-    const url = `/uploads/${req.file.filename}`;
-
-    // productId が指定されていれば products.json に反映
-    const pid = resolveProductId(String(req.body?.productId || "").trim());
-    if (pid) {
-      const { products, idx } = findProductById(pid);
-      if (idx >= 0) {
-        products[idx].image = url;
-        writeProducts(products);
-        return res.json({ ok:true, url, file:req.file.filename, productId: pid, saved: true });
-      }
-      // productId が見つからなければその旨だけ返す
-      return res.json({ ok:true, url, file:req.file.filename, productId: pid, saved: false, note: "product_not_found" });
-    }
-    return res.json({ ok:true, url, file:req.file.filename });
-  });
-});
-
-// 3) URL で画像をセットしたい場合（ドラッグ&ドロップ以外でも）
-//    POST /api/admin/products/set-image { productId, image }
-//    image は絶対URL/相対URL どちらでもOK（例: /uploads/xxx.jpg）
-app.post("/api/admin/products/set-image", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try{
-    const pid = resolveProductId(String(req.body?.productId || "").trim());
-    const image = String(req.body?.image || "").trim();
-    if (!pid) return res.status(400).json({ ok:false, error: "productId required" });
-    if (!image) return res.status(400).json({ ok:false, error: "image required" });
-    const { products, idx } = findProductById(pid);
-    if (idx < 0) return res.status(404).json({ ok:false, error: "product_not_found" });
-    products[idx].image = image;
-    writeProducts(products);
-    res.json({ ok:true, productId: pid, image });
-  }catch(e){
-    res.status(500).json({ ok:false, error: String(e.message||e) });
-  }
-});
-
-// ====== 予約者に一括連絡 API ======
+// 予約者に一括連絡
 app.post("/api/admin/reservations/notify", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try{
@@ -799,8 +637,12 @@ app.post("/api/admin/reservations/notify", async (req, res) => {
     let sent = 0;
     for (let i=0;i<userIds.length;i+=chunkSize) {
       const ids = userIds.slice(i, i+chunkSize);
-      try { await client.multicast(ids, [{ type:"text", text: msg }]); sent += ids.length; }
-      catch (e) { console.error("notify reservations multicast error:", e?.response?.data || e); }
+      try {
+        await client.multicast(ids, [{ type:"text", text: msg }]);
+        sent += ids.length;
+      } catch (e) {
+        console.error("notify reservations multicast error:", e?.response?.data || e);
+      }
     }
     return res.json({ ok:true, productId: pid, requested:userIds.length, sent });
   }catch(e){
@@ -808,7 +650,88 @@ app.post("/api/admin/reservations/notify", async (req, res) => {
   }
 });
 
-// ====== Insight API ======
+// 予約者：順次通知
+function buildReservationQueue(productId) {
+  const all = readLogLines(RESERVATIONS_LOG, 200000)
+    .filter(r => r && r.productId === productId && r.userId && r.ts)
+    .sort((a,b) => new Date(a.ts) - new Date(b.ts));
+  const seen = new Set();
+  const ids  = [];
+  for (const r of all) {
+    if (!seen.has(r.userId)) { seen.add(r.userId); ids.push(r.userId); }
+  }
+  return ids;
+}
+app.post("/api/admin/reservations/notify-start", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const pid = resolveProductId(String(req.body?.productId || "").trim());
+    const message = String(req.body?.message || "").trim();
+    if (!pid)  return res.status(400).json({ ok:false, error:"productId required" });
+    if (!message) return res.status(400).json({ ok:false, error:"message required" });
+
+    const userIds = buildReservationQueue(pid);
+    const state = readNotifyState();
+    state[pid] = { idx: 0, userIds, message, updatedAt: new Date().toISOString() };
+    state.__lastPid = pid;
+    writeNotifyState(state);
+
+    if (userIds.length === 0) return res.json({ ok:true, info:"no_reservers", sent:false });
+
+    try {
+      await client.pushMessage(userIds[0], { type:"text", text: message });
+      state[pid].idx = 1;
+      state[pid].updatedAt = new Date().toISOString();
+      writeNotifyState(state);
+      return res.json({ ok:true, productId: pid, sentTo: userIds[0], index: 1, total: userIds.length });
+    } catch (e) {
+      return res.status(500).json({ ok:false, error:"push_failed", detail: e?.response?.data || String(e) });
+    }
+  } catch (e) {
+    return res.status(500).json({ ok:false, error:String(e) });
+  }
+});
+app.post("/api/admin/reservations/notify-next", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const pidRaw = (req.body?.productId ?? readNotifyState().__lastPid ?? "").toString().trim();
+    const pid = resolveProductId(pidRaw);
+    const n = Math.max(1, Math.min(100, Number(req.body?.count || 1)));
+    const state = readNotifyState();
+    const st = state[pid];
+    if (!pid || !st) return res.status(400).json({ ok:false, error:"not_started" });
+
+    const { userIds, message } = st;
+    let { idx } = st;
+    const total = userIds.length;
+    if (idx >= total) return res.json({ ok:true, done:true, index: idx, total });
+
+    const sentTo = [];
+    for (let i=0; i<n && idx < total; i++, idx++) {
+      const uid = userIds[idx];
+      try { await client.pushMessage(uid, { type:"text", text: message }); sentTo.push(uid); }
+      catch (e) { console.error("notify-next push error:", e?.response?.data || e); }
+    }
+    state[pid].idx = idx;
+    state[pid].updatedAt = new Date().toISOString();
+    writeNotifyState(state);
+
+    return res.json({ ok:true, productId: pid, sent: sentTo.length, sentTo, index: idx, total });
+  } catch (e) {
+    return res.status(500).json({ ok:false, error:String(e) });
+  }
+});
+app.post("/api/admin/reservations/notify-stop", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const pid = resolveProductId(String(req.body?.productId || "").trim());
+  const state = readNotifyState();
+  if (pid && state[pid]) { delete state[pid]; }
+  if (state.__lastPid === pid) delete state.__lastPid;
+  writeNotifyState(state);
+  res.json({ ok:true, stopped: pid || true });
+});
+
+// Insight API（フォロワー数）
 function yyyymmddJST(offsetDays = -1) {
   const now = new Date();
   const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
@@ -851,7 +774,7 @@ app.get("/admin/audience-count", (req, res) => {
   res.redirect(301, "/api/admin/audience-count" + qs);
 });
 
-// ====== ユニーク送信者数（Active Chatters） & メッセージログ ======
+// アクティブユーザー数 & メッセージログ
 app.get("/api/admin/active-chatters", (req, res) => {
   if (!requireAdmin(req, res)) return;
 
@@ -863,7 +786,7 @@ app.get("/api/admin/active-chatters", (req, res) => {
   if (req.query.from || req.query.to) range = { from: req.query.from, to: req.query.to };
   if (range.from || range.to) items = filterByIsoRange(items, x => x.ts, range.from, range.to);
 
-  items = items.filter(x => x && x.type === "text" && x.userId);
+  items = items.filter(x => x && x.type && x.userId);
   const set = new Set(items.map(x => x.userId));
   const listFlag = String(req.query.list || "false").toLowerCase() === "true";
 
@@ -884,21 +807,23 @@ app.get("/api/admin/messages", (req, res) => {
   res.json({ ok:true, items, path: MESSAGES_LOG });
 });
 
-// ====== Flex配信（"me" 解決にも対応） ======
-function expandUserIds(rawIds) {
-  const ids = Array.isArray(rawIds) ? rawIds : [];
-  const out = [];
-  for (const id of ids) {
-    if (!id) continue;
-    if (id === "me" && ADMIN_USER_ID) out.push(ADMIN_USER_ID);
-    else out.push(id);
-  }
-  return Array.from(new Set(out));
+// ====== セグメント/ブロードキャスト（Flex） ======
+function ensureAltText(altText) {
+  const s = String(altText || "").trim();
+  if (!s) throw new Error("altText is required");
+  if (s.length > 400) throw new Error("altText too long (<=400)");
+  return s;
+}
+function validateFlexContents(contents) {
+  if (!contents || typeof contents !== "object") throw new Error("contents must be object");
+  const t = contents.type;
+  if (t !== "bubble" && t !== "carousel") throw new Error('contents.type must be "bubble" or "carousel"');
+  return contents;
 }
 
 app.post("/api/admin/segment/send", async (req, res) => {
   if (!requireAdmin(req, res)) return;
-  const userIds = expandUserIds(req.body?.userIds);
+  const userIds = Array.isArray(req.body?.userIds) ? uniq(req.body.userIds) : [];
   const message = (req.body?.message || "").trim();
 
   if (userIds.length === 0) return res.status(400).json({ ok:false, error:"no_users" });
@@ -927,7 +852,7 @@ app.post("/api/admin/segment/send", async (req, res) => {
 app.post("/api/admin/segment/send-flex", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
-    const userIds = expandUserIds(req.body?.userIds);
+    const userIds = Array.isArray(req.body?.userIds) ? Array.from(new Set(req.body.userIds.filter(Boolean))) : [];
     const altText = ensureAltText(req.body?.altText);
     const contents = validateFlexContents(req.body?.contents);
     if (userIds.length === 0) return res.status(400).json({ ok:false, error:"no_users" });
@@ -952,11 +877,11 @@ app.post("/api/admin/segment/send-flex", async (req, res) => {
   }
 });
 
-app.post("/api/admin/broadcast-flex", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
+app.post("/api/admin/broadcast-flex", async (_req, res) => {
+  if (!requireAdmin(_req, res)) return;
   try {
-    const altText = ensureAltText(req.body?.altText);
-    const contents = validateFlexContents(req.body?.contents);
+    const altText = ensureAltText(_req.body?.altText);
+    const contents = validateFlexContents(_req.body?.contents);
     await client.broadcast([{ type: "flex", altText, contents }]);
     return res.json({ ok:true });
   } catch (e) {
@@ -995,7 +920,7 @@ async function handleEvent(ev) {
       const text = (ev.message.text || "").trim();
       const t = text.replace(/\s+/g, " ").trim();
 
-      // 久助（テキスト直打ちフロー）
+      // 久助（テキスト直打ち）
       const kusukeRe = /^久助(?:\s+(\d+))?$/i;
       const km = kusukeRe.exec(text);
       if (km) {
@@ -1048,7 +973,7 @@ async function handleEvent(ev) {
         return;
       }
 
-      // 管理者テキストコマンド
+      // 管理者テキストコマンド（在庫・予約連絡）
       if (ev.source?.userId && ADMIN_USER_ID && ev.source.userId === ADMIN_USER_ID) {
         if (t === "在庫一覧") {
           const items = readProducts().map(p => `・${p.name}（${p.id}）：${Number(p.stock||0)}個`).join("\n");
@@ -1169,7 +1094,8 @@ async function handleEvent(ev) {
           const st = state[pid];
           if (!pid || !st) { await client.replyMessage(ev.replyToken, { type:"text", text:"先に「予約連絡開始 {商品} {本文}」を実行してください。" }); return; }
 
-          const { userIds, message } = st; let { idx } = st;
+          const { userIds, message } = st;
+          let { idx } = st;
           const total = userIds.length;
           if (idx >= total) { await client.replyMessage(ev.replyToken, { type:"text", text:`完了済み：${idx}/${total}` }); return; }
           let sent = 0;
@@ -1256,7 +1182,7 @@ async function handleEvent(ev) {
           const parts = String(id).split(":");
           const encName = parts[1] || "";
           const priceStr = parts[2] || "0";
-          product = { id, name: decodeURIComponent(encName || "その他"), price: Number(priceStr || 0), image: "" };
+          product = { id, name: decodeURIComponent(encName || "その他"), price: Number(priceStr || 0) };
         } else {
           const products = readProducts();
           product = products.find(p => p.id === id);
@@ -1279,7 +1205,7 @@ async function handleEvent(ev) {
           const parts = String(id).split(":");
           const encName = parts[1] || "";
           const priceStr = parts[2] || "0";
-          product = { id, name: decodeURIComponent(encName || "その他"), price: Number(priceStr || 0), stock: Infinity, image: "" };
+          product = { id, name: decodeURIComponent(encName || "その他"), price: Number(priceStr || 0), stock: Infinity };
           idx = -1;
         } else {
           if (idx === -1) return client.replyMessage(ev.replyToken, { type: "text", text: "商品が見つかりませんでした。" });
@@ -1326,7 +1252,7 @@ async function handleEvent(ev) {
           `数量：${need}個`,
           `小計：${yen(subtotal)}`,
           `送料：${yen(regionFee)}`,
-          `代引き手数料：${yen(codFee)}`,
+          `代引き手数料：${yen(cOD_FEE)}`.replace("cOD_FEE","COD_FEE"), // safe format
           `合計：${yen(total)}`
         ];
         if (method === "delivery") {
@@ -1344,12 +1270,22 @@ async function handleEvent(ev) {
         if (method === "delivery" && payment === "bank") {
           const lines = [];
           lines.push("▼ 振込先");
-          if (BANK_INFO) { lines.push(BANK_INFO); }
-          else { lines.push("（銀行口座情報が未設定です。管理者に連絡してください。）"); }
-          if (BANK_NOTE) { lines.push(""); lines.push(BANK_NOTE); }
-          lines.push(""); lines.push("※ご入金確認後の発送となります。");
-          try { await client.pushMessage(ev.source.userId, { type:"text", text: lines.join("\n") }); }
-          catch (e) { console.error("bank info send error:", e?.response?.data || e); }
+          if (BANK_INFO) {
+            lines.push(BANK_INFO);
+          } else {
+            lines.push("（銀行口座情報が未設定です。管理者に連絡してください。）");
+          }
+          if (BANK_NOTE) {
+            lines.push("");
+            lines.push(BANK_NOTE);
+          }
+          lines.push("");
+          lines.push("※ご入金確認後の発送となります。");
+          try {
+            await client.pushMessage(ev.source.userId, { type:"text", text: lines.join("\n") });
+          } catch (e) {
+            console.error("bank info send error:", e?.response?.data || e);
+          }
         }
 
         const adminMsg = [
@@ -1357,7 +1293,7 @@ async function handleEvent(ev) {
           `ユーザーID：${ev.source?.userId || ""}`,
           `商品：${product.name}`,
           `数量：${need}個`,
-          `小計：${yen(subtotal)} / 送料：${yen(regionFee)} / 代引：${yen(codFee)} / 合計：${yen(total)}`,
+          `小計：${yen(subtotal)} / 送料：${yen(regionFee)} / 代引：${yen(COD_FEE)} / 合計：${yen(total)}`,
           `受取：${method}${method === "delivery" ? `（${region}）` : ""} / 支払：${payment}`,
           (addr
             ? `住所：${addr.postal} ${addr.prefecture}${addr.city}${addr.address1}${addr.address2 ? " " + addr.address2 : ""}\n氏名：${addr.name} / TEL：${addr.phone}`
@@ -1388,121 +1324,23 @@ async function handleEvent(ev) {
         return;
       }
 
-      // 簡易アンケート（スタブ）
-      if (d.startsWith("survey_q2?")) { return client.replyMessage(ev.replyToken, { type:"text", text:"アンケートQ2（準備中）" }); }
-      if (d.startsWith("survey_q3?")) { return client.replyMessage(ev.replyToken, { type:"text", text:"アンケートQ3（準備中）" }); }
-      if (d.startsWith("survey_submit?")) { await client.replyMessage(ev.replyToken, { type:"text", text:"アンケート送信ありがとうございました（準備中）。" }); return; }
+      // 簡易アンケート
+      if (d.startsWith("survey_q2?")) {
+        return client.replyMessage(ev.replyToken, { type:"text", text:"アンケートQ2（準備中）" });
+      }
+      if (d.startsWith("survey_q3?")) {
+        return client.replyMessage(ev.replyToken, { type:"text", text:"アンケートQ3（準備中）" });
+      }
+      if (d.startsWith("survey_submit?")) {
+        await client.replyMessage(ev.replyToken, { type:"text", text:"アンケート送信ありがとうございました（準備中のため簡易応答）。" });
+        return;
+      }
     }
   } catch (err) {
     console.error("handleEvent error:", err?.response?.data || err?.stack || err);
     if (ev.replyToken) { try { await client.replyMessage(ev.replyToken, { type: "text", text: "エラーが発生しました。もう一度お試しください。" }); } catch {} }
   }
 }
-
-// ====== シンプルな管理UI（おまけ） ======
-app.get("/admin", (_req, res) => {
-  const html = `
-<!doctype html>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Admin — 画像アップロード対応</title>
-<style>
-  body{font-family:system-ui, sans-serif;max-width:980px;margin:24px auto;padding:0 16px;}
-  h1{font-size:20px;margin:0 0 12px}
-  section{border:1px solid #ddd;border-radius:12px;padding:16px;margin:16px 0}
-  label{display:block;margin:8px 0 4px}
-  input[type=text],textarea{width:100%;padding:8px;border:1px solid #ccc;border-radius:8px;font-family:inherit}
-  button{padding:10px 14px;border:0;border-radius:10px;cursor:pointer}
-  .row{display:flex;gap:8px;flex-wrap:wrap}
-  .row > *{flex:1}
-  pre{background:#f7f7f7;padding:12px;border-radius:8px;overflow:auto}
-  .muted{color:#666}
-  .drop{border:2px dashed #bbb;padding:20px;border-radius:10px;text-align:center}
-</style>
-<h1>管理画面（画像アップロード → Flex hero 反映）</h1>
-
-<section>
-  <div class="row">
-    <div>
-      <label>Admin Token（.env: ADMIN_API_TOKEN）</label>
-      <input id="token" type="text" placeholder="例：sk_live_xxx">
-      <small class="muted">全APIで使用します。</small>
-    </div>
-    <div>
-      <label>productId</label>
-      <input id="pid" type="text" placeholder="例：original-set-2000">
-    </div>
-  </div>
-
-  <div class="drop" id="drop">
-    ここに画像をドラッグ＆ドロップ（png / jpg / webp / 8MBまで）
-  </div>
-  <div class="row" style="margin-top:8px">
-    <input id="file" type="file" accept="image/*">
-    <button id="upload">アップロード</button>
-  </div>
-  <div id="result" class="muted"></div>
-</section>
-
-<section>
-  <button id="load">products を取得</button>
-  <pre id="products">（未取得）</pre>
-</section>
-
-<script>
-const $ = (id)=>document.getElementById(id);
-function log(m){ $('result').textContent = m; }
-
-async function uploadFile(f){
-  const t = $('token').value.trim();
-  if(!t) return alert('ADMIN_API_TOKEN を入れてください');
-  if(!f) return alert('ファイルを選択してください');
-  const fd = new FormData();
-  fd.append('image', f);
-  const pid = $('pid').value.trim();
-  if(pid) fd.append('productId', pid);
-  const r = await fetch('/api/admin/upload-image', {
-    method:'POST',
-    headers: { 'Authorization': 'Bearer '+t },
-    body: fd
-  });
-  const j = await r.json();
-  if(!r.ok || !j.ok) throw new Error((j && (j.error||j.note)) || ('HTTP '+r.status));
-  return j;
-}
-
-$('upload').onclick = async ()=>{
-  try{
-    const f = $('file').files[0];
-    const j = await uploadFile(f);
-    log('OK: '+JSON.stringify(j));
-  }catch(e){ log('NG: '+e.message); }
-};
-
-const box = $('drop');
-box.addEventListener('dragover', (e)=>{ e.preventDefault(); box.style.borderColor='#88c';});
-box.addEventListener('dragleave', ()=>{ box.style.borderColor='#bbb';});
-box.addEventListener('drop', async (e)=>{
-  e.preventDefault(); box.style.borderColor='#bbb';
-  const f = e.dataTransfer.files[0];
-  try{
-    const j = await uploadFile(f);
-    log('OK: '+JSON.stringify(j));
-  }catch(err){ log('NG: '+err.message); }
-});
-
-$('load').onclick = async ()=>{
-  try{
-    const t = $('token').value.trim();
-    const r = await fetch('/api/admin/products', { headers:{ 'Authorization':'Bearer '+t } });
-    const j = await r.json();
-    $('products').textContent = JSON.stringify(j, null, 2);
-  }catch(e){ $('products').textContent = 'ERR '+e.message; }
-};
-</script>
-`;
-  res.type("html").send(html);
-});
 
 // ====== Health ======
 app.get("/health", (_req, res) => res.status(200).type("text/plain").send("OK"));
@@ -1514,6 +1352,7 @@ app.get("/api/health", (_req, res) => {
     time: new Date().toISOString(),
     node: process.version,
     dataDir: DATA_DIR,
+    uploadsDir: UPLOADS_DIR,
     files: {
       products: PRODUCTS_PATH,
       ordersLog: ORDERS_LOG,
@@ -1524,7 +1363,6 @@ app.get("/api/health", (_req, res) => {
       sessions: SESSIONS_PATH,
       notifyState: NOTIFY_STATE_PATH,
       stockLog: STOCK_LOG,
-      uploadDir: UPLOAD_DIR,
     },
     env: {
       PORT: !!process.env.PORT,
@@ -1545,8 +1383,7 @@ app.get("/api/health", (_req, res) => {
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server started on port ${PORT}`);
   console.log(`   DATA_DIR: ${DATA_DIR}`);
-  console.log(`   Uploads:  /uploads  ← ${UPLOAD_DIR}`);
+  console.log(`   UPLOADS:  /uploads -> ${UPLOADS_DIR}`);
   console.log(`   Webhook:  POST /webhook`);
-  console.log(`   Admin UI: GET  /admin`);
   console.log(`   LIFF address page: /public/liff-address.html  (open via https://liff.line.me/${LIFF_ID})`);
 });

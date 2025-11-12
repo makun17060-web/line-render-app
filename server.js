@@ -142,15 +142,7 @@ initLog(STOCK_LOG);
 
 
 
-// multer 設定
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || "").toLowerCase();
-    const base = String(Date.now()) + "-" + Math.random().toString(36).slice(2, 8);
-    cb(null, base + ext);
-  }
-});
+
 const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } }); // 最大5MB
 
 // ====== 在庫・別名 ======

@@ -2,47 +2,38 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>LINE 管理画面（画像ドラッグ&ドロップ対応）</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LINE 管理画面</title>
   <style>
-    :root{
-      --bg:#0b1020; --panel:#131a2e; --line:#243057; --muted:#7b88b8; --head:#9fb1ff;
-      --text:#e6ebff; --btn:#6aa3ff; --btn2:#26345d;
-    }
-    *{box-sizing:border-box}
-    body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans JP",sans-serif}
-    header{padding:16px 20px;border-bottom:1px solid #1f2744;background:linear-gradient(180deg,#121a33,#0b1020);position:sticky;top:0;z-index:1}
+    body{margin:0;background:#0b1020;color:#e6ebff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans JP",sans-serif}
+    header{padding:16px 20px;border-bottom:1px solid #1f2744;background:linear-gradient(180deg,#121a33,#0b1020);position:sticky;top:0;z-index:10}
     h1{margin:0;font-size:18px}
-    .muted{color:var(--muted);font-size:12px}
     main{padding:20px;display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
-    .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
-    .card h2{margin:0 0 8px;font-size:16px;color:var(--head)}
+    .card{background:#131a2e;border:1px solid #243057;border-radius:14px;padding:14px}
+    .card h2{margin:0 0 8px;font-size:16px;color:#9fb1ff}
     .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
-    input,textarea{background:#0f1630;color:var(--text);border:1px solid #2a3760;border-radius:10px;padding:10px 12px;outline:none;width:100%}
+    input,textarea{background:#0f1630;color:#e6ebff;border:1px solid #2a3760;border-radius:10px;padding:10px 12px;outline:none;width:100%}
     textarea{min-height:100px}
-    button{background:var(--btn);color:#06102b;border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}
-    button.secondary{background:var(--btn2);color:#cfe0ff;border:1px solid #3a4a7b}
-    pre{white-space:pre-wrap;word-break:break-all;background:#0f1630;color:#cfe0ff;border:1px solid #2a3760;border-radius:10px;padding:10px;max-height:360px;overflow:auto}
+    button{background:#6aa3ff;color:#06102b;border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}
+    button.secondary{background:#26345d;color:#cfe0ff;border:1px solid #3a4a7b}
+    pre{white-space:pre-wrap;word-break:break-all;background:#0f1630;color:#cfe0ff;border:1px solid #2a3760;border-radius:10px;padding:10px;max-height:320px;overflow:auto}
+    .muted{color:#7b88b8;font-size:12px}
     .pill{display:inline-block;background:#20305c;color:#cfe0ff;border:1px solid #35477b;padding:3px 8px;border-radius:999px;font-size:12px}
-    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
-    .prod{border:1px solid #2a3760;border-radius:12px;padding:10px;background:#0f1630}
-    .prod h3{margin:0 0 6px;font-size:15px}
-    .mini{font-size:12px;color:var(--muted)}
-    .drop{border:2px dashed #35528f;border-radius:12px;padding:8px;text-align:center;background:#0b1433;cursor:pointer}
-    .drop.drag{background:#0d1b4f}
-    .thumb{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:8px;border:1px solid #2a3760;background:#0b1433}
-    .row tight{gap:6px}
-    .ok{color:#7fffd4}
-    .ng{color:#ff8aa0}
-    code.inline{background:#0b1433;padding:2px 6px;border-radius:6px;border:1px solid #2a3760}
+    .grid{display:grid;gap:10px}
+    .pgrid{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+    .pitem{border:1px dashed #3a4a7b;border-radius:12px;padding:10px;background:#0f1630}
+    .pitem h3{margin:0 0 6px;font-size:14px;color:#cfe0ff}
+    .drop{border:2px dashed #5c75c9;border-radius:10px;padding:10px;text-align:center;background:#0d1430;color:#9fb1ff}
+    .thumb{width:100%;aspect-ratio:1/1;background:#0b1020;border:1px solid #2a3760;border-radius:10px;display:flex;align-items:center;justify-content:center;overflow:hidden;margin-bottom:8px}
+    .thumb img{width:100%;height:100%;object-fit:cover}
+    .mini{font-size:12px}
   </style>
 </head>
 <body>
   <header>
-    <h1>LINE 管理画面（配信・セグメント・ログ・画像アップロード）</h1>
-    <div class="muted">このページ：<code>/public/admin.html</code>（例：<code>https://&lt;your-app&gt;.onrender.com/public/admin.html</code>）</div>
+    <h1>LINE 管理画面（配信・セグメント・ログ・画像）</h1>
+    <div class="muted">URL：<code>/public/admin.html</code></div>
   </header>
-
   <main>
     <!-- 認証・状態 -->
     <section class="card">
@@ -55,26 +46,29 @@
       <pre id="healthOut" hidden></pre>
     </section>
 
-    <!-- 商品（画像管理 + Flex生成/配信） -->
+    <!-- 画像管理（ドラッグ＆ドロップ） -->
     <section class="card">
-      <h2>商品管理（画像ドラッグ&ドロップ対応）</h2>
+      <h2>商品画像 管理（ドラッグ＆ドロップ / 選択）</h2>
       <div class="row">
         <button id="btnLoadProducts">/api/admin/products を取得</button>
         <span id="prodCount" class="muted"></span>
       </div>
+      <div class="grid">
+        <div class="muted">商品ごとのドロップゾーンに画像をドロップ、または「画像を選ぶ」からアップロードすると、その商品の <code>image</code> が設定されます（5MBまで）。</div>
+        <div id="prodGrid" class="pgrid"></div>
+      </div>
+    </section>
 
-      <div id="productsGrid" class="grid"><!-- ここに商品カードが並びます --></div>
-
+    <!-- 商品 → Flex生成/配信 -->
+    <section class="card">
+      <h2>商品 → リッチ（Flex）自動生成・配信</h2>
       <div class="row"><input id="hideIds" type="text" placeholder="一覧から隠すID（例: kusuke-250,foo-123）"></div>
       <div class="row"><input id="altText" type="text" placeholder="altText（例：商品一覧）"></div>
       <div class="row">
         <button id="btnBuildFlex">Flex を生成（プレビュー）</button>
       </div>
       <pre id="flexPreview" hidden></pre>
-      <div class="row">
-        <input id="userIds" list="uidList" type="text" placeholder="セグメント userId（カンマ区切り）。空なら broadcast">
-        <datalist id="uidList"></datalist>
-      </div>
+      <div class="row"><input id="userIds" type="text" placeholder="セグメント userId（カンマ区切り）。空なら broadcast"></div>
       <div class="row"><button id="btnSendFlex">この Flex を配信</button><span id="sendFlexRes" class="muted"></span></div>
     </section>
 
@@ -82,52 +76,18 @@
     <section class="card">
       <h2>テキスト配信（セグメント / ブロードキャスト）</h2>
       <div class="row"><textarea id="textMessage" placeholder="配信する本文"></textarea></div>
-      <div class="row">
-        <input id="textUserIds" list="uidList" type="text" placeholder="userId（カンマ区切り）。空なら broadcast">
-      </div>
+      <div class="row"><input id="textUserIds" type="text" placeholder="userId（カンマ区切り）。空なら broadcast"></div>
       <div class="row"><button id="btnSendText">送信</button><span id="sendTextRes" class="muted"></span></div>
     </section>
-<!-- 商品画像（ドラッグ＆ドロップ対応） -->
-<section class="card">
-  <h2>商品画像（ドラッグ＆ドロップで追加）</h2>
-  <div class="row">
-    <button id="btnReloadProductsForImages">商品一覧を再取得</button>
-    <span class="muted">画像と商品IDを紐づけます（ローカル保存）</span>
-  </div>
 
-  <div class="row">
-    <select id="imageTarget" title="画像を紐づける商品ID">
-      <option value="">（先に商品を取得してください）</option>
-    </select>
-  </div>
-
-  <div id="dropZone"
-       style="border:1px dashed #3a4a7b;border-radius:10px;padding:20px;text-align:center">
-    ここに画像をドラッグ＆ドロップ（またはクリック）<br>
-    <span class="muted">JPG/PNG（最大5MB程度目安）</span>
-    <input id="filePick" type="file" accept="image/*" hidden>
-  </div>
-
-  <div class="row">
-    <button class="secondary" id="btnClearImage">この商品の画像を解除</button>
-  </div>
-
-  <div class="muted">登録済みサムネイル（クリックでコピー）</div>
-  <div id="thumbGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px"></div>
-</section>
-
-    
     <!-- ユーザー収集 -->
     <section class="card">
-      <h2>userId 収集（直近アクティブ）</h2>
-      <div class="row tight">
-        <button id="btnActiveUsers">直近アクティブユーザー取得</button>
-        <span class="muted">/api/admin/active-chatters?list=true</span>
-      </div>
-      <pre id="usersOut"></pre>
+      <h2>userId 収集</h2>
+      <div class="row"><button id="btnActiveUsers">直近アクティブユーザー取得</button><span class="muted">/api/admin/active-chatters?list=true</span></div>
+      <pre id="usersOut" hidden></pre>
     </section>
 
-    <!-- メッセージログ -->
+    <!-- メッセージログ（tail相当） -->
     <section class="card">
       <h2>メッセージログ（/data/messages.log）</h2>
       <div class="row">
@@ -140,6 +100,7 @@
     </section>
   </main>
 
+  <!-- ※admin.js は <script>タグ無しの純JSファイルです -->
   <script src="/public/admin.js"></script>
 </body>
 </html>

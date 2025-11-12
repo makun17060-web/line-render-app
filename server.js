@@ -15,6 +15,31 @@ const axios = require("axios");
 const multer = require("multer");
 
 const app = express();
+// ====== 画像アップロードAPI ======
+const multer = require("multer");
+
+// アップロード先フォルダを指定（存在しない場合は自動で作成）
+const uploadDir = path.join(__dirname, "public/uploads");
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+// ファイル保存設定
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    const name = path.basename(file.originalname, ext);
+    cb(null, name + "-" + Date.now() + ext);
+  },
+});
+const upload = multer({ storage });
+
+// POST /api/upload-image
+app.post("/api/upload-image", upload.single("image"), (req, res) => {
+  if (!req.file) return res.status(400).json({ ok: false, error: "no file" });
+  const url = `/uploads/${req.file.filename}`;
+  res.json({ ok: true, url });
+});
+
 
 // ====== 環境変数 ======
 const PORT = Number(process.env.PORT || 3000);
@@ -115,6 +140,23 @@ initLog(RESERVATIONS_LOG);
 initLog(SURVEYS_LOG);
 initLog(MESSAGES_LOG);
 initLog(STOCK_LOG);
+
+// 画像アップロード先（公開用）
+const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+// /uploads 配下を公開（https://<host>/uploads/... で見える）
+app.use("/uploads", express.static(UPLOAD_DIR));
+
+// multer 設定
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    const base = String(Date.now()) + "-" + Math.random().toString(36).slice(2, 8);
+    cb(null, base + ext);
+  }
+});
+const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } }); // 最大5MB
 
 // ====== 在庫・別名 ======
 const LOW_STOCK_THRESHOLD = 5;
@@ -275,24 +317,21 @@ function normalizeUserIds(list){
   return Array.from(new Set(mapped));
 }
 
-// ====== 商品UI（Flex） ======
 function productsFlex(allProducts) {
+  // ★ 久助は一覧から除外（既存仕様維持）
   const products = (allProducts || []).filter(p => !HIDE_PRODUCT_IDS.has(p.id));
+
   const bubbles = products.map(p => {
-    const body = {
-      type: "box", layout: "vertical", spacing: "sm",
-      contents: [
-        { type: "text", text: p.name, weight: "bold", size: "md", wrap: true },
-        { type: "text", text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`, size: "sm", wrap: true },
-        p.desc ? { type: "text", text: p.desc, size: "sm", wrap: true } : { type: "box", layout: "vertical", contents: [] }
-      ]
-    };
-    const bubble = {
+    const base = {
       type: "bubble",
-      ...(p.imageUrl ? {
-        hero: { type: "image", url: p.imageUrl, size: "full", aspectRatio: "20:13", aspectMode: "cover" }
-      } : {}),
-      body,
+      body: {
+        type: "box", layout: "vertical", spacing: "sm",
+        contents: [
+          { type: "text", text: p.name, weight: "bold", size: "md", wrap: true },
+          { type: "text", text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`, size: "sm", wrap: true },
+          p.desc ? { type: "text", text: p.desc, size: "sm", wrap: true } : { type: "box", layout: "vertical", contents: [] }
+        ]
+      },
       footer: {
         type: "box", layout: "horizontal", spacing: "md",
         contents: [
@@ -301,10 +340,20 @@ function productsFlex(allProducts) {
         ]
       }
     };
-    return bubble;
+    // 画像があれば hero を付ける
+    if (p.image) {
+      base.hero = {
+        type: "image",
+        url: p.image,
+        size: "full",
+        aspectRatio: "1:1",     // 正方形推奨（異形でもOK）
+        aspectMode: "cover"
+      };
+    }
+    return base;
   });
 
-  // 「その他（自由入力）」：★価格入力なし版
+  // 「その他（自由入力）」は画像なし
   bubbles.push({
     type: "bubble",
     body: {
@@ -325,7 +374,11 @@ function productsFlex(allProducts) {
     }
   });
 
-  return { type: "flex", altText: "商品一覧", contents: bubbles.length === 1 ? bubbles[0] : { type: "carousel", contents: bubbles } };
+  return {
+    type: "flex",
+    altText: "商品一覧",
+    contents: bubbles.length === 1 ? bubbles[0] : { type: "carousel", contents: bubbles }
+  };
 }
 
 function qtyFlex(id, qty = 1) {

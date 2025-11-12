@@ -3,7 +3,7 @@
 // 必須 .env: LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, LIFF_ID, (ADMIN_API_TOKEN または ADMIN_CODE)
 // 任意 .env: PORT, ADMIN_USER_ID, MULTICAST_USER_IDS, BANK_INFO, BANK_NOTE, DATA_DIR（任意で上書き）
 
-"use strict";
+"use strict";画像アップロードAPI
 
 require("dotenv").config();
 
@@ -15,9 +15,10 @@ const axios = require("axios");
 
 
 const app = express();
-// ====== 画像アップロードAPI（LINE用リサイズ対応） ======
+// ====== 画像アップロードAPI（LINE向け 800px以内・WebP化） ======
 const multer = require("multer");
-const sharp = require("sharp"); // ← 追加
+const sharp = require("sharp");
+
 const uploadDir = path.join(__dirname, "public/uploads");
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
@@ -25,34 +26,39 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname);
-    const name = path.basename(file.originalname, ext);
-    cb(null, `${name}-${Date.now()}${ext}`);
+    const base = path.basename(file.originalname, ext).replace(/[^\w.-]/g, "_");
+    cb(null, `${base}-${Date.now()}${ext.toLowerCase()}`);
   },
 });
 const upload = multer({
   storage,
-  limits: { fileSize: 2 * 1024 * 1024 } // 最大2MB
+  limits: { fileSize: 5 * 1024 * 1024 } // 最大5MB
 });
 
 app.post("/api/upload-image", upload.single("image"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ ok: false, error: "no file" });
 
-    const inputPath = req.file.path;
-    const ext = path.extname(req.file.filename);
-    const base = path.basename(req.file.filename, ext);
-    const outputPath = path.join(uploadDir, `${base}-resized${ext}`);
+    const inputPath = req.file.path; // 例: /public/uploads/xxx-123.jpg
+    const base = path.basename(inputPath, path.extname(inputPath));
+    const outputPath = path.join(uploadDir, `${base}-800.webp`); // 常に別名・WebP化
 
-    // LINE用に自動リサイズ（最大800x800）
+    // 800×800 以内に収め、WebPで圧縮保存
     await sharp(inputPath)
-      .resize(800, 800, { fit: "inside" })
+      .resize(800, 800, { fit: "inside", withoutEnlargement: true })
+      .webp({ quality: 82 })
       .toFile(outputPath);
 
+    // 元ファイルは削除（残したいならコメントアウト）
+    try { fs.unlinkSync(inputPath); } catch {}
+
+    // 返すのは「リサイズ済みの」URLだけ
     const url = `/uploads/${path.basename(outputPath)}`;
-    res.json({ ok: true, url });
+    // キャッシュ対策でクエリを付与（ブラウザに古いのを掴まれない）
+    return res.json({ ok: true, url: `${url}?v=${Date.now()}` });
   } catch (e) {
     console.error("upload resize error:", e);
-    res.status(500).json({ ok: false, error: e.message });
+    return res.status(500).json({ ok: false, error: e.message });
   }
 });
 

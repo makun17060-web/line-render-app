@@ -1,19 +1,20 @@
 {
-  "name": "ebisen-line-bot",
+  "name": "ebisen-shop-server",
   "version": "1.0.0",
-  "description": "えびせんべい直販 LINE Bot + 管理画面 + アップロード対応",
+  "description": "えびせんべい LINE Bot サーバー",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
-  "engines": {
-    "node": ">=18.x"
-  },
   "dependencies": {
-    "@line/bot-sdk": "^7.5.2",
-    "axios": "^1.7.1",
+    "axios": "^1.6.8",
     "dotenv": "^16.3.1",
     "express": "^4.21.1",
-    "multer": "^1.4.5-lts.1"
+    "fs-extra": "^11.2.0",
+    "multer": "^1.4.5-lts.1",
+    "@line/bot-sdk": "^7.5.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

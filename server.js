@@ -267,22 +267,6 @@ const COD_FEE = 330;
 // ====== LINE client ======
 const client = new line.Client(config);
 
-// ====== アップロード（画像） ======
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || "").toLowerCase() || ".bin";
-    const base = Date.now() + "-" + Math.random().toString(36).slice(2, 8);
-    cb(null, base + ext);
-  }
-});
-
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
-  fileFilter: (_req, file, cb) => {
-    const ok = /^image\/(png|jpe?g|gif|webp|svg\+xml)$/.test(file.mimetype);
-    cb(ok ? null : new Error("unsupported_file_type"), ok);
-  }
-});
 
 // ====== Flex送信ユーティリティ ======
 function ensureAltText(altText) {

@@ -1,10 +1,10 @@
 (function(){
-  // ===== 共通ユーティリティ =====
-  const $  = (sel)=>document.querySelector(sel);
-  const show = (el, data)=>{ if(!el) return; el.hidden=false; el.textContent = typeof data==='string' ? data : JSON.stringify(data,null,2); };
-  const auth = ()=>({ 'Authorization':'Bearer ' + (($('#token')?.value)||'').trim(), 'Content-Type':'application/json' });
+  const $ = (sel)=>document.querySelector(sel);
+  const $$ = (sel)=>Array.from(document.querySelectorAll(sel));
+  const show = (el, data)=>{ el.hidden=false; el.textContent = typeof data==='string' ? data : JSON.stringify(data,null,2); };
+  const auth = ()=>({ 'Authorization':'Bearer ' + ($('#token').value||'').trim(), 'Content-Type':'application/json' });
 
-  // ===== 認証・状態 =====
+  // ========= 認証・状態 =========
   $('#btnPing').onclick = async ()=>{
     try{
       const r = await fetch('/api/admin/ping', { headers: auth() });
@@ -19,8 +19,149 @@
     }catch(e){ show($('#healthOut'), String(e)); }
   };
 
-  // ===== 商品取得 → Flex生成 =====
+  // ========= 商品取得・表示 =========
   let products = [];
+  const grid = $('#productsGrid');
+
+  function yen(n){ return Number(n||0).toLocaleString('ja-JP')+'円'; }
+
+  function renderProducts(){
+    grid.innerHTML = '';
+    products.forEach(p=>{
+      const card = document.createElement('div');
+      card.className = 'prod';
+      card.dataset.id = p.id;
+
+      const imgUrl = p.image || '';
+      card.innerHTML = `
+        <h3>${p.name}</h3>
+        <div class="mini">ID: <code class="inline">${p.id}</code></div>
+        <div class="mini">価格：${yen(p.price)}　在庫：${p.stock ?? 0}</div>
+        <img class="thumb" alt="image" src="${imgUrl || ''}" ${imgUrl?'':'style="display:none"'} />
+        <div class="drop" tabindex="0">ここに画像をドラッグ＆ドロップ、またはクリックして選択</div>
+        <div class="row">
+          <input class="imgUrl" type="text" placeholder="画像URL（手動で貼る場合）" value="${imgUrl}">
+        </div>
+        <div class="row">
+          <button class="secondary saveImg">画像URLを保存</button>
+          <span class="mini status"></span>
+        </div>
+      `;
+      grid.appendChild(card);
+
+      const drop = card.querySelector('.drop');
+      const thumb = card.querySelector('.thumb');
+      const urlInput = card.querySelector('.imgUrl');
+      const status = card.querySelector('.status');
+      const saveBtn = card.querySelector('.saveImg');
+
+      // 画像プレビューの更新
+      const applyThumb = (url)=>{
+        if (url) {
+          thumb.src = url;
+          thumb.style.display = '';
+          urlInput.value = url;
+        }
+      };
+
+      // 直接URL保存
+      saveBtn.onclick = async ()=>{
+        const url = (urlInput.value||'').trim();
+        if(!url) return alert('画像URLを入力してください');
+        status.textContent = '保存中...';
+        try{
+          const r = await fetch('/api/admin/products/set-image',{
+            method:'POST',
+            headers: auth(),
+            body: JSON.stringify({ productId: p.id, image: url })
+          });
+          const j = await r.json();
+          if(!j.ok) throw new Error(j.error||'save_failed');
+          status.textContent = '✓ 保存しました'; status.className='mini ok';
+          applyThumb(url);
+          // ローカルの products も更新
+          const idx = products.findIndex(x=>x.id===p.id);
+          if (idx>=0) products[idx].image = url;
+        }catch(e){
+          status.textContent = '✗ 保存失敗: '+e.message; status.className='mini ng';
+        }
+      };
+
+      // D&D/クリック → アップロード
+      const pickFile = ()=>{
+        const inp = document.createElement('input');
+        inp.type = 'file';
+        inp.accept = 'image/*';
+        inp.onchange = ()=>{ if(inp.files && inp.files[0]) uploadFile(inp.files[0]); };
+        inp.click();
+      };
+
+      const uploadFile = async (file)=>{
+        if(!file) return;
+        const t = ($('#token').value||'').trim();
+        if(!t) return alert('ADMIN_API_TOKEN を入力してください');
+
+        status.textContent = 'アップロード中...'; status.className='mini';
+        try{
+          const fd = new FormData();
+          fd.append('image', file);
+          fd.append('productId', p.id);
+
+          const r = await fetch('/api/admin/upload-image', {
+            method:'POST',
+            headers: { 'Authorization':'Bearer '+t }, // FormData のときは Content-Type 付けない
+            body: fd
+          });
+          // たまに HTML が返ってきて JSON.parse が落ちることがあるので保険
+          const text = await r.text();
+          let j;
+          try{ j = JSON.parse(text); }catch{
+            throw new Error('サーバーがJSONを返しませんでした: '+text.slice(0,120));
+          }
+          if(!j.ok) throw new Error(j.error||'upload_failed');
+
+          const url = j.url; // 例：/uploads/abc123.png
+          applyThumb(url);
+          urlInput.value = url;
+
+          // 画像URLを products に保存
+          const r2 = await fetch('/api/admin/products/set-image',{
+            method:'POST',
+            headers: auth(),
+            body: JSON.stringify({ productId: p.id, image: url })
+          });
+          const j2 = await r2.json();
+          if(!j2.ok) throw new Error(j2.error||'save_failed');
+
+          status.textContent = '✓ 画像を登録しました'; status.className='mini ok';
+
+          // ローカルの products も更新
+          const idx = products.findIndex(x=>x.id===p.id);
+          if (idx>=0) products[idx].image = url;
+
+        }catch(e){
+          status.textContent = '✗ アップロード失敗: '+e.message; status.className='mini ng';
+        }
+      };
+
+      // D&Dイベント
+      const enter = (e)=>{ e.preventDefault(); drop.classList.add('drag'); };
+      const over  = (e)=>{ e.preventDefault(); };
+      const leave = (e)=>{ drop.classList.remove('drag'); };
+      const dropH = (e)=>{
+        e.preventDefault(); drop.classList.remove('drag');
+        const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (f) uploadFile(f);
+      };
+      drop.addEventListener('dragenter', enter);
+      drop.addEventListener('dragover', over);
+      drop.addEventListener('dragleave', leave);
+      drop.addEventListener('drop', dropH);
+      drop.addEventListener('click', pickFile);
+      drop.addEventListener('keypress', (e)=>{ if(e.key==='Enter' || e.key===' ') pickFile(); });
+    });
+  }
+
   $('#btnLoadProducts').onclick = async ()=>{
     try{
       const r = await fetch('/api/admin/products', { headers: auth() });
@@ -28,28 +169,37 @@
       if (!j.ok) return alert('取得失敗: '+(j.error||''));
       products = j.items||[];
       $('#prodCount').textContent = `取得 ${products.length} 件`;
+      renderProducts();
+      // ついでに直近アクティブユーザーも候補に入れる（datalist）
+      try{ await loadActiveUsersToDatalist(); }catch{}
     }catch(e){ alert('ERR '+e.message); }
   };
 
-  function yen(n){ return Number(n||0).toLocaleString('ja-JP')+'円'; }
-  function qstr(obj){ return Object.entries(obj).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&'); }
-
+  // ========= Flex生成 =========
   function buildFlex(){
     const hideRaw = ($('#hideIds').value||'').split(',').map(s=>s.trim()).filter(Boolean);
     const visible = products.filter(p=>!hideRaw.includes(p.id));
-
-    const bubbles = visible.map(p=>({
-      type:'bubble',
-      body:{ type:'box', layout:'vertical', spacing:'sm', contents:[
-        { type:'text', text:p.name, weight:'bold', size:'md', wrap:true },
-        { type:'text', text:`価格：${yen(p.price)}　在庫：${p.stock??0}`, size:'sm', wrap:true },
-        p.desc ? { type:'text', text:p.desc, size:'sm', wrap:true } : { type:'box', layout:'vertical', contents:[] }
-      ]},
-      footer:{ type:'box', layout:'horizontal', spacing:'md', contents:[
-        // ★ これが「数量を選ぶ」ポストバック（意味：数量選択画面へ遷移トリガー）
-        { type:'button', style:'primary', action:{ type:'postback', label:'数量を選ぶ', data:`order_qty?${qstr({ id:p.id, qty:1 })}` } }
-      ]}
-    }));
+    const bubbles = visible.map(p=>{
+      const bodyContents = [];
+      if (p.image) {
+        // 画像を hero に
+        // hero は body 外のトップ画像。代わりに body に image を入れてもOK
+      }
+      const bubble = {
+        type:'bubble',
+        hero: p.image ? { type:'image', url:p.image, size:'full', aspectRatio:'16:9', aspectMode:'cover' } : undefined,
+        body:{ type:'box', layout:'vertical', spacing:'sm', contents:[
+          { type:'text', text:p.name, weight:'bold', size:'md', wrap:true },
+          { type:'text', text:`価格：${yen(p.price)}　在庫：${p.stock??0}`, size:'sm', wrap:true },
+          p.desc ? { type:'text', text:p.desc, size:'sm', wrap:true } : { type:'box', layout:'vertical', contents:[] }
+        ]},
+        footer:{ type:'box', layout:'horizontal', spacing:'md', contents:[
+          { type:'button', style:'primary', action:{ type:'postback', label:'数量を選ぶ', data:`order_qty?id=${encodeURIComponent(p.id)}&qty=1` } }
+        ]}
+      };
+      if (!p.image) delete bubble.hero;
+      return bubble;
+    });
 
     // その他
     bubbles.push({
@@ -76,7 +226,7 @@
     show($('#flexPreview'), buildFlex());
   };
 
-  // ===== 配信（Flex） =====
+  // ========= 配信 =========
   $('#btnSendFlex').onclick = async ()=>{
     if (!products.length) return alert('先に商品を取得してください');
     const payload = buildFlex();
@@ -89,7 +239,6 @@
     $('#sendFlexRes').textContent = j.ok ? 'OK' : ('NG: ' + (j.error||''));
   };
 
-  // ===== テキスト配信 =====
   $('#btnSendText').onclick = async ()=>{
     const msg = ($('#textMessage').value||'').trim();
     if (!msg) return alert('本文が空です');
@@ -99,7 +248,7 @@
       const j = await r.json();
       $('#sendTextRes').textContent = j.ok ? 'OK' : ('NG: ' + (j.error||''));      
     } else {
-      // テキストを Flex に包んで broadcast
+      // broadcast は Flex に包んで送る
       const r = await fetch('/api/admin/broadcast-flex', {
         method:'POST', headers: auth(),
         body: JSON.stringify({ altText:'テキスト', contents:{ type:'bubble', body:{ type:'box', layout:'vertical', contents:[{ type:'text', text: msg, wrap:true }] } } })
@@ -109,34 +258,25 @@
     }
   };
 
-  // ===== 直近アクティブユーザー（一覧＆datalist候補） =====
-  async function loadActiveUsers(){
-    try{
-      const r = await fetch('/api/admin/active-chatters?list=true', { headers: auth() });
-      const j = await r.json();
-      // サーバー実装が users: [ "Uxxxx", ... ] を返す前提
-      const users = Array.isArray(j.users) ? j.users : [];
-      show($('#usersOut'), users);
-      // datalist を更新
-      const dl = $('#userIdList');
-      if (dl){
-        dl.innerHTML = '';
-        users.forEach(u=>{
-          const opt = document.createElement('option');
-          opt.value = u;
-          dl.appendChild(opt);
-        });
-      }
-      return users;
-    }catch(e){
-      show($('#usersOut'), '取得失敗：'+e.message);
-      return [];
+  // ========= 直近アクティブユーザー（datalist化も） =========
+  async function loadActiveUsersToDatalist(){
+    const r = await fetch('/api/admin/active-chatters?list=true', { headers: auth() });
+    const j = await r.json();
+    const pre = $('#usersOut');
+    show(pre, j);
+    const dl = $('#uidList');
+    dl.innerHTML = '';
+    if (Array.isArray(j.users)) {
+      j.users.forEach(uid=>{
+        const opt = document.createElement('option');
+        opt.value = uid;
+        dl.appendChild(opt);
+      });
     }
   }
-  $('#btnActiveUsers').onclick = loadActiveUsers;
-  $('#btnLoadActive').onclick  = loadActiveUsers;
+  $('#btnActiveUsers').onclick = loadActiveUsersToDatalist;
 
-  // ===== メッセージログ（tail） =====
+  // ========= メッセージログ =========
   async function loadLog(){
     const r = await fetch('/api/admin/messages?limit=200', { headers: auth() });
     const j = await r.json();
@@ -150,91 +290,82 @@
     if (auto){ loadLog(); timer = setInterval(loadLog, 10000); } else { clearInterval(timer); }
   };
 
-  // ===== userId 自動入力（URL / localStorage / LIFF / whoami） =====
-  const PARAM_NAMES = ["userId", "uid", "me"];
-  const LS_KEY = "admin_user_ids";
-  const setIfExists = (sel, value) => { const el = $(sel); if (el && value) el.value = value; };
-  const saveLocal = (value) => { try { localStorage.setItem(LS_KEY, value); } catch(_){} };
-  const loadLocal = () => { try { return localStorage.getItem(LS_KEY) || ""; } catch(_) { return ""; } };
-  const applyUserIds = (ids) => {
-    setIfExists("#userIds", ids);
-    setIfExists("#textUserIds", ids);
-    saveLocal(ids);
-    const sendFlexRes = $('#sendFlexRes'); if (sendFlexRes && ids) sendFlexRes.textContent = `userId 自動入力: ${ids}`;
-    const sendTextRes = $('#sendTextRes'); if (sendTextRes && ids) sendTextRes.textContent = `userId 自動入力: ${ids}`;
-  };
-  const getFromUrl = () => {
-    const u = new URL(location.href);
-    for (const key of PARAM_NAMES) {
-      if (u.searchParams.has(key)) {
-        const v = u.searchParams.get(key);
-        if (key === "me" && (v === "1" || v === "true")) return "me";
-        if (v) return v.trim();
+  // ========= userId 自動入力（URL/Local/LIFF/whoami） =========
+  (function(){
+    const USER_IDS_INPUT_SELECTOR = "#userIds";
+    const TEXT_USER_IDS_INPUT_SELECTOR = "#textUserIds";
+    const PARAM_NAMES = ["userId","uid","me"];
+    const LS_KEY = "admin_user_ids";
+    const setIfExists = (sel, v)=>{ const el=$(sel); if(el&&v) el.value=v; };
+    const saveLocal = (v)=>{ try{ localStorage.setItem(LS_KEY, v); }catch{} };
+    const loadLocal = ()=>{ try{ return localStorage.getItem(LS_KEY)||""; }catch{ return ""; } };
+    const getFromUrl = ()=>{
+      const u = new URL(location.href);
+      for (const k of PARAM_NAMES){
+        if (u.searchParams.has(k)){
+          const v = u.searchParams.get(k);
+          if (k==="me" && (v==="1"||v==="true")) return "me";
+          if (v) return v.trim();
+        }
       }
-    }
-    const hash = (u.hash || "").replace(/^#/, "");
-    const parts = new URLSearchParams(hash);
-    for (const key of PARAM_NAMES) {
-      if (parts.has(key)) {
-        const v = parts.get(key);
-        if (key === "me" && (v === "1" || v === "true")) return "me";
-        if (v) return v.trim();
+      const hash=(u.hash||"").replace(/^#/,"");
+      const parts=new URLSearchParams(hash);
+      for(const k of PARAM_NAMES){
+        if(parts.has(k)){
+          const v=parts.get(k);
+          if (k==="me" && (v==="1"||v==="true")) return "me";
+          if (v) return v.trim();
+        }
       }
-    }
-    return "";
-  };
-  const tryLiff = async () => {
-    const liffId = document.body?.dataset?.liffId;
-    if (!liffId) return "";
-    try {
-      if (typeof window.liff === "undefined") {
-        await new Promise((resolve, reject) => {
-          const s = document.createElement("script");
-          s.src = "https://static.line-scdn.net/liff/edge/2/sdk.js";
-          s.onload = resolve; s.onerror = reject;
-          document.head.appendChild(s);
-        });
-      }
-      await liff.init({ liffId });
-      if (!liff.isLoggedIn()) { liff.login({}); return ""; }
-      try { const prof = await liff.getProfile(); if (prof?.userId) return prof.userId; } catch(_){}
-      try { const token = liff.getDecodedIDToken(); if (token?.sub) return token.sub; } catch(_){}
-    } catch(e) { console.warn("LIFF 取得失敗:", e); }
-    return "";
-  };
-  const tryWhoAmI = async () => {
-    try {
-      const res = await fetch("/api/admin/whoami", { credentials: "include" });
-      if (!res.ok) return "";
-      const j = await res.json();
-      if (j && j.userId) return j.userId;
-    } catch(_) {}
-    return "";
-  };
+      return "";
+    };
+    const applyUserIds = (ids)=>{
+      setIfExists(USER_IDS_INPUT_SELECTOR, ids);
+      setIfExists(TEXT_USER_IDS_INPUT_SELECTOR, ids);
+      saveLocal(ids);
+      const a=$('#sendFlexRes'); if (a&&ids) a.textContent=`userId 自動入力: ${ids}`;
+      const b=$('#sendTextRes'); if (b&&ids) b.textContent=`userId 自動入力: ${ids}`;
+    };
+    const tryLiff = async ()=>{
+      const liffId = document.body?.dataset?.liffId;
+      if(!liffId) return "";
+      try{
+        if(typeof window.liff==="undefined"){
+          await new Promise((resolve,reject)=>{
+            const s=document.createElement("script"); s.src="https://static.line-scdn.net/liff/edge/2/sdk.js";
+            s.onload=resolve; s.onerror=reject; document.head.appendChild(s);
+          });
+        }
+        await liff.init({ liffId });
+        if(!liff.isLoggedIn()){ liff.login({}); return ""; }
+        try{ const prof=await liff.getProfile(); if(prof?.userId) return prof.userId; }catch{}
+        try{ const tok=liff.getDecodedIDToken(); if(tok?.sub) return tok.sub; }catch{}
+      }catch{ }
+      return "";
+    };
+    const tryWhoAmI = async ()=>{
+      try{
+        const r=await fetch("/api/admin/whoami",{ credentials:"include" });
+        if(!r.ok) return "";
+        const j=await r.json();
+        if(j?.userId) return j.userId;
+      }catch{}
+      return "";
+    };
 
-  document.addEventListener("DOMContentLoaded", async ()=>{
-    // URL 優先
-    let candidate = getFromUrl();
-    if (candidate) { applyUserIds(candidate === "me" ? "me" : candidate); }
-    else {
-      candidate = loadLocal();
-      if (candidate) applyUserIds(candidate);
-      const fromLiff = await tryLiff(); if (fromLiff) { applyUserIds(fromLiff); }
-      else {
-        const fromApi = await tryWhoAmI(); if (fromApi) applyUserIds(fromApi);
-      }
-    }
-  });
+    document.addEventListener("DOMContentLoaded", async ()=>{
+      let c=getFromUrl();
+      if(c){ applyUserIds(c==="me"?"me":c); return; }
+      c=loadLocal();
+      if(c){ applyUserIds(c); }
+      const fromLiff=await tryLiff(); if(fromLiff){ applyUserIds(fromLiff); return; }
+      const fromApi=await tryWhoAmI(); if(fromApi){ applyUserIds(fromApi); return; }
 
-  // 入力修正→保存
-  const hookInput = (sel) => {
-    const el = $(sel); if (!el) return;
-    el.addEventListener("input", () => saveLocal(el.value.trim()));
-  };
-  hookInput("#userIds");
-  hookInput("#textUserIds");
+      // ここまでで入らなければ手入力/候補（datalist）で補助
+    });
 
-  // 「自分（me）」ボタン
-  $('#btnFillMe').onclick = ()=> applyUserIds('me');
-
+    // 入力を保存
+    const hook=(sel)=>{ const el=$(sel); if(!el) return; el.addEventListener("input", ()=>saveLocal(el.value.trim())); };
+    hook(USER_IDS_INPUT_SELECTOR); hook(TEXT_USER_IDS_INPUT_SELECTOR);
+  })();
 })();

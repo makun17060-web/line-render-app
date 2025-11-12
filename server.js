@@ -120,6 +120,34 @@ app.use("/api", express.json({ limit: "2mb" }));
 app.use("/public", express.static(path.join(__dirname, "public"))); // admin.html など
 app.use("/uploads", express.static(UPLOADS_DIR, { maxAge: "7d", immutable: true })); // 画像配信
 app.get("/", (_req, res) => res.status(200).send("OK"));
+// ====== 画像アップロード機能 ======
+const multer = require("multer");
+
+const uploadDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+// 保存設定（ファイル名を日付＋オリジナル名に）
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    const unique = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(null, unique + path.extname(file.originalname));
+  },
+});
+
+const upload = multer({ storage });
+
+// 静的配信（画像URL: /uploads/xxxx.jpg）
+app.use("/uploads", express.static(uploadDir));
+
+// アップロードAPI（管理画面から呼び出し）
+app.post("/api/admin/upload", upload.single("file"), (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  if (!req.file) return res.status(400).json({ ok: false, error: "no_file" });
+
+  const url = `/uploads/${req.file.filename}`;
+  res.json({ ok: true, file: req.file.filename, url });
+});
 
 // ====== LIFF （軽い情報） ======
 app.get("/api/liff/config", (_req, res) => res.json({ liffId: LIFF_ID }));

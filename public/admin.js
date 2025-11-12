@@ -1,371 +1,1552 @@
-(function(){
-  const $ = (sel)=>document.querySelector(sel);
-  const $$ = (sel)=>Array.from(document.querySelectorAll(sel));
-  const show = (el, data)=>{ el.hidden=false; el.textContent = typeof data==='string' ? data : JSON.stringify(data,null,2); };
-  const auth = ()=>({ 'Authorization':'Bearer ' + ($('#token').value||'').trim(), 'Content-Type':'application/json' });
+// server.js — フル機能版 + 画像アップロード対応（multer）
+// - Flex配信（商品画像 hero 表示対応）
+// - 「その他＝価格入力なし」
+// - 久助専用テキスト購入フロー（一覧からは非表示）
+// - 予約者連絡 API/コマンド（順次 / 一括）
+// - 店頭受取（現金のみ）Fix
+// - 銀行振込案内（コメント対応）
+// - Persistent Disk 対応（/data を優先）
+// - ヘルスチェック拡充
+// - 画像アップロード: POST /api/admin/upload-image  （要トークン）
+//   - フィールド名: image（ファイル） / productId（任意）
+//   - 保存先: <DATA_DIR>/uploads  を /uploads に静的配信
+//   - 自動で products.json の該当商品に image URL を保存（productId があれば）
+//
+// 必須 .env: LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, LIFF_ID, (ADMIN_API_TOKEN または ADMIN_CODE)
+// 任意 .env: PORT, ADMIN_USER_ID, MULTICAST_USER_IDS, BANK_INFO, BANK_NOTE, DATA_DIR
 
-  // ========= 認証・状態 =========
-  $('#btnPing').onclick = async ()=>{
-    try{
-      const r = await fetch('/api/admin/ping', { headers: auth() });
-      const j = await r.json();
-      alert(j.ok ? 'OK' : ('NG: '+(j.error||'')));
-    }catch(e){ alert('ERR '+e); }
+"use strict";
+
+require("dotenv").config();
+
+const fs = require("fs");
+const path = require("path");
+const express = require("express");
+const line = require("@line/bot-sdk");
+const axios = require("axios");
+const multer = require("multer"); // ★ 追加：画像アップロード
+
+const app = express();
+
+// ====== 環境変数 ======
+const PORT = Number(process.env.PORT || 3000);
+const LIFF_ID = (process.env.LIFF_ID || "").trim();
+const ADMIN_USER_ID = (process.env.ADMIN_USER_ID || "").trim();
+const MULTICAST_USER_IDS = (process.env.MULTICAST_USER_IDS || "")
+  .split(",").map(s => s.trim()).filter(Boolean);
+
+const ADMIN_API_TOKEN_ENV = (process.env.ADMIN_API_TOKEN || "").trim(); // 推奨
+const ADMIN_CODE_ENV      = (process.env.ADMIN_CODE || "").trim();      // 互換（クエリ ?code= でも可）
+
+// ★ 銀行振込案内（任意）
+const BANK_INFO = (process.env.BANK_INFO || "").trim();
+const BANK_NOTE = (process.env.BANK_NOTE || "").trim();
+
+const config = {
+  channelAccessToken: (process.env.LINE_CHANNEL_ACCESS_TOKEN || "").trim(),
+  channelSecret:      (process.env.LINE_CHANNEL_SECRET || "").trim(),
+};
+
+if (!config.channelAccessToken || !config.channelSecret || !LIFF_ID || (!ADMIN_API_TOKEN_ENV && !ADMIN_CODE_ENV)) {
+  console.error(
+`ERROR: .env の必須値が不足しています。
+  - LINE_CHANNEL_ACCESS_TOKEN
+  - LINE_CHANNEL_SECRET
+  - LIFF_ID
+  - （ADMIN_API_TOKEN または ADMIN_CODE のどちらか）`
+  );
+  process.exit(1);
+}
+
+// ====== ミドルウェア / 静的配信 ======
+app.use("/api", express.json(), express.urlencoded({ extended: true }));
+app.use("/public", express.static(path.join(__dirname, "public")));
+app.get("/", (_req, res) => res.status(200).send("OK"));
+
+// ====== Persistent Disk / データパス ======
+function pickWritableDir(candidates) {
+  for (const dir of candidates) {
+    if (!dir) continue;
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.accessSync(dir, fs.constants.W_OK);
+      return dir;
+    } catch {}
+  }
+  const fallback = path.join(__dirname, "data");
+  fs.mkdirSync(fallback, { recursive: true });
+  return fallback;
+}
+
+const DATA_DIR = pickWritableDir([
+  (process.env.DATA_DIR || "").trim(),
+  (process.env.RENDER_DATA_DIR || "").trim(),
+  "/data",
+  path.join(__dirname, "data"),
+]);
+
+const PRODUCTS_PATH     = path.join(DATA_DIR, "products.json");
+const ORDERS_LOG        = path.join(DATA_DIR, "orders.log");
+const RESERVATIONS_LOG  = path.join(DATA_DIR, "reservations.log");
+const ADDRESSES_PATH    = path.join(DATA_DIR, "addresses.json");
+const SURVEYS_LOG       = path.join(DATA_DIR, "surveys.log");
+const MESSAGES_LOG      = path.join(DATA_DIR, "messages.log");
+const SESSIONS_PATH     = path.join(DATA_DIR, "sessions.json");
+const NOTIFY_STATE_PATH = path.join(DATA_DIR, "notify_state.json");
+const STOCK_LOG         = path.join(DATA_DIR, "stock.log");
+
+// ====== 画像アップロード保存先（静的配信） ======
+const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+// /uploads で公開
+app.use("/uploads", express.static(UPLOAD_DIR));
+
+// 初期ファイル生成ヘルパー
+function initJSON(p, v){ if (!fs.existsSync(p)) fs.writeFileSync(p, JSON.stringify(v, null, 2), "utf8"); }
+function initLog(p){ if (!fs.existsSync(p)) fs.writeFileSync(p, "", "utf8"); }
+
+// 初回 products.json 作成（image は空文字で用意）
+if (!fs.existsSync(PRODUCTS_PATH)) {
+  const sample = [
+    { id: "kusuke-250",        name: "久助（えびせん）",     price: 250,  stock: 30, desc: "お得な割れせん。", image: "" },
+    { id: "nori-akasha-340",   name: "のりあかしゃ",         price: 340,  stock: 20, desc: "海苔の風味豊かなえびせんべい", image: "" },
+    { id: "uzu-akasha-340",    name: "うずあかしゃ",         price: 340,  stock: 10, desc: "渦を巻いたえびせんべい", image: "" },
+    { id: "shio-akasha-340",   name: "潮あかしゃ",           price: 340,  stock: 5,  desc: "えびせんべいにあおさをトッピング", image: "" },
+    { id: "matsu-akasha-340",  name: "松あかしゃ",           price: 340,  stock: 30, desc: "海老をたっぷり使用した高級えびせんべい", image: "" },
+    { id: "iso-akasha-340",    name: "磯あかしゃ",           price: 340,  stock: 30, desc: "海老せんべいに高級海苔をトッピング", image: "" },
+    { id: "goma-akasha-340",   name: "ごまあかしゃ",         price: 340,  stock: 30, desc: "海老せんべいに風味豊かなごまをトッピング", image: "" },
+    { id: "original-set-2000", name: "磯屋オリジナルセット", price: 2000, stock: 30, desc: "6袋をセットにしたオリジナル", image: "" },
+  ];
+  fs.writeFileSync(PRODUCTS_PATH, JSON.stringify(sample, null, 2), "utf8");
+  console.log(`ℹ️ ${PRODUCTS_PATH} を自動作成しました。`);
+}
+
+// その他初期ファイル
+initJSON(ADDRESSES_PATH, {});
+initJSON(SESSIONS_PATH, {});
+initJSON(NOTIFY_STATE_PATH, {});
+initLog(ORDERS_LOG);
+initLog(RESERVATIONS_LOG);
+initLog(SURVEYS_LOG);
+initLog(MESSAGES_LOG);
+initLog(STOCK_LOG);
+
+// ====== 在庫管理（設定） ======
+const LOW_STOCK_THRESHOLD = 5;
+const PRODUCT_ALIASES = {
+  "久助": "kusuke-250",
+  "くすけ": "kusuke-250",
+  "kusuke": "kusuke-250",
+  "kusuke-250": "kusuke-250",
+};
+// 直接注文の一覧から隠す商品（久助は非表示）
+const HIDE_PRODUCT_IDS = new Set(["kusuke-250"]);
+
+// ====== ユーティリティ ======
+const safeReadJSON = (p, fb) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return fb; } };
+const readProducts   = () => safeReadJSON(PRODUCTS_PATH, []);
+const writeProducts  = (data) => fs.writeFileSync(PRODUCTS_PATH, JSON.stringify(data, null, 2), "utf8");
+const readAddresses  = () => safeReadJSON(ADDRESSES_PATH, {});
+const writeAddresses = (data) => fs.writeFileSync(ADDRESSES_PATH, JSON.stringify(data, null, 2), "utf8");
+const readSessions   = () => safeReadJSON(SESSIONS_PATH, {});
+const writeSessions  = (s) => fs.writeFileSync(SESSIONS_PATH, JSON.stringify(s, null, 2), "utf8");
+const readNotifyState  = () => safeReadJSON(NOTIFY_STATE_PATH, {});
+const writeNotifyState = (s) => fs.writeFileSync(NOTIFY_STATE_PATH, JSON.stringify(s, null, 2), "utf8");
+
+const yen = (n) => `${Number(n || 0).toLocaleString("ja-JP")}円`;
+const qstr = (obj) => Object.entries(obj).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
+const parse = (data) => {
+  const s = data && data.includes("=") ? data : "";
+  const o = {};
+  s.split("&").forEach(kv => { const [k, v] = kv.split("="); if (k) o[decodeURIComponent(k)] = decodeURIComponent(v || ""); });
+  return o;
+};
+const uniq = (arr) => Array.from(new Set((arr||[]).filter(Boolean)));
+
+// ====== 在庫ユーティリティ ======
+function findProductById(pid) {
+  const products = readProducts();
+  const idx = products.findIndex(p => p.id === pid);
+  return { products, idx, product: idx >= 0 ? products[idx] : null };
+}
+function resolveProductId(token) { return PRODUCT_ALIASES[token] || token; }
+function writeStockLog(entry) { try { fs.appendFileSync(STOCK_LOG, JSON.stringify({ ts:new Date().toISOString(), ...entry }) + "\n", "utf8"); } catch {} }
+function setStock(productId, qty, actor = "system") {
+  const q = Math.max(0, Number(qty)||0);
+  const { products, idx, product } = findProductById(productId);
+  if (idx < 0) throw new Error("product_not_found");
+  const before = Number(product.stock || 0);
+  products[idx].stock = q; writeProducts(products);
+  writeStockLog({ action:"set", productId, before, after:q, delta:(q-before), actor });
+  return { before, after:q };
+}
+function addStock(productId, delta, actor = "system") {
+  const d = Number(delta)||0;
+  const { products, idx, product } = findProductById(productId);
+  if (idx < 0) throw new Error("product_not_found");
+  const before = Number(product.stock || 0);
+  const after = Math.max(0, before + d);
+  products[idx].stock = after; writeProducts(products);
+  writeStockLog({ action:"add", productId, before, after, delta:d, actor });
+  return { before, after };
+}
+async function maybeLowStockAlert(productId, productName, stockNow) {
+  if (stockNow < LOW_STOCK_THRESHOLD) {
+    const msg = `⚠️ 在庫僅少アラート\n商品：${productName}（${productId}）\n残り：${stockNow}個\nしきい値：${LOW_STOCK_THRESHOLD}個`;
+    try { if (ADMIN_USER_ID) await client.pushMessage(ADMIN_USER_ID, { type:"text", text: msg }); } catch {}
+  }
+}
+
+// ====== 認可 ======
+function bearerToken(req) {
+  const h = req.headers?.authorization || req.headers?.Authorization || "";
+  const m = /^Bearer\s+(.+)$/i.exec(h);
+  return m ? m[1].trim() : null;
+}
+function requireAdmin(req, res) {
+  const headerTok = bearerToken(req);
+  const queryTok  = (req.query?.token || req.query?.code || "").trim();
+  const tok = headerTok || queryTok;
+
+  if (ADMIN_API_TOKEN_ENV && tok === ADMIN_API_TOKEN_ENV) return true;
+  if (ADMIN_CODE_ENV && tok === ADMIN_CODE_ENV) return true;
+
+  res.status(401).json({
+    ok: false,
+    error: "unauthorized",
+    hint: {
+      need: { bearer_header: !!ADMIN_API_TOKEN_ENV, token_query: !!ADMIN_API_TOKEN_ENV, code_query: !!ADMIN_CODE_ENV },
+      got:  { header: headerTok ? "present" : "missing", query: queryTok ? "present" : "missing" }
+    }
+  });
+  return false;
+}
+
+// ====== ログユーティリティ ======
+function readLogLines(filePath, limit = 100) {
+  if (!fs.existsSync(filePath)) return [];
+  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/).filter(Boolean);
+  const tail = lines.slice(-Math.min(Number(limit)||100, lines.length));
+  return tail.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+}
+
+function jstRangeFromYmd(ymd) {
+  const y = Number(ymd.slice(0,4)), m = Number(ymd.slice(4,6))-1, d = Number(ymd.slice(6,8));
+  const startJST = new Date(Date.UTC(y, m, d, -9, 0, 0));
+  const endJST   = new Date(Date.UTC(y, m, d+1, -9, 0, 0));
+  return { from: startJST.toISOString(), to: endJST.toISOString() };
+}
+function filterByIsoRange(items, getTs, fromIso, toIso) {
+  if (!fromIso && !toIso) return items;
+  const from = fromIso ? new Date(fromIso).getTime() : -Infinity;
+  const to   = toIso   ? new Date(toIso).getTime()   :  Infinity;
+  return items.filter(it => {
+    const t = new Date(getTs(it)).getTime();
+    return t >= from && t < to;
+  });
+}
+
+// ====== 配送料 & 代引き ======
+const SHIPPING_BY_REGION = {
+  "北海道": 1100, "東北": 900, "関東": 800, "中部": 800,
+  "近畿": 900, "中国": 1000, "四国": 1000, "九州": 1100, "沖縄": 1400
+};
+const COD_FEE = 330;
+
+// ====== LINE client ======
+const client = new line.Client(config);
+
+// ====== Flex送信ユーティリティ ======
+function ensureAltText(altText) {
+  const s = String(altText || "").trim();
+  if (!s) throw new Error("altText is required");
+  if (s.length > 400) throw new Error("altText too long (<=400)");
+  return s;
+}
+function validateFlexContents(contents) {
+  if (!contents || typeof contents !== "object") throw new Error("contents must be object");
+  const t = contents.type;
+  if (t !== "bubble" && t !== "carousel") throw new Error('contents.type must be "bubble" or "carousel"');
+  return contents;
+}
+
+// ====== 商品UI（Flex：画像 hero 対応） ======
+function bubbleForProduct(p) {
+  const bodyContents = [
+    { type: "text", text: p.name, weight: "bold", size: "md", wrap: true },
+    { type: "text", text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`, size: "sm", wrap: true },
+    p.desc ? { type: "text", text: p.desc, size: "sm", wrap: true } : { type: "box", layout: "vertical", contents: [] }
+  ];
+
+  const b = {
+    type: "bubble",
+    body: { type: "box", layout: "vertical", spacing: "sm", contents: bodyContents },
+    footer: {
+      type: "box", layout: "horizontal", spacing: "md",
+      contents: [
+        { type: "button", style: "primary",
+          action: { type: "postback", label: "数量を選ぶ", data: `order_qty?${qstr({ id: p.id, qty: 1 })}` } }
+      ]
+    }
   };
-  $('#btnHealth').onclick = async ()=>{
-    try{
-      const r = await fetch('/api/health');
-      show($('#healthOut'), await r.json());
-    }catch(e){ show($('#healthOut'), String(e)); }
+
+  // 画像があれば hero に掲載
+  if (p.image) {
+    b.hero = {
+      type: "image",
+      url: p.image,           // 例: https://<host>/uploads/xxx.jpg
+      size: "full",
+      aspectRatio: "20:13",   // よくあるサイズ
+      aspectMode: "cover"
+    };
+  }
+  return b;
+}
+
+function productsFlex(allProducts) {
+  // 久助は一覧から除外
+  const products = (allProducts || []).filter(p => !HIDE_PRODUCT_IDS.has(p.id));
+
+  const bubbles = products.map(bubbleForProduct);
+
+  // 「その他（自由入力）」：価格入力なし
+  bubbles.push({
+    type: "bubble",
+    body: {
+      type: "box", layout: "vertical", spacing: "sm",
+      contents: [
+        { type: "text", text: "その他（自由入力）", weight: "bold", size: "md" },
+        { type: "text", text: "商品名と個数だけ入力します。価格入力は不要です。", size: "sm", wrap: true }
+      ]
+    },
+    footer: {
+      type: "box", layout: "vertical", spacing: "md",
+      contents: [
+        { type: "button", style: "primary",
+          action: { type: "postback", label: "商品名を入力する", data: "other_start" } },
+        { type: "button", style: "secondary",
+          action: { type: "postback", label: "← 戻る", data: "order_back" } }
+      ]
+    }
+  });
+
+  return { type: "flex", altText: "商品一覧", contents: bubbles.length === 1 ? bubbles[0] : { type: "carousel", contents: bubbles } };
+}
+
+function qtyFlex(id, qty = 1) {
+  const q = Math.max(1, Math.min(99, Number(qty) || 1));
+  return {
+    type: "flex", altText: "数量を選択してください",
+    contents: {
+      type: "bubble",
+      body: { type: "box", layout: "vertical", spacing: "md",
+        contents: [
+          { type: "text", text: "数量選択", weight: "bold", size: "lg" },
+          { type: "text", text: `現在の数量：${q} 個`, size: "md" }
+        ] },
+      footer: { type: "box", layout: "vertical", spacing: "md",
+        contents: [
+          { type: "box", layout: "horizontal", spacing: "md",
+            contents: [
+              { type: "button", style: "secondary", action: { type: "postback", label: "-1", data: `order_qty?${qstr({ id, qty: Math.max(1, q - 1) })}` } },
+              { type: "button", style: "secondary", action: { type: "postback", label: "+1", data: `order_qty?${qstr({ id, qty: Math.min(99, q + 1) })}` } },
+            ] },
+          { type: "box", layout: "horizontal", spacing: "md",
+            contents: [1,2,3,5].map(n => ({ type: "button", style: n===q ? "primary" : "secondary",
+              action: { type: "postback", label: `${n}個`, data: `order_qty?${qstr({ id, qty: n })}` } })) },
+          { type: "button", style: "primary",   action: { type: "postback", label: "受取方法へ", data: `order_method?${qstr({ id, qty: q })}` } },
+          { type: "button", style: "secondary", action: { type: "postback", label: "← 商品一覧", data: "order_back" } }
+        ] }
+    }
   };
+}
 
-  // ========= 商品取得・表示 =========
-  let products = [];
-  const grid = $('#productsGrid');
+function methodFlex(id, qty) {
+  return {
+    type: "flex", altText: "受取方法を選択してください",
+    contents: { type: "bubble",
+      body: { type: "box", layout: "vertical", spacing: "md",
+        contents: [
+          { type: "text", text: "受取方法", weight: "bold", size: "lg" },
+          { type: "text", text: "宅配 または 店頭受取 を選択してください。", wrap: true }
+        ] },
+      footer: { type: "box", layout: "horizontal", spacing: "md",
+        contents: [
+          { type: "button", style: "primary",
+            action: { type: "postback", label: "宅配（送料あり）", data: `order_region?${qstr({ id, qty, method: "delivery" })}` } },
+          { type: "button", style: "secondary",
+            action: { type: "postback", label: "店頭受取（送料0円）", data: `order_payment?${qstr({ id, qty, method: "pickup", region: "-" })}` } }
+        ] }
+    }
+  };
+}
 
-  function yen(n){ return Number(n||0).toLocaleString('ja-JP')+'円'; }
-
-  function renderProducts(){
-    grid.innerHTML = '';
-    products.forEach(p=>{
-      const card = document.createElement('div');
-      card.className = 'prod';
-      card.dataset.id = p.id;
-
-      const imgUrl = p.image || '';
-      card.innerHTML = `
-        <h3>${p.name}</h3>
-        <div class="mini">ID: <code class="inline">${p.id}</code></div>
-        <div class="mini">価格：${yen(p.price)}　在庫：${p.stock ?? 0}</div>
-        <img class="thumb" alt="image" src="${imgUrl || ''}" ${imgUrl?'':'style="display:none"'} />
-        <div class="drop" tabindex="0">ここに画像をドラッグ＆ドロップ、またはクリックして選択</div>
-        <div class="row">
-          <input class="imgUrl" type="text" placeholder="画像URL（手動で貼る場合）" value="${imgUrl}">
-        </div>
-        <div class="row">
-          <button class="secondary saveImg">画像URLを保存</button>
-          <span class="mini status"></span>
-        </div>
-      `;
-      grid.appendChild(card);
-
-      const drop = card.querySelector('.drop');
-      const thumb = card.querySelector('.thumb');
-      const urlInput = card.querySelector('.imgUrl');
-      const status = card.querySelector('.status');
-      const saveBtn = card.querySelector('.saveImg');
-
-      // 画像プレビューの更新
-      const applyThumb = (url)=>{
-        if (url) {
-          thumb.src = url;
-          thumb.style.display = '';
-          urlInput.value = url;
-        }
-      };
-
-      // 直接URL保存
-      saveBtn.onclick = async ()=>{
-        const url = (urlInput.value||'').trim();
-        if(!url) return alert('画像URLを入力してください');
-        status.textContent = '保存中...';
-        try{
-          const r = await fetch('/api/admin/products/set-image',{
-            method:'POST',
-            headers: auth(),
-            body: JSON.stringify({ productId: p.id, image: url })
-          });
-          const j = await r.json();
-          if(!j.ok) throw new Error(j.error||'save_failed');
-          status.textContent = '✓ 保存しました'; status.className='mini ok';
-          applyThumb(url);
-          // ローカルの products も更新
-          const idx = products.findIndex(x=>x.id===p.id);
-          if (idx>=0) products[idx].image = url;
-        }catch(e){
-          status.textContent = '✗ 保存失敗: '+e.message; status.className='mini ng';
-        }
-      };
-
-      // D&D/クリック → アップロード
-      const pickFile = ()=>{
-        const inp = document.createElement('input');
-        inp.type = 'file';
-        inp.accept = 'image/*';
-        inp.onchange = ()=>{ if(inp.files && inp.files[0]) uploadFile(inp.files[0]); };
-        inp.click();
-      };
-
-      const uploadFile = async (file)=>{
-        if(!file) return;
-        const t = ($('#token').value||'').trim();
-        if(!t) return alert('ADMIN_API_TOKEN を入力してください');
-
-        status.textContent = 'アップロード中...'; status.className='mini';
-        try{
-          const fd = new FormData();
-          fd.append('image', file);
-          fd.append('productId', p.id);
-
-          const r = await fetch('/api/admin/upload-image', {
-            method:'POST',
-            headers: { 'Authorization':'Bearer '+t }, // FormData のときは Content-Type 付けない
-            body: fd
-          });
-          // たまに HTML が返ってきて JSON.parse が落ちることがあるので保険
-          const text = await r.text();
-          let j;
-          try{ j = JSON.parse(text); }catch{
-            throw new Error('サーバーがJSONを返しませんでした: '+text.slice(0,120));
-          }
-          if(!j.ok) throw new Error(j.error||'upload_failed');
-
-          const url = j.url; // 例：/uploads/abc123.png
-          applyThumb(url);
-          urlInput.value = url;
-
-          // 画像URLを products に保存
-          const r2 = await fetch('/api/admin/products/set-image',{
-            method:'POST',
-            headers: auth(),
-            body: JSON.stringify({ productId: p.id, image: url })
-          });
-          const j2 = await r2.json();
-          if(!j2.ok) throw new Error(j2.error||'save_failed');
-
-          status.textContent = '✓ 画像を登録しました'; status.className='mini ok';
-
-          // ローカルの products も更新
-          const idx = products.findIndex(x=>x.id===p.id);
-          if (idx>=0) products[idx].image = url;
-
-        }catch(e){
-          status.textContent = '✗ アップロード失敗: '+e.message; status.className='mini ng';
-        }
-      };
-
-      // D&Dイベント
-      const enter = (e)=>{ e.preventDefault(); drop.classList.add('drag'); };
-      const over  = (e)=>{ e.preventDefault(); };
-      const leave = (e)=>{ drop.classList.remove('drag'); };
-      const dropH = (e)=>{
-        e.preventDefault(); drop.classList.remove('drag');
-        const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-        if (f) uploadFile(f);
-      };
-      drop.addEventListener('dragenter', enter);
-      drop.addEventListener('dragover', over);
-      drop.addEventListener('dragleave', leave);
-      drop.addEventListener('drop', dropH);
-      drop.addEventListener('click', pickFile);
-      drop.addEventListener('keypress', (e)=>{ if(e.key==='Enter' || e.key===' ') pickFile(); });
+function regionFlex(id, qty) {
+  const regions = Object.keys(SHIPPING_BY_REGION);
+  const rows = [];
+  for (let i = 0; i < regions.length; i += 2) {
+    rows.push({
+      type: "box", layout: "horizontal", spacing: "md",
+      contents: regions.slice(i, i + 2).map(r => ({
+        type: "button", style: "secondary",
+        action: { type: "postback", label: `${r}（${yen(SHIPPING_BY_REGION[r])}）`, data: `order_payment?${qstr({ id, qty, method: "delivery", region: r })}` }
+      }))
     });
   }
-
-  $('#btnLoadProducts').onclick = async ()=>{
-    try{
-      const r = await fetch('/api/admin/products', { headers: auth() });
-      const j = await r.json();
-      if (!j.ok) return alert('取得失敗: '+(j.error||''));
-      products = j.items||[];
-      $('#prodCount').textContent = `取得 ${products.length} 件`;
-      renderProducts();
-      // ついでに直近アクティブユーザーも候補に入れる（datalist）
-      try{ await loadActiveUsersToDatalist(); }catch{}
-    }catch(e){ alert('ERR '+e.message); }
+  return {
+    type: "flex", altText: "地域選択",
+    contents: { type: "bubble",
+      body: { type: "box", layout: "vertical", spacing: "md",
+        contents: [
+          { type: "text", text: "地域選択", weight: "bold", size: "lg" },
+          { type: "text", text: "地域により送料が異なります。", wrap: true }
+        ] },
+      footer: { type: "box", layout: "vertical", spacing: "sm", contents: rows }
+    }
   };
+}
 
-  // ========= Flex生成 =========
-  function buildFlex(){
-    const hideRaw = ($('#hideIds').value||'').split(',').map(s=>s.trim()).filter(Boolean);
-    const visible = products.filter(p=>!hideRaw.includes(p.id));
-    const bubbles = visible.map(p=>{
-      const bodyContents = [];
-      if (p.image) {
-        // 画像を hero に
-        // hero は body 外のトップ画像。代わりに body に image を入れてもOK
-      }
-      const bubble = {
-        type:'bubble',
-        hero: p.image ? { type:'image', url:p.image, size:'full', aspectRatio:'16:9', aspectMode:'cover' } : undefined,
-        body:{ type:'box', layout:'vertical', spacing:'sm', contents:[
-          { type:'text', text:p.name, weight:'bold', size:'md', wrap:true },
-          { type:'text', text:`価格：${yen(p.price)}　在庫：${p.stock??0}`, size:'sm', wrap:true },
-          p.desc ? { type:'text', text:p.desc, size:'sm', wrap:true } : { type:'box', layout:'vertical', contents:[] }
-        ]},
-        footer:{ type:'box', layout:'horizontal', spacing:'md', contents:[
-          { type:'button', style:'primary', action:{ type:'postback', label:'数量を選ぶ', data:`order_qty?id=${encodeURIComponent(p.id)}&qty=1` } }
-        ]}
-      };
-      if (!p.image) delete bubble.hero;
-      return bubble;
-    });
-
-    // その他
-    bubbles.push({
-      type:'bubble',
-      body:{ type:'box', layout:'vertical', spacing:'sm', contents:[
-        { type:'text', text:'その他（自由入力）', weight:'bold', size:'md' },
-        { type:'text', text:'商品名と個数だけ入力します。価格入力は不要です。', size:'sm', wrap:true }
-      ]},
-      footer:{ type:'box', layout:'vertical', spacing:'md', contents:[
-        { type:'button', style:'primary', action:{ type:'postback', label:'商品名を入力する', data:'other_start' } },
-        { type:'button', style:'secondary', action:{ type:'postback', label:'← 戻る', data:'order_back' } }
-      ]}
-    });
-
+// ★ 店頭受取＝現金のみ に対応
+function paymentFlex(id, qty, method, region) {
+  if (method === "pickup") {
     return {
-      type:'flex',
-      altText: ($('#altText').value||'商品一覧').slice(0,400),
-      contents: bubbles.length===1 ? bubbles[0] : { type:'carousel', contents:bubbles }
-    };
-  }
-
-  $('#btnBuildFlex').onclick = ()=>{
-    if (!products.length) return alert('先に商品を取得してください');
-    show($('#flexPreview'), buildFlex());
-  };
-
-  // ========= 配信 =========
-  $('#btnSendFlex').onclick = async ()=>{
-    if (!products.length) return alert('先に商品を取得してください');
-    const payload = buildFlex();
-    const ids = ($('#userIds').value||'').split(',').map(s=>s.trim()).filter(Boolean);
-    const url = ids.length ? '/api/admin/segment/send-flex' : '/api/admin/broadcast-flex';
-    const body = ids.length ? { userIds: ids, altText: payload.altText, contents: payload.contents }
-                            : { altText: payload.altText, contents: payload.contents };
-    const r = await fetch(url, { method:'POST', headers: auth(), body: JSON.stringify(body) });
-    const j = await r.json();
-    $('#sendFlexRes').textContent = j.ok ? 'OK' : ('NG: ' + (j.error||''));
-  };
-
-  $('#btnSendText').onclick = async ()=>{
-    const msg = ($('#textMessage').value||'').trim();
-    if (!msg) return alert('本文が空です');
-    const ids = ($('#textUserIds').value||'').split(',').map(s=>s.trim()).filter(Boolean);
-    if (ids.length){
-      const r = await fetch('/api/admin/segment/send', { method:'POST', headers: auth(), body: JSON.stringify({ userIds: ids, message: msg }) });
-      const j = await r.json();
-      $('#sendTextRes').textContent = j.ok ? 'OK' : ('NG: ' + (j.error||''));      
-    } else {
-      // broadcast は Flex に包んで送る
-      const r = await fetch('/api/admin/broadcast-flex', {
-        method:'POST', headers: auth(),
-        body: JSON.stringify({ altText:'テキスト', contents:{ type:'bubble', body:{ type:'box', layout:'vertical', contents:[{ type:'text', text: msg, wrap:true }] } } })
-      });
-      const j = await r.json();
-      $('#sendTextRes').textContent = j.ok ? 'OK' : ('NG: ' + (j.error||''));
-    }
-  };
-
-  // ========= 直近アクティブユーザー（datalist化も） =========
-  async function loadActiveUsersToDatalist(){
-    const r = await fetch('/api/admin/active-chatters?list=true', { headers: auth() });
-    const j = await r.json();
-    const pre = $('#usersOut');
-    show(pre, j);
-    const dl = $('#uidList');
-    dl.innerHTML = '';
-    if (Array.isArray(j.users)) {
-      j.users.forEach(uid=>{
-        const opt = document.createElement('option');
-        opt.value = uid;
-        dl.appendChild(opt);
-      });
-    }
-  }
-  $('#btnActiveUsers').onclick = loadActiveUsersToDatalist;
-
-  // ========= メッセージログ =========
-  async function loadLog(){
-    const r = await fetch('/api/admin/messages?limit=200', { headers: auth() });
-    const j = await r.json();
-    show($('#logOut'), j);
-  }
-  $('#btnLoadLog').onclick = loadLog;
-
-  let auto=false, timer=null;
-  $('#btnAutoRefresh').onclick = ()=>{
-    auto = !auto; $('#autoStatus').textContent = auto ? 'ON' : 'OFF';
-    if (auto){ loadLog(); timer = setInterval(loadLog, 10000); } else { clearInterval(timer); }
-  };
-
-  // ========= userId 自動入力（URL/Local/LIFF/whoami） =========
-  (function(){
-    const USER_IDS_INPUT_SELECTOR = "#userIds";
-    const TEXT_USER_IDS_INPUT_SELECTOR = "#textUserIds";
-    const PARAM_NAMES = ["userId","uid","me"];
-    const LS_KEY = "admin_user_ids";
-    const setIfExists = (sel, v)=>{ const el=$(sel); if(el&&v) el.value=v; };
-    const saveLocal = (v)=>{ try{ localStorage.setItem(LS_KEY, v); }catch{} };
-    const loadLocal = ()=>{ try{ return localStorage.getItem(LS_KEY)||""; }catch{ return ""; } };
-    const getFromUrl = ()=>{
-      const u = new URL(location.href);
-      for (const k of PARAM_NAMES){
-        if (u.searchParams.has(k)){
-          const v = u.searchParams.get(k);
-          if (k==="me" && (v==="1"||v==="true")) return "me";
-          if (v) return v.trim();
+      type: "flex", altText: "お支払い（店頭）",
+      contents: {
+        type: "bubble",
+        body: {
+          type: "box", layout: "vertical", spacing: "md",
+          contents: [
+            { type: "text", text: "お支払い方法", weight: "bold", size: "lg" },
+            { type: "text", text: "店頭受取は現金のみです。", wrap: true }
+          ]
+        },
+        footer: {
+          type: "box", layout: "vertical", spacing: "md",
+          contents: [
+            { type: "button", style: "primary",
+              action: {
+                type: "postback", label: "現金で支払う（店頭）",
+                data: `order_confirm_view?${qstr({ id, qty, method: "pickup", region: "", payment: "cash" })}`
+              }
+            },
+            { type: "button", style: "secondary",
+              action: { type: "postback", label: "← 受取方法へ戻る", data: `order_method?${qstr({ id, qty })}` }
+            }
+          ]
         }
       }
-      const hash=(u.hash||"").replace(/^#/,"");
-      const parts=new URLSearchParams(hash);
-      for(const k of PARAM_NAMES){
-        if(parts.has(k)){
-          const v=parts.get(k);
-          if (k==="me" && (v==="1"||v==="true")) return "me";
-          if (v) return v.trim();
-        }
-      }
-      return "";
     };
-    const applyUserIds = (ids)=>{
-      setIfExists(USER_IDS_INPUT_SELECTOR, ids);
-      setIfExists(TEXT_USER_IDS_INPUT_SELECTOR, ids);
-      saveLocal(ids);
-      const a=$('#sendFlexRes'); if (a&&ids) a.textContent=`userId 自動入力: ${ids}`;
-      const b=$('#sendTextRes'); if (b&&ids) b.textContent=`userId 自動入力: ${ids}`;
-    };
-    const tryLiff = async ()=>{
-      const liffId = document.body?.dataset?.liffId;
-      if(!liffId) return "";
-      try{
-        if(typeof window.liff==="undefined"){
-          await new Promise((resolve,reject)=>{
-            const s=document.createElement("script"); s.src="https://static.line-scdn.net/liff/edge/2/sdk.js";
-            s.onload=resolve; s.onerror=reject; document.head.appendChild(s);
-          });
-        }
-        await liff.init({ liffId });
-        if(!liff.isLoggedIn()){ liff.login({}); return ""; }
-        try{ const prof=await liff.getProfile(); if(prof?.userId) return prof.userId; }catch{}
-        try{ const tok=liff.getDecodedIDToken(); if(tok?.sub) return tok.sub; }catch{}
-      }catch{ }
-      return "";
-    };
-    const tryWhoAmI = async ()=>{
-      try{
-        const r=await fetch("/api/admin/whoami",{ credentials:"include" });
-        if(!r.ok) return "";
-        const j=await r.json();
-        if(j?.userId) return j.userId;
-      }catch{}
-      return "";
-    };
+  }
 
-    document.addEventListener("DOMContentLoaded", async ()=>{
-      let c=getFromUrl();
-      if(c){ applyUserIds(c==="me"?"me":c); return; }
-      c=loadLocal();
-      if(c){ applyUserIds(c); }
-      const fromLiff=await tryLiff(); if(fromLiff){ applyUserIds(fromLiff); return; }
-      const fromApi=await tryWhoAmI(); if(fromApi){ applyUserIds(fromApi); return; }
+  const regionText = method === "delivery" ? `（配送地域：${region}）` : "";
+  return {
+    type: "flex", altText: "お支払い方法を選択してください",
+    contents: { type: "bubble",
+      body: { type: "box", layout: "vertical", spacing: "md",
+        contents: [
+          { type: "text", text: "お支払い方法", weight: "bold", size: "lg" },
+          { type: "text", text: `代引きは +${yen(COD_FEE)}${regionText}`, wrap: true }
+        ] },
+      footer: { type: "box", layout: "horizontal", spacing: "md",
+        contents: [
+          { type: "button", style: "primary",   action: { type: "postback", label: `代金引換（+${yen(COD_FEE)}）`, data: `order_confirm_view?${qstr({ id, qty, method, region, payment: "cod" })}` } },
+          { type: "button", style: "secondary", action: { type: "postback", label: "銀行振込", data: `order_confirm_view?${qstr({ id, qty, method, region, payment: "bank" })}` } }
+        ] }
+    }
+  };
+}
 
-      // ここまでで入らなければ手入力/候補（datalist）で補助
+function confirmFlex(product, qty, method, region, payment, liffId) {
+  if (typeof product?.id === "string" && product.id.startsWith("other:")) {
+    const parts = product.id.split(":");
+    const encName = parts[1] || "";
+    const priceStr = parts[2] || "0";
+    product = { ...product, name: decodeURIComponent(encName || "その他"), price: Number(priceStr || 0) };
+  }
+
+  const regionFee = method === "delivery" ? (SHIPPING_BY_REGION[region] || 0) : 0;
+  const codFee = payment === "cod" ? COD_FEE : 0;
+  const subtotal = Number(product.price) * Number(qty);
+  const total = subtotal + regionFee + codFee;
+
+  const payText =
+    payment === "cod"  ? `代金引換（+${yen(COD_FEE)})` :
+    payment === "bank" ? "銀行振込" :
+    "現金（店頭）";
+
+  const lines = [
+    `受取方法：${method === "pickup" ? "店頭受取（送料0円）" : `宅配（${region}：${yen(regionFee)}）`}`,
+    `支払い：${payText}`,
+    `商品：${product.name}`,
+    `数量：${qty}個`,
+    `小計：${yen(subtotal)}`,
+    `送料：${yen(regionFee)}`,
+    `代引き手数料：${yen(codFee)}`,
+    `合計：${yen(total)}`
+  ];
+
+  const bodyContents = [
+    { type: "text", text: "最終確認", weight: "bold", size: "lg" },
+    ...lines.map(t => ({ type: "text", text: t, wrap: true })),
+  ];
+  if (method === "delivery") {
+    bodyContents.push({ type: "text", text: "住所が未登録の方は「住所を入力（LIFF）」を押してください。", size: "sm", wrap: true });
+  }
+
+  const footerButtons = [
+    { type: "button", style: "secondary", action: { type: "postback", label: "← 商品一覧へ", data: "order_back" } },
+    { type: "button", style: "primary",   action: { type: "postback", label: "この内容で確定", data: `order_confirm?${qstr({ id: product.id, qty, method, region, payment })}` } },
+  ];
+  if (method === "delivery") {
+    footerButtons.unshift({
+      type: "button", style: "secondary",
+      action: { type: "uri", label: "住所を入力（LIFF）", uri: `https://liff.line.me/${liffId}?${qstr({ from: "address", need: "shipping" })}` }
     });
+  }
 
-    // 入力を保存
-    const hook=(sel)=>{ const el=$(sel); if(!el) return; el.addEventListener("input", ()=>saveLocal(el.value.trim())); };
-    hook(USER_IDS_INPUT_SELECTOR); hook(TEXT_USER_IDS_INPUT_SELECTOR);
-  })();
-})();
+  const bubble = {
+    type: "bubble",
+    body: { type: "box", layout: "vertical", spacing: "md", contents: bodyContents },
+    footer: { type: "box", layout: "vertical", spacing: "md", contents: footerButtons }
+  };
+
+  // 確認画面にも画像があれば hero で表示
+  if (product.image) {
+    bubble.hero = {
+      type: "image",
+      url: product.image,
+      size: "full",
+      aspectRatio: "20:13",
+      aspectMode: "cover"
+    };
+  }
+
+  return { type: "flex", altText: "注文内容の最終確認", contents: bubble };
+}
+
+function reserveOffer(product, needQty, stock) {
+  return [
+    { type: "text", text: [
+      "申し訳ありません。在庫が不足しています。",
+      `商品：${product.name}`,
+      `希望数量：${needQty}個 / 現在在庫：${stock}個`,
+      "",
+      "予約しますか？ 入荷次第ご案内します。"
+    ].join("\n") },
+    {
+      type: "template", altText: "在庫不足：予約しますか？",
+      template: {
+        type: "confirm", text: "予約しますか？",
+        actions: [
+          { type: "postback", label: "予約する", data: `order_reserve?${qstr({ id: product.id, qty: needQty })}` },
+          { type: "postback", label: "やめる", data: "order_cancel" }
+        ]
+      }
+    }
+  ];
+}
+
+// ====== アンケート簡易スタブ ======
+const SURVEY_VERSION = 2;
+const SURVEY_SCHEMA = { q1:{options:[]}, q2:{options:[]}, q3:{options:[]} };
+function labelOf(q, code){ return code; }
+
+// ====== /api: 住所（LIFF） & LIFF ID / whoami ======
+app.post("/api/liff/address", async (req, res) => {
+  try {
+    const { userId, name, phone, postal, prefecture, city, address1, address2 } = req.body || {};
+    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
+    const book = readAddresses();
+    book[userId] = { name, phone, postal, prefecture, city, address1, address2, ts: new Date().toISOString() };
+    writeAddresses(book);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+app.get("/api/liff/config", (_req, res) => res.json({ liffId: LIFF_ID }));
+
+// 利用中の管理者ID（UI の「me」解決や自動入力向け）
+app.get("/api/admin/whoami", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  res.json({ ok: true, userId: ADMIN_USER_ID || null });
+});
+
+// ====== 管理API（要トークン） ======
+app.get("/api/admin/ping", (req, res) => { if (!requireAdmin(req, res)) return; res.json({ ok: true, ping: "pong" }); });
+
+// 注文/予約/住所/アンケート一覧
+app.get("/api/admin/orders", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const limit = Math.min(5000, Number(req.query.limit || 1000));
+  let items = readLogLines(ORDERS_LOG, limit);
+  let range = {};
+  if (req.query.date) range = jstRangeFromYmd(String(req.query.date));
+  if (req.query.from || req.query.to) range = { from: req.query.from, to: req.query.to };
+  if (range.from || range.to) items = filterByIsoRange(items, x => x.ts, range.from, range.to);
+  res.json({ ok: true, items });
+});
+app.get("/api/admin/reservations", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const limit = Math.min(5000, Number(req.query.limit || 1000));
+  let items = readLogLines(RESERVATIONS_LOG, limit);
+  let range = {};
+  if (req.query.date) range = jstRangeFromYmd(String(req.query.date));
+  if (req.query.from || req.query.to) range = { from: req.query.from, to: req.query.to };
+  if (range.from || range.to) items = filterByIsoRange(items, x => x.ts, range.from, range.to);
+  res.json({ ok: true, items });
+});
+app.get("/api/admin/addresses", (req, res) => { if (!requireAdmin(req, res)) return; res.json({ ok: true, items: readAddresses() }); });
+app.get("/api/admin/surveys", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const limit = Math.min(5000, Number(req.query.limit || 2000));
+  let items = readLogLines(SURVEYS_LOG, limit);
+  let range = {};
+  if (req.query.date) range = jstRangeFromYmd(String(req.query.date));
+  if (req.query.from || req.query.to) range = { from: req.query.from, to: req.query.to };
+  if (range.from || range.to) items = filterByIsoRange(items, x => x.ts, range.from, range.to);
+  res.json({ ok: true, items });
+});
+app.get("/api/admin/surveys/summary", (req, res) => { if (!requireAdmin(req, res)) return; res.json({ ok: true, version: SURVEY_VERSION, total: 0, summary: { q1:[], q2:[], q3:[] } }); });
+
+// ====== 予約者：順次通知 API ======
+function buildReservationQueue(productId) {
+  const all = readLogLines(RESERVATIONS_LOG, 200000)
+    .filter(r => r && r.productId === productId && r.userId && r.ts)
+    .sort((a,b) => new Date(a.ts) - new Date(b.ts));
+  const seen = new Set(); const ids = [];
+  for (const r of all) { if (!seen.has(r.userId)) { seen.add(r.userId); ids.push(r.userId); } }
+  return ids;
+}
+app.post("/api/admin/reservations/notify-start", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const pid = resolveProductId(String(req.body?.productId || "").trim());
+    const message = String(req.body?.message || "").trim();
+    if (!pid)  return res.status(400).json({ ok:false, error:"productId required" });
+    if (!message) return res.status(400).json({ ok:false, error:"message required" });
+
+    const userIds = buildReservationQueue(pid);
+    const state = readNotifyState();
+    state[pid] = { idx: 0, userIds, message, updatedAt: new Date().toISOString() };
+    state.__lastPid = pid;
+    writeNotifyState(state);
+
+    if (userIds.length === 0) return res.json({ ok:true, info:"no_reservers", sent:false });
+
+    try {
+      await client.pushMessage(userIds[0], { type:"text", text: message });
+      state[pid].idx = 1; state[pid].updatedAt = new Date().toISOString(); writeNotifyState(state);
+      return res.json({ ok:true, productId: pid, sentTo: userIds[0], index: 1, total: userIds.length });
+    } catch (e) {
+      return res.status(500).json({ ok:false, error:"push_failed", detail: e?.response?.data || String(e) });
+    }
+  } catch (e) {
+    return res.status(500).json({ ok:false, error:String(e) });
+  }
+});
+app.post("/api/admin/reservations/notify-next", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const pidRaw = (req.body?.productId ?? readNotifyState().__lastPid ?? "").toString().trim();
+    const pid = resolveProductId(pidRaw);
+    const n = Math.max(1, Math.min(100, Number(req.body?.count || 1)));
+    const state = readNotifyState();
+    const st = state[pid];
+    if (!pid || !st) return res.status(400).json({ ok:false, error:"not_started" });
+
+    const { userIds, message } = st; let { idx } = st;
+    const total = userIds.length;
+    if (idx >= total) return res.json({ ok:true, done:true, index: idx, total });
+
+    const sentTo = [];
+    for (let i=0; i<n && idx < total; i++, idx++) {
+      const uid = userIds[idx];
+      try { await client.pushMessage(uid, { type:"text", text: message }); sentTo.push(uid); }
+      catch (e) { console.error("notify-next push error:", e?.response?.data || e); }
+    }
+    state[pid].idx = idx; state[pid].updatedAt = new Date().toISOString(); writeNotifyState(state);
+
+    return res.json({ ok:true, productId: pid, sent: sentTo.length, sentTo, index: idx, total });
+  } catch (e) {
+    return res.status(500).json({ ok:false, error:String(e) });
+  }
+});
+app.post("/api/admin/reservations/notify-stop", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const pid = resolveProductId(String(req.body?.productId || "").trim());
+  const state = readNotifyState();
+  if (pid && state[pid]) { delete state[pid]; }
+  if (state.__lastPid === pid) delete state.__lastPid;
+  writeNotifyState(state);
+  res.json({ ok:true, stopped: pid || true });
+});
+
+// ====== 在庫 / 商品 API ======
+app.get("/api/admin/products", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const items = readProducts().map(p => ({
+    id:p.id, name:p.name, price:p.price, stock:p.stock ?? 0, desc:p.desc || "", image: p.image || ""
+  }));
+  res.json({ ok:true, items });
+});
+
+app.get("/api/admin/stock/logs", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const limit = Math.min(10000, Number(req.query.limit || 200));
+  const items = readLogLines(STOCK_LOG, limit);
+  res.json({ ok:true, items });
+});
+app.post("/api/admin/stock/set", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try{
+    const pid = resolveProductId((req.body?.productId || "").trim());
+    const qty = Number(req.body?.qty);
+    const r = setStock(pid, qty, "api");
+    res.json({ ok:true, productId: pid, ...r });
+  }catch(e){ res.status(400).json({ ok:false, error:String(e.message||e) }); }
+});
+app.post("/api/admin/stock/add", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try{
+    const pid = resolveProductId((req.body?.productId || "").trim());
+    const delta = Number(req.body?.delta);
+    const r = addStock(pid, delta, "api");
+    res.json({ ok:true, productId: pid, ...r });
+  }catch(e){ res.status(400).json({ ok:false, error:String(e.message||e) }); }
+});
+
+// ====== 画像アップロード API（★新規） ======
+// 1) multer 設定（拡張子と mimetype を簡易チェック）
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+  filename: (_req, file, cb) => {
+    const ext = (path.extname(file.originalname) || "").toLowerCase();
+    const base = Date.now() + "-" + Math.random().toString(36).slice(2,8);
+    cb(null, base + ext);
+  }
+});
+const upload = multer({
+  storage,
+  limits: { fileSize: 8 * 1024 * 1024 }, // 8MB
+  fileFilter: (_req, file, cb) => {
+    const ok = /^image\/(png|jpe?g|webp)$/.test(file.mimetype);
+    cb(ok ? null : new Error("unsupported_type"));
+  }
+}).single("image");
+
+// 2) POST /api/admin/upload-image  （FormData: image, productId?）
+//    返り値: { ok, url, file, productId? }
+app.post("/api/admin/upload-image", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  upload(req, res, (err) => {
+    if (err) return res.status(400).json({ ok:false, error: String(err.message || err) });
+    if (!req.file) return res.status(400).json({ ok:false, error: "file_required" });
+
+    // 公開URL（例: https://.../uploads/xxxx.jpg）
+    const url = `/uploads/${req.file.filename}`;
+
+    // productId が指定されていれば products.json に反映
+    const pid = resolveProductId(String(req.body?.productId || "").trim());
+    if (pid) {
+      const { products, idx } = findProductById(pid);
+      if (idx >= 0) {
+        products[idx].image = url;
+        writeProducts(products);
+        return res.json({ ok:true, url, file:req.file.filename, productId: pid, saved: true });
+      }
+      // productId が見つからなければその旨だけ返す
+      return res.json({ ok:true, url, file:req.file.filename, productId: pid, saved: false, note: "product_not_found" });
+    }
+    return res.json({ ok:true, url, file:req.file.filename });
+  });
+});
+
+// 3) URL で画像をセットしたい場合（ドラッグ&ドロップ以外でも）
+//    POST /api/admin/products/set-image { productId, image }
+//    image は絶対URL/相対URL どちらでもOK（例: /uploads/xxx.jpg）
+app.post("/api/admin/products/set-image", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try{
+    const pid = resolveProductId(String(req.body?.productId || "").trim());
+    const image = String(req.body?.image || "").trim();
+    if (!pid) return res.status(400).json({ ok:false, error: "productId required" });
+    if (!image) return res.status(400).json({ ok:false, error: "image required" });
+    const { products, idx } = findProductById(pid);
+    if (idx < 0) return res.status(404).json({ ok:false, error: "product_not_found" });
+    products[idx].image = image;
+    writeProducts(products);
+    res.json({ ok:true, productId: pid, image });
+  }catch(e){
+    res.status(500).json({ ok:false, error: String(e.message||e) });
+  }
+});
+
+// ====== 予約者に一括連絡 API ======
+app.post("/api/admin/reservations/notify", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try{
+    const pid = resolveProductId(String(req.body?.productId || "").trim());
+    const msg = String(req.body?.message || "").trim();
+    if (!pid) return res.status(400).json({ ok:false, error:"productId required" });
+    if (!msg) return res.status(400).json({ ok:false, error:"message required" });
+
+    const items = readLogLines(RESERVATIONS_LOG, 100000).filter(r => r && r.productId === pid && r.userId);
+    const userIds = Array.from(new Set(items.map(r => r.userId)));
+    if (userIds.length === 0) return res.json({ ok:true, sent:0, users:[] });
+
+    const chunkSize = 500;
+    let sent = 0;
+    for (let i=0;i<userIds.length;i+=chunkSize) {
+      const ids = userIds.slice(i, i+chunkSize);
+      try { await client.multicast(ids, [{ type:"text", text: msg }]); sent += ids.length; }
+      catch (e) { console.error("notify reservations multicast error:", e?.response?.data || e); }
+    }
+    return res.json({ ok:true, productId: pid, requested:userIds.length, sent });
+  }catch(e){
+    return res.status(500).json({ ok:false, error: String(e.message||e) });
+  }
+});
+
+// ====== Insight API ======
+function yyyymmddJST(offsetDays = -1) {
+  const now = new Date();
+  const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  jst.setDate(jst.getDate() + offsetDays);
+  const y = jst.getUTCFullYear();
+  const m = String(jst.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(jst.getUTCDate()).padStart(2, "0");
+  return `${y}${m}${d}`;
+}
+app.get("/api/admin/audience-count", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const candidates = [];
+  if (req.query.date) candidates.push(String(req.query.date).replace(/[^0-9]/g, ""));
+  else candidates.push(yyyymmddJST(-1), yyyymmddJST(-2));
+
+  const tried = [];
+  for (const date of candidates) {
+    try {
+      const url = `https://api.line.me/v2/bot/insight/followers?date=${date}`;
+      const r = await axios.get(url, {
+        headers: { Authorization: `Bearer ${config.channelAccessToken}` },
+        timeout: 10000,
+      });
+      const { followers = null, targetedReaches = null, blocks = null } = r.data || {};
+      return res.json({ ok: true, date, followers, targetedReaches, blocks, raw: r.data });
+    } catch (e) {
+      const status = e?.response?.status || 500;
+      const detail = e?.response?.data || { message: e.message || String(e) };
+      tried.push({ date, status, detail });
+      if (status === 401 || status === 403) {
+        return res.status(200).json({ ok: false, status, detail, tried });
+      }
+    }
+  }
+  return res.status(200).json({ ok: false, error: "no_usable_date", tried });
+});
+app.get("/admin/audience-count", (req, res) => {
+  const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+  res.redirect(301, "/api/admin/audience-count" + qs);
+});
+
+// ====== ユニーク送信者数（Active Chatters） & メッセージログ ======
+app.get("/api/admin/active-chatters", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const limit = Math.min(200000, Number(req.query.limit || 50000));
+  let items = readLogLines(MESSAGES_LOG, limit);
+
+  let range = {};
+  if (req.query.date) range = jstRangeFromYmd(String(req.query.date));
+  if (req.query.from || req.query.to) range = { from: req.query.from, to: req.query.to };
+  if (range.from || range.to) items = filterByIsoRange(items, x => x.ts, range.from, range.to);
+
+  items = items.filter(x => x && x.type === "text" && x.userId);
+  const set = new Set(items.map(x => x.userId));
+  const listFlag = String(req.query.list || "false").toLowerCase() === "true";
+
+  res.json({
+    ok: true,
+    totalMessages: items.length,
+    uniqueUsers: set.size,
+    date: req.query.date || null,
+    from: range.from || null,
+    to: range.to || null,
+    users: listFlag ? Array.from(set) : undefined
+  });
+});
+app.get("/api/admin/messages", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const limit = Math.min(200000, Number(req.query.limit || 2000));
+  const items = readLogLines(MESSAGES_LOG, limit);
+  res.json({ ok:true, items, path: MESSAGES_LOG });
+});
+
+// ====== Flex配信（"me" 解決にも対応） ======
+function expandUserIds(rawIds) {
+  const ids = Array.isArray(rawIds) ? rawIds : [];
+  const out = [];
+  for (const id of ids) {
+    if (!id) continue;
+    if (id === "me" && ADMIN_USER_ID) out.push(ADMIN_USER_ID);
+    else out.push(id);
+  }
+  return Array.from(new Set(out));
+}
+
+app.post("/api/admin/segment/send", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const userIds = expandUserIds(req.body?.userIds);
+  const message = (req.body?.message || "").trim();
+
+  if (userIds.length === 0) return res.status(400).json({ ok:false, error:"no_users" });
+  if (!message)           return res.status(400).json({ ok:false, error:"no_message" });
+
+  const chunkSize = 500;
+  const chunks = [];
+  for (let i=0; i<userIds.length; i+=chunkSize) chunks.push(userIds.slice(i, i+chunkSize));
+
+  const results = [];
+  for (const ids of chunks) {
+    try{
+      await client.multicast(ids, [{ type: "text", text: message }]);
+      results.push({ size: ids.length, ok:true });
+    }catch(e){
+      console.error("multicast error:", e?.response?.data || e);
+      results.push({ size: ids.length, ok:false, error: e?.response?.data || String(e) });
+    }
+  }
+  const okCount  = results.filter(r=>r.ok).reduce((a,b)=>a+b.size,0);
+  const ngCount  = results.filter(r=>!r.ok).reduce((a,b)=>a+b.size,0);
+
+  return res.json({ ok:true, requested:userIds.length, sent:okCount, failed:ngCount, batches:results.length, results });
+});
+
+app.post("/api/admin/segment/send-flex", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const userIds = expandUserIds(req.body?.userIds);
+    const altText = ensureAltText(req.body?.altText);
+    const contents = validateFlexContents(req.body?.contents);
+    if (userIds.length === 0) return res.status(400).json({ ok:false, error:"no_users" });
+
+    const msg = [{ type: "flex", altText, contents }];
+    const chunkSize = 500;
+    let sent = 0, failed = 0, batches = 0, results = [];
+    for (let i = 0; i < userIds.length; i += chunkSize) {
+      const ids = userIds.slice(i, i + chunkSize);
+      try {
+        await client.multicast(ids, msg);
+        results.push({ ok:true, size: ids.length }); sent += ids.length; batches++;
+      } catch (e) {
+        const detail = e?.response?.data || String(e);
+        console.error("send-flex multicast error:", detail);
+        results.push({ ok:false, size: ids.length, error: detail }); failed += ids.length; batches++;
+      }
+    }
+    return res.json({ ok:true, requested:userIds.length, sent, failed, batches, results });
+  } catch (err) {
+    return res.status(400).json({ ok:false, error: err.message || "bad_request" });
+  }
+});
+
+app.post("/api/admin/broadcast-flex", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const altText = ensureAltText(req.body?.altText);
+    const contents = validateFlexContents(req.body?.contents);
+    await client.broadcast([{ type: "flex", altText, contents }]);
+    return res.json({ ok:true });
+  } catch (e) {
+    const detail = e?.response?.data || e.message || String(e);
+    console.error("broadcast-flex error:", detail);
+    return res.status(400).json({ ok:false, error: detail });
+  }
+});
+
+// ====== Webhook ======
+app.post("/webhook", line.middleware(config), async (req, res) => {
+  try {
+    const events = req.body.events || [];
+    await Promise.all(events.map(handleEvent));
+    res.status(200).end();
+  } catch (err) {
+    const detail = err?.originalError?.response?.data || err?.response?.data || err?.stack || err;
+    console.error("Webhook Error detail:", JSON.stringify(detail, null, 2));
+    res.status(500).end();
+  }
+});
+
+// ====== イベント処理 ======
+async function handleEvent(ev) {
+  try {
+    // ---- message:text ----
+    if (ev.type === "message" && ev.message?.type === "text") {
+      try {
+        const rec = { ts: new Date().toISOString(), userId: ev.source?.userId || "", type: "text", len: (ev.message.text || "").length };
+        fs.appendFileSync(MESSAGES_LOG, JSON.stringify(rec) + "\n", "utf8");
+      } catch {}
+
+      const sessions = readSessions();
+      const uid = ev.source?.userId || "";
+      const sess = sessions[uid] || null;
+      const text = (ev.message.text || "").trim();
+      const t = text.replace(/\s+/g, " ").trim();
+
+      // 久助（テキスト直打ちフロー）
+      const kusukeRe = /^久助(?:\s+(\d+))?$/i;
+      const km = kusukeRe.exec(text);
+      if (km) {
+        const qtyStr = km[1];
+        if (!qtyStr) {
+          sessions[uid] = { await: "kusukeQty" };
+          writeSessions(sessions);
+          await client.replyMessage(ev.replyToken, { type:"text", text:"久助の個数を半角数字で入力してください（例：2）" });
+          return;
+        }
+        const qty = Math.max(1, Math.min(99, Number(qtyStr)));
+        await client.replyMessage(ev.replyToken, methodFlex("kusuke-250", qty));
+        return;
+      }
+      if (sess?.await === "kusukeQty") {
+        const n = (text || "").trim();
+        if (!/^\d+$/.test(n)) {
+          await client.replyMessage(ev.replyToken, { type:"text", text:"半角数字で入力してください（例：2）" });
+          return;
+        }
+        const qty = Math.max(1, Math.min(99, Number(n)));
+        delete sessions[uid]; writeSessions(sessions);
+        await client.replyMessage(ev.replyToken, methodFlex("kusuke-250", qty));
+        return;
+      }
+
+      // その他（自由入力）
+      if (sess?.await === "otherName") {
+        const name = (text || "").slice(0, 50).trim();
+        if (!name) {
+          await client.replyMessage(ev.replyToken, { type:"text", text:"商品名を入力してください。" });
+          return;
+        }
+        sessions[uid] = { await: "otherQty", temp: { name } };
+        writeSessions(sessions);
+        await client.replyMessage(ev.replyToken, { type:"text", text:`「${name}」ですね。個数を半角数字で入力してください。例：2` });
+        return;
+      }
+      if (sess?.await === "otherQty") {
+        const n = (text || "").trim();
+        if (!/^\d+$/.test(n)) {
+          await client.replyMessage(ev.replyToken, { type:"text", text:"個数は半角数字で入力してください。例：2" });
+          return;
+        }
+        const qty = Math.max(1, Math.min(99, Number(n)));
+        const name = sess.temp?.name || "その他";
+        delete sessions[uid]; writeSessions(sessions);
+        const id = `other:${encodeURIComponent(name)}:0`;
+        await client.replyMessage(ev.replyToken, methodFlex(id, qty));
+        return;
+      }
+
+      // 管理者テキストコマンド
+      if (ev.source?.userId && ADMIN_USER_ID && ev.source.userId === ADMIN_USER_ID) {
+        if (t === "在庫一覧") {
+          const items = readProducts().map(p => `・${p.name}（${p.id}）：${Number(p.stock||0)}個`).join("\n");
+          await client.replyMessage(ev.replyToken, { type:"text", text: items || "商品がありません。" });
+          return;
+        }
+        if (t.startsWith("在庫 ")) {
+          const parts = t.split(" ");
+          if (parts.length === 2) {
+            const pid = resolveProductId(parts[1]);
+            const { product } = findProductById(pid);
+            if (!product) await client.replyMessage(ev.replyToken, { type:"text", text:"商品が見つかりません。" });
+            else await client.replyMessage(ev.replyToken, { type:"text", text:`${product.name}：${Number(product.stock||0)}個` });
+            return;
+          }
+          if (parts.length === 4) {
+            const op = parts[1];
+            const pid = resolveProductId(parts[2]);
+            const val = Number(parts[3]);
+            try {
+              if (op === "設定" || op.toLowerCase() === "set") {
+                const r = setStock(pid, val, "admin-text");
+                const { product } = findProductById(pid);
+                await client.replyMessage(ev.replyToken, { type:"text", text:`[設定] ${product?.name || pid}\n${r.before} → ${r.after} 個` });
+                await maybeLowStockAlert(pid, product?.name || pid, r.after);
+                return;
+              }
+              if (op === "追加" || op === "+" || op.toLowerCase() === "add") {
+                const r = addStock(pid, Math.abs(val), "admin-text");
+                const { product } = findProductById(pid);
+                await client.replyMessage(ev.replyToken, { type:"text", text:`[追加] ${product?.name || pid}\n${r.before} → ${r.after} 個（+${Math.abs(val)}）` });
+                return;
+              }
+              if (op === "減少" || op === "-" || op.toLowerCase() === "sub") {
+                const r = addStock(pid, -Math.abs(val), "admin-text");
+                const { product } = findProductById(pid);
+                await client.replyMessage(ev.replyToken, { type:"text", text:`[減少] ${product?.name || pid}\n${r.before} → ${r.after} 個（-${Math.abs(val)}）` });
+                await maybeLowStockAlert(pid, product?.name || pid, r.after);
+                return;
+              }
+            } catch (e) {
+              await client.replyMessage(ev.replyToken, { type:"text", text:`在庫コマンドエラー：${e.message || e}` });
+              return;
+            }
+          }
+          if (parts.length === 3 && /^[+-]\d+$/.test(parts[2])) {
+            const pid = resolveProductId(parts[1]);
+            const delta = Number(parts[2]);
+            try{
+              const r = addStock(pid, delta, "admin-text");
+              const { product } = findProductById(pid);
+              const sign = delta >= 0 ? "+" : "";
+              await client.replyMessage(ev.replyToken, { type:"text", text:`[調整] ${product?.name || pid}\n${r.before} → ${r.after} 個（${sign}${delta}）` });
+              await maybeLowStockAlert(pid, product?.name || pid, r.after);
+            }catch(e){
+              await client.replyMessage(ev.replyToken, { type:"text", text:`在庫コマンドエラー：${e.message || e}` });
+            }
+            return;
+          }
+          await client.replyMessage(ev.replyToken, { type:"text", text:
+            "在庫コマンド使い方：\n" +
+            "・在庫一覧\n" +
+            "・在庫 久助\n" +
+            "・在庫 設定 久助 50\n" +
+            "・在庫 追加 久助 10\n" +
+            "・在庫 減少 久助 3\n" +
+            "・在庫 久助 +5 / 在庫 久助 -2"
+          });
+          return;
+        }
+
+        if (t.startsWith("予約連絡 ")) {
+          const m = /^予約連絡\s+(\S+)\s+([\s\S]+)$/.exec(t);
+          if (!m) { await client.replyMessage(ev.replyToken, { type:"text", text:"使い方：予約連絡 {商品名またはID} {本文}" }); return; }
+          const pid = resolveProductId(m[1]);
+          const message = m[2].trim();
+          const items = readLogLines(RESERVATIONS_LOG, 100000).filter(r => r && r.productId === pid && r.userId);
+          const userIds = Array.from(new Set(items.map(r=>r.userId)));
+          if (userIds.length === 0) { await client.replyMessage(ev.replyToken, { type:"text", text:`予約者が見つかりませんでした。（${pid}）` }); return; }
+          try {
+            const chunk = 500;
+            for (let i=0;i<userIds.length;i+=chunk) {
+              await client.multicast(userIds.slice(i,i+chunk), [{ type:"text", text: message }]);
+            }
+            await client.replyMessage(ev.replyToken, { type:"text", text:`予約者 ${userIds.length}名に送信しました。` });
+          } catch (e) {
+            await client.replyMessage(ev.replyToken, { type:"text", text:`送信エラー：${e?.response?.data?.message || e.message || e}` });
+          }
+          return;
+        }
+
+        if (t.startsWith("予約連絡開始 ")) {
+          const m = /^予約連絡開始\s+(\S+)\s+([\s\S]+)$/.exec(t);
+          if (!m) { await client.replyMessage(ev.replyToken, { type:"text", text:"使い方：予約連絡開始 {商品名/ID} {本文}" }); return; }
+          const pid = resolveProductId(m[1]);
+          const message = m[2].trim();
+          const userIds = buildReservationQueue(pid);
+          const state = readNotifyState();
+          state[pid] = { idx:0, userIds, message, updatedAt: new Date().toISOString() };
+          state.__lastPid = pid;
+          writeNotifyState(state);
+
+          if (userIds.length === 0) { await client.replyMessage(ev.replyToken, { type:"text", text:`予約者がいません。（${pid}）` }); return; }
+          try {
+            await client.pushMessage(userIds[0], { type:"text", text: message });
+            state[pid].idx = 1; state[pid].updatedAt = new Date().toISOString(); writeNotifyState(state);
+            await client.replyMessage(ev.replyToken, { type:"text", text:`開始：${pid}\n1/${userIds.length} 件送信しました。次へ進むには「予約連絡次」と送ってください。` });
+          } catch (e) {
+            await client.replyMessage(ev.replyToken, { type:"text", text:`送信エラー：${e?.response?.data?.message || e.message || e}` });
+          }
+          return;
+        }
+        if (t === "予約連絡次" || t.startsWith("予約連絡次 ")) {
+          const m = /^予約連絡次(?:\s+(\S+))?(?:\s+(\d+))?$/.exec(t);
+          const pid = resolveProductId(m?.[1] || readNotifyState().__lastPid || "");
+          const count = Math.max(1, Number(m?.[2] || 1));
+          const state = readNotifyState();
+          const st = state[pid];
+          if (!pid || !st) { await client.replyMessage(ev.replyToken, { type:"text", text:"先に「予約連絡開始 {商品} {本文}」を実行してください。" }); return; }
+
+          const { userIds, message } = st; let { idx } = st;
+          const total = userIds.length;
+          if (idx >= total) { await client.replyMessage(ev.replyToken, { type:"text", text:`完了済み：${idx}/${total}` }); return; }
+          let sent = 0;
+          for (let i=0; i<count && idx < total; i++, idx++) {
+            try { await client.pushMessage(userIds[idx], { type:"text", text: message }); sent++; } catch {}
+          }
+          state[pid].idx = idx; state[pid].updatedAt = new Date().toISOString(); writeNotifyState(state);
+          await client.replyMessage(ev.replyToken, { type:"text", text:`${sent}件送信：${idx}/${total}` });
+          return;
+        }
+        if (t.startsWith("予約連絡停止")) {
+          const m = /^予約連絡停止(?:\s+(\S+))?$/.exec(t);
+          const pid = resolveProductId(m?.[1] || readNotifyState().__lastPid || "");
+          const state = readNotifyState();
+          if (pid && state[pid]) delete state[pid];
+          if (state.__lastPid === pid) delete state.__lastPid;
+          writeNotifyState(state);
+          await client.replyMessage(ev.replyToken, { type:"text", text:`停止しました：${pid || "(未指定)"}` });
+          return;
+        }
+      }
+
+      // 一般ユーザー
+      if (text === "直接注文") {
+        return client.replyMessage(ev.replyToken, productsFlex(readProducts()));
+      }
+      if (text === "アンケート") {
+        return client.replyMessage(ev.replyToken, { type:"text", text:"アンケート機能は準備中です。" });
+      }
+      return client.replyMessage(ev.replyToken, { type: "text", text: "「直接注文」と送ると、商品一覧が表示されます。\n久助は「久助 2」のように、商品名＋半角個数でご入力ください。" });
+    }
+
+    // ---- postback ----
+    if (ev.type === "postback") {
+      try {
+        const d_ = String(ev.postback?.data || "");
+        const rec = { ts: new Date().toISOString(), userId: ev.source?.userId || "", type: "postback", data: d_.slice(0, 200) };
+        fs.appendFileSync(MESSAGES_LOG, JSON.stringify(rec) + "\n", "utf8");
+      } catch {}
+
+      const d = ev.postback?.data || "";
+
+      if (d === "other_start") {
+        const sessions = readSessions();
+        const uid = ev.source?.userId || "";
+        sessions[uid] = { await: "otherName" };
+        writeSessions(sessions);
+        await client.replyMessage(ev.replyToken, { type: "text", text: "その他の商品名を入力してください。" });
+        return;
+      }
+
+      if (d.startsWith("order_qty?")) {
+        const { id, qty } = parse(d.replace("order_qty?", ""));
+        return client.replyMessage(ev.replyToken, qtyFlex(id, qty));
+      }
+      if (d.startsWith("order_method?")) {
+        const { id, qty } = parse(d.replace("order_method?", ""));
+        return client.replyMessage(ev.replyToken, methodFlex(id, qty));
+      }
+      if (d.startsWith("order_region?")) {
+        const { id, qty, method } = parse(d.replace("order_region?", ""));
+        if (method === "delivery") return client.replyMessage(ev.replyToken, regionFlex(id, qty));
+        return client.replyMessage(ev.replyToken, paymentFlex(id, qty, "pickup", ""));
+      }
+      if (d.startsWith("order_payment?")) {
+        let { id, qty, method, region } = parse(d.replace("order_payment?", ""));
+        method = (method || "").trim();
+        region = (region || "").trim();
+        if (region === "-") region = "";
+
+        if (method === "pickup") {
+          return client.replyMessage(ev.replyToken, paymentFlex(id, qty, "pickup", ""));
+        }
+        if (method === "delivery") {
+          if (!region) return client.replyMessage(ev.replyToken, regionFlex(id, qty));
+          return client.replyMessage(ev.replyToken, paymentFlex(id, qty, "delivery", region));
+        }
+        return client.replyMessage(ev.replyToken, methodFlex(id, qty));
+      }
+      if (d.startsWith("order_confirm_view?")) {
+        const { id, qty, method, region, payment } = parse(d.replace("order_confirm_view?", ""));
+        let product;
+        if (String(id).startsWith("other:")) {
+          const parts = String(id).split(":");
+          const encName = parts[1] || "";
+          const priceStr = parts[2] || "0";
+          product = { id, name: decodeURIComponent(encName || "その他"), price: Number(priceStr || 0), image: "" };
+        } else {
+          const products = readProducts();
+          product = products.find(p => p.id === id);
+          if (!product) return client.replyMessage(ev.replyToken, { type: "text", text: "商品が見つかりませんでした。" });
+        }
+        return client.replyMessage(ev.replyToken, confirmFlex(product, qty, method, region, payment, LIFF_ID));
+      }
+      if (d === "order_back") {
+        return client.replyMessage(ev.replyToken, productsFlex(readProducts()));
+      }
+      if (d.startsWith("order_confirm?")) {
+        const { id, qty, method, region, payment } = parse(d.replace("order_confirm?", ""));
+        const need = Math.max(1, Number(qty) || 1);
+
+        let product = null;
+        let products = readProducts();
+        let idx = products.findIndex(p => p.id === id);
+
+        if (String(id).startsWith("other:")) {
+          const parts = String(id).split(":");
+          const encName = parts[1] || "";
+          const priceStr = parts[2] || "0";
+          product = { id, name: decodeURIComponent(encName || "その他"), price: Number(priceStr || 0), stock: Infinity, image: "" };
+          idx = -1;
+        } else {
+          if (idx === -1) return client.replyMessage(ev.replyToken, { type: "text", text: "商品が見つかりませんでした。" });
+          product = products[idx];
+          if (!product.stock || product.stock < need) {
+            return client.replyMessage(ev.replyToken, reserveOffer(product, need, product.stock || 0));
+          }
+          products[idx].stock = Number(product.stock) - need;
+          writeProducts(products);
+          await maybeLowStockAlert(product.id, product.name, products[idx].stock);
+        }
+
+        const regionFee = method === "delivery" ? (SHIPPING_BY_REGION[region] || 0) : 0;
+        const codFee = payment === "cod" ? COD_FEE : 0;
+        const subtotal = Number(product.price) * need;
+        const total = subtotal + regionFee + codFee;
+
+        const addrBook = readAddresses();
+        const addr = addrBook[ev.source?.userId || ""] || null;
+
+        const order = {
+          ts: new Date().toISOString(),
+          userId: ev.source?.userId || "",
+          productId: product.id,
+          productName: product.name,
+          qty: need,
+          price: Number(product.price),
+          subtotal, region, shipping: regionFee,
+          payment, codFee, total, method,
+          address: addr
+        };
+        fs.appendFileSync(ORDERS_LOG, JSON.stringify(order) + "\n", "utf8");
+
+        const payText =
+          payment === "cod"  ? `代金引換（+${yen(COD_FEE)})` :
+          payment === "bank" ? "銀行振込" :
+          "現金（店頭）";
+
+        const userLines = [
+          "ご注文ありがとうございます！",
+          `受取方法：${method === "pickup" ? "店頭受取（送料0円）" : `宅配（${region}）`}`,
+          `支払い：${payText}`,
+          `商品：${product.name}`,
+          `数量：${need}個`,
+          `小計：${yen(subtotal)}`,
+          `送料：${yen(regionFee)}`,
+          `代引き手数料：${yen(codFee)}`,
+          `合計：${yen(total)}`
+        ];
+        if (method === "delivery") {
+          userLines.push("");
+          userLines.push(
+            addr
+              ? `お届け先：${addr.postal} ${addr.prefecture}${addr.city}${addr.address1}${addr.address2 ? " " + addr.address2 : ""}\n氏名：${addr.name}\n電話：${addr.phone}`
+              : "住所未登録です。メニューの「住所を入力（LIFF）」から登録してください。"
+          );
+        } else {
+          userLines.push("", "店頭でのお受け取りをお待ちしています。");
+        }
+        await client.replyMessage(ev.replyToken, { type: "text", text: userLines.join("\n") });
+
+        if (method === "delivery" && payment === "bank") {
+          const lines = [];
+          lines.push("▼ 振込先");
+          if (BANK_INFO) { lines.push(BANK_INFO); }
+          else { lines.push("（銀行口座情報が未設定です。管理者に連絡してください。）"); }
+          if (BANK_NOTE) { lines.push(""); lines.push(BANK_NOTE); }
+          lines.push(""); lines.push("※ご入金確認後の発送となります。");
+          try { await client.pushMessage(ev.source.userId, { type:"text", text: lines.join("\n") }); }
+          catch (e) { console.error("bank info send error:", e?.response?.data || e); }
+        }
+
+        const adminMsg = [
+          "🧾 新規注文",
+          `ユーザーID：${ev.source?.userId || ""}`,
+          `商品：${product.name}`,
+          `数量：${need}個`,
+          `小計：${yen(subtotal)} / 送料：${yen(regionFee)} / 代引：${yen(codFee)} / 合計：${yen(total)}`,
+          `受取：${method}${method === "delivery" ? `（${region}）` : ""} / 支払：${payment}`,
+          (addr
+            ? `住所：${addr.postal} ${addr.prefecture}${addr.city}${addr.address1}${addr.address2 ? " " + addr.address2 : ""}\n氏名：${addr.name} / TEL：${addr.phone}`
+            : "住所：未登録")
+        ].join("\n");
+        try {
+          if (ADMIN_USER_ID) await client.pushMessage(ADMIN_USER_ID, { type: "text", text: adminMsg });
+          if (MULTICAST_USER_IDS.length > 0) await client.multicast(MULTICAST_USER_IDS, { type: "text", text: adminMsg });
+        } catch {}
+        return;
+      }
+      if (d.startsWith("order_reserve?")) {
+        const { id, qty } = parse(d.replace("order_reserve?", ""));
+        const products = readProducts();
+        const product = products.find(p => p.id === id);
+        if (!product) return client.replyMessage(ev.replyToken, { type: "text", text: "商品が見つかりませんでした。" });
+
+        const r = { ts: new Date().toISOString(), userId: ev.source?.userId || "", productId: product.id, productName: product.name, qty: Math.max(1, Number(qty) || 1), status: "reserved" };
+        fs.appendFileSync(RESERVATIONS_LOG, JSON.stringify(r) + "\n", "utf8");
+
+        await client.replyMessage(ev.replyToken, { type: "text", text: ["予約を受け付けました。入荷次第ご案内します。", `商品：${product.name}`, `数量：${r.qty}個`].join("\n") });
+
+        try {
+          const adminReserve = ["📝 予約受付", `ユーザーID：${ev.source?.userId || ""}`, `商品：${product.name}`, `数量：${r.qty}個`].join("\n");
+          if (ADMIN_USER_ID) await client.pushMessage(ADMIN_USER_ID, { type: "text", text: adminReserve });
+          if (MULTICAST_USER_IDS.length > 0) await client.multicast(MULTICAST_USER_IDS, { type: "text", text: adminReserve });
+        } catch {}
+        return;
+      }
+
+      // 簡易アンケート（スタブ）
+      if (d.startsWith("survey_q2?")) { return client.replyMessage(ev.replyToken, { type:"text", text:"アンケートQ2（準備中）" }); }
+      if (d.startsWith("survey_q3?")) { return client.replyMessage(ev.replyToken, { type:"text", text:"アンケートQ3（準備中）" }); }
+      if (d.startsWith("survey_submit?")) { await client.replyMessage(ev.replyToken, { type:"text", text:"アンケート送信ありがとうございました（準備中）。" }); return; }
+    }
+  } catch (err) {
+    console.error("handleEvent error:", err?.response?.data || err?.stack || err);
+    if (ev.replyToken) { try { await client.replyMessage(ev.replyToken, { type: "text", text: "エラーが発生しました。もう一度お試しください。" }); } catch {} }
+  }
+}
+
+// ====== シンプルな管理UI（おまけ） ======
+app.get("/admin", (_req, res) => {
+  const html = `
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin — 画像アップロード対応</title>
+<style>
+  body{font-family:system-ui, sans-serif;max-width:980px;margin:24px auto;padding:0 16px;}
+  h1{font-size:20px;margin:0 0 12px}
+  section{border:1px solid #ddd;border-radius:12px;padding:16px;margin:16px 0}
+  label{display:block;margin:8px 0 4px}
+  input[type=text],textarea{width:100%;padding:8px;border:1px solid #ccc;border-radius:8px;font-family:inherit}
+  button{padding:10px 14px;border:0;border-radius:10px;cursor:pointer}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  .row > *{flex:1}
+  pre{background:#f7f7f7;padding:12px;border-radius:8px;overflow:auto}
+  .muted{color:#666}
+  .drop{border:2px dashed #bbb;padding:20px;border-radius:10px;text-align:center}
+</style>
+<h1>管理画面（画像アップロード → Flex hero 反映）</h1>
+
+<section>
+  <div class="row">
+    <div>
+      <label>Admin Token（.env: ADMIN_API_TOKEN）</label>
+      <input id="token" type="text" placeholder="例：sk_live_xxx">
+      <small class="muted">全APIで使用します。</small>
+    </div>
+    <div>
+      <label>productId</label>
+      <input id="pid" type="text" placeholder="例：original-set-2000">
+    </div>
+  </div>
+
+  <div class="drop" id="drop">
+    ここに画像をドラッグ＆ドロップ（png / jpg / webp / 8MBまで）
+  </div>
+  <div class="row" style="margin-top:8px">
+    <input id="file" type="file" accept="image/*">
+    <button id="upload">アップロード</button>
+  </div>
+  <div id="result" class="muted"></div>
+</section>
+
+<section>
+  <button id="load">products を取得</button>
+  <pre id="products">（未取得）</pre>
+</section>
+
+<script>
+const $ = (id)=>document.getElementById(id);
+function log(m){ $('result').textContent = m; }
+
+async function uploadFile(f){
+  const t = $('token').value.trim();
+  if(!t) return alert('ADMIN_API_TOKEN を入れてください');
+  if(!f) return alert('ファイルを選択してください');
+  const fd = new FormData();
+  fd.append('image', f);
+  const pid = $('pid').value.trim();
+  if(pid) fd.append('productId', pid);
+  const r = await fetch('/api/admin/upload-image', {
+    method:'POST',
+    headers: { 'Authorization': 'Bearer '+t },
+    body: fd
+  });
+  const j = await r.json();
+  if(!r.ok || !j.ok) throw new Error((j && (j.error||j.note)) || ('HTTP '+r.status));
+  return j;
+}
+
+$('upload').onclick = async ()=>{
+  try{
+    const f = $('file').files[0];
+    const j = await uploadFile(f);
+    log('OK: '+JSON.stringify(j));
+  }catch(e){ log('NG: '+e.message); }
+};
+
+const box = $('drop');
+box.addEventListener('dragover', (e)=>{ e.preventDefault(); box.style.borderColor='#88c';});
+box.addEventListener('dragleave', ()=>{ box.style.borderColor='#bbb';});
+box.addEventListener('drop', async (e)=>{
+  e.preventDefault(); box.style.borderColor='#bbb';
+  const f = e.dataTransfer.files[0];
+  try{
+    const j = await uploadFile(f);
+    log('OK: '+JSON.stringify(j));
+  }catch(err){ log('NG: '+err.message); }
+});
+
+$('load').onclick = async ()=>{
+  try{
+    const t = $('token').value.trim();
+    const r = await fetch('/api/admin/products', { headers:{ 'Authorization':'Bearer '+t } });
+    const j = await r.json();
+    $('products').textContent = JSON.stringify(j, null, 2);
+  }catch(e){ $('products').textContent = 'ERR '+e.message; }
+};
+</script>
+`;
+  res.type("html").send(html);
+});
+
+// ====== Health ======
+app.get("/health", (_req, res) => res.status(200).type("text/plain").send("OK"));
+app.get("/healthz", (_req, res) => res.status(200).type("text/plain").send("OK"));
+app.head("/health", (_req, res) => res.status(200).end());
+app.get("/api/health", (_req, res) => {
+  res.json({
+    ok: true,
+    time: new Date().toISOString(),
+    node: process.version,
+    dataDir: DATA_DIR,
+    files: {
+      products: PRODUCTS_PATH,
+      ordersLog: ORDERS_LOG,
+      reservationsLog: RESERVATIONS_LOG,
+      addresses: ADDRESSES_PATH,
+      surveysLog: SURVEYS_LOG,
+      messagesLog: MESSAGES_LOG,
+      sessions: SESSIONS_PATH,
+      notifyState: NOTIFY_STATE_PATH,
+      stockLog: STOCK_LOG,
+      uploadDir: UPLOAD_DIR,
+    },
+    env: {
+      PORT: !!process.env.PORT,
+      LINE_CHANNEL_ACCESS_TOKEN: !!process.env.LINE_CHANNEL_ACCESS_TOKEN,
+      LINE_CHANNEL_SECRET: !!process.env.LINE_CHANNEL_SECRET,
+      LIFF_ID: !!process.env.LIFF_ID,
+      ADMIN_API_TOKEN: !!ADMIN_API_TOKEN_ENV,
+      ADMIN_CODE: !!ADMIN_CODE_ENV,
+      BANK_INFO: !!BANK_INFO,
+      BANK_NOTE: !!BANK_NOTE,
+      DATA_DIR: process.env.DATA_DIR || null,
+      RENDER_DATA_DIR: process.env.RENDER_DATA_DIR || null,
+    }
+  });
+});
+
+// ====== 起動 ======
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Server started on port ${PORT}`);
+  console.log(`   DATA_DIR: ${DATA_DIR}`);
+  console.log(`   Uploads:  /uploads  ← ${UPLOAD_DIR}`);
+  console.log(`   Webhook:  POST /webhook`);
+  console.log(`   Admin UI: GET  /admin`);
+  console.log(`   LIFF address page: /public/liff-address.html  (open via https://liff.line.me/${LIFF_ID})`);
+});

@@ -1,6 +1,5 @@
-// server.js — フル機能版 + Flex配信 + 「その他＝価格入力なし」 + 久助専用テキスト購入フロー + 予約者連絡API/コマンド + 店頭受取Fix + 銀行振込案内（コメント対応） + 画像管理（アップロード/一覧/削除）+ 商品画像URLひも付け
-// 必須 .env: LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, LIFF_ID, (ADMIN_API_TOKEN または ADMIN_CODE)
-// 任意 .env: PORT, ADMIN_USER_ID, MULTICAST_USER_IDS, BANK_INFO, BANK_NOTE
+// server.js — フル機能版 + Flex配信 + 「その他＝価格入力なし」 + 久助専用テキスト購入フロー + 予約者連絡API/コマンド + 店頭受取Fix + 銀行振込案内（コメント対応）
+// + 画像アップロード/一覧/削除 + 商品への画像紐付け（admin.html / admin.js対応版）
 "use strict";
 
 require("dotenv").config();
@@ -10,7 +9,7 @@ const path = require("path");
 const express = require("express");
 const line = require("@line/bot-sdk");
 const axios = require("axios");
-const multer = require("multer"); // ← 追加
+const multer = require("multer"); // ★ 追加
 
 const app = express();
 
@@ -59,6 +58,10 @@ const MESSAGES_LOG      = path.join(DATA_DIR, "messages.log"); // ← ユニー�
 const SESSIONS_PATH     = path.join(DATA_DIR, "sessions.json");
 const NOTIFY_STATE_PATH = path.join(DATA_DIR, "notify_state.json"); // 順次連絡の状態
 
+// ★ 画像保存先（/public/uploads） —— ここを admin.html が見る
+const UPLOAD_DIR = path.join(__dirname, "public", "uploads");
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
 // ★ 在庫管理
 const STOCK_LOG         = path.join(DATA_DIR, "stock.log");
 const LOW_STOCK_THRESHOLD = 5; // しきい値（例：残り5で通知）
@@ -74,9 +77,9 @@ const HIDE_PRODUCT_IDS = new Set(["kusuke-250"]);
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(PRODUCTS_PATH)) {
   const sample = [
-    { id: "kusuke-250",      name: "久助（えびせん）",     price: 250, stock: 20, desc: "お得な割れせん。" },
-    { id: "nori-square-300", name: "四角のりせん",         price: 300, stock: 10, desc: "のり香る角せん。" },
-    { id: "premium-ebi-400", name: "プレミアムえびせん",   price: 400, stock: 5,  desc: "贅沢な旨み。" }
+    { id: "kusuke-250",      name: "久助（えびせん）",     price: 250, stock: 20, desc: "お得な割れせん。", imageUrl: "" },
+    { id: "nori-square-300", name: "四角のりせん",         price: 300, stock: 10, desc: "のり香る角せん。", imageUrl: "" },
+    { id: "premium-ebi-400", name: "プレミアムえびせん",   price: 400, stock: 5,  desc: "贅沢な旨み。",     imageUrl: "" }
   ];
   fs.writeFileSync(PRODUCTS_PATH, JSON.stringify(sample, null, 2), "utf8");
   console.log(`ℹ️ ${PRODUCTS_PATH} を自動作成しました。`);
@@ -180,8 +183,7 @@ function readLogLines(filePath, limit = 100) {
 }
 
 function jstRangeFromYmd(ymd) {
-  const y = Number(ymd.slice(0,4)), m = Number(ymd.slice(6,8)) ? Number(ymd.slice(4,6))-1 : Number(ymd.slice(4,6))-1; // safe
-  const d = Number(ymd.slice(6,8));
+  const y = Number(ymd.slice(0,4)), m = Number(ymd.slice(4,6))-1, d = Number(ymd.slice(6,8));
   const startJST = new Date(Date.UTC(y, m, d, -9, 0, 0));   // JST 00:00
   const endJST   = new Date(Date.UTC(y, m, d+1, -9, 0, 0)); // 翌日 JST 00:00
   return { from: startJST.toISOString(), to: endJST.toISOString() };
@@ -220,13 +222,22 @@ function validateFlexContents(contents) {
   return contents;
 }
 
-// ====== 商品UI（Flex） ======
+// ====== 商品UI（Flex） — ★ 画像(hero)対応 ======
 function productsFlex(allProducts) {
   // ★ 久助は一覧から除外
   const products = (allProducts || []).filter(p => !HIDE_PRODUCT_IDS.has(p.id));
 
   const bubbles = products.map(p => ({
     type: "bubble",
+    ...(p.imageUrl ? {
+      hero: {
+        type: "image",
+        url: p.imageUrl,     // 例: /public/uploads/xxxx.jpg
+        size: "full",
+        aspectRatio: "1:1",
+        aspectMode: "cover"
+      }
+    } : {}),
     body: {
       type: "box", layout: "vertical", spacing: "sm",
       contents: [
@@ -267,6 +278,7 @@ function productsFlex(allProducts) {
 
   return { type: "flex", altText: "商品一覧", contents: bubbles.length === 1 ? bubbles[0] : { type: "carousel", contents: bubbles } };
 }
+
 function qtyFlex(id, qty = 1) {
   const q = Math.max(1, Math.min(99, Number(qty) || 1));
   return {
@@ -490,6 +502,97 @@ app.get("/api/liff/config", (_req, res) => res.json({ liffId: LIFF_ID }));
 // ====== 管理API（要トークン） ======
 app.get("/api/admin/ping", (req, res) => { if (!requireAdmin(req, res)) return; res.json({ ok: true, ping: "pong" }); });
 
+// --- 画像API（アップロード・一覧・削除） ---
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      const base = path.basename(file.originalname, ext).replace(/[^\w.-]+/g, "_").slice(0, 40);
+      const stamp = Date.now().toString(36);
+      cb(null, `${base}-${stamp}${ext}`);
+    }
+  }),
+  fileFilter: (_req, file, cb) => {
+    if (/^image\//.test(file.mimetype)) cb(null, true);
+    else cb(new Error("only_image_allowed"));
+  },
+  limits: { fileSize: 5 * 1024 * 1024 } // 5MB
+});
+
+app.post("/api/admin/upload-image", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  upload.single("file")(req, res, (err) => {
+    if (err) return res.status(400).json({ ok:false, error: err.message || String(err) });
+    if (!req.file) return res.status(400).json({ ok:false, error:"no_file" });
+    const name = req.file.filename;
+    const url = `/public/uploads/${name}`; // 静的配信
+    return res.json({ ok:true, name, url, size: req.file.size });
+  });
+});
+
+app.get("/api/admin/images", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const files = fs.readdirSync(UPLOAD_DIR);
+    const items = files
+      .filter(f => /\.(png|jpe?g|gif|webp|avif|bmp)$/i.test(f))
+      .map(name => {
+        const fp = path.join(UPLOAD_DIR, name);
+        const stat = fs.statSync(fp);
+        return {
+          name,
+          url: `/public/uploads/${name}`,
+          size: stat.size,
+          createdAt: stat.birthtime?.toISOString?.() || stat.ctime?.toISOString?.() || null
+        };
+      })
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    res.json({ ok:true, items });
+  } catch (e) {
+    res.status(500).json({ ok:false, error:String(e.message||e) });
+  }
+});
+
+app.delete("/api/admin/images/:name", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const name = req.params.name || "";
+    const fp = path.join(UPLOAD_DIR, name);
+    if (!/^\w[\w.\-]+$/.test(name)) return res.status(400).json({ ok:false, error:"bad_name" });
+    if (!fs.existsSync(fp)) return res.json({ ok:true, deleted:false });
+    fs.unlinkSync(fp);
+    res.json({ ok:true, deleted:true });
+  } catch (e) {
+    res.status(500).json({ ok:false, error:String(e.message||e) });
+  }
+});
+
+// --- 商品一覧 & 画像紐付け ---
+app.get("/api/admin/products", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const items = readProducts().map(p => ({
+    id:p.id, name:p.name, price:p.price, stock:p.stock ?? 0, desc:p.desc || "", imageUrl: p.imageUrl || ""
+  }));
+  res.json({ ok:true, items });
+});
+
+app.post("/api/admin/products/set-image", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const pid = (req.body?.productId || "").trim();
+    const url = (req.body?.imageUrl || "").trim();
+    const { products, idx, product } = findProductById(pid);
+    if (idx < 0) return res.status(404).json({ ok:false, error:"product_not_found" });
+
+    products[idx].imageUrl = url; // 空文字で解除
+    writeProducts(products);
+    res.json({ ok:true, productId: pid, imageUrl: url });
+  } catch (e) {
+    res.status(500).json({ ok:false, error:String(e.message||e) });
+  }
+});
+
 // 注文・予約・住所・アンケート一覧 & 集計
 app.get("/api/admin/orders", (req, res) => {
   if (!requireAdmin(req, res)) return;
@@ -611,71 +714,10 @@ app.post("/api/admin/reservations/notify-stop", (req, res) => {
   res.json({ ok:true, stopped: pid || true });
 });
 
-// === 画像アップロード用設定 ===
-const UPLOAD_DIR = path.join(__dirname, "public", "uploads");
-if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || "").toLowerCase();
-    const base = path.basename(file.originalname || "", ext).replace(/[^a-zA-Z0-9_-]/g, "");
-    const name = `${Date.now()}_${base || "img"}${ext || ".png"}`;
-    cb(null, name);
-  }
-});
-const upload = multer({
-  storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
-  fileFilter: (_req, file, cb) => {
-    const ok = /\.(png|jpe?g|webp|gif)$/i.test(file.originalname || "");
-    cb(ok ? null : new Error("unsupported_filetype"), ok);
-  }
-});
-
-// === 画像管理 API ===
-app.get("/api/admin/images", (req, res) => {
+// ★ 在庫管理 API
+app.get("/api/admin/products/list", (req, res) => { // 互換（念のため）
   if (!requireAdmin(req, res)) return;
-  try {
-    const files = fs.readdirSync(UPLOAD_DIR).filter(f => !f.startsWith("."));
-    const items = files.map(filename => ({
-      filename,
-      url: `/public/uploads/${filename}`,
-    }));
-    res.json({ ok: true, items });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: "list_failed" });
-  }
-});
-app.post("/api/admin/upload-image", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  upload.single("file")(req, res, err => {
-    if (err) return res.status(400).json({ ok:false, error: err.message || "upload_failed" });
-    const filename = req.file?.filename;
-    if (!filename) return res.status(400).json({ ok:false, error:"no_file" });
-    res.json({ ok:true, filename, url: `/public/uploads/${filename}` });
-  });
-});
-app.delete("/api/admin/images/:filename", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  const filename = (req.params.filename || "").replace(/[^a-zA-Z0-9_.-]/g, "");
-  if (!filename) return res.status(400).json({ ok:false, error:"bad_filename" });
-  const p = path.join(UPLOAD_DIR, filename);
-  if (!fs.existsSync(p)) return res.json({ ok:true, deleted:false });
-  try { fs.unlinkSync(p); res.json({ ok:true, deleted:true }); }
-  catch { res.status(500).json({ ok:false, error:"delete_failed" }); }
-});
-
-// ★ 在庫管理 API（置換版） — imageUrl を含めて返す
-app.get("/api/admin/products", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  const items = readProducts().map(p => ({
-    id: p.id,
-    name: p.name,
-    price: p.price,
-    stock: p.stock ?? 0,
-    desc: p.desc || "",
-    imageUrl: p.imageUrl || ""
-  }));
+  const items = readProducts().map(p => ({ id:p.id, name:p.name, price:p.price, stock:p.stock ?? 0, desc:p.desc || "", imageUrl: p.imageUrl || "" }));
   res.json({ ok:true, items });
 });
 app.get("/api/admin/stock/logs", (req, res) => {
@@ -703,42 +745,7 @@ app.post("/api/admin/stock/add", (req, res) => {
   }catch(e){ res.status(400).json({ ok:false, error:String(e.message||e) }); }
 });
 
-// === 商品画像URL 設定/解除 API ===
-app.post("/api/admin/products/:id/image", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try{
-    const id = String(req.params.id || "").trim();
-    const url = String(req.body?.url || "").trim();
-    if (!id || !url) return res.status(400).json({ ok:false, error:"id_or_url_required" });
-
-    const items = readProducts();
-    const idx = items.findIndex(p => p.id === id);
-    if (idx < 0) return res.status(404).json({ ok:false, error:"product_not_found" });
-
-    items[idx].imageUrl = url;
-    writeProducts(items);
-    res.json({ ok:true, product: items[idx] });
-  }catch(e){
-    res.status(500).json({ ok:false, error: String(e.message||e) });
-  }
-});
-app.delete("/api/admin/products/:id/image", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try{
-    const id = String(req.params.id || "").trim();
-    const items = readProducts();
-    const idx = items.findIndex(p => p.id === id);
-    if (idx < 0) return res.status(404).json({ ok:false, error:"product_not_found" });
-
-    delete items[idx].imageUrl;
-    writeProducts(items);
-    res.json({ ok:true, product: items[idx] });
-  }catch(e){
-    res.status(500).json({ ok:false, error: String(e.message||e) });
-  }
-});
-
-// ★ 予約者に一括連絡 API（既存）
+// ★ 予約者に一括連絡 API
 app.post("/api/admin/reservations/notify", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try{
@@ -1446,4 +1453,5 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server started on port ${PORT}`);
   console.log("   Webhook: POST /webhook");
   console.log("   LIFF address page: /public/liff-address.html  (open via https://liff.line.me/LIFF_ID)");
+  console.log("   Admin image UI:    /public/admin.html (token: ?code=YOUR_TOKEN)");
 });

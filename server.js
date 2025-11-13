@@ -84,9 +84,21 @@ if (!fs.existsSync(PRODUCTS_PATH)) {
   fs.writeFileSync(PRODUCTS_PATH, JSON.stringify(sample, null, 2), "utf8");
   console.log(`ℹ️ ${PRODUCTS_PATH} を自動作成しました。`);
 }
+
 if (!fs.existsSync(ADDRESSES_PATH)) fs.writeFileSync(ADDRESSES_PATH, JSON.stringify({}, null, 2), "utf8");
 if (!fs.existsSync(SESSIONS_PATH)) fs.writeFileSync(SESSIONS_PATH, JSON.stringify({}, null, 2), "utf8");
 if (!fs.existsSync(NOTIFY_STATE_PATH)) fs.writeFileSync(NOTIFY_STATE_PATH, JSON.stringify({}, null, 2), "utf8");
+// ====== データパス ======
+const DATA_DIR = path.join(__dirname, "data");
+const PRODUCTS_PATH     = path.join(DATA_DIR, "products.json");
+// ...（既存）...
+
+// ▼▼ これを追加：アップロード先ディレクトリを必ず作る
+const UPLOAD_DIR = path.join(__dirname, "public", "uploads");
+if (!fs.existsSync(UPLOAD_DIR)) {
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+  console.log(`ℹ️ ${UPLOAD_DIR} を作成しました。`);
+}
 
 // ====== ユーティリティ ======
 const safeReadJSON = (p, fb) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return fb; } };

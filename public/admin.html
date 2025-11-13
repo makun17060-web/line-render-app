@@ -1,377 +1,437 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8" />
-  <title>えびせん管理画面（画像管理付き・単体版）</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta charset="UTF-8" />
+  <title>管理画面（在庫・画像・セグメント配信）</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      margin: 0;
+      font-family: system-ui, sans-serif;
       padding: 16px;
-      background: #f5f5f5;
     }
     h1 {
-      margin-top: 0;
       font-size: 20px;
+      margin-bottom: 8px;
     }
-    .card {
-      background: #fff;
-      border-radius: 8px;
-      padding: 12px 16px;
-      margin-bottom: 12px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    h2 {
+      margin-top: 24px;
+      font-size: 18px;
+      border-bottom: 1px solid #ccc;
+      padding-bottom: 4px;
     }
-    label {
-      display: block;
-      font-size: 12px;
-      margin-bottom: 4px;
-    }
-    input[type="text"] {
-      width: 100%;
-      max-width: 320px;
-      padding: 6px 8px;
-      font-size: 13px;
-      box-sizing: border-box;
-    }
-    button {
-      padding: 6px 12px;
-      font-size: 13px;
-      border-radius: 4px;
-      border: none;
-      cursor: pointer;
-      margin-right: 4px;
-      margin-top: 4px;
-    }
-    button.primary { background: #1976d2; color:#fff; }
-    button.danger  { background: #d32f2f; color:#fff; }
-
-    #log {
-      background: #111;
-      color: #eee;
-      font-family: monospace;
-      font-size: 11px;
+    .section {
+      margin-top: 12px;
       padding: 8px;
+      border: 1px solid #ddd;
       border-radius: 4px;
-      max-height: 240px;
+    }
+    .row {
+      margin: 4px 0;
+    }
+    #log {
+      margin-top: 12px;
+      max-height: 200px;
       overflow: auto;
+      font-size: 12px;
+      background: #f5f5f5;
+      padding: 4px;
       white-space: pre-wrap;
     }
-    .log-ok { color: #8bc34a; }
-    .log-err { color: #ff5252; }
+    button {
+      margin: 2px 0;
+    }
 
-    #imageList {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    /* サムネ一覧 */
+    #imagesList {
+      display: flex;
+      flex-wrap: wrap;
       gap: 8px;
+      margin-top: 8px;
     }
-    .thumb-card {
-      background:#fff;
-      border-radius:8px;
-      padding:6px;
-      box-shadow:0 1px 2px rgba(0,0,0,0.1);
-      display:flex;
-      flex-direction:column;
-      align-items:center;
-      font-size:11px;
+    .thumbWrap {
+      width: 150px;
+      text-align: center;
+      font-size: 11px;
+      border: 1px solid #ddd;
+      padding: 4px;
+      border-radius: 4px;
+      background: #fafafa;
+      cursor: pointer;
     }
-    .thumb-card img {
+    .thumb {
       width: 120px;
       height: 120px;
       object-fit: cover;
-      border-radius:4px;
-      background:#eee;
+      display: block;
+      margin: 0 auto 4px;
     }
-    .thumb-url {
-      width:100%;
-      font-size:10px;
+    .thumbCaption {
       word-break: break-all;
-      margin-top:4px;
     }
-    .thumb-actions {
-      margin-top:4px;
-      display:flex;
-      flex-wrap:wrap;
-      gap:4px;
-      justify-content:center;
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 13px;
+      margin-top: 4px;
     }
-    select, .prod-input {
-      font-size:11px;
-      padding:4px;
-      max-width:140px;
+    th, td {
+      border: 1px solid #ccc;
+      padding: 4px;
+      text-align: left;
+    }
+    th {
+      background: #eee;
+    }
+    input[type="text"], input[type="number"] {
+      width: 100%;
+      box-sizing: border-box;
     }
   </style>
 </head>
 <body>
-  <h1>えびせん管理画面（画像管理付き）</h1>
+  <h1>えびせん管理画面</h1>
 
-  <!-- 認証トークン -->
-  <div class="card">
-    <label>管理トークン（ADMIN_API_TOKEN または ADMIN_CODE）</label>
-    <input type="text" id="token" placeholder="例: my-secret-token" />
-    <div style="margin-top:4px;">
-      <button class="primary" id="btnConn">接続テスト</button>
-      <span id="connStatus" style="font-size:12px; margin-left:8px;"></span>
+  <div class="section">
+    <div class="row">
+      接続トークン（URLの ?code= または ?token= でも可）:
+      <input type="text" id="tokenInput" style="width:250px;" />
+      <button id="saveTokenBtn">保存</button>
+    </div>
+    <div class="row">
+      <button id="pingBtn">接続テスト</button>
+      <span id="status"></span>
     </div>
   </div>
 
-  <!-- 画像アップロード -->
-  <div class="card">
-    <h2 style="font-size:16px; margin:0 0 8px;">画像アップロード</h2>
-    <input type="file" id="fileInput" accept="image/*" />
-    <button id="btnUpload" class="primary">アップロード</button>
-    <div id="uploadInfo" style="font-size:12px; margin-top:4px;"></div>
+  <h2>商品一覧・在庫 / 画像URL紐付け</h2>
+  <div class="section">
+    <button id="reloadProductsBtn">商品を再読込</button>
+    <table id="productsTable">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>商品名</th>
+          <th>価格</th>
+          <th>在庫</th>
+          <th>画像URL</th>
+          <th>画像保存</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <small>※「画像URL」は下のサムネ一覧をクリックすると自動で入ります。</small>
   </div>
 
-  <!-- 画像一覧 & 商品に紐付け -->
-  <div class="card">
-    <h2 style="font-size:16px; margin:0 0 8px;">画像一覧 &gt; 商品に紐付け</h2>
-    <div style="margin-bottom:4px;">
-      <button id="btnReloadImages">画像一覧を読み込み</button>
-      <button id="btnReloadProducts">商品一覧を読み込み</button>
+  <h2>画像アップロード & サムネ一覧</h2>
+  <div class="section">
+    <form id="uploadForm">
+      <input type="file" id="imageFile" accept="image/*" />
+      <button type="submit">アップロード</button>
+    </form>
+    <div id="uploadResult"></div>
+
+    <div style="margin-top:8px;">
+      <button id="reloadImagesBtn">画像一覧を再読込</button>
     </div>
-    <div id="imageList"></div>
+    <div id="imagesList"></div>
   </div>
 
-  <!-- ログ -->
-  <div class="card">
-    <h2 style="font-size:16px; margin:0 0 8px;">ログ</h2>
-    <pre id="log"></pre>
+  <h2>セグメント配信（テキストのみ）</h2>
+  <div class="section">
+    <div class="row">
+      <label>種別：
+        <select id="segmentType">
+          <option value="activeChatters">最近トークした人</option>
+          <option value="addresses">住所登録者</option>
+        </select>
+      </label>
+      <button id="segmentPreviewBtn">対象を集計</button>
+    </div>
+    <div class="row">
+      対象人数：<span id="segmentCount">0</span>人
+    </div>
+    <div class="row">
+      メッセージ本文：<br />
+      <textarea id="segmentMessage" rows="4" style="width:100%;"></textarea>
+    </div>
+    <div class="row">
+      <button id="segmentSendBtn">テキストを一斉配信</button>
+    </div>
   </div>
 
-  <!-- ★ ここから JS をインラインで書く（admin.js は不要） -->
+  <div id="log"></div>
+
   <script>
-    // ★ロード確認アラート
-    alert("管理画面スクリプトが読み込まれました");
-
     (function(){
-      const $  = (id) => document.getElementById(id);
-      const logBox = $("log");
-      const connStatus = $("connStatus");
+      const $ = (id) => document.getElementById(id);
+      const logEl = $("log");
+      const STATUS = $("status");
+      let lastImageInput = null;         // 直近でクリックした画像URL入力欄
+      let currentSegmentUserIds = [];    // セグメント配信対象
 
-      function log(msg, cls) {
-        const line = document.createElement("div");
-        line.textContent = "[" + new Date().toLocaleString() + "] " + msg;
-        if (cls === "ok") line.classList.add("log-ok");
-        if (cls === "err") line.classList.add("log-err");
-        logBox.appendChild(line);
-        logBox.scrollTop = logBox.scrollHeight;
+      function log(msg) {
+        const line = "[" + new Date().toLocaleString() + "] " + msg + "\\n";
+        logEl.textContent = line + logEl.textContent;
       }
 
+      // ===== トークン管理 =====
+      function getTokenFromUrlOrStorage() {
+        const params = new URLSearchParams(location.search);
+        const fromUrl = params.get("code") || params.get("token") || "";
+        if (fromUrl) {
+          localStorage.setItem("adminToken", fromUrl);
+          return fromUrl;
+        }
+        const saved = localStorage.getItem("adminToken") || "";
+        return saved;
+      }
       function getToken() {
-        return ($("token").value || "").trim();
+        return $("tokenInput").value.trim();
       }
 
-      // シンプルAPIラッパ（?code=TOKEN を付与）
-      async function api(path, options = {}) {
+      // 初期化
+      const initToken = getTokenFromUrlOrStorage();
+      $("tokenInput").value = initToken;
+      if (!initToken) {
+        STATUS.textContent = "トークン未設定です。?code=ADMIN_CODE をURLにつけるか、上に入力してください。";
+      }
+
+      $("saveTokenBtn").addEventListener("click", () => {
+        const t = getToken();
+        if (!t) {
+          alert("トークンを入力してください。");
+          return;
+        }
+        localStorage.setItem("adminToken", t);
+        STATUS.textContent = "トークンを保存しました。";
+        log("トークン保存: " + t);
+      });
+
+      // 共通 fetch
+      async function apiFetch(path, options = {}) {
         const token = getToken();
-        if (!token) {
-          throw new Error("管理トークンを入力してください。");
+        if (!token) throw new Error("トークン未設定");
+        const url = path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token);
+        const opt = Object.assign({
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+        }, options);
+        const res = await fetch(url, opt);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) {
+          throw new Error(data.error || res.status + " error");
         }
-        const url = "/api" + path + (path.includes("?") ? "&" : "?") + "code=" + encodeURIComponent(token);
-        const opts = Object.assign({ method:"GET" }, options);
-        const res  = await fetch(url, opts);
-        const text = await res.text();
-        let json;
-        try { json = JSON.parse(text); } catch(e) { json = { raw:text }; }
-        log(opts.method + " " + url + " \u2192 " + res.status, res.ok ? "ok" : "err");
-        log(JSON.stringify(json, null, 2));
-        if (!res.ok || json.ok === false) {
-          throw new Error(json.error || ("HTTP " + res.status));
-        }
-        return json;
+        return data;
       }
 
-      // 接続テスト
-      async function testConnection() {
+      // ===== 接続テスト =====
+      $("pingBtn").addEventListener("click", async () => {
         try {
-          connStatus.textContent = "テスト中…";
-          const r = await api("/admin/connection-test");
-          if (r.ok) {
-            connStatus.textContent = "接続OK";
-            connStatus.style.color = "#2e7d32";
-          } else {
-            connStatus.textContent = "エラー";
-            connStatus.style.color = "#c62828";
-          }
-        } catch(e) {
-          connStatus.textContent = "エラー";
-          connStatus.style.color = "#c62828";
-          log("接続テストエラー: " + e.message, "err");
+          STATUS.textContent = "接続テスト中...";
+          const data = await apiFetch("/api/admin/ping");
+          STATUS.textContent = "接続OK";
+          log("接続テスト: " + JSON.stringify(data));
+        } catch (e) {
+          STATUS.textContent = "接続エラー: " + e.message;
+          log("接続エラー: " + e.message);
+          alert("接続に失敗しました: " + e.message + "\\nトークンやURLを確認してください。");
+        }
+      });
+
+      // ===== 商品一覧 =====
+      async function loadProducts() {
+        try {
+          const data = await apiFetch("/api/admin/products");
+          const tbody = $("productsTable").querySelector("tbody");
+          tbody.innerHTML = "";
+          (data.items || []).forEach((p) => {
+            const tr = document.createElement("tr");
+
+            const tdId = document.createElement("td");
+            tdId.textContent = p.id;
+            tr.appendChild(tdId);
+
+            const tdName = document.createElement("td");
+            tdName.textContent = p.name;
+            tr.appendChild(tdName);
+
+            const tdPrice = document.createElement("td");
+            tdPrice.textContent = p.price;
+            tr.appendChild(tdPrice);
+
+            const tdStock = document.createElement("td");
+            tdStock.textContent = p.stock;
+            tr.appendChild(tdStock);
+
+            const tdImageUrl = document.createElement("td");
+            const inputImg = document.createElement("input");
+            inputImg.type = "text";
+            inputImg.value = p.image || "";
+            inputImg.className = "imageUrlInput";
+            inputImg.addEventListener("focus", () => {
+              lastImageInput = inputImg;
+              log("画像URL欄を選択：" + p.id);
+            });
+            tdImageUrl.appendChild(inputImg);
+            tr.appendChild(tdImageUrl);
+
+            const tdSave = document.createElement("td");
+            const btnSave = document.createElement("button");
+            btnSave.textContent = "保存";
+            btnSave.addEventListener("click", async () => {
+              try {
+                const imageUrl = inputImg.value.trim();
+                const body = JSON.stringify({ productId: p.id, imageUrl });
+                const data = await apiFetch("/api/admin/products/set-image", {
+                  method: "POST",
+                  body
+                });
+                alert("保存しました");
+                log("画像URL保存: " + JSON.stringify(data.product));
+              } catch (e) {
+                alert("保存エラー: " + e.message);
+                log("画像URL保存エラー: " + e.message);
+              }
+            });
+            tdSave.appendChild(btnSave);
+            tr.appendChild(tdSave);
+
+            tbody.appendChild(tr);
+          });
+          log("商品一覧読み込み完了: " + (data.items || []).length + "件");
+        } catch (e) {
+          alert("商品読み込みエラー: " + e.message);
+          log("商品読み込みエラー: " + e.message);
         }
       }
 
-      // 画像アップロード
-      async function uploadImage() {
-        const fileInput = $("fileInput");
-        if (!fileInput.files || fileInput.files.length === 0) {
+      $("reloadProductsBtn").addEventListener("click", loadProducts);
+
+      // ===== 画像アップロード =====
+      $("uploadForm").addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        const file = $("imageFile").files[0];
+        if (!file) {
           alert("画像ファイルを選択してください。");
           return;
         }
-        const file = fileInput.files[0];
-        const token = getToken();
-        if (!token) {
-          alert("管理トークンを入力してください。");
-          return;
-        }
-        const url = "/api/admin/upload-image?code=" + encodeURIComponent(token);
-        const formData = new FormData();
-        formData.append("image", file);
-        log("アップロード開始: " + file.name + " (" + file.size + " bytes)");
-
         try {
-          const res = await fetch(url, { method:"POST", body: formData });
-          const json = await res.json().catch(() => ({}));
-          log("POST " + url + " \u2192 " + res.status, res.ok ? "ok" : "err");
-          log(JSON.stringify(json, null, 2));
-
-          if (!res.ok || json.ok === false) {
-            throw new Error(json.error || ("HTTP " + res.status));
+          const token = getToken();
+          if (!token) throw new Error("トークン未設定");
+          const formData = new FormData();
+          formData.append("image", file);
+          const url = "/api/admin/upload-image?token=" + encodeURIComponent(token);
+          const res = await fetch(url, { method: "POST", body: formData });
+          const data = await res.json();
+          if (!res.ok || data.ok === false) {
+            throw new Error(data.error || res.status + " error");
           }
-          $("uploadInfo").textContent = "アップロード成功: " + json.url;
-          $("uploadInfo").style.color = "#2e7d32";
-          // 成功したら一覧をリロード
-          await loadImages();
-        } catch(e) {
-          $("uploadInfo").textContent = "アップロード失敗: " + e.message;
-          $("uploadInfo").style.color = "#c62828";
-          log("アップロードエラー: " + e.message, "err");
+          $("uploadResult").textContent = "アップロード完了: " + data.url;
+          log("画像アップロード: " + JSON.stringify(data));
+          loadImages(); // リスト更新
+        } catch (e) {
+          alert("アップロードエラー: " + e.message);
+          log("アップロードエラー: " + e.message);
         }
-      }
+      });
 
-      // 商品一覧を取得してメモリに保持
-      let productsCache = [];
-
-      async function loadProducts() {
-        try {
-          const r = await api("/admin/products");
-          productsCache = Array.isArray(r.items) ? r.items : [];
-          log("商品一覧取得: " + productsCache.length + "件", "ok");
-        } catch(e) {
-          log("商品一覧取得エラー: " + e.message, "err");
-        }
-      }
-
-      // 画像一覧を読み込んでサムネ表示
+      // ===== 画像一覧（ここがサムネ表示） =====
       async function loadImages() {
-        const list = $("imageList");
-        list.innerHTML = "読み込み中…";
-
         try {
-          const r = await api("/admin/images");
-          const items = r.items || [];
-          list.innerHTML = "";
-          if (items.length === 0) {
-            list.textContent = "画像がありません。";
+          const data = await apiFetch("/api/admin/images");
+          const listEl = $("imagesList");
+          listEl.innerHTML = "";
+          const items = data.items || [];
+          if (!items.length) {
+            listEl.textContent = "画像がありません。";
             return;
           }
-          items.forEach(img => {
-            const card = document.createElement("div");
-            card.className = "thumb-card";
+          items.forEach((img) => {
+            const wrap = document.createElement("div");
+            wrap.className = "thumbWrap";
 
-            const image = document.createElement("img");
-            image.src = img.url;
-            image.alt = img.name;
+            const imageEl = document.createElement("img");
+            imageEl.className = "thumb";
+            imageEl.src = img.url;           // ← ここで本物の画像を表示
+            imageEl.alt = img.name;
+            wrap.appendChild(imageEl);
 
-            const urlDiv = document.createElement("div");
-            urlDiv.className = "thumb-url";
-            urlDiv.textContent = img.url;
+            const cap = document.createElement("div");
+            cap.className = "thumbCaption";
+            cap.textContent = img.name;
+            wrap.appendChild(cap);
 
-            const actions = document.createElement("div");
-            actions.className = "thumb-actions";
-
-            // 商品セレクト
-            const select = document.createElement("select");
-            select.className = "prod-input";
-            const opt0 = document.createElement("option");
-            opt0.value = "";
-            opt0.textContent = "商品を選択";
-            select.appendChild(opt0);
-            productsCache.forEach(p => {
-              const opt = document.createElement("option");
-              opt.value = p.id;
-              opt.textContent = p.name + " (" + p.id + ")";
-              select.appendChild(opt);
-            });
-
-            const btnSet = document.createElement("button");
-            btnSet.textContent = "商品に設定";
-            btnSet.className = "primary";
-            btnSet.addEventListener("click", async () => {
-              const pid = select.value;
-              if (!pid) {
-                alert("商品を選択してください。");
-                return;
-              }
-              try {
-                const body = JSON.stringify({ productId: pid, imageUrl: img.url });
-                await api("/admin/products/set-image", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body
-                });
-                log("画像設定完了: " + pid + " ← " + img.url, "ok");
-                alert("商品「" + pid + "」に画像を設定しました。");
-              } catch(e) {
-                log("画像設定エラー: " + e.message, "err");
-                alert("画像設定に失敗しました。");
+            wrap.addEventListener("click", () => {
+              if (lastImageInput) {
+                lastImageInput.value = img.url;
+                alert("選択した画像URLを、最後にクリックした商品画像欄に設定しました。");
+              } else {
+                alert("先に上の「画像URL」入力欄をクリックしてから、サムネを選んでください。");
               }
             });
 
-            const btnDel = document.createElement("button");
-            btnDel.textContent = "削除";
-            btnDel.className = "danger";
-            btnDel.addEventListener("click", async () => {
-              if (!confirm("この画像を削除しますか？\n" + img.name)) return;
-              try {
-                const token = getToken();
-                const url = "/api/admin/images/" + encodeURIComponent(img.name) +
-                            "?code=" + encodeURIComponent(token);
-                const res = await fetch(url, { method:"DELETE" });
-                const json = await res.json().catch(() => ({}));
-                log("DELETE " + url + " \u2192 " + res.status, res.ok ? "ok" : "err");
-                log(JSON.stringify(json, null, 2));
-                if (!res.ok || json.ok === false) throw new Error(json.error || ("HTTP " + res.status));
-                await loadImages();
-              } catch(e) {
-                log("削除エラー: " + e.message, "err");
-                alert("削除に失敗しました。");
-              }
-            });
-
-            actions.appendChild(select);
-            actions.appendChild(btnSet);
-            actions.appendChild(btnDel);
-
-            card.appendChild(image);
-            card.appendChild(urlDiv);
-            card.appendChild(actions);
-            list.appendChild(card);
+            listEl.appendChild(wrap);
           });
-        } catch(e) {
-          list.textContent = "画像一覧の取得に失敗しました。";
-          log("画像一覧エラー: " + e.message, "err");
+          log("画像一覧読み込み完了: " + items.length + "件");
+        } catch (e) {
+          alert("画像一覧エラー: " + e.message);
+          log("画像一覧エラー: " + e.message);
         }
       }
 
-      // イベント登録（このファイル1枚で完結）
-      window.addEventListener("load", () => {
-        $("btnConn").addEventListener("click", testConnection);
-        $("btnUpload").addEventListener("click", uploadImage);
-        $("btnReloadImages").addEventListener("click", loadImages);
-        $("btnReloadProducts").addEventListener("click", loadProducts);
+      $("reloadImagesBtn").addEventListener("click", loadImages);
 
-        // URLの ?code=... があればトークン欄に自動セット
-        const params = new URLSearchParams(location.search);
-        const qCode = params.get("code");
-        if (qCode) {
-          $("token").value = qCode;
-          log("URLのcodeクエリをトークンにセットしました。");
+      // ===== セグメント配信（簡易版） =====
+      $("segmentPreviewBtn").addEventListener("click", async () => {
+        try {
+          const t = $("segmentType").value;
+          const body = JSON.stringify({ type: t });
+          const data = await apiFetch("/api/admin/segment/preview", {
+            method: "POST",
+            body
+          });
+          currentSegmentUserIds = data.userIds || [];
+          $("segmentCount").textContent = currentSegmentUserIds.length;
+          log("セグメント集計: " + t + " → " + currentSegmentUserIds.length + "人");
+        } catch (e) {
+          alert("セグメント集計エラー: " + e.message);
+          log("セグメント集計エラー: " + e.message);
         }
-
-        // ページロード時に商品一覧だけは先に取っておく
-        loadProducts().catch(()=>{});
       });
+
+      $("segmentSendBtn").addEventListener("click", async () => {
+        try {
+          if (!currentSegmentUserIds.length) {
+            alert("まず「対象を集計」を押してください。");
+            return;
+          }
+          const msg = $("segmentMessage").value.trim();
+          if (!msg) {
+            alert("メッセージ本文を入力してください。");
+            return;
+          }
+          if (!confirm(currentSegmentUserIds.length + "人にテキストを配信します。よろしいですか？")) {
+            return;
+          }
+          const body = JSON.stringify({ userIds: currentSegmentUserIds, message: msg });
+          const data = await apiFetch("/api/admin/segment/send", {
+            method: "POST",
+            body
+          });
+          alert("配信リクエスト完了: 送信 " + data.sent + " / 失敗 " + data.failed);
+          log("セグメント送信: " + JSON.stringify(data));
+        } catch (e) {
+          alert("配信エラー: " + e.message);
+          log("配信エラー: " + e.message);
+        }
+      });
+
+      // ===== 初期ロード =====
+      if (initToken) {
+        loadProducts();
+        loadImages();
+      }
     })();
   </script>
 </body>

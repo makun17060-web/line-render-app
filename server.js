@@ -49,7 +49,6 @@ app.get("/", (_req, res) => res.status(200).send("OK"));
 
 // ====== データパス ======
 const DATA_DIR = path.join(__dirname, "data");
-const PRODUCTS_PATH     = path.join(DATA_DIR, "products.json");
 const ORDERS_LOG        = path.join(DATA_DIR, "orders.log");
 const RESERVATIONS_LOG  = path.join(DATA_DIR, "reservations.log");
 const ADDRESSES_PATH    = path.join(DATA_DIR, "addresses.json");

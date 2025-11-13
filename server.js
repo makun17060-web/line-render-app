@@ -1,7 +1,4 @@
-// server.js — フル機能版 + Flex配信 + 「その他＝価格入力なし」 + 久助専用テキスト購入フロー
-// + 予約者連絡API/コマンド + 店頭受取Fix + 銀行振込案内（コメント対応）
-// + 画像アップロード/管理（Render永続ディスク ./uploads 前提）
-//
+// server.js — フル機能版 + Flex配信 + 「その他＝価格入力なし」 + 久助専用テキスト購入フロー + 予約者連絡API/コマンド + 店頭受取Fix + 銀行振込案内（コメント対応） + 画像管理（アップロード/一覧/削除）+ 商品画像URLひも付け
 // 必須 .env: LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, LIFF_ID, (ADMIN_API_TOKEN または ADMIN_CODE)
 // 任意 .env: PORT, ADMIN_USER_ID, MULTICAST_USER_IDS, BANK_INFO, BANK_NOTE
 "use strict";
@@ -13,7 +10,7 @@ const path = require("path");
 const express = require("express");
 const line = require("@line/bot-sdk");
 const axios = require("axios");
-const multer = require("multer"); // ★ 画像アップロード
+const multer = require("multer"); // ← 追加
 
 const app = express();
 
@@ -50,29 +47,6 @@ if (!config.channelAccessToken || !config.channelSecret || !LIFF_ID || (!ADMIN_A
 app.use("/api", express.json(), express.urlencoded({ extended: true }));
 app.use("/public", express.static(path.join(__dirname, "public")));
 app.get("/", (_req, res) => res.status(200).send("OK"));
-
-// ====== 画像アップロード設定（Renderの Disk を ./uploads にマウント推奨） ======
-const UPLOAD_DIR = path.join(__dirname, "uploads");
-if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-app.use("/uploads", express.static(UPLOAD_DIR));
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || "").toLowerCase();
-    const base = Date.now() + "-" + Math.random().toString(36).slice(2, 8);
-    cb(null, base + ext);
-  }
-});
-const imageFilter = (_req, file, cb) => {
-  const ok = /image\/(jpeg|png|webp|gif)/i.test(file.mimetype);
-  cb(ok ? null : new Error("unsupported_file_type"), ok);
-};
-const upload = multer({
-  storage,
-  fileFilter: imageFilter,
-  limits: { fileSize: 5 * 1024 * 1024 } // 5MB
-});
 
 // ====== データパス ======
 const DATA_DIR = path.join(__dirname, "data");
@@ -206,7 +180,7 @@ function readLogLines(filePath, limit = 100) {
 }
 
 function jstRangeFromYmd(ymd) {
-  const y = Number(ymd.slice(0,4)), m = Number(ymd.slice(6,8)) ? Number(ymd.slice(4,6))-1 : Number(ymd.slice(4,6))-1; // 安全
+  const y = Number(ymd.slice(0,4)), m = Number(ymd.slice(6,8)) ? Number(ymd.slice(4,6))-1 : Number(ymd.slice(4,6))-1; // safe
   const d = Number(ymd.slice(6,8));
   const startJST = new Date(Date.UTC(y, m, d, -9, 0, 0));   // JST 00:00
   const endJST   = new Date(Date.UTC(y, m, d+1, -9, 0, 0)); // 翌日 JST 00:00
@@ -251,37 +225,24 @@ function productsFlex(allProducts) {
   // ★ 久助は一覧から除外
   const products = (allProducts || []).filter(p => !HIDE_PRODUCT_IDS.has(p.id));
 
-  const bubbles = products.map(p => {
-    const bubble = {
-      type: "bubble",
-      body: {
-        type: "box", layout: "vertical", spacing: "sm",
-        contents: [
-          { type: "text", text: p.name, weight: "bold", size: "md", wrap: true },
-          { type: "text", text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`, size: "sm", wrap: true },
-          p.desc ? { type: "text", text: p.desc, size: "sm", wrap: true } : { type: "box", layout: "vertical", contents: [] }
-        ]
-      },
-      footer: {
-        type: "box", layout: "horizontal", spacing: "md",
-        contents: [
-          { type: "button", style: "primary",
-            action: { type: "postback", label: "数量を選ぶ", data: `order_qty?${qstr({ id: p.id, qty: 1 })}` } }
-        ]
-      }
-    };
-    // ★ 画像があれば hero に表示
-    if (p.imageUrl) {
-      bubble.hero = {
-        type: "image",
-        url: p.imageUrl,
-        size: "full",
-        aspectRatio: "20:13",
-        aspectMode: "cover"
-      };
+  const bubbles = products.map(p => ({
+    type: "bubble",
+    body: {
+      type: "box", layout: "vertical", spacing: "sm",
+      contents: [
+        { type: "text", text: p.name, weight: "bold", size: "md", wrap: true },
+        { type: "text", text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`, size: "sm", wrap: true },
+        p.desc ? { type: "text", text: p.desc, size: "sm", wrap: true } : { type: "box", layout: "vertical", contents: [] }
+      ]
+    },
+    footer: {
+      type: "box", layout: "horizontal", spacing: "md",
+      contents: [
+        { type: "button", style: "primary",
+          action: { type: "postback", label: "数量を選ぶ", data: `order_qty?${qstr({ id: p.id, qty: 1 })}` } }
+      ]
     }
-    return bubble;
-  });
+  }));
 
   // 「その他（自由入力）」：★価格入力なし版
   bubbles.push({
@@ -650,10 +611,71 @@ app.post("/api/admin/reservations/notify-stop", (req, res) => {
   res.json({ ok:true, stopped: pid || true });
 });
 
-// ★ 在庫管理 API
+// === 画像アップロード用設定 ===
+const UPLOAD_DIR = path.join(__dirname, "public", "uploads");
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    const base = path.basename(file.originalname || "", ext).replace(/[^a-zA-Z0-9_-]/g, "");
+    const name = `${Date.now()}_${base || "img"}${ext || ".png"}`;
+    cb(null, name);
+  }
+});
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (_req, file, cb) => {
+    const ok = /\.(png|jpe?g|webp|gif)$/i.test(file.originalname || "");
+    cb(ok ? null : new Error("unsupported_filetype"), ok);
+  }
+});
+
+// === 画像管理 API ===
+app.get("/api/admin/images", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const files = fs.readdirSync(UPLOAD_DIR).filter(f => !f.startsWith("."));
+    const items = files.map(filename => ({
+      filename,
+      url: `/public/uploads/${filename}`,
+    }));
+    res.json({ ok: true, items });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "list_failed" });
+  }
+});
+app.post("/api/admin/upload-image", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  upload.single("file")(req, res, err => {
+    if (err) return res.status(400).json({ ok:false, error: err.message || "upload_failed" });
+    const filename = req.file?.filename;
+    if (!filename) return res.status(400).json({ ok:false, error:"no_file" });
+    res.json({ ok:true, filename, url: `/public/uploads/${filename}` });
+  });
+});
+app.delete("/api/admin/images/:filename", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const filename = (req.params.filename || "").replace(/[^a-zA-Z0-9_.-]/g, "");
+  if (!filename) return res.status(400).json({ ok:false, error:"bad_filename" });
+  const p = path.join(UPLOAD_DIR, filename);
+  if (!fs.existsSync(p)) return res.json({ ok:true, deleted:false });
+  try { fs.unlinkSync(p); res.json({ ok:true, deleted:true }); }
+  catch { res.status(500).json({ ok:false, error:"delete_failed" }); }
+});
+
+// ★ 在庫管理 API（置換版） — imageUrl を含めて返す
 app.get("/api/admin/products", (req, res) => {
   if (!requireAdmin(req, res)) return;
-  const items = readProducts().map(p => ({ id:p.id, name:p.name, price:p.price, stock:p.stock ?? 0, desc:p.desc || "", imageUrl: p.imageUrl || "" }));
+  const items = readProducts().map(p => ({
+    id: p.id,
+    name: p.name,
+    price: p.price,
+    stock: p.stock ?? 0,
+    desc: p.desc || "",
+    imageUrl: p.imageUrl || ""
+  }));
   res.json({ ok:true, items });
 });
 app.get("/api/admin/stock/logs", (req, res) => {
@@ -681,72 +703,42 @@ app.post("/api/admin/stock/add", (req, res) => {
   }catch(e){ res.status(400).json({ ok:false, error:String(e.message||e) }); }
 });
 
-// ★ 画像アップロード / 画像管理 API（要トークン）
-app.post("/api/admin/upload-image", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  upload.single("file")(req, res, (err) => {
-    if (err) {
-      return res.status(400).json({ ok:false, error: String(err.message || err) });
-    }
-    if (!req.file) return res.status(400).json({ ok:false, error:"file_required" });
-    const filename = req.file.filename;
-    const url = `/uploads/${filename}`;
-    res.json({ ok:true, filename, url, size: req.file.size, mime: req.file.mimetype });
-  });
-});
-app.get("/api/admin/images", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    const files = fs.readdirSync(UPLOAD_DIR).filter(f => !f.startsWith("."));
-    const items = files.map(f => ({ filename: f, url: `/uploads/${f}` }));
-    res.json({ ok:true, items });
-  } catch (e) {
-    res.status(500).json({ ok:false, error:String(e.message||e) });
-  }
-});
-app.delete("/api/admin/images/:filename", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    const filename = (req.params.filename || "").replace(/[^\w.\-]/g, "");
-    const p = path.join(UPLOAD_DIR, filename);
-    if (fs.existsSync(p)) fs.unlinkSync(p);
-    res.json({ ok:true, deleted: filename });
-  } catch (e) {
-    res.status(500).json({ ok:false, error:String(e.message||e) });
-  }
-});
+// === 商品画像URL 設定/解除 API ===
 app.post("/api/admin/products/:id/image", (req, res) => {
   if (!requireAdmin(req, res)) return;
-  try {
-    const pid = resolveProductId((req.params.id || "").trim());
-    const url = (req.body?.url || "").trim();
-    if (!url) return res.status(400).json({ ok:false, error:"url_required" });
-    const products = readProducts();
-    const i = products.findIndex(p => p.id === pid);
-    if (i < 0) return res.status(404).json({ ok:false, error:"product_not_found" });
-    products[i].imageUrl = url;
-    writeProducts(products);
-    res.json({ ok:true, product: products[i] });
-  } catch (e) {
-    res.status(500).json({ ok:false, error:String(e.message||e) });
+  try{
+    const id = String(req.params.id || "").trim();
+    const url = String(req.body?.url || "").trim();
+    if (!id || !url) return res.status(400).json({ ok:false, error:"id_or_url_required" });
+
+    const items = readProducts();
+    const idx = items.findIndex(p => p.id === id);
+    if (idx < 0) return res.status(404).json({ ok:false, error:"product_not_found" });
+
+    items[idx].imageUrl = url;
+    writeProducts(items);
+    res.json({ ok:true, product: items[idx] });
+  }catch(e){
+    res.status(500).json({ ok:false, error: String(e.message||e) });
   }
 });
 app.delete("/api/admin/products/:id/image", (req, res) => {
   if (!requireAdmin(req, res)) return;
-  try {
-    const pid = resolveProductId((req.params.id || "").trim());
-    const products = readProducts();
-    const i = products.findIndex(p => p.id === pid);
-    if (i < 0) return res.status(404).json({ ok:false, error:"product_not_found" });
-    delete products[i].imageUrl;
-    writeProducts(products);
-    res.json({ ok:true, product: products[i] });
-  } catch (e) {
-    res.status(500).json({ ok:false, error:String(e.message||e) });
+  try{
+    const id = String(req.params.id || "").trim();
+    const items = readProducts();
+    const idx = items.findIndex(p => p.id === id);
+    if (idx < 0) return res.status(404).json({ ok:false, error:"product_not_found" });
+
+    delete items[idx].imageUrl;
+    writeProducts(items);
+    res.json({ ok:true, product: items[idx] });
+  }catch(e){
+    res.status(500).json({ ok:false, error: String(e.message||e) });
   }
 });
 
-// ★ 予約者に一括連絡 API
+// ★ 予約者に一括連絡 API（既存）
 app.post("/api/admin/reservations/notify", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try{
@@ -1453,7 +1445,5 @@ app.get("/api/health", (_req, res) => {
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server started on port ${PORT}`);
   console.log("   Webhook: POST /webhook");
-  console.log("   Admin UI: /public/admin.html");
-  console.log("   Uploads : /uploads (RenderのDiskを ./uploads にマウント推奨)");
   console.log("   LIFF address page: /public/liff-address.html  (open via https://liff.line.me/LIFF_ID)");
 });

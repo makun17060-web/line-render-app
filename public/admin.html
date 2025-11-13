@@ -1,38 +1,35 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8" />
-  <title>LINE えびせん管理画面（画像＆商品）</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="utf-8" />
+  <title>えびせん管理画面（画像管理付き・単体版）</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      margin: 16px;
+      margin: 0;
+      padding: 16px;
       background: #f5f5f5;
     }
     h1 {
+      margin-top: 0;
       font-size: 20px;
-      margin-bottom: 12px;
-    }
-    h2 {
-      font-size: 16px;
-      margin: 16px 0 8px;
     }
     .card {
       background: #fff;
       border-radius: 8px;
-      padding: 12px;
+      padding: 12px 16px;
       margin-bottom: 12px;
-      box-shadow: 0 1px 3px rgba(0,0,0,.08);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
     label {
-      font-size: 13px;
-      display: inline-block;
+      display: block;
+      font-size: 12px;
       margin-bottom: 4px;
     }
     input[type="text"] {
-      width: 260px;
-      max-width: 100%;
+      width: 100%;
+      max-width: 320px;
       padding: 6px 8px;
       font-size: 13px;
       box-sizing: border-box;
@@ -43,140 +40,339 @@
       border-radius: 4px;
       border: none;
       cursor: pointer;
-      background: #007bff;
-      color: #fff;
-      margin-left: 4px;
-    }
-    button:disabled {
-      opacity: 0.6;
-      cursor: default;
-    }
-    #status {
-      font-size: 12px;
-      white-space: pre-line;
-      margin-top: 6px;
-      color: #333;
-    }
-    .flex-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-    }
-    .flex-col {
-      flex: 1 1 260px;
-      min-width: 260px;
-    }
-
-    /* 画像一覧サムネ */
-    #imageList {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-    .thumb {
-      width: 120px;
-      border-radius: 6px;
-      overflow: hidden;
-      background: #fafafa;
-      border: 1px solid #ddd;
-      cursor: pointer;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      font-size: 11px;
-    }
-    .thumb img {
-      width: 100%;
-      height: 100px;
-      object-fit: cover;
-      display: block;
-      background: #eee;
-    }
-    .thumb span {
-      padding: 2px 4px 4px;
-      text-align: center;
-      word-break: break-all;
-    }
-    .thumb.selected {
-      outline: 3px solid #007bff;
-      border-color: #007bff;
-    }
-
-    /* 商品側 */
-    #productSelect {
-      width: 260px;
-      max-width: 100%;
-      padding: 6px 8px;
-      font-size: 13px;
-    }
-    #productPreviewImg {
-      width: 160px;
-      height: 160px;
-      object-fit: cover;
-      border-radius: 8px;
-      border: 1px solid #ddd;
-      background: #eee;
-      display: block;
-      margin-top: 6px;
-    }
-    #productInfo {
-      font-size: 12px;
+      margin-right: 4px;
       margin-top: 4px;
     }
-    small {
+    button.primary { background: #1976d2; color:#fff; }
+    button.danger  { background: #d32f2f; color:#fff; }
+
+    #log {
+      background: #111;
+      color: #eee;
+      font-family: monospace;
       font-size: 11px;
-      color: #666;
+      padding: 8px;
+      border-radius: 4px;
+      max-height: 240px;
+      overflow: auto;
+      white-space: pre-wrap;
+    }
+    .log-ok { color: #8bc34a; }
+    .log-err { color: #ff5252; }
+
+    #imageList {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 8px;
+    }
+    .thumb-card {
+      background:#fff;
+      border-radius:8px;
+      padding:6px;
+      box-shadow:0 1px 2px rgba(0,0,0,0.1);
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      font-size:11px;
+    }
+    .thumb-card img {
+      width: 120px;
+      height: 120px;
+      object-fit: cover;
+      border-radius:4px;
+      background:#eee;
+    }
+    .thumb-url {
+      width:100%;
+      font-size:10px;
+      word-break: break-all;
+      margin-top:4px;
+    }
+    .thumb-actions {
+      margin-top:4px;
+      display:flex;
+      flex-wrap:wrap;
+      gap:4px;
+      justify-content:center;
+    }
+    select, .prod-input {
+      font-size:11px;
+      padding:4px;
+      max-width:140px;
     }
   </style>
 </head>
 <body>
-  <h1>LINE えびせん 管理画面（画像アップロード & 商品サムネ設定）</h1>
+  <h1>えびせん管理画面（画像管理付き）</h1>
 
+  <!-- 認証トークン -->
   <div class="card">
-    <h2>1. 接続設定</h2>
-    <label for="tokenInput">管理トークン（ADMIN_API_TOKEN または ADMIN_CODE）</label><br />
-    <input id="tokenInput" type="text" placeholder="例: abc123..." />
-    <button id="connectBtn">接続テスト</button>
-    <div id="status"></div>
-  </div>
-
-  <div class="flex-row">
-    <div class="flex-col">
-      <div class="card">
-        <h2>2. 画像アップロード</h2>
-        <input id="fileInput" type="file" accept="image/*" />
-        <button id="uploadBtn">アップロード</button><br />
-        <small>※ 8MB まで。正方形〜縦長・横長どれでも可です（一覧では正方形にトリミング表示）。</small>
-      </div>
-
-      <div class="card">
-        <h2>3. アップロード済み画像</h2>
-        <div id="imageList"></div>
-      </div>
-    </div>
-
-    <div class="flex-col">
-      <div class="card">
-        <h2>4. 商品にサムネ画像を設定</h2>
-        <label for="productSelect">商品を選択</label><br />
-        <select id="productSelect">
-          <option value="">（まだ読み込みされていません）</option>
-        </select>
-
-        <div id="productInfo"></div>
-        <img id="productPreviewImg" src="" alt="商品サムネ" />
-
-        <div style="margin-top:8px;">
-          <button id="applyImageBtn">選択中の画像をこの商品に設定</button>
-        </div>
-        <small>
-          ※ LINE に送る画像 URL は「https://〜」のフル URL で保存されます。<br />
-          ※ サムネを変更したら、LINE の「直接注文」で新しい画像が表示されます。
-        </small>
-      </div>
+    <label>管理トークン（ADMIN_API_TOKEN または ADMIN_CODE）</label>
+    <input type="text" id="token" placeholder="例: my-secret-token" />
+    <div style="margin-top:4px;">
+      <button class="primary" id="btnConn">接続テスト</button>
+      <span id="connStatus" style="font-size:12px; margin-left:8px;"></span>
     </div>
   </div>
 
-  <script src="./admin.js" defer></script>
+  <!-- 画像アップロード -->
+  <div class="card">
+    <h2 style="font-size:16px; margin:0 0 8px;">画像アップロード</h2>
+    <input type="file" id="fileInput" accept="image/*" />
+    <button id="btnUpload" class="primary">アップロード</button>
+    <div id="uploadInfo" style="font-size:12px; margin-top:4px;"></div>
+  </div>
+
+  <!-- 画像一覧 & 商品に紐付け -->
+  <div class="card">
+    <h2 style="font-size:16px; margin:0 0 8px;">画像一覧 &gt; 商品に紐付け</h2>
+    <div style="margin-bottom:4px;">
+      <button id="btnReloadImages">画像一覧を読み込み</button>
+      <button id="btnReloadProducts">商品一覧を読み込み</button>
+    </div>
+    <div id="imageList"></div>
+  </div>
+
+  <!-- ログ -->
+  <div class="card">
+    <h2 style="font-size:16px; margin:0 0 8px;">ログ</h2>
+    <pre id="log"></pre>
+  </div>
+
+  <!-- ★ ここから JS をインラインで書く（admin.js は不要） -->
+  <script>
+    // ★ロード確認アラート
+    alert("管理画面スクリプトが読み込まれました");
+
+    (function(){
+      const $  = (id) => document.getElementById(id);
+      const logBox = $("log");
+      const connStatus = $("connStatus");
+
+      function log(msg, cls) {
+        const line = document.createElement("div");
+        line.textContent = "[" + new Date().toLocaleString() + "] " + msg;
+        if (cls === "ok") line.classList.add("log-ok");
+        if (cls === "err") line.classList.add("log-err");
+        logBox.appendChild(line);
+        logBox.scrollTop = logBox.scrollHeight;
+      }
+
+      function getToken() {
+        return ($("token").value || "").trim();
+      }
+
+      // シンプルAPIラッパ（?code=TOKEN を付与）
+      async function api(path, options = {}) {
+        const token = getToken();
+        if (!token) {
+          throw new Error("管理トークンを入力してください。");
+        }
+        const url = "/api" + path + (path.includes("?") ? "&" : "?") + "code=" + encodeURIComponent(token);
+        const opts = Object.assign({ method:"GET" }, options);
+        const res  = await fetch(url, opts);
+        const text = await res.text();
+        let json;
+        try { json = JSON.parse(text); } catch(e) { json = { raw:text }; }
+        log(opts.method + " " + url + " \u2192 " + res.status, res.ok ? "ok" : "err");
+        log(JSON.stringify(json, null, 2));
+        if (!res.ok || json.ok === false) {
+          throw new Error(json.error || ("HTTP " + res.status));
+        }
+        return json;
+      }
+
+      // 接続テスト
+      async function testConnection() {
+        try {
+          connStatus.textContent = "テスト中…";
+          const r = await api("/admin/connection-test");
+          if (r.ok) {
+            connStatus.textContent = "接続OK";
+            connStatus.style.color = "#2e7d32";
+          } else {
+            connStatus.textContent = "エラー";
+            connStatus.style.color = "#c62828";
+          }
+        } catch(e) {
+          connStatus.textContent = "エラー";
+          connStatus.style.color = "#c62828";
+          log("接続テストエラー: " + e.message, "err");
+        }
+      }
+
+      // 画像アップロード
+      async function uploadImage() {
+        const fileInput = $("fileInput");
+        if (!fileInput.files || fileInput.files.length === 0) {
+          alert("画像ファイルを選択してください。");
+          return;
+        }
+        const file = fileInput.files[0];
+        const token = getToken();
+        if (!token) {
+          alert("管理トークンを入力してください。");
+          return;
+        }
+        const url = "/api/admin/upload-image?code=" + encodeURIComponent(token);
+        const formData = new FormData();
+        formData.append("image", file);
+        log("アップロード開始: " + file.name + " (" + file.size + " bytes)");
+
+        try {
+          const res = await fetch(url, { method:"POST", body: formData });
+          const json = await res.json().catch(() => ({}));
+          log("POST " + url + " \u2192 " + res.status, res.ok ? "ok" : "err");
+          log(JSON.stringify(json, null, 2));
+
+          if (!res.ok || json.ok === false) {
+            throw new Error(json.error || ("HTTP " + res.status));
+          }
+          $("uploadInfo").textContent = "アップロード成功: " + json.url;
+          $("uploadInfo").style.color = "#2e7d32";
+          // 成功したら一覧をリロード
+          await loadImages();
+        } catch(e) {
+          $("uploadInfo").textContent = "アップロード失敗: " + e.message;
+          $("uploadInfo").style.color = "#c62828";
+          log("アップロードエラー: " + e.message, "err");
+        }
+      }
+
+      // 商品一覧を取得してメモリに保持
+      let productsCache = [];
+
+      async function loadProducts() {
+        try {
+          const r = await api("/admin/products");
+          productsCache = Array.isArray(r.items) ? r.items : [];
+          log("商品一覧取得: " + productsCache.length + "件", "ok");
+        } catch(e) {
+          log("商品一覧取得エラー: " + e.message, "err");
+        }
+      }
+
+      // 画像一覧を読み込んでサムネ表示
+      async function loadImages() {
+        const list = $("imageList");
+        list.innerHTML = "読み込み中…";
+
+        try {
+          const r = await api("/admin/images");
+          const items = r.items || [];
+          list.innerHTML = "";
+          if (items.length === 0) {
+            list.textContent = "画像がありません。";
+            return;
+          }
+          items.forEach(img => {
+            const card = document.createElement("div");
+            card.className = "thumb-card";
+
+            const image = document.createElement("img");
+            image.src = img.url;
+            image.alt = img.name;
+
+            const urlDiv = document.createElement("div");
+            urlDiv.className = "thumb-url";
+            urlDiv.textContent = img.url;
+
+            const actions = document.createElement("div");
+            actions.className = "thumb-actions";
+
+            // 商品セレクト
+            const select = document.createElement("select");
+            select.className = "prod-input";
+            const opt0 = document.createElement("option");
+            opt0.value = "";
+            opt0.textContent = "商品を選択";
+            select.appendChild(opt0);
+            productsCache.forEach(p => {
+              const opt = document.createElement("option");
+              opt.value = p.id;
+              opt.textContent = p.name + " (" + p.id + ")";
+              select.appendChild(opt);
+            });
+
+            const btnSet = document.createElement("button");
+            btnSet.textContent = "商品に設定";
+            btnSet.className = "primary";
+            btnSet.addEventListener("click", async () => {
+              const pid = select.value;
+              if (!pid) {
+                alert("商品を選択してください。");
+                return;
+              }
+              try {
+                const body = JSON.stringify({ productId: pid, imageUrl: img.url });
+                await api("/admin/products/set-image", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body
+                });
+                log("画像設定完了: " + pid + " ← " + img.url, "ok");
+                alert("商品「" + pid + "」に画像を設定しました。");
+              } catch(e) {
+                log("画像設定エラー: " + e.message, "err");
+                alert("画像設定に失敗しました。");
+              }
+            });
+
+            const btnDel = document.createElement("button");
+            btnDel.textContent = "削除";
+            btnDel.className = "danger";
+            btnDel.addEventListener("click", async () => {
+              if (!confirm("この画像を削除しますか？\n" + img.name)) return;
+              try {
+                const token = getToken();
+                const url = "/api/admin/images/" + encodeURIComponent(img.name) +
+                            "?code=" + encodeURIComponent(token);
+                const res = await fetch(url, { method:"DELETE" });
+                const json = await res.json().catch(() => ({}));
+                log("DELETE " + url + " \u2192 " + res.status, res.ok ? "ok" : "err");
+                log(JSON.stringify(json, null, 2));
+                if (!res.ok || json.ok === false) throw new Error(json.error || ("HTTP " + res.status));
+                await loadImages();
+              } catch(e) {
+                log("削除エラー: " + e.message, "err");
+                alert("削除に失敗しました。");
+              }
+            });
+
+            actions.appendChild(select);
+            actions.appendChild(btnSet);
+            actions.appendChild(btnDel);
+
+            card.appendChild(image);
+            card.appendChild(urlDiv);
+            card.appendChild(actions);
+            list.appendChild(card);
+          });
+        } catch(e) {
+          list.textContent = "画像一覧の取得に失敗しました。";
+          log("画像一覧エラー: " + e.message, "err");
+        }
+      }
+
+      // イベント登録（このファイル1枚で完結）
+      window.addEventListener("load", () => {
+        $("btnConn").addEventListener("click", testConnection);
+        $("btnUpload").addEventListener("click", uploadImage);
+        $("btnReloadImages").addEventListener("click", loadImages);
+        $("btnReloadProducts").addEventListener("click", loadProducts);
+
+        // URLの ?code=... があればトークン欄に自動セット
+        const params = new URLSearchParams(location.search);
+        const qCode = params.get("code");
+        if (qCode) {
+          $("token").value = qCode;
+          log("URLのcodeクエリをトークンにセットしました。");
+        }
+
+        // ページロード時に商品一覧だけは先に取っておく
+        loadProducts().catch(()=>{});
+      });
+    })();
+  </script>
 </body>
 </html>

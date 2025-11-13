@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <title>えびせん管理画面（画像管理付き・単体版）</title>
+  <title>えびせん管理画面（画像管理＋セグメント配信）</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     body {
@@ -27,12 +27,18 @@
       font-size: 12px;
       margin-bottom: 4px;
     }
-    input[type="text"] {
+    input[type="text"],
+    input[type="number"],
+    textarea,
+    select {
       width: 100%;
-      max-width: 320px;
+      max-width: 360px;
       padding: 6px 8px;
       font-size: 13px;
       box-sizing: border-box;
+    }
+    textarea {
+      min-height: 60px;
     }
     button {
       padding: 6px 12px;
@@ -53,7 +59,7 @@
       font-size: 11px;
       padding: 8px;
       border-radius: 4px;
-      max-height: 240px;
+      max-height: 260px;
       overflow: auto;
       white-space: pre-wrap;
     }
@@ -95,15 +101,35 @@
       gap:4px;
       justify-content:center;
     }
-    select, .prod-input {
+    .prod-input {
       font-size:11px;
       padding:4px;
-      max-width:140px;
+      max-width:160px;
+    }
+
+    .small-note {
+      font-size:11px;
+      color:#555;
+    }
+    .seg-row {
+      margin-top:6px;
+    }
+    .seg-row label {
+      font-weight:600;
+    }
+    #segResult {
+      font-size:12px;
+      margin-top:6px;
+      white-space:pre-wrap;
+      background:#fafafa;
+      border-radius:4px;
+      padding:6px;
+      border:1px solid #ddd;
     }
   </style>
 </head>
 <body>
-  <h1>えびせん管理画面（画像管理付き）</h1>
+  <h1>えびせん管理画面（画像管理＋セグメント配信）</h1>
 
   <!-- 認証トークン -->
   <div class="card">
@@ -113,6 +139,9 @@
       <button class="primary" id="btnConn">接続テスト</button>
       <span id="connStatus" style="font-size:12px; margin-left:8px;"></span>
     </div>
+    <div class="small-note" style="margin-top:4px;">
+      URLに <code>?code=トークン</code> を付けて開くと、この入力欄に自動でセットされます。
+    </div>
   </div>
 
   <!-- 画像アップロード -->
@@ -121,6 +150,10 @@
     <input type="file" id="fileInput" accept="image/*" />
     <button id="btnUpload" class="primary">アップロード</button>
     <div id="uploadInfo" style="font-size:12px; margin-top:4px;"></div>
+    <div class="small-note" style="margin-top:4px;">
+      アップロードされた画像は <code>/public/uploads/</code> 以下に保存されます。<br>
+      Flex用は正方形（800×800〜1200×1200）推奨です。
+    </div>
   </div>
 
   <!-- 画像一覧 & 商品に紐付け -->
@@ -131,6 +164,93 @@
       <button id="btnReloadProducts">商品一覧を読み込み</button>
     </div>
     <div id="imageList"></div>
+    <div class="small-note" style="margin-top:4px;">
+      各サムネイルの「商品に設定」から、LINEの「直接注文」で表示される商品画像を登録できます。
+    </div>
+  </div>
+
+  <!-- ★ セグメント配信 -->
+  <div class="card">
+    <h2 style="font-size:16px; margin:0 0 8px;">セグメント配信（テキスト）</h2>
+    <div class="small-note" style="margin-bottom:6px;">
+      1. 条件を選んで「プレビュー」で対象人数を確認<br>
+      2. 問題なければ「この条件で配信」で実際にテキストメッセージを送信します。
+    </div>
+
+    <div class="seg-row">
+      <label for="segType">対象タイプ</label>
+      <select id="segType">
+        <option value="activeChatters">アクティブユーザー（メッセージ送信者）</option>
+        <option value="orders">注文者</option>
+        <option value="survey">アンケート回答者</option>
+        <option value="addresses">住所登録済みユーザー</option>
+      </select>
+      <div class="small-note">
+        「アクティブユーザー」は最近トークしてくれた人、「注文者」は注文ログから抽出されます。
+      </div>
+    </div>
+
+    <div class="seg-row">
+      <label for="segDate">対象日（任意・YYYYMMDD）</label>
+      <input type="text" id="segDate" placeholder="例: 20251110（空なら全期間）">
+    </div>
+
+    <div class="seg-row">
+      <label for="segLimit">最大ログ件数（任意）</label>
+      <input type="number" id="segLimit" placeholder="例: 50000（空ならデフォルト）">
+    </div>
+
+    <!-- orders 用 -->
+    <div class="seg-row seg-for-orders">
+      <label for="segProductIds">商品ID（注文者フィルタ・カンマ区切り）</label>
+      <input type="text" id="segProductIds" placeholder="例: kusuke-250,nori-square-300（空なら全商品）">
+      <div class="small-note">
+        商品IDは <code>products.json</code> の id（例: <code>kusuke-250</code>）です。
+      </div>
+    </div>
+    <div class="seg-row seg-for-orders">
+      <label for="segMethod">受取方法（orders専用・任意）</label>
+      <select id="segMethod">
+        <option value="">指定なし</option>
+        <option value="pickup">店頭受取</option>
+        <option value="delivery">宅配</option>
+      </select>
+    </div>
+    <div class="seg-row seg-for-orders">
+      <label for="segPayment">支払い方法（orders専用・任意）</label>
+      <select id="segPayment">
+        <option value="">指定なし</option>
+        <option value="cash">現金（店頭）</option>
+        <option value="cod">代引き</option>
+        <option value="bank">銀行振込</option>
+      </select>
+    </div>
+
+    <!-- survey 用 -->
+    <div class="seg-row seg-for-survey">
+      <label for="segQ1">Q1コード（アンケート専用・カンマ区切り）</label>
+      <input type="text" id="segQ1" placeholder="例: a,b（空なら指定なし）">
+    </div>
+    <div class="seg-row seg-for-survey">
+      <label for="segQ2">Q2コード（アンケート専用）</label>
+      <input type="text" id="segQ2" placeholder="例: x,y">
+    </div>
+    <div class="seg-row seg-for-survey">
+      <label for="segQ3">Q3コード（アンケート専用）</label>
+      <input type="text" id="segQ3" placeholder="例: 1,2">
+    </div>
+
+    <div class="seg-row">
+      <label for="segMessage">配信メッセージ本文</label>
+      <textarea id="segMessage" placeholder="例: いつもご利用ありがとうございます。久助入荷のお知らせです。"></textarea>
+    </div>
+
+    <div class="seg-row">
+      <button id="btnSegPreview">プレビュー（対象人数を確認）</button>
+      <button id="btnSegSend" class="primary">この条件で配信</button>
+    </div>
+
+    <div id="segResult" class="small-note"></div>
   </div>
 
   <!-- ログ -->
@@ -139,9 +259,9 @@
     <pre id="log"></pre>
   </div>
 
-  <!-- ★ ここから JS をインラインで書く（admin.js は不要） -->
+  <!-- ★ JS（admin.js不要・この中で完結） -->
   <script>
-    // ★ロード確認アラート
+    // ロード確認
     alert("管理画面スクリプトが読み込まれました");
 
     (function(){
@@ -162,7 +282,7 @@
         return ($("token").value || "").trim();
       }
 
-      // シンプルAPIラッパ（?code=TOKEN を付与）
+      // 共通 API ラッパ（?code=TOKEN を自動付与）
       async function api(path, options = {}) {
         const token = getToken();
         if (!token) {
@@ -174,7 +294,7 @@
         const text = await res.text();
         let json;
         try { json = JSON.parse(text); } catch(e) { json = { raw:text }; }
-        log(opts.method + " " + url + " \u2192 " + res.status, res.ok ? "ok" : "err");
+        log(opts.method + " " + url + " → " + res.status, res.ok ? "ok" : "err");
         log(JSON.stringify(json, null, 2));
         if (!res.ok || json.ok === false) {
           throw new Error(json.error || ("HTTP " + res.status));
@@ -222,7 +342,7 @@
         try {
           const res = await fetch(url, { method:"POST", body: formData });
           const json = await res.json().catch(() => ({}));
-          log("POST " + url + " \u2192 " + res.status, res.ok ? "ok" : "err");
+          log("POST " + url + " → " + res.status, res.ok ? "ok" : "err");
           log(JSON.stringify(json, null, 2));
 
           if (!res.ok || json.ok === false) {
@@ -230,7 +350,6 @@
           }
           $("uploadInfo").textContent = "アップロード成功: " + json.url;
           $("uploadInfo").style.color = "#2e7d32";
-          // 成功したら一覧をリロード
           await loadImages();
         } catch(e) {
           $("uploadInfo").textContent = "アップロード失敗: " + e.message;
@@ -239,7 +358,7 @@
         }
       }
 
-      // 商品一覧を取得してメモリに保持
+      // 商品一覧キャッシュ
       let productsCache = [];
 
       async function loadProducts() {
@@ -252,7 +371,7 @@
         }
       }
 
-      // 画像一覧を読み込んでサムネ表示
+      // 画像一覧表示
       async function loadImages() {
         const list = $("imageList");
         list.innerHTML = "読み込み中…";
@@ -280,7 +399,6 @@
             const actions = document.createElement("div");
             actions.className = "thumb-actions";
 
-            // 商品セレクト
             const select = document.createElement("select");
             select.className = "prod-input";
             const opt0 = document.createElement("option");
@@ -329,7 +447,7 @@
                             "?code=" + encodeURIComponent(token);
                 const res = await fetch(url, { method:"DELETE" });
                 const json = await res.json().catch(() => ({}));
-                log("DELETE " + url + " \u2192 " + res.status, res.ok ? "ok" : "err");
+                log("DELETE " + url + " → " + res.status, res.ok ? "ok" : "err");
                 log(JSON.stringify(json, null, 2));
                 if (!res.ok || json.ok === false) throw new Error(json.error || ("HTTP " + res.status));
                 await loadImages();
@@ -354,14 +472,137 @@
         }
       }
 
-      // イベント登録（このファイル1枚で完結）
+      // ===== セグメント配信 UI 切り替え =====
+      function updateSegmentVisibility() {
+        const type = $("segType").value;
+        const ordersRows = document.querySelectorAll(".seg-for-orders");
+        const surveyRows = document.querySelectorAll(".seg-for-survey");
+        ordersRows.forEach(el => { el.style.display = (type === "orders") ? "block" : "none"; });
+        surveyRows.forEach(el => { el.style.display = (type === "survey") ? "block" : "none"; });
+      }
+
+      // 最後にプレビューした userIds を保持
+      let lastSegmentUserIds = [];
+
+      // セグメントプレビュー
+      async function segmentPreview() {
+        const type = $("segType").value;
+        const msg  = ($("segMessage").value || "").trim();
+        const payload = { type: type };
+
+        const date = ($("segDate").value || "").trim();
+        if (date) payload.date = date;
+
+        const limitVal = parseInt(($("segLimit").value || "").trim(), 10);
+        if (!isNaN(limitVal) && limitVal > 0) {
+          payload.limit = limitVal;
+        }
+
+        if (type === "orders") {
+          const pids = ($("segProductIds").value || "").trim();
+          if (pids) {
+            payload.productIds = pids.split(",").map(s => s.trim()).filter(Boolean);
+          }
+          const method = $("segMethod").value;
+          const payment = $("segPayment").value;
+          if (method)  payload.method  = method;
+          if (payment) payload.payment = payment;
+        }
+
+        if (type === "survey") {
+          const q1 = ($("segQ1").value || "").trim();
+          const q2 = ($("segQ2").value || "").trim();
+          const q3 = ($("segQ3").value || "").trim();
+          if (q1) payload.q1codes = q1.split(",").map(s => s.trim()).filter(Boolean);
+          if (q2) payload.q2codes = q2.split(",").map(s => s.trim()).filter(Boolean);
+          if (q3) payload.q3codes = q3.split(",").map(s => s.trim()).filter(Boolean);
+        }
+
+        $("segResult").textContent = "プレビュー中…";
+
+        try {
+          const r = await api("/admin/segment/preview", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          lastSegmentUserIds = Array.isArray(r.userIds) ? r.userIds : [];
+          let text = "";
+          text += "タイプ: " + (r.type || type) + "\n";
+          text += "対象ユーザー数: " + (r.total != null ? r.total : lastSegmentUserIds.length) + "人\n";
+          if (msg) {
+            text += "\n※ このメッセージを送信予定:\n" + msg + "\n";
+          }
+          const previewList = lastSegmentUserIds.slice(0, 20);
+          if (previewList.length > 0) {
+            text += "\nサンプル userId (最大20件):\n" + previewList.join("\n");
+            if (lastSegmentUserIds.length > 20) {
+              text += "\n…他 " + (lastSegmentUserIds.length - 20) + " 件";
+            }
+          }
+          $("segResult").textContent = text;
+        } catch(e) {
+          $("segResult").textContent = "プレビューエラー: " + e.message;
+          log("セグメントプレビューエラー: " + e.message, "err");
+        }
+      }
+
+      // セグメント送信
+      async function segmentSend() {
+        const msg = ($("segMessage").value || "").trim();
+        if (!msg) {
+          alert("配信メッセージ本文を入力してください。");
+          return;
+        }
+        if (!lastSegmentUserIds || lastSegmentUserIds.length === 0) {
+          const ok = confirm("プレビューで対象を確認していません。\nそのまま配信しますか？");
+          if (!ok) return;
+        }
+        const userIds = lastSegmentUserIds && lastSegmentUserIds.length > 0
+          ? lastSegmentUserIds
+          : null;
+
+        let sendPayload;
+        if (userIds) {
+          sendPayload = { userIds: userIds, message: msg };
+        } else {
+          alert("先にプレビューで対象を確認してください。");
+          return;
+        }
+
+        const ok2 = confirm("この条件で " + userIds.length + " 人にメッセージを送信しますか？");
+        if (!ok2) return;
+
+        $("segResult").textContent += "\n\n配信中…";
+
+        try {
+          const r = await api("/admin/segment/send", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(sendPayload)
+          });
+          let text = "配信結果:\n";
+          text += "リクエスト人数: " + (r.requested != null ? r.requested : userIds.length) + "\n";
+          text += "送信成功: " + (r.sent != null ? r.sent : "?") + "\n";
+          text += "送信失敗: " + (r.failed != null ? r.failed : 0) + "\n";
+          $("segResult").textContent += "\n" + text;
+        } catch(e) {
+          $("segResult").textContent += "\n配信エラー: " + e.message;
+          log("セグメント配信エラー: " + e.message, "err");
+        }
+      }
+
+      // 初期化
       window.addEventListener("load", () => {
         $("btnConn").addEventListener("click", testConnection);
         $("btnUpload").addEventListener("click", uploadImage);
         $("btnReloadImages").addEventListener("click", loadImages);
         $("btnReloadProducts").addEventListener("click", loadProducts);
 
-        // URLの ?code=... があればトークン欄に自動セット
+        $("segType").addEventListener("change", updateSegmentVisibility);
+        $("btnSegPreview").addEventListener("click", segmentPreview);
+        $("btnSegSend").addEventListener("click", segmentSend);
+
         const params = new URLSearchParams(location.search);
         const qCode = params.get("code");
         if (qCode) {
@@ -369,7 +610,7 @@
           log("URLのcodeクエリをトークンにセットしました。");
         }
 
-        // ページロード時に商品一覧だけは先に取っておく
+        updateSegmentVisibility();
         loadProducts().catch(()=>{});
       });
     })();

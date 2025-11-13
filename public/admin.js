@@ -1,145 +1,301 @@
-alert("admin.js LOADED");
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="utf-8" />
-  <title>えびせん管理画面（画像管理付き）</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <style>
-    body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      margin: 0;
-      padding: 16px;
-      background: #f5f5f5;
-    }
-    h1 {
-      margin-top: 0;
-      font-size: 20px;
-    }
-    .card {
-      background: #fff;
-      border-radius: 8px;
-      padding: 12px 16px;
-      margin-bottom: 12px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-    }
-    label {
-      display: block;
-      font-size: 12px;
-      margin-bottom: 4px;
-    }
-    input[type="text"] {
-      width: 100%;
-      max-width: 320px;
-      padding: 6px 8px;
-      font-size: 13px;
-      box-sizing: border-box;
-    }
-    button {
-      padding: 6px 12px;
-      font-size: 13px;
-      border-radius: 4px;
-      border: none;
-      cursor: pointer;
-      margin-right: 4px;
-      margin-top: 4px;
-    }
-    button.primary { background: #1976d2; color:#fff; }
-    button.danger  { background: #d32f2f; color:#fff; }
+// public/admin.js
 
-    #log {
-      background: #111;
-      color: #eee;
-      font-family: monospace;
-      font-size: 11px;
-      padding: 8px;
-      border-radius: 4px;
-      max-height: 240px;
-      overflow: auto;
-      white-space: pre-wrap;
-    }
-    .log-ok { color: #8bc34a; }
-    .log-err { color: #ff5252; }
+(function () {
+  const $ = (id) => document.getElementById(id);
 
-    #imageList {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-      gap: 8px;
-    }
-    .thumb-card {
-      background:#fff;
-      border-radius:8px;
-      padding:6px;
-      box-shadow:0 1px 2px rgba(0,0,0,0.1);
-      display:flex;
-      flex-direction:column;
-      align-items:center;
-      font-size:11px;
-    }
-    .thumb-card img {
-      width: 120px;
-      height: 120px;
-      object-fit: cover;
-      border-radius:4px;
-      background:#eee;
-    }
-    .thumb-url {
-      width:100%;
-      font-size:10px;
-      word-break: break-all;
-      margin-top:4px;
-    }
-    .thumb-actions {
-      margin-top:4px;
-      display:flex;
-      flex-wrap:wrap;
-      gap:4px;
-      justify-content:center;
-    }
-    select, .prod-input {
-      font-size:11px;
-      padding:4px;
-      max-width:140px;
-    }
-  </style>
-</head>
-<body>
-  <h1>えびせん管理画面（画像管理付き）</h1>
+  const tokenInput = $("tokenInput");
+  const connectBtn = $("connectBtn");
+  const statusDiv = $("status");
 
-  <!-- 認証トークン -->
-  <div class="card">
-    <label>管理トークン（ADMIN_API_TOKEN または ADMIN_CODE）</label>
-    <input type="text" id="token" placeholder="例: my-secret-token" />
-    <div style="margin-top:4px;">
-      <button class="primary" id="btnConn">接続テスト</button>
-      <span id="connStatus" style="font-size:12px; margin-left:8px;"></span>
-    </div>
-  </div>
+  const fileInput = $("fileInput");
+  const uploadBtn = $("uploadBtn");
 
-  <!-- 画像アップロード -->
-  <div class="card">
-    <h2 style="font-size:16px; margin:0 0 8px;">画像アップロード</h2>
-    <input type="file" id="fileInput" accept="image/*" />
-    <button id="btnUpload" class="primary">アップロード</button>
-    <div id="uploadInfo" style="font-size:12px; margin-top:4px;"></div>
-  </div>
+  const imageListDiv = $("imageList");
 
-  <!-- 画像一覧 & 商品に紐付け -->
-  <div class="card">
-    <h2 style="font-size:16px; margin:0 0 8px;">画像一覧 &gt; 商品に紐付け</h2>
-    <div style="margin-bottom:4px;">
-      <button id="btnReloadImages">画像一覧を読み込み</button>
-      <button id="btnReloadProducts">商品一覧を読み込み</button>
-    </div>
-    <div id="imageList"></div>
-  </div>
+  const productSelect = $("productSelect");
+  const productInfo = $("productInfo");
+  const productPreviewImg = $("productPreviewImg");
+  const applyImageBtn = $("applyImageBtn");
 
-  <!-- ログ -->
-  <div class="card">
-    <h2 style="font-size:16px; margin:0 0 8px;">ログ</h2>
-    <pre id="log"></pre>
-  </div>
+  let adminToken = "";
+  let images = [];
+  let products = [];
+  let selectedImageUrl = ""; // 絶対URL（https://〜）
 
-  <script src="admin.js" defer></script>
-</body>
-</html>
+  function logStatus(msg) {
+    const now = new Date().toLocaleString();
+    statusDiv.textContent = `[${now}] ${msg}`;
+    console.log("[admin]", msg);
+  }
+
+  function toAbsoluteUrl(pathOrUrl) {
+    if (!pathOrUrl) return "";
+    // すでに http / https ならそのまま
+    if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+    // それ以外（/public/〜）は origin を付ける
+    return window.location.origin + pathOrUrl;
+  }
+
+  // URL パラメータから code/token を拾って初期値にする
+  (function initFromQuery() {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get("code") || params.get("token");
+      if (code) {
+        tokenInput.value = code;
+      }
+    } catch (e) {
+      console.warn("query parse error", e);
+    }
+  })();
+
+  async function connectionTest() {
+    const t = (tokenInput.value || "").trim();
+    if (!t) {
+      alert("管理トークン（?code= または ADMIN_API_TOKEN）を入力してください。");
+      return;
+    }
+    adminToken = t;
+    logStatus("接続テスト中…");
+
+    try {
+      const res = await fetch(`/api/admin/connection-test?code=${encodeURIComponent(adminToken)}`, {
+        method: "GET",
+        credentials: "same-origin",
+      });
+      const json = await res.json();
+      if (!json.ok) {
+        logStatus("接続テスト失敗: " + JSON.stringify(json));
+        alert("接続テストに失敗しました。\nトークン（code）が正しいか確認してください。");
+        return;
+      }
+      logStatus("接続テスト成功: " + JSON.stringify(json));
+      alert("接続テスト成功しました。画像一覧と商品一覧を読み込みます。");
+
+      // 成功したら一覧をロード
+      await Promise.all([loadImages(), loadProducts()]);
+    } catch (e) {
+      console.error(e);
+      logStatus("接続テスト中にエラー: " + e.message);
+      alert("接続テスト中にエラーが発生しました。コンソールを確認してください。");
+    }
+  }
+
+  async function loadImages() {
+    if (!adminToken) return;
+    logStatus("画像一覧を取得中…");
+    imageListDiv.innerHTML = "読み込み中…";
+
+    try {
+      const res = await fetch(`/api/admin/images?code=${encodeURIComponent(adminToken)}`, {
+        method: "GET",
+        credentials: "same-origin",
+      });
+      const json = await res.json();
+      if (!json.ok) {
+        imageListDiv.textContent = "取得エラー: " + (json.error || "");
+        logStatus("画像一覧取得失敗: " + JSON.stringify(json));
+        return;
+      }
+      images = json.items || [];
+      renderImageList();
+      logStatus(`画像一覧取得 OK (${images.length}件)`);
+    } catch (e) {
+      console.error(e);
+      imageListDiv.textContent = "取得エラー";
+      logStatus("画像一覧取得エラー: " + e.message);
+    }
+  }
+
+  function renderImageList() {
+    imageListDiv.innerHTML = "";
+    if (!images.length) {
+      imageListDiv.textContent = "まだ画像がありません。アップロードしてください。";
+      return;
+    }
+
+    images.forEach((item, idx) => {
+      const absUrl = toAbsoluteUrl(item.url);
+
+      const div = document.createElement("div");
+      div.className = "thumb";
+      div.dataset.url = absUrl;
+
+      const img = document.createElement("img");
+      img.src = absUrl;
+      img.alt = item.name || `image-${idx}`;
+
+      const nameSpan = document.createElement("span");
+      nameSpan.textContent = item.name || `画像${idx + 1}`;
+
+      div.appendChild(img);
+      div.appendChild(nameSpan);
+
+      div.addEventListener("click", () => {
+        document.querySelectorAll(".thumb.selected").forEach(el => el.classList.remove("selected"));
+        div.classList.add("selected");
+        selectedImageUrl = absUrl;
+        logStatus("選択中の画像: " + selectedImageUrl);
+      });
+
+      imageListDiv.appendChild(div);
+    });
+  }
+
+  async function uploadImage() {
+    if (!adminToken) {
+      alert("先に接続テストを行ってください。");
+      return;
+    }
+    const file = fileInput.files[0];
+    if (!file) {
+      alert("アップロードする画像ファイルを選択してください。");
+      return;
+    }
+
+    const form = new FormData();
+    form.append("image", file);
+
+    uploadBtn.disabled = true;
+    logStatus("画像アップロード中…");
+
+    try {
+      const res = await fetch(`/api/admin/upload-image?code=${encodeURIComponent(adminToken)}`, {
+        method: "POST",
+        body: form,
+      });
+      const json = await res.json();
+      if (!json.ok) {
+        logStatus("アップロード失敗: " + JSON.stringify(json));
+        alert("アップロードに失敗しました: " + (json.error || ""));
+        return;
+      }
+      logStatus("アップロード成功: " + json.url);
+      // すぐ一覧更新
+      await loadImages();
+    } catch (e) {
+      console.error(e);
+      logStatus("アップロードエラー: " + e.message);
+      alert("アップロード中にエラーが発生しました。");
+    } finally {
+      uploadBtn.disabled = false;
+      fileInput.value = "";
+    }
+  }
+
+  async function loadProducts() {
+    if (!adminToken) return;
+    logStatus("商品一覧を取得中…");
+    productSelect.innerHTML = `<option value="">読み込み中…</option>`;
+
+    try {
+      const res = await fetch(`/api/admin/products?code=${encodeURIComponent(adminToken)}`, {
+        method: "GET",
+        credentials: "same-origin",
+      });
+      const json = await res.json();
+      if (!json.ok) {
+        logStatus("商品一覧取得失敗: " + JSON.stringify(json));
+        productSelect.innerHTML = `<option value="">取得エラー</option>`;
+        return;
+      }
+      products = json.items || [];
+      renderProductSelect();
+      logStatus(`商品一覧取得 OK (${products.length}件)`);
+    } catch (e) {
+      console.error(e);
+      logStatus("商品一覧取得エラー: " + e.message);
+      productSelect.innerHTML = `<option value="">取得エラー</option>`;
+    }
+  }
+
+  function renderProductSelect() {
+    productSelect.innerHTML = "";
+    if (!products.length) {
+      productSelect.innerHTML = `<option value="">商品がありません</option>`;
+      return;
+    }
+    productSelect.appendChild(new Option("商品を選択してください", ""));
+    products.forEach(p => {
+      const label = `${p.name}（${p.id} / ${p.price}円 / 在庫${p.stock}）`;
+      productSelect.appendChild(new Option(label, p.id));
+    });
+  }
+
+  function updateProductPreview() {
+    const pid = productSelect.value;
+    const product = products.find(p => p.id === pid);
+    if (!product) {
+      productInfo.textContent = "";
+      productPreviewImg.src = "";
+      productPreviewImg.style.visibility = "hidden";
+      return;
+    }
+    productPreviewImg.style.visibility = "visible";
+    const abs = toAbsoluteUrl(product.image || "");
+    if (abs) {
+      productPreviewImg.src = abs;
+    } else {
+      productPreviewImg.src = "";
+    }
+    productInfo.textContent = `現在の画像URL: ${product.image || "(未設定)"}`;
+  }
+
+  async function applyImageToProduct() {
+    const pid = productSelect.value;
+    if (!pid) {
+      alert("商品を選択してください。");
+      return;
+    }
+    if (!selectedImageUrl) {
+      alert("左側の画像一覧から、商品に設定したい画像をクリックして選択してください。");
+      return;
+    }
+    if (!adminToken) {
+      alert("先に接続テストを行ってください。");
+      return;
+    }
+
+    const absUrl = toAbsoluteUrl(selectedImageUrl); // 念のため
+
+    logStatus(`商品 ${pid} に画像を設定中…`);
+    applyImageBtn.disabled = true;
+
+    try {
+      const res = await fetch(`/api/admin/products/set-image?code=${encodeURIComponent(adminToken)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productId: pid, imageUrl: absUrl }),
+      });
+      const json = await res.json();
+      if (!json.ok) {
+        logStatus("設定失敗: " + JSON.stringify(json));
+        alert("画像設定に失敗しました: " + (json.error || ""));
+        return;
+      }
+      logStatus("設定成功: " + JSON.stringify(json.product));
+      alert("商品に画像を設定しました。LINE での表示もこの画像になります。");
+
+      // ローカルの products も更新してプレビュー反映
+      const idx = products.findIndex(p => p.id === pid);
+      if (idx >= 0) {
+        products[idx].image = json.product.image;
+      }
+      updateProductPreview();
+    } catch (e) {
+      console.error(e);
+      logStatus("設定エラー: " + e.message);
+      alert("画像設定中にエラーが発生しました。");
+    } finally {
+      applyImageBtn.disabled = false;
+    }
+  }
+
+  // ===== イベント紐付け =====
+  connectBtn.addEventListener("click", connectionTest);
+  uploadBtn.addEventListener("click", uploadImage);
+  productSelect.addEventListener("change", updateProductPreview);
+
+  // 初期表示ではプレビュー画像を隠しておく
+  productPreviewImg.style.visibility = "hidden";
+})();

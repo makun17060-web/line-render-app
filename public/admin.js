@@ -1,3 +1,4 @@
+alert("admin.js LOADED");
 <!DOCTYPE html>
 <html lang="ja">
 <head>

@@ -336,7 +336,7 @@
         }
       });
 
-      // ===== 画像一覧（ここがサムネ表示） =====
+            // ===== 画像一覧（ここがサムネ表示） =====
       async function loadImages() {
         try {
           const data = await apiFetch("/api/admin/images");
@@ -351,9 +351,14 @@
             const wrap = document.createElement("div");
             wrap.className = "thumbWrap";
 
+            // ★ 相対パス("/public/...") → フルURL("https://〜/public/...") に変換
+            const absoluteUrl = img.url.startsWith("http")
+              ? img.url
+              : location.origin + img.url;
+
             const imageEl = document.createElement("img");
             imageEl.className = "thumb";
-            imageEl.src = img.url;           // ← ここで本物の画像を表示
+            imageEl.src = absoluteUrl;          // ← これで確実に画像が表示される
             imageEl.alt = img.name;
             wrap.appendChild(imageEl);
 
@@ -362,9 +367,10 @@
             cap.textContent = img.name;
             wrap.appendChild(cap);
 
+            // ★ クリックしたら「フルURL」を商品画像欄にセット
             wrap.addEventListener("click", () => {
               if (lastImageInput) {
-                lastImageInput.value = img.url;
+                lastImageInput.value = absoluteUrl;
                 alert("選択した画像URLを、最後にクリックした商品画像欄に設定しました。");
               } else {
                 alert("先に上の「画像URL」入力欄をクリックしてから、サムネを選んでください。");
@@ -379,6 +385,7 @@
           log("画像一覧エラー: " + e.message);
         }
       }
+
 
       $("reloadImagesBtn").addEventListener("click", loadImages);
 

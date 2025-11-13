@@ -2,7 +2,7 @@
 // + 予約者連絡API/コマンド + 店頭受取Fix + 銀行振込案内（コメント対応）
 // + 画像アップロード/一覧/削除 + 商品へ画像URL紐付け（管理画面用）
 // 必須 .env: LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, LIFF_ID, (ADMIN_API_TOKEN または ADMIN_CODE)
-// 任意 .env: PORT, ADMIN_USER_ID, MULTICAST_USER_IDS, BANK_INFO, BANK_NOTE
+// 任意 .env: PORT, ADMIN_USER_ID, MULTICAST_USER_IDS, BANK_INFO, BANK_NOTE, PUBLIC_BASE_URL
 
 "use strict";
 
@@ -30,6 +30,9 @@ const ADMIN_CODE_ENV      = (process.env.ADMIN_CODE || "").trim();      // 互�
 // ★ 銀行振込案内（任意）
 const BANK_INFO = (process.env.BANK_INFO || "").trim(); // 例: "〇〇銀行 △△支店 普通 1234567 カ)エビセンショップ"
 const BANK_NOTE = (process.env.BANK_NOTE || "").trim(); // 例: "振込手数料はお客様ご負担です / お振込名義はご注文者様のお名前でお願いします"
+
+// ★ 公開URL（Renderのhttpsドメインを .env で指定推奨）
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "");
 
 const config = {
   channelAccessToken: (process.env.LINE_CHANNEL_ACCESS_TOKEN || "").trim(),
@@ -235,31 +238,43 @@ function validateFlexContents(contents) {
 // ====== 商品UI（Flex） ======
 function productsFlex(allProducts) {
   const products = (allProducts || []).filter(p => !HIDE_PRODUCT_IDS.has(p.id));
-  const bubbles = products.map(p => ({
-    type: "bubble",
-    hero: p.image ? {
-      type: "image",
-      url: p.image,
-      size: "full",
-      aspectRatio: "1:1",
-      aspectMode: "cover"
-    } : undefined,
-    body: {
-      type: "box", layout: "vertical", spacing: "sm",
-      contents: [
-        { type: "text", text: p.name, weight: "bold", size: "md", wrap: true },
-        { type: "text", text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`, size: "sm", wrap: true },
-        p.desc ? { type: "text", text: p.desc, size: "sm", wrap: true } : { type: "box", layout: "vertical", contents: [] }
-      ].filter(Boolean)
-    },
-    footer: {
-      type: "box", layout: "horizontal", spacing: "md",
-      contents: [
-        { type: "button", style: "primary",
-          action: { type: "postback", label: "数量を選ぶ", data: `order_qty?${qstr({ id: p.id, qty: 1 })}` } }
-      ]
-    }
-  }));
+
+  const bubbles = products.map(p => {
+    const imageUrl = p.image || "";
+    const hero = (imageUrl && /^https:\/\//i.test(imageUrl))
+      ? {
+          type: "image",
+          url: imageUrl,
+          size: "full",
+          aspectRatio: "1:1",
+          aspectMode: "cover"
+        }
+      : undefined;
+
+    return {
+      type: "bubble",
+      hero,
+      body: {
+        type: "box", layout: "vertical", spacing: "sm",
+        contents: [
+          { type: "text", text: p.name, weight: "bold", size: "md", wrap: true },
+          { type: "text", text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`, size: "sm", wrap: true },
+          p.desc
+            ? { type: "text", text: p.desc, size: "sm", wrap: true }
+            : { type: "box", layout: "vertical", contents: [] }
+        ].filter(Boolean)
+      },
+      footer: {
+        type: "box", layout: "horizontal", spacing: "md",
+        contents: [
+          {
+            type: "button", style: "primary",
+            action: { type: "postback", label: "数量を選ぶ", data: `order_qty?${qstr({ id: p.id, qty: 1 })}` }
+          }
+        ]
+      }
+    };
+  });
 
   // 「その他（自由入力）」：★価格入力なし版
   bubbles.push({
@@ -282,8 +297,15 @@ function productsFlex(allProducts) {
     }
   });
 
-  return { type: "flex", altText: "商品一覧", contents: bubbles.length === 1 ? bubbles[0] : { type: "carousel", contents: bubbles } };
+  return {
+    type: "flex",
+    altText: "商品一覧",
+    contents: bubbles.length === 1
+      ? bubbles[0]
+      : { type: "carousel", contents: bubbles }
+  };
 }
+
 function qtyFlex(id, qty = 1) {
   const q = Math.max(1, Math.min(99, Number(qty) || 1));
   return {
@@ -311,6 +333,7 @@ function qtyFlex(id, qty = 1) {
     }
   };
 }
+
 function methodFlex(id, qty) {
   return {
     type: "flex", altText: "受取方法を選択してください",
@@ -330,6 +353,7 @@ function methodFlex(id, qty) {
     }
   };
 }
+
 function regionFlex(id, qty) {
   const regions = Object.keys(SHIPPING_BY_REGION);
   const rows = [];
@@ -450,17 +474,22 @@ function confirmFlex(product, qty, method, region, payment, LIFF_ID) {
     });
   }
 
+  const imageUrl = product.image || "";
+  const hero = (imageUrl && /^https:\/\//i.test(imageUrl))
+    ? { type: "image", url: imageUrl, size: "full", aspectRatio: "1:1", aspectMode: "cover" }
+    : undefined;
+
   return {
     type: "flex", altText: "注文内容の最終確認",
-    contents: { type: "bubble",
-      hero: product.image ? {
-        type: "image", url: product.image, size: "full", aspectRatio: "1:1", aspectMode: "cover"
-      } : undefined,
+    contents: {
+      type: "bubble",
+      hero,
       body: { type: "box", layout: "vertical", spacing: "md", contents: bodyContents },
       footer: { type: "box", layout: "vertical", spacing: "md", contents: footerButtons }
     }
   };
 }
+
 function reserveOffer(product, needQty, stock) {
   return [
     { type: "text", text: [
@@ -838,7 +867,7 @@ app.get("/api/admin/connection-test", (req, res) => {
   res.json({ ok:true, uploads:true, uploadDir: "/public/uploads" });
 });
 
-// アップロード
+// アップロード（★ https フルURL を返すように改修）
 app.post("/api/admin/upload-image", (req, res) => {
   if (!requireAdmin(req, res)) return;
   upload.single("image")(req, res, (err) => {
@@ -847,21 +876,53 @@ app.post("/api/admin/upload-image", (req, res) => {
       return res.status(400).json({ ok:false, error: msg });
     }
     if (!req.file) return res.status(400).json({ ok:false, error:"no_file" });
-    const url = `/public/uploads/${req.file.filename}`;
-    res.json({ ok:true, file: req.file.filename, url, size: req.file.size, mimetype: req.file.mimetype });
+
+    const filename = req.file.filename;
+    const relPath = `/public/uploads/${filename}`;
+
+    // ベースURL: .env の PUBLIC_BASE_URL 優先、なければヘッダから推定
+    let base = PUBLIC_BASE_URL;
+    if (!base) {
+      const proto = req.headers["x-forwarded-proto"] || "https";
+      const host  = req.headers.host;
+      base = `${proto}://${host}`;
+    }
+    const url = `${base}${relPath}`;
+
+    res.json({
+      ok:true,
+      file: filename,
+      url,
+      path: relPath,
+      size: req.file.size,
+      mimetype: req.file.mimetype
+    });
   });
 });
 
-// 一覧
+// 一覧（★ url も https フルURL に）
 app.get("/api/admin/images", (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
+    let base = PUBLIC_BASE_URL;
+    if (!base) {
+      const proto = req.headers["x-forwarded-proto"] || "https";
+      const host  = req.headers.host;
+      base = `${proto}://${host}`;
+    }
     const files = fs.readdirSync(UPLOAD_DIR)
       .filter(f => /\.(png|jpe?g|gif|webp)$/i.test(f))
       .map(name => {
         const p = path.join(UPLOAD_DIR, name);
         const st = fs.statSync(p);
-        return { name, url: `/public/uploads/${name}`, bytes: st.size, mtime: st.mtimeMs };
+        const relPath = `/public/uploads/${name}`;
+        return {
+          name,
+          url: `${base}${relPath}`,
+          path: relPath,
+          bytes: st.size,
+          mtime: st.mtimeMs
+        };
       })
       .sort((a,b) => b.mtime - a.mtime);
     res.json({ ok:true, items: files });
@@ -1329,6 +1390,7 @@ app.get("/api/health", (_req, res) => {
       ADMIN_CODE: !!ADMIN_CODE_ENV,
       BANK_INFO: !!BANK_INFO,
       BANK_NOTE: !!BANK_NOTE,
+      PUBLIC_BASE_URL: !!PUBLIC_BASE_URL,
     }
   });
 });
@@ -1339,4 +1401,3 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log("   Webhook: POST /webhook");
   console.log("   LIFF address page: /public/liff-address.html  (open via https://liff.line.me/LIFF_ID)");
 });
-

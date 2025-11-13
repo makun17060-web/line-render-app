@@ -1,394 +1,144 @@
-# /public/admin.html
-
-```html
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>商品画像 管理画面</title>
+  <meta charset="utf-8" />
+  <title>えびせん管理画面（画像管理付き）</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    :root{--fg:#222;--muted:#666;--brand:#0d6efd;--bg:#f7f7f9}
-    *{box-sizing:border-box}
-    body{font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif; color:var(--fg); background:var(--bg); margin:0}
-    header{position:sticky;top:0;background:#fff;border-bottom:1px solid #e7e7e7;padding:12px 16px;z-index:10}
-    header .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
-    header input[type="password"], header input[type="text"]{padding:8px 10px;border:1px solid #ddd;border-radius:8px;min-width:260px}
-    header button{padding:8px 12px;border:1px solid #ccc;background:#fff;border-radius:8px;cursor:pointer}
-    header button.primary{background:var(--brand);color:#fff;border-color:var(--brand)}
-    main{padding:18px;max-width:1100px;margin:0 auto}
-    h2{margin:18px 0 10px}
-    .card{background:#fff;border:1px solid #e7e7e7;border-radius:14px;padding:14px}
-    .row{display:flex;gap:14px;flex-wrap:wrap}
-    .grow{flex:1 1 400px}
-    .muted{color:var(--muted)}
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: #f5f5f5;
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 20px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    label {
+      display: block;
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+    input[type="text"] {
+      width: 100%;
+      max-width: 320px;
+      padding: 6px 8px;
+      font-size: 13px;
+      box-sizing: border-box;
+    }
+    button {
+      padding: 6px 12px;
+      font-size: 13px;
+      border-radius: 4px;
+      border: none;
+      cursor: pointer;
+      margin-right: 4px;
+      margin-top: 4px;
+    }
+    button.primary { background: #1976d2; color:#fff; }
+    button.danger  { background: #d32f2f; color:#fff; }
 
-    /* 画像グリッド */
-    .thumb-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}
-    .thumb{width:100%;max-width:180px;aspect-ratio:1/1;border:1px solid #ddd;border-radius:12px;overflow:hidden;background:#fafafa;display:flex;align-items:center;justify-content:center;position:relative}
-    .thumb img{max-width:100%;max-height:100%;object-fit:cover;display:block;pointer-events:none;user-select:none}
-    .thumb .bar{position:absolute;bottom:0;left:0;right:0;display:flex;gap:6px;padding:6px;background:rgba(0,0,0,.55)}
-    .thumb .bar button{flex:1;border:none;border-radius:8px;padding:6px 8px;color:#fff;background:#2b2b2b;cursor:pointer;font-size:12px}
-    .thumb .bar button.danger{background:#d63638}
-    .thumb .bar button.copy{background:#0d6efd}
+    #log {
+      background: #111;
+      color: #eee;
+      font-family: monospace;
+      font-size: 11px;
+      padding: 8px;
+      border-radius: 4px;
+      max-height: 240px;
+      overflow: auto;
+      white-space: pre-wrap;
+    }
+    .log-ok { color: #8bc34a; }
+    .log-err { color: #ff5252; }
 
-    /* ドロップゾーン */
-    .dropzone{border:2px dashed #bbb;border-radius:14px;background:#fff;padding:18px;text-align:center}
-    .dropzone.is-dragover{border-color:#4aa3ff;background:#f0f7ff}
-
-    table{width:100%;border-collapse:separate;border-spacing:0}
-    th,td{padding:10px;border-bottom:1px solid #eee;text-align:left;vertical-align:middle}
-    th{font-weight:700;background:#f8f8f8}
-    tr:hover td{background:#fafafa}
-    .cell-img{width:64px}
-    .cell-img img{width:56px;height:56px;border-radius:10px;object-fit:cover;border:1px solid #ddd}
-    .actions{display:flex;gap:8px;flex-wrap:wrap}
-    .btn{padding:8px 10px;border:1px solid #ccc;background:#fff;border-radius:8px;cursor:pointer}
-    .btn.primary{background:var(--brand);border-color:var(--brand);color:#fff}
-    .btn.danger{background:#d63638;border-color:#d63638;color:#fff}
-    .btn.ghost{border-color:#ddd;color:#333}
-
-    .hint{font-size:13px;color:var(--muted)}
-    .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#eef3ff;color:#2144c1;font-size:12px}
-    .flex{display:flex;gap:10px;align-items:center}
-    .right{margin-left:auto}
-    .sep{height:12px}
+    #imageList {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 8px;
+    }
+    .thumb-card {
+      background:#fff;
+      border-radius:8px;
+      padding:6px;
+      box-shadow:0 1px 2px rgba(0,0,0,0.1);
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      font-size:11px;
+    }
+    .thumb-card img {
+      width: 120px;
+      height: 120px;
+      object-fit: cover;
+      border-radius:4px;
+      background:#eee;
+    }
+    .thumb-url {
+      width:100%;
+      font-size:10px;
+      word-break: break-all;
+      margin-top:4px;
+    }
+    .thumb-actions {
+      margin-top:4px;
+      display:flex;
+      flex-wrap:wrap;
+      gap:4px;
+      justify-content:center;
+    }
+    select, .prod-input {
+      font-size:11px;
+      padding:4px;
+      max-width:140px;
+    }
   </style>
 </head>
 <body>
-  <header>
-    <div class="row">
-      <strong>商品画像 管理</strong>
-      <span class="muted">（Render /public 配信）</span>
-      <input id="adminToken" type="password" placeholder="管理トークン（ADMIN_API_TOKEN か ADMIN_CODE）" />
-      <button id="saveTokenBtn" class="btn">保存</button>
-      <button id="pingBtn" class="btn">接続テスト</button>
-      <span id="pingStatus" class="pill">未接続</span>
-      <span class="right hint">URLの <code>?code=XXXX</code> でも自動セット可</span>
+  <h1>えびせん管理画面（画像管理付き）</h1>
+
+  <!-- 認証トークン -->
+  <div class="card">
+    <label>管理トークン（ADMIN_API_TOKEN または ADMIN_CODE）</label>
+    <input type="text" id="token" placeholder="例: my-secret-token" />
+    <div style="margin-top:4px;">
+      <button class="primary" id="btnConn">接続テスト</button>
+      <span id="connStatus" style="font-size:12px; margin-left:8px;"></span>
     </div>
-  </header>
+  </div>
 
-  <main>
-    <section class="card">
-      <h2>1) 画像をアップロード</h2>
-      <div class="row">
-        <div class="grow">
-          <div id="dropzone" class="dropzone">
-            <p><strong>ここに画像をドラッグ＆ドロップ</strong></p>
-            <p class="hint">対応: PNG / JPG / WEBP / GIF（最大 5MB）。複数同時OK。</p>
-            <div class="sep"></div>
-            <input id="fileInput" type="file" accept="image/*" multiple />
-          </div>
-        </div>
-        <div>
-          <div class="hint">推奨サイズ：正方形 1200×1200（Flex heroは 1:1 / cover）</div>
-        </div>
-      </div>
-    </section>
+  <!-- 画像アップロード -->
+  <div class="card">
+    <h2 style="font-size:16px; margin:0 0 8px;">画像アップロード</h2>
+    <input type="file" id="fileInput" accept="image/*" />
+    <button id="btnUpload" class="primary">アップロード</button>
+    <div id="uploadInfo" style="font-size:12px; margin-top:4px;"></div>
+  </div>
 
-    <div class="sep"></div>
+  <!-- 画像一覧 & 商品に紐付け -->
+  <div class="card">
+    <h2 style="font-size:16px; margin:0 0 8px;">画像一覧 &gt; 商品に紐付け</h2>
+    <div style="margin-bottom:4px;">
+      <button id="btnReloadImages">画像一覧を読み込み</button>
+      <button id="btnReloadProducts">商品一覧を読み込み</button>
+    </div>
+    <div id="imageList"></div>
+  </div>
 
-    <section class="card">
-      <div class="flex">
-        <h2>2) アップロード済み画像</h2>
-        <button id="reloadImagesBtn" class="btn">再読込</button>
-      </div>
-      <div id="thumbGrid" class="thumb-grid" aria-live="polite"></div>
-    </section>
+  <!-- ログ -->
+  <div class="card">
+    <h2 style="font-size:16px; margin:0 0 8px;">ログ</h2>
+    <pre id="log"></pre>
+  </div>
 
-    <div class="sep"></div>
-
-    <section class="card">
-      <div class="flex">
-        <h2>3) 商品に画像を設定</h2>
-        <button id="reloadProductsBtn" class="btn">再読込</button>
-      </div>
-      <p class="hint">「直接注文」の一覧（Flex）でヒーロー画像として表示されます（久助は一覧から非表示の仕様）。</p>
-      <table>
-        <thead>
-          <tr>
-            <th class="cell-img">画像</th>
-            <th>ID</th>
-            <th>商品名</th>
-            <th>価格</th>
-            <th>在庫</th>
-            <th>説明</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody id="productsTbody"></tbody>
-      </table>
-    </section>
-  </main>
-
-  <script src="/public/admin.js"></script>
+  <script src="admin.js" defer></script>
 </body>
 </html>
-```
-
----
-
-# /public/admin.js
-
-```js
-// ========== 設定 ==========
-const API = {
-  ping: '/api/admin/ping',
-  products: '/api/admin/products',                    // GET
-  setImage: '/api/admin/products/set-image',          // POST {productId, imageUrl}
-  images: '/api/admin/images',                        // GET
-  uploadImage: '/api/admin/upload-image',             // POST multipart
-  deleteImage: (name) => `/api/admin/images/${encodeURIComponent(name)}` // DELETE
-};
-
-// URL ?code= または ?token= を拾って保存
-(function bootstrapTokenFromQuery(){
-  const params = new URLSearchParams(location.search);
-  const code = params.get('code') || params.get('token');
-  if (code) {
-    localStorage.setItem('ADMIN_TOKEN', code);
-    // URLをクリーンに（履歴は汚さない）
-    const url = new URL(location.href);
-    url.searchParams.delete('code');
-    url.searchParams.delete('token');
-    history.replaceState({}, '', url);
-  }
-})();
-
-// DOM 参照
-const $ = (sel) => document.querySelector(sel);
-const adminTokenEl = $('#adminToken');
-const pingBtn = $('#pingBtn');
-const pingStatus = $('#pingStatus');
-const saveTokenBtn = $('#saveTokenBtn');
-const dropzone = $('#dropzone');
-const fileInput = $('#fileInput');
-const thumbGrid = $('#thumbGrid');
-const productsTbody = $('#productsTbody');
-const reloadImagesBtn = $('#reloadImagesBtn');
-const reloadProductsBtn = $('#reloadProductsBtn');
-
-// 標準ヘッダ
-const authHeaders = () => {
-  const tok = (adminTokenEl.value || localStorage.getItem('ADMIN_TOKEN') || '').trim();
-  return tok ? { Authorization: `Bearer ${tok}` } : {};
-};
-
-function setTokenUIFromStorage(){
-  const t = localStorage.getItem('ADMIN_TOKEN') || '';
-  adminTokenEl.value = t;
-}
-
-// ページ全体のドラッグ & ドロップでのフル画面表示を抑止
-window.addEventListener('dragover', (e)=> e.preventDefault());
-window.addEventListener('drop', (e)=> e.preventDefault());
-
-// Dropzone の見た目
-if (dropzone){
-  ['dragenter','dragover'].forEach(type=> dropzone.addEventListener(type, (e)=>{
-    e.preventDefault(); e.stopPropagation(); dropzone.classList.add('is-dragover');
-  }));
-  ;['dragleave','dragend','drop'].forEach(type=> dropzone.addEventListener(type, (e)=>{
-    e.preventDefault(); e.stopPropagation(); dropzone.classList.remove('is-dragover');
-  }));
-  dropzone.addEventListener('drop', async (e)=>{
-    const files = Array.from(e.dataTransfer.files||[]).filter(f=>/image\//.test(f.type));
-    if (files.length) await uploadFiles(files);
-  });
-}
-
-// ファイル選択
-fileInput?.addEventListener('change', async (e)=>{
-  const files = Array.from(e.target.files||[]);
-  if (files.length) await uploadFiles(files);
-  fileInput.value = '';
-});
-
-async function uploadFiles(files){
-  for (const f of files){
-    const fd = new FormData();
-    fd.append('file', f);
-    try{
-      const r = await fetch(API.uploadImage, {method:'POST', headers: authHeaders(), body: fd});
-      const json = await r.json();
-      if (!json.ok) throw new Error(json.error||'upload_failed');
-    }catch(e){
-      alert(`アップロード失敗: ${f.name} / ${e.message||e}`);
-    }
-  }
-  await reloadImages();
-}
-
-// 画像一覧読込 & 描画
-async function reloadImages(){
-  thumbGrid.innerHTML = '<div class="muted">読み込み中...</div>';
-  try{
-    const r = await fetch(API.images, { headers: authHeaders() });
-    const json = await r.json();
-    if (!json.ok) throw new Error(json.error||'load_failed');
-    renderImages(json.items||json.images||[]);
-  }catch(e){
-    thumbGrid.innerHTML = `<div class="muted">画像一覧の取得に失敗しました: ${e.message||e}</div>`;
-  }
-}
-
-function renderImages(items){
-  thumbGrid.innerHTML='';
-  if (!items.length){
-    thumbGrid.innerHTML = '<div class="muted">画像はまだありません。アップロードしてください。</div>';
-    return;
-  }
-  for (const it of items){
-    // it: { name, url, size, createdAt } を想定
-    const card = document.createElement('div');
-    card.className = 'thumb';
-    const img = document.createElement('img');
-    img.src = it.url || it.path || '';
-    img.alt = it.name || '';
-    img.draggable = false;
-    const bar = document.createElement('div');
-    bar.className = 'bar';
-
-    const btnCopy = document.createElement('button');
-    btnCopy.className = 'copy';
-    btnCopy.textContent = 'URL';
-    btnCopy.title = 'URLをコピー';
-    btnCopy.addEventListener('click', async()=>{
-      const url = img.src;
-      try{ await navigator.clipboard.writeText(url); btnCopy.textContent = '✓'; setTimeout(()=>btnCopy.textContent='URL',800);}catch{}
-    });
-
-    const btnDel = document.createElement('button');
-    btnDel.className = 'danger';
-    btnDel.textContent = '削除';
-    btnDel.addEventListener('click', async()=>{
-      if (!confirm(`${it.name||'この画像'} を削除しますか？`)) return;
-      try{
-        const r = await fetch(API.deleteImage(it.name||it.filename||''), {method:'DELETE', headers: authHeaders()});
-        const json = await r.json();
-        if (!json.ok) throw new Error(json.error||'delete_failed');
-        await reloadImages();
-      }catch(e){ alert('削除失敗: ' + (e.message||e)); }
-    });
-
-    bar.append(btnCopy, btnDel);
-    card.append(img, bar);
-    thumbGrid.append(card);
-  }
-}
-
-// 商品一覧
-async function reloadProducts(){
-  productsTbody.innerHTML = '<tr><td colspan="7" class="muted">読み込み中...</td></tr>';
-  try{
-    const r = await fetch(API.products, { headers: authHeaders() });
-    const json = await r.json();
-    if (!json.ok) throw new Error(json.error||'load_failed');
-    renderProducts(json.items||json);
-  }catch(e){
-    productsTbody.innerHTML = `<tr><td colspan="7" class="muted">商品取得に失敗しました: ${e.message||e}</td></tr>`;
-  }
-}
-
-function renderProducts(items){
-  productsTbody.innerHTML = '';
-  for (const p of items){
-    const tr = document.createElement('tr');
-
-    const tdImg = document.createElement('td');
-    tdImg.className = 'cell-img';
-    const img = document.createElement('img');
-    img.src = p.imageUrl || '';
-    img.alt = p.name || '';
-    if (!p.imageUrl) img.style.opacity = .25;
-    tdImg.append(img);
-
-    const tdId = document.createElement('td'); tdId.textContent = p.id;
-    const tdName = document.createElement('td'); tdName.textContent = p.name;
-    const tdPrice = document.createElement('td'); tdPrice.textContent = `${Number(p.price||0).toLocaleString('ja-JP')}円`;
-    const tdStock = document.createElement('td'); tdStock.textContent = `${Number(p.stock||0)}個`;
-    const tdDesc = document.createElement('td'); tdDesc.textContent = p.desc || '';
-
-    const tdAct = document.createElement('td');
-    tdAct.className = 'actions';
-
-    const inputUrl = document.createElement('input');
-    inputUrl.type = 'text'; inputUrl.placeholder = '画像URLをペースト'; inputUrl.value = p.imageUrl||'';
-    inputUrl.style.minWidth = '280px';
-
-    const btnPick = document.createElement('button');
-    btnPick.className = 'btn ghost'; btnPick.textContent = '↑ 一覧から選ぶ';
-    btnPick.title = '上の「アップロード済み画像」のカードでURLコピー→ここに貼付が早いです';
-
-    const btnSave = document.createElement('button');
-    btnSave.className = 'btn primary'; btnSave.textContent = '保存';
-
-    const btnClear = document.createElement('button');
-    btnClear.className = 'btn'; btnClear.textContent = '解除';
-
-    btnSave.addEventListener('click', async ()=>{
-      const url = inputUrl.value.trim();
-      if (!url) return alert('画像URLを入力してください');
-      try{
-        const r = await fetch(API.setImage, { method:'POST', headers:{ 'Content-Type':'application/json', ...authHeaders() }, body: JSON.stringify({ productId: p.id, imageUrl: url }) });
-        const json = await r.json();
-        if (!json.ok) throw new Error(json.error||'save_failed');
-        await reloadProducts();
-      }catch(e){ alert('保存失敗: ' + (e.message||e)); }
-    });
-
-    btnClear.addEventListener('click', async ()=>{
-      try{
-        const r = await fetch(API.setImage, { method:'POST', headers:{ 'Content-Type':'application/json', ...authHeaders() }, body: JSON.stringify({ productId: p.id, imageUrl: '' }) });
-        const json = await r.json();
-        if (!json.ok) throw new Error(json.error||'clear_failed');
-        await reloadProducts();
-      }catch(e){ alert('解除失敗: ' + (e.message||e)); }
-    });
-
-    tdAct.append(inputUrl, btnPick, btnSave, btnClear);
-
-    tr.append(tdImg, tdId, tdName, tdPrice, tdStock, tdDesc, tdAct);
-    productsTbody.append(tr);
-  }
-}
-
-// Ping
-async function ping(){
-  pingStatus.textContent = '接続中...';
-  pingStatus.style.background = '#fff3cd';
-  try{
-    const r = await fetch(API.ping, { headers: authHeaders() });
-    const json = await r.json();
-    if (json.ok){
-      pingStatus.textContent = '接続OK';
-      pingStatus.style.background = '#e7f6ed';
-    }else{
-      pingStatus.textContent = '失敗';
-      pingStatus.style.background = '#fde2e1';
-    }
-  }catch(e){
-    pingStatus.textContent = '失敗';
-    pingStatus.style.background = '#fde2e1';
-  }
-}
-
-// 保存ボタン
-saveTokenBtn?.addEventListener('click', ()=>{
-  const v = adminTokenEl.value.trim();
-  if (!v) return alert('管理トークンを入力してください');
-  localStorage.setItem('ADMIN_TOKEN', v);
-  ping();
-});
-
-pingBtn?.addEventListener('click', ping);
-reloadImagesBtn?.addEventListener('click', reloadImages);
-reloadProductsBtn?.addEventListener('click', reloadProducts);
-
-// 初期化
-(async function init(){
-  setTokenUIFromStorage();
-  await ping();
-  await Promise.all([reloadImages(), reloadProducts()]);
-})();
-```

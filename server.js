@@ -89,7 +89,6 @@ if (!fs.existsSync(ADDRESSES_PATH)) fs.writeFileSync(ADDRESSES_PATH, JSON.string
 if (!fs.existsSync(SESSIONS_PATH)) fs.writeFileSync(SESSIONS_PATH, JSON.stringify({}, null, 2), "utf8");
 if (!fs.existsSync(NOTIFY_STATE_PATH)) fs.writeFileSync(NOTIFY_STATE_PATH, JSON.stringify({}, null, 2), "utf8");
 // ====== データパス ======
-const DATA_DIR = path.join(__dirname, "data");
 // ▼ public/uploads を作成（既存DATA_DIRのすぐ下に追記）
 const UPLOAD_DIR = path.join(__dirname, "public", "uploads");
 if (!fs.existsSync(UPLOAD_DIR)) {

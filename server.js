@@ -52,7 +52,7 @@ const DATA_DIR = path.join(__dirname, "data");
 const UPLOAD_DIR = path.join(__dirname, "public", "uploads");
 if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-  console.log(`📁 Created: ${UPLOAD_DIR}`);
+  console.log(`📁 Created: ${UPLOAD_DIR}`);}
 const ORDERS_LOG        = path.join(DATA_DIR, "orders.log");
 const RESERVATIONS_LOG  = path.join(DATA_DIR, "reservations.log");
 const ADDRESSES_PATH    = path.join(DATA_DIR, "addresses.json");

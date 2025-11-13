@@ -90,6 +90,13 @@ if (!fs.existsSync(SESSIONS_PATH)) fs.writeFileSync(SESSIONS_PATH, JSON.stringif
 if (!fs.existsSync(NOTIFY_STATE_PATH)) fs.writeFileSync(NOTIFY_STATE_PATH, JSON.stringify({}, null, 2), "utf8");
 // ====== データパス ======
 const DATA_DIR = path.join(__dirname, "data");
+// ▼ public/uploads を作成（既存DATA_DIRのすぐ下に追記）
+const UPLOAD_DIR = path.join(__dirname, "public", "uploads");
+if (!fs.existsSync(UPLOAD_DIR)) {
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+  console.log(`📁 ${UPLOAD_DIR} フォルダを作成しました`);
+}
+
 const PRODUCTS_PATH     = path.join(DATA_DIR, "products.json");
 // ...（既存）...
 

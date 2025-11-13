@@ -59,7 +59,7 @@ const SESSIONS_PATH     = path.join(DATA_DIR, "sessions.json");
 const NOTIFY_STATE_PATH = path.join(DATA_DIR, "notify_state.json"); // 順次連絡の状態
 
 // ★ 画像保存先（/public/uploads） —— ここを admin.html が見る
-const UPLOAD_DIR = path.join(__dirname, "public", "uploads");
+ path.join(__dirname, "public", "uploads");
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 // ★ 在庫管理
@@ -90,7 +90,6 @@ if (!fs.existsSync(SESSIONS_PATH)) fs.writeFileSync(SESSIONS_PATH, JSON.stringif
 if (!fs.existsSync(NOTIFY_STATE_PATH)) fs.writeFileSync(NOTIFY_STATE_PATH, JSON.stringify({}, null, 2), "utf8");
 // ====== データパス ======
 // ▼ public/uploads を作成（既存DATA_DIRのすぐ下に追記）
-const UPLOAD_DIR = path.join(__dirname, "public", "uploads");
 if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
   console.log(`📁 ${UPLOAD_DIR} フォルダを作成しました`);
@@ -100,7 +99,6 @@ const PRODUCTS_PATH     = path.join(DATA_DIR, "products.json");
 // ...（既存）...
 
 // ▼▼ これを追加：アップロード先ディレクトリを必ず作る
-const UPLOAD_DIR = path.join(__dirname, "public", "uploads");
 if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
   console.log(`ℹ️ ${UPLOAD_DIR} を作成しました。`);

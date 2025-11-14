@@ -234,45 +234,97 @@ function validateFlexContents(contents) {
   if (t !== "bubble" && t !== "carousel") throw new Error('contents.type must be "bubble" or "carousel"');
   return contents;
 }
+// ===== 画像URL整形（Flex用） =====
+function toPublicImageUrl(raw) {
+  if (!raw) return "";
 
-// ====== 商品UI（Flex） ======
+  let s = String(raw).trim();
+  if (!s) return "";
+
+  // 以前のバグで付いた "onrender.com./" を修正
+  s = s.replace(".onrender.com./", ".onrender.com/");
+
+  // すでに http/https ならそのまま使う
+  if (/^https?:\/\//i.test(s)) {
+    return s;
+  }
+
+  // 相対パスやファイル名だけの場合 → ファイル名を取り出す
+  let fname = s;
+  const lastSlash = s.lastIndexOf("/");
+  if (lastSlash >= 0) {
+    fname = s.slice(lastSlash + 1);
+  }
+
+  // 標準の公開パスに揃える
+  const pathPart = `/public/uploads/${fname}`;
+
+  // Render のホスト名から https URL を組み立て
+  const hostFromRender =
+    process.env.RENDER_EXTERNAL_HOSTNAME ||
+    (process.env.RENDER_EXTERNAL_URL || "")
+      .replace(/^https?:\/\//, "")
+      .replace(/\/.*$/, "");
+
+  if (hostFromRender) {
+    return `https://${hostFromRender}${pathPart}`;
+  }
+
+  // 最悪テスト用に相対パスを返す（本番では Render のホスト名が入っているはず）
+  return pathPart;
+}
+
+// ===== 商品UI（Flex） ======
 function productsFlex(allProducts) {
   const products = (allProducts || []).filter(p => !HIDE_PRODUCT_IDS.has(p.id));
 
   const bubbles = products.map(p => {
-    const imageUrl = p.image || "";
-    const hero = (imageUrl && /^https:\/\//i.test(imageUrl))
-      ? {
-          type: "image",
-          url: imageUrl,
-          size: "full",
-          aspectRatio: "1:1",
-          aspectMode: "cover"
-        }
-      : undefined;
+    const imgUrl = toPublicImageUrl(p.image);
 
     return {
       type: "bubble",
-      hero,
+      hero: imgUrl
+        ? {
+            type: "image",
+            url: imgUrl,
+            size: "full",
+            aspectRatio: "1:1",
+            aspectMode: "cover",
+          }
+        : undefined,
       body: {
-        type: "box", layout: "vertical", spacing: "sm",
+        type: "box",
+        layout: "vertical",
+        spacing: "sm",
         contents: [
           { type: "text", text: p.name, weight: "bold", size: "md", wrap: true },
-          { type: "text", text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`, size: "sm", wrap: true },
+          {
+            type: "text",
+            text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`,
+            size: "sm",
+            wrap: true,
+          },
           p.desc
             ? { type: "text", text: p.desc, size: "sm", wrap: true }
-            : { type: "box", layout: "vertical", contents: [] }
-        ].filter(Boolean)
+            : { type: "box", layout: "vertical", contents: [] },
+        ].filter(Boolean),
       },
       footer: {
-        type: "box", layout: "horizontal", spacing: "md",
+        type: "box",
+        layout: "horizontal",
+        spacing: "md",
         contents: [
           {
-            type: "button", style: "primary",
-            action: { type: "postback", label: "数量を選ぶ", data: `order_qty?${qstr({ id: p.id, qty: 1 })}` }
-          }
-        ]
-      }
+            type: "button",
+            style: "primary",
+            action: {
+              type: "postback",
+              label: "数量を選ぶ",
+              data: `order_qty?${qstr({ id: p.id, qty: 1 })}`,
+            },
+          },
+        ],
+      },
     };
   });
 
@@ -280,29 +332,52 @@ function productsFlex(allProducts) {
   bubbles.push({
     type: "bubble",
     body: {
-      type: "box", layout: "vertical", spacing: "sm",
+      type: "box",
+      layout: "vertical",
+      spacing: "sm",
       contents: [
         { type: "text", text: "その他（自由入力）", weight: "bold", size: "md" },
-        { type: "text", text: "商品名と個数だけ入力します。価格入力は不要です。", size: "sm", wrap: true }
-      ]
+        {
+          type: "text",
+          text: "商品名と個数だけ入力します。価格入力は不要です。",
+          size: "sm",
+          wrap: true,
+        },
+      ],
     },
     footer: {
-      type: "box", layout: "vertical", spacing: "md",
+      type: "box",
+      layout: "vertical",
+      spacing: "md",
       contents: [
-        { type: "button", style: "primary",
-          action: { type: "postback", label: "商品名を入力する", data: "other_start" } },
-        { type: "button", style: "secondary",
-          action: { type: "postback", label: "← 戻る", data: "order_back" } }
-      ]
-    }
+        {
+          type: "button",
+          style: "primary",
+          action: {
+            type: "postback",
+            label: "商品名を入力する",
+            data: "other_start",
+          },
+        },
+        {
+          type: "button",
+          style: "secondary",
+          action: { type: "postback", label: "← 戻る", data: "order_back" },
+        },
+      ],
+    },
   });
 
   return {
     type: "flex",
     altText: "商品一覧",
-    contents: bubbles.length === 1
-      ? bubbles[0]
-      : { type: "carousel", contents: bubbles }
+    contents:
+      bubbles.length === 1
+        ? bubbles[0]
+        : {
+            type: "carousel",
+            contents: bubbles,
+          },
   };
 }
 
@@ -435,6 +510,7 @@ function confirmFlex(product, qty, method, region, payment, LIFF_ID) {
     const priceStr = parts[2] || "0";
     product = { ...product, name: decodeURIComponent(encName || "その他"), price: Number(priceStr || 0) };
   }
+
   const regionFee = method === "delivery" ? (SHIPPING_BY_REGION[region] || 0) : 0;
   const codFee = payment === "cod" ? COD_FEE : 0;
   const subtotal = Number(product.price) * Number(qty);
@@ -460,35 +536,74 @@ function confirmFlex(product, qty, method, region, payment, LIFF_ID) {
     ...lines.map(t => ({ type: "text", text: t, wrap: true })),
   ];
   if (method === "delivery") {
-    bodyContents.push({ type: "text", text: "住所が未登録の方は「住所を入力（LIFF）」を押してください。", size: "sm", wrap: true });
-  }
-
-  const footerButtons = [
-    { type: "button", style: "secondary", action: { type: "postback", label: "← 商品一覧へ", data: "order_back" } },
-    { type: "button", style: "primary",   action: { type: "postback", label: "この内容で確定", data: `order_confirm?${qstr({ id: product.id, qty, method, region, payment })}` } },
-  ];
-  if (method === "delivery") {
-    footerButtons.unshift({
-      type: "button", style: "secondary",
-      action: { type: "uri", label: "住所を入力（LIFF）", uri: `https://liff.line.me/${LIFF_ID}?${qstr({ from: "address", need: "shipping" })}` }
+    bodyContents.push({
+      type: "text",
+      text: "住所が未登録の方は「住所を入力（LIFF）」を押してください。",
+      size: "sm",
+      wrap: true,
     });
   }
 
-  const imageUrl = product.image || "";
-  const hero = (imageUrl && /^https:\/\//i.test(imageUrl))
-    ? { type: "image", url: imageUrl, size: "full", aspectRatio: "1:1", aspectMode: "cover" }
-    : undefined;
+  const footerButtons = [
+    {
+      type: "button",
+      style: "secondary",
+      action: { type: "postback", label: "← 商品一覧へ", data: "order_back" },
+    },
+    {
+      type: "button",
+      style: "primary",
+      action: {
+        type: "postback",
+        label: "この内容で確定",
+        data: `order_confirm?${qstr({ id: product.id, qty, method, region, payment })}`,
+      },
+    },
+  ];
+  if (method === "delivery") {
+    footerButtons.unshift({
+      type: "button",
+      style: "secondary",
+      action: {
+        type: "uri",
+        label: "住所を入力（LIFF）",
+        uri: `https://liff.line.me/${LIFF_ID}?${qstr({ from: "address", need: "shipping" })}`,
+      },
+    });
+  }
+
+  const imgUrl = toPublicImageUrl(product.image);
 
   return {
-    type: "flex", altText: "注文内容の最終確認",
+    type: "flex",
+    altText: "注文内容の最終確認",
     contents: {
       type: "bubble",
-      hero,
-      body: { type: "box", layout: "vertical", spacing: "md", contents: bodyContents },
-      footer: { type: "box", layout: "vertical", spacing: "md", contents: footerButtons }
-    }
+      hero: imgUrl
+        ? {
+            type: "image",
+            url: imgUrl,
+            size: "full",
+            aspectRatio: "1:1",
+            aspectMode: "cover",
+          }
+        : undefined,
+      body: {
+        type: "box",
+        layout: "vertical",
+        spacing: "md",
+        contents: bodyContents,
+      },
+      footer: {
+        type: "box",
+        layout: "vertical",
+        spacing: "md",
+        contents: footerButtons,
+      },
+    },
   };
 }
+
 
 function reserveOffer(product, needQty, stock) {
   return [

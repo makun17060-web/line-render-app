@@ -852,22 +852,6 @@ app.post("/api/admin/segment/preview", (req, res) => {
       const ids = uniqIds(items.filter(x=>x && x.type==="text" && x.userId).map(x=>x.userId));
       return res.json({ ok:true, type:t, total: ids.length, userIds: ids });
     }
-    if (t === "survey") {
-      const limit = Math.min(200000, Number(req.body?.limit || 50000));
-      let items = readLogLines(SURVEYS_LOG, limit);
-      items = rng("date")(items, x => x.ts);
-      const q1 = Array.isArray(req.body?.q1codes) ? req.body.q1codes : null;
-      const q2 = Array.isArray(req.body?.q2codes) ? req.body.q2codes : null;
-      const q3 = Array.isArray(req.body?.q3codes) ? req.body.q3codes : null;
-      const pass = (a, qkey, allow) => (!allow || allow.length===0) ? true : (a?.[qkey]?.code || "");
-      const ids = uniqIds(items.filter(it=>{
-        const a = it?.answers || {};
-        return (!q1 || q1.includes(a?.q1?.code||"")) &&
-               (!q2 || q2.includes(a?.q2?.code||"")) &&
-               (!q3 || q3.includes(a?.q3?.code||""));
-      }).map(it=>it.userId));
-      return res.json({ ok:true, type:t, total: ids.length, userIds: ids });
-    }
     if (t === "textSenders") {
   const limit = Math.min(200000, Number(req.body?.limit || 50000));
   let items = readLogLines(MESSAGES_LOG, limit);
@@ -884,6 +868,23 @@ app.post("/api/admin/segment/preview", (req, res) => {
   return res.json({ ok: true, type: t, total: ids.length, userIds: ids });
 }
 
+    if (t === "survey") {
+      const limit = Math.min(200000, Number(req.body?.limit || 50000));
+      let items = readLogLines(SURVEYS_LOG, limit);
+      items = rng("date")(items, x => x.ts);
+      const q1 = Array.isArray(req.body?.q1codes) ? req.body.q1codes : null;
+      const q2 = Array.isArray(req.body?.q2codes) ? req.body.q2codes : null;
+      const q3 = Array.isArray(req.body?.q3codes) ? req.body.q3codes : null;
+      const pass = (a, qkey, allow) => (!allow || allow.length===0) ? true : (a?.[qkey]?.code || "");
+      const ids = uniqIds(items.filter(it=>{
+        const a = it?.answers || {};
+        return (!q1 || q1.includes(a?.q1?.code||"")) &&
+               (!q2 || q2.includes(a?.q2?.code||"")) &&
+               (!q3 || q3.includes(a?.q3?.code||""));
+      }).map(it=>it.userId));
+      return res.json({ ok:true, type:t, total: ids.length, userIds: ids });
+    }
+    
     if (t === "orders") {
       const limit = Math.min(200000, Number(req.body?.limit || 50000));
       let items = readLogLines(ORDERS_LOG, limit);

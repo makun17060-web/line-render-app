@@ -868,6 +868,22 @@ app.post("/api/admin/segment/preview", (req, res) => {
       }).map(it=>it.userId));
       return res.json({ ok:true, type:t, total: ids.length, userIds: ids });
     }
+    if (t === "textSenders") {
+  const limit = Math.min(200000, Number(req.body?.limit || 50000));
+  let items = readLogLines(MESSAGES_LOG, limit);
+  items = (req.body?.date)
+    ? filterByIsoRange(items, x => x.ts, jstRangeFromYmd(String(req.body.date)).from, jstRangeFromYmd(String(req.body.date)).to)
+    : items;
+
+  const ids = Array.from(new Set(
+    items
+      .filter(x => x && x.type === "text" && x.userId)
+      .map(x => x.userId)
+  ));
+
+  return res.json({ ok: true, type: t, total: ids.length, userIds: ids });
+}
+
     if (t === "orders") {
       const limit = Math.min(200000, Number(req.body?.limit || 50000));
       let items = readLogLines(ORDERS_LOG, limit);

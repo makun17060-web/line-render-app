@@ -901,35 +901,33 @@ app.post("/api/admin/upload-image", (req, res) => {
 });
 
 // 一覧（★ url も https フルURL に）
+// 一覧
 app.get("/api/admin/images", (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
-    let base = PUBLIC_BASE_URL;
-    if (!base) {
-      const proto = req.headers["x-forwarded-proto"] || "https";
-      const host  = req.headers.host;
-      base = `${proto}://${host}`;
-    }
     const files = fs.readdirSync(UPLOAD_DIR)
       .filter(f => /\.(png|jpe?g|gif|webp)$/i.test(f))
       .map(name => {
         const p = path.join(UPLOAD_DIR, name);
         const st = fs.statSync(p);
-        const relPath = `/public/uploads/${name}`;
         return {
           name,
-          url: `${base}${relPath}`,
-          path: relPath,
+          // ★ ここは「相対パス」のみ。ホスト名は付けない
+          url: `/public/uploads/${name}`,
+          path: `/public/uploads/${name}`,
           bytes: st.size,
           mtime: st.mtimeMs
         };
       })
-      .sort((a,b) => b.mtime - a.mtime);
-    res.json({ ok:true, items: files });
-  } catch(e) {
-    res.status(500).json({ ok:false, error:"list_error" });
+      .sort((a, b) => b.mtime - a.mtime);
+
+    res.json({ ok: true, items: files });
+  } catch (e) {
+    console.error("images list error:", e);
+    res.status(500).json({ ok: false, error: "list_error" });
   }
 });
+
 
 // 削除
 app.delete("/api/admin/images/:name", (req, res) => {

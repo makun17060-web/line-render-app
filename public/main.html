@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>海老せんべいショップ</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f7f5f0;
+      color: #333;
+    }
+    header {
+      background: #c62828;
+      color: #fff;
+      text-align: center;
+      padding: 12px 8px;
+      font-size: 20px;
+      font-weight: bold;
+    }
+    header small {
+      display: block;
+      font-size: 11px;
+      opacity: 0.85;
+    }
+    main {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 12px;
+      box-sizing: border-box;
+    }
+    .section-title {
+      font-size: 15px;
+      font-weight: bold;
+      margin: 4px 0 8px;
+    }
+    .product-card {
+      display: flex;
+      padding: 10px;
+      margin-bottom: 10px;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      box-sizing: border-box;
+    }
+    .thumb-box {
+      width: 90px;
+      height: 90px;
+      border-radius: 6px;
+      background: #ffe0e0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      color: #b71c1c;
+      text-align: center;
+      padding: 4px;
+      box-sizing: border-box;
+      flex-shrink: 0;
+    }
+    .product-body {
+      flex: 1;
+      margin-left: 10px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-width: 0;
+    }
+    .product-name {
+      font-size: 15px;
+      font-weight: bold;
+      margin-bottom: 2px;
+    }
+    .product-price {
+      font-size: 13px;
+      margin-bottom: 2px;
+    }
+    .product-desc {
+      font-size: 11px;
+      color: #666;
+      margin-bottom: 6px;
+    }
+    .qty-row {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 4px;
+      flex-wrap: nowrap;
+    }
+    .qty-label {
+      font-size: 12px;
+      margin-right: 4px;
+      white-space: nowrap;
+    }
+    .qty-btn {
+      min-width: 32px;
+      padding: 4px 0;
+      border-radius: 999px;
+      border: 1px solid #c62828;
+      background: #fff;
+      color: #c62828;
+      font-size: 16px;
+      line-height: 1;
+      text-align: center;
+    }
+    .qty-value {
+      min-width: 28px;
+      text-align: center;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .summary {
+      margin-top: 12px;
+      padding: 10px;
+      background: #fff3e0;
+      border-radius: 8px;
+      border: 1px solid #ffe0b2;
+    }
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+    .summary-label {
+      font-size: 14px;
+      font-weight: bold;
+    }
+    .summary-total {
+      font-size: 18px;
+      font-weight: bold;
+      color: #c62828;
+    }
+    .note {
+      font-size: 11px;
+      color: #666;
+      margin-top: 4px;
+    }
+    #confirmBtn {
+      margin-top: 10px;
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: 999px;
+      background: #c62828;
+      color: #fff;
+      font-size: 15px;
+      font-weight: bold;
+    }
+    #confirmBtn:disabled {
+      background: #ccc;
+      color: #666;
+    }
+    #orderText {
+      margin-top: 8px;
+      width: 100%;
+      min-height: 120px;
+      font-size: 12px;
+      box-sizing: border-box;
+      padding: 6px;
+    }
+    footer {
+      max-width: 640px;
+      margin: 12px auto 16px;
+      padding: 0 12px;
+      font-size: 10px;
+      color: #999;
+      box-sizing: border-box;
+    }
+  </style>
+</head>
+<body>
+<header>
+  海老せんべいショップ
+  <small>Handmade Shrimp Rice Crackers “ISOYA”</small>
+</header>
+
+<main>
+  <p class="section-title">商品を選んで数量を入力してください / Select items &amp; quantity</p>
+
+  <div id="productList"></div>
+
+  <section class="summary">
+    <div class="summary-row">
+      <span class="summary-label">合計 / Total</span>
+      <span class="summary-total"><span id="totalAmount">0</span> 円</span>
+    </div>
+    <p class="note">
+      ※ この画面は審査用の簡易画面です。<br>
+      ※ 決済や発送は、今後本番運用時に連携します。<br>
+      * This page is a simple review screen for LINE Mini App review.
+    </p>
+    <button id="confirmBtn" disabled>注文内容を確認 / Review order</button>
+    <textarea id="orderText" readonly
+      placeholder="ここに注文内容のテキストが表示されます（LINEトーク画面にコピー＆貼り付けできます）。&#10;Order summary text will appear here."></textarea>
+  </section>
+</main>
+
+<footer>
+  © 手造りえびせんべい 磯屋 / ISOYA.
+</footer>
+
+<script>
+  // 商品データ
+  const products = [
+    {
+      id: 1,
+      name: "磯屋オリジナルセット",
+      price: 2000,
+      description: "6袋をセットにしたオリジナルセット"
+    },
+    {
+      id: 2,
+      name: "久助えびせん（徳用）",
+      price: 500,
+      description: "割れせんたっぷりの徳用パック"
+    },
+    {
+      id: 3,
+      name: "四角のりせん",
+      price: 300,
+      description: "パリパリ香ばしい四角のりせん"
+    }
+  ];
+
+  const quantities = {}; // { productId: qty }
+
+  const productListEl = document.getElementById("productList");
+  const totalAmountEl = document.getElementById("totalAmount");
+  const confirmBtn = document.getElementById("confirmBtn");
+  const orderTextEl = document.getElementById("orderText");
+
+  // 商品カードを描画
+  function renderProducts() {
+    productListEl.innerHTML = "";
+    products.forEach(p => {
+      const card = document.createElement("div");
+      card.className = "product-card";
+
+      const thumb = document.createElement("div");
+      thumb.className = "thumb-box";
+      thumb.textContent = "商品画像\n(後で差し替え可)";
+      card.appendChild(thumb);
+
+      const body = document.createElement("div");
+      body.className = "product-body";
+
+      const nameEl = document.createElement("div");
+      nameEl.className = "product-name";
+      nameEl.textContent = p.name;
+      body.appendChild(nameEl);
+
+      const priceEl = document.createElement("div");
+      priceEl.className = "product-price";
+      priceEl.textContent = `${p.price}円／袋`;
+      body.appendChild(priceEl);
+
+      const descEl = document.createElement("div");
+      descEl.className = "product-desc";
+      descEl.textContent = p.description;
+      body.appendChild(descEl);
+
+      const qtyRow = document.createElement("div");
+      qtyRow.className = "qty-row";
+
+      const label = document.createElement("span");
+      label.className = "qty-label";
+      label.textContent = "数量 / Qty";
+      qtyRow.appendChild(label);
+
+      const minusBtn = document.createElement("button");
+      minusBtn.className = "qty-btn";
+      minusBtn.textContent = "－";
+      minusBtn.addEventListener("click", () => changeQty(p.id, -1));
+      qtyRow.appendChild(minusBtn);
+
+      const valueSpan = document.createElement("span");
+      valueSpan.className = "qty-value";
+      valueSpan.id = `qty-${p.id}`;
+      valueSpan.textContent = "0";
+      qtyRow.appendChild(valueSpan);
+
+      const plusBtn = document.createElement("button");
+      plusBtn.className = "qty-btn";
+      plusBtn.textContent = "＋";
+      plusBtn.addEventListener("click", () => changeQty(p.id, +1));
+      qtyRow.appendChild(plusBtn);
+
+      body.appendChild(qtyRow);
+      card.appendChild(body);
+
+      productListEl.appendChild(card);
+    });
+  }
+
+  function changeQty(productId, delta) {
+    const current = quantities[productId] || 0;
+    const next = Math.max(0, current + delta);
+    quantities[productId] = next;
+    const valueSpan = document.getElementById(`qty-${productId}`);
+    if (valueSpan) valueSpan.textContent = String(next);
+    updateTotalAndButton();
+  }
+
+  function updateTotalAndButton() {
+    let total = 0;
+    products.forEach(p => {
+      const q = quantities[p.id] || 0;
+      total += p.price * q;
+    });
+    totalAmountEl.textContent = total;
+    confirmBtn.disabled = total <= 0;
+    if (total <= 0) {
+      orderTextEl.value = "";
+    }
+  }
+
+  function buildOrderText() {
+    let total = 0;
+    let lines = [];
+    lines.push("【海老せんべい 注文内容 / Ebisen Order】");
+    lines.push("");
+
+    products.forEach(p => {
+      const q = quantities[p.id] || 0;
+      if (q > 0) {
+        const subtotal = p.price * q;
+        total += subtotal;
+        lines.push(`${p.name} × ${q}袋 ＝ ${subtotal}円`);
+      }
+    });
+
+    lines.push("");
+    lines.push(`合計金額：${total}円`);
+    lines.push("");
+    lines.push("お名前：");
+    lines.push("お電話番号：");
+    lines.push("お届け先住所：");
+    lines.push("ご希望の受け取り方法（宅配／店頭）：");
+    lines.push("");
+    lines.push("※ このテキストをコピーして、LINEトーク画面に貼り付けてください。");
+    lines.push("Please copy this text and send it via LINE chat.");
+
+    return lines.join("\n");
+  }
+
+  confirmBtn.addEventListener("click", () => {
+    if (confirmBtn.disabled) return;
+    orderTextEl.value = buildOrderText();
+    orderTextEl.focus();
+  });
+
+  // 初期描画
+  renderProducts();
+  updateTotalAndButton();
+</script>
+</body>
+</html>

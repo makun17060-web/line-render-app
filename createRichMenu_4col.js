@@ -1,5 +1,5 @@
-// createRichMenu_4col.js — 磯屋4分割（正方形2500×2500版）
-// 左上=アンケート / 右上=直接注文 / 左下=オンライン注文 / 右下=会員ログイン
+// createRichMenu_4col.js — 磯屋4分割（横長 2500×843 版）
+// 左=アンケート / 中左=直接注文 / 中右=オンライン注文 / 右=会員ログイン
 // sharpによる自動圧縮アップロード対応
 
 "use strict";
@@ -20,7 +20,7 @@ LIFF_URL=https://liff.line.me/xxxxxxxxxxxx
 # 会員ログインURL（なければ公式サイトでも可）
 MEMBER_URL=https://example.com/login
 
-# 画像パス
+# 画像パス（正方形でもOK。自動で 2500x843 にリサイズ）
 IMAGE_PATH=./public/richmenu_4col_square.png
 ======================================= */
 
@@ -31,7 +31,7 @@ const IMAGE_PATH =
   process.env.IMAGE_PATH ||
   path.join(__dirname, "public", "richmenu_4col_square.png");
 
-const RICHMENU_NAME = "Isoya-4col-Square";
+const RICHMENU_NAME = "Isoya-4col";
 const CHAT_BAR_TEXT = "メニューを開く";
 
 if (!ACCESS_TOKEN) {
@@ -43,10 +43,10 @@ if (!fs.existsSync(IMAGE_PATH)) {
   process.exit(1);
 }
 
-// === 四角形画像（2500×2500） ===
+// === 正しいリッチメニューサイズ（2500x843） ===
 const WIDTH = 2500;
-const HEIGHT = 2500;
-const CELL = WIDTH / 2; // 1250px
+const HEIGHT = 843;
+const CELL = WIDTH / 4; // 625px 幅 × 4カラム
 
 const richmenu = {
   size: { width: WIDTH, height: HEIGHT },
@@ -54,35 +54,37 @@ const richmenu = {
   name: RICHMENU_NAME,
   chatBarText: CHAT_BAR_TEXT,
   areas: [
-    // 左上：アンケート
+    // 左：アンケート
     {
-      bounds: { x: 0, y: 0, width: CELL, height: CELL },
+      bounds: { x: 0, y: 0, width: CELL, height: HEIGHT },
       action: { type: "message", text: "アンケート" },
     },
-    // 右上：直接注文
+    // 中左：直接注文
     {
-      bounds: { x: CELL, y: 0, width: CELL, height: CELL },
+      bounds: { x: CELL, y: 0, width: CELL, height: HEIGHT },
       action: { type: "message", text: "直接注文" },
     },
-    // 左下：オンライン注文（ミニアプリ）
+    // 中右：オンライン注文（ミニアプリ）
     {
-      bounds: { x: 0, y: CELL, width: CELL, height: CELL },
+      bounds: { x: CELL * 2, y: 0, width: CELL, height: HEIGHT },
       action: { type: "uri", uri: LIFF_URL },
     },
-    // 右下：会員ログイン
+    // 右：会員ログイン
     {
-      bounds: { x: CELL, y: CELL, width: CELL, height: CELL },
+      bounds: { x: CELL * 3, y: 0, width: CELL, height: HEIGHT },
       action: { type: "uri", uri: MEMBER_URL },
     },
   ],
 };
+
+const client = new line.Client({ channelAccessToken: ACCESS_TOKEN });
 
 // === 圧縮してアップロード ===
 async function uploadRichMenuImage(richMenuId, imgPath) {
   let quality = 80;
 
   let buffer = await sharp(imgPath)
-    .resize(WIDTH, HEIGHT)
+    .resize(WIDTH, HEIGHT)          // ★ ここで 2500x843 に変形
     .jpeg({ quality, mozjpeg: true })
     .toBuffer();
 
@@ -106,8 +108,6 @@ async function uploadRichMenuImage(richMenuId, imgPath) {
   await client.setRichMenuImage(richMenuId, stream, "image/jpeg");
 }
 
-const client = new line.Client({ channelAccessToken: ACCESS_TOKEN });
-
 (async () => {
   try {
     console.log("▶ Creating RichMenu...");
@@ -121,8 +121,7 @@ const client = new line.Client({ channelAccessToken: ACCESS_TOKEN });
     console.log("▶ Setting as default...");
     await client.setDefaultRichMenu(richMenuId);
     console.log("🎉 完了！LINEを再起動すると反映されます");
-
   } catch (err) {
-    console.error("❌ Error:", err.response?.data || err.message || err);
+    console.error("❌ Error detail:", err.response?.data || err.message || err);
   }
 })();

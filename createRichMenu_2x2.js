@@ -10,24 +10,25 @@ const { Readable } = require("stream");
 
 // ========= 必要環境変数 (.env) =========
 // LINE_CHANNEL_ACCESS_TOKEN=your_token
-// MEMBER_URL=https://example.com/login
 // ======================================
 
-// ★ オンライン注文（ミニアプリ）の遷移先を固定
-const LIFF_URL = "https://line-render-app-1.onrender.com/public/products.html";
+// ★ オンライン注文 → ミニアプリのトップページ
+const LIFF_URL = "https://line-render-app-1.onrender.com/public/main.html";
 
-// ★ 会員ログインの遷移先（使うなら変更）
-const MEMBER_URL = process.env.MEMBER_URL || "";
+// ★ 会員ログイン → isoya-shop.com
+const MEMBER_URL = "https://isoya-shop.com";
 
-// ★ あなたの画像を使う
+// ★ 使用するリッチメニュー画像
 const IMAGE_PATH = "/mnt/data/A_digital_graphic_design_menu_banner_in.png";
 
+// ★ LINE TOKEN
 const ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 
+// === 基本設定 ===
 const RICHMENU_NAME = "Isoya-2x2";
 const CHAT_BAR_TEXT = "メニューを開く";
 
-// === サイズ ===
+// === リッチメニューのサイズ設定 ===
 const WIDTH = 2500;
 const HEIGHT = 1686;
 const CELL_W = 1250;
@@ -39,16 +40,33 @@ const richmenu = {
   name: RICHMENU_NAME,
   chatBarText: CHAT_BAR_TEXT,
   areas: [
-    { bounds: { x: 0, y: 0, width: CELL_W, height: CELL_H }, action: { type: "message", text: "アンケート" }},
-    { bounds: { x: CELL_W, y: 0, width: CELL_W, height: CELL_H }, action: { type: "message", text: "直接注文" }},
-    { bounds: { x: 0, y: CELL_H, width: CELL_W, height: CELL_H }, action: { type: "uri", uri: LIFF_URL }},
-    { bounds: { x: CELL_W, y: CELL_H, width: CELL_W, height: CELL_H }, action: { type: "uri", uri: MEMBER_URL }},
+    // 左上：アンケート
+    {
+      bounds: { x: 0, y: 0, width: CELL_W, height: CELL_H },
+      action: { type: "message", text: "アンケート" },
+    },
+    // 右上：直接注文
+    {
+      bounds: { x: CELL_W, y: 0, width: CELL_W, height: CELL_H },
+      action: { type: "message", text: "直接注文" },
+    },
+    // 左下：オンライン注文（ミニアプリ）
+    {
+      bounds: { x: 0, y: CELL_H, width: CELL_W, height: CELL_H },
+      action: { type: "uri", uri: LIFF_URL },
+    },
+    // 右下：会員ログイン（外部サイト）
+    {
+      bounds: { x: CELL_W, y: CELL_H, width: CELL_W, height: CELL_H },
+      action: { type: "uri", uri: MEMBER_URL },
+    },
   ],
 };
 
+// ===== LINE クライアント =====
 const client = new line.Client({ channelAccessToken: ACCESS_TOKEN });
 
-// === JPEG圧縮してアップロード ===
+// === JPEG圧縮して画像アップロード ===
 async function uploadRichMenuImage(richMenuId, imgPath) {
   let quality = 80;
 
@@ -86,7 +104,8 @@ async function uploadRichMenuImage(richMenuId, imgPath) {
 
     console.log("▶ Setting as default...");
     await client.setDefaultRichMenu(richMenuId);
-    console.log("🎉 完了！LINE を再起動すると新しいリッチメニューが表示されます！");
+
+    console.log("🎉 完了！ LINE を再起動して新しいメニューをご確認ください！");
   } catch (err) {
     console.error("❌ Error detail:", err.response?.data || err.message || err);
   }

@@ -196,7 +196,7 @@ function readLogLines(filePath, limit = 100) {
   return tail.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
 }
 function jstRangeFromYmd(ymd) {
-  const y = Number(ymd.slice(0,4)), m = Number(ymd.slice(6,8)) ? Number(ymd.slice(4,6))-1 : Number(ymd.slice(4,6))-1, d = Number(ymd.slice(6,8));
+  const y = Number(ymd.slice(0,4)), m = Number(ymd.slice(4,6))-1, d = Number(ymd.slice(6,8));
   const startJST = new Date(Date.UTC(y, m, d, -9, 0, 0));
   const endJST   = new Date(Date.UTC(y, m, d+1, -9, 0, 0));
   return { from: startJST.toISOString(), to: endJST.toISOString() };
@@ -681,7 +681,7 @@ app.get("/api/admin/surveys", (req, res) => {
   let items = readLogLines(SURVEYS_LOG, limit);
   let range = {};
   if (req.query.date) range = jstRangeFromYmd(String(req.query.date));
-  if (req.query.from || req.query.to) range = { from: req.query.from, to: req.query.to };
+  if (req.query.from || req.queryto) range = { from: req.query.from, to: req.query.to };
   if (range.from || range.to) items = filterByIsoRange(items, x => x.ts, range.from, range.to);
   res.json({ ok: true, items });
 });
@@ -772,9 +772,57 @@ app.post("/api/admin/reservations/notify-stop", (req, res) => {
 // ====== 在庫管理 API ======
 app.get("/api/admin/products", (req, res) => {
   if (!requireAdmin(req, res)) return;
-  const items = readProducts().map(p => ({ id:p.id, name:p.name, price:p.price, stock:p.stock ?? 0, desc:p.desc || "", image: p.image || "" }));
+  const items = readProducts().map(p => ({
+    id: p.id,
+    name: p.name,
+    price: p.price,
+    stock: p.stock ?? 0,
+    desc: p.desc || "",
+    image: p.image || ""
+  }));
   res.json({ ok:true, items });
 });
+
+// ★ 商品情報更新API（価格・画像・在庫・説明）
+app.post("/api/admin/products/update", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  try {
+    const rawId = (req.body?.id || req.body?.productId || "").toString().trim();
+    if (!rawId) {
+      return res.status(400).json({ ok: false, error: "id required" });
+    }
+
+    const pid = resolveProductId(rawId);
+    const { products, idx, product } = findProductById(pid);
+    if (idx < 0 || !product) {
+      return res.status(404).json({ ok: false, error: "product_not_found" });
+    }
+
+    const body = req.body || {};
+
+    if (body.price !== undefined) {
+      products[idx].price = Number(body.price) || 0;
+    }
+    if (body.image !== undefined) {
+      products[idx].image = String(body.image || "");
+    }
+    if (body.stock !== undefined) {
+      products[idx].stock = Math.max(0, Number(body.stock) || 0);
+    }
+    if (body.desc !== undefined) {
+      products[idx].desc = String(body.desc || "");
+    }
+
+    writeProducts(products);
+    return res.json({ ok: true, product: products[idx] });
+
+  } catch (e) {
+    console.error("admin products/update error:", e);
+    return res.status(500).json({ ok: false, error: "update_error" });
+  }
+});
+
 app.get("/api/admin/stock/logs", (req, res) => {
   if (!requireAdmin(req, res)) return;
   const limit = Math.min(10000, Number(req.query.limit || 200));
@@ -798,6 +846,24 @@ app.post("/api/admin/stock/add", (req, res) => {
     const r = addStock(pid, delta, "api");
     res.json({ ok:true, productId: pid, ...r });
   }catch(e){ res.status(400).json({ ok:false, error:String(e.message||e) }); }
+});
+
+// ====== ミニアプリ用：商品一覧 API ======
+app.get("/api/products", (req, res) => {
+  try {
+    const items = readProducts().map(p => ({
+      id: p.id,
+      name: p.name,
+      price: p.price,
+      stock: p.stock ?? 0,
+      desc: p.desc || "",
+      image: toPublicImageUrl(p.image || "")
+    }));
+    res.json({ ok: true, products: items });
+  } catch (e) {
+    console.error("/api/products error:", e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
 });
 
 // ====== 予約者一括連絡 ======
@@ -853,20 +919,20 @@ app.post("/api/admin/segment/preview", (req, res) => {
       return res.json({ ok:true, type:t, total: ids.length, userIds: ids });
     }
     if (t === "textSenders") {
-  const limit = Math.min(200000, Number(req.body?.limit || 50000));
-  let items = readLogLines(MESSAGES_LOG, limit);
-  items = (req.body?.date)
-    ? filterByIsoRange(items, x => x.ts, jstRangeFromYmd(String(req.body.date)).from, jstRangeFromYmd(String(req.body.date)).to)
-    : items;
+      const limit = Math.min(200000, Number(req.body?.limit || 50000));
+      let items = readLogLines(MESSAGES_LOG, limit);
+      items = (req.body?.date)
+        ? filterByIsoRange(items, x => x.ts, jstRangeFromYmd(String(req.body.date)).from, jstRangeFromYmd(String(req.body.date)).to)
+        : items;
 
-  const ids = Array.from(new Set(
-    items
-      .filter(x => x && x.type === "text" && x.userId)
-      .map(x => x.userId)
-  ));
+      const ids = Array.from(new Set(
+        items
+          .filter(x => x && x.type === "text" && x.userId)
+          .map(x => x.userId)
+      ));
 
-  return res.json({ ok: true, type: t, total: ids.length, userIds: ids });
-}
+      return res.json({ ok: true, type: t, total: ids.length, userIds: ids });
+    }
 
     if (t === "survey") {
       const limit = Math.min(200000, Number(req.body?.limit || 50000));
@@ -875,7 +941,6 @@ app.post("/api/admin/segment/preview", (req, res) => {
       const q1 = Array.isArray(req.body?.q1codes) ? req.body.q1codes : null;
       const q2 = Array.isArray(req.body?.q2codes) ? req.body.q2codes : null;
       const q3 = Array.isArray(req.body?.q3codes) ? req.body.q3codes : null;
-      const pass = (a, qkey, allow) => (!allow || allow.length===0) ? true : (a?.[qkey]?.code || "");
       const ids = uniqIds(items.filter(it=>{
         const a = it?.answers || {};
         return (!q1 || q1.includes(a?.q1?.code||"")) &&
@@ -999,7 +1064,7 @@ app.get("/api/admin/connection-test", (req, res) => {
   res.json({ ok:true, uploads:true, uploadDir: "/public/uploads" });
 });
 
-// アップロード（★ https フルURL を返すように改修）
+// アップロード
 app.post("/api/admin/upload-image", (req, res) => {
   if (!requireAdmin(req, res)) return;
   upload.single("image")(req, res, (err) => {
@@ -1012,7 +1077,6 @@ app.post("/api/admin/upload-image", (req, res) => {
     const filename = req.file.filename;
     const relPath = `/public/uploads/${filename}`;
 
-    // ベースURL: .env の PUBLIC_BASE_URL 優先、なければヘッダから推定
     let base = PUBLIC_BASE_URL;
     if (!base) {
       const proto = req.headers["x-forwarded-proto"] || "https";
@@ -1032,7 +1096,6 @@ app.post("/api/admin/upload-image", (req, res) => {
   });
 });
 
-// 一覧（★ url も https フルURL に）
 // 一覧
 app.get("/api/admin/images", (req, res) => {
   if (!requireAdmin(req, res)) return;
@@ -1044,7 +1107,6 @@ app.get("/api/admin/images", (req, res) => {
         const st = fs.statSync(p);
         return {
           name,
-          // ★ ここは「相対パス」のみ。ホスト名は付けない
           url: `/public/uploads/${name}`,
           path: `/public/uploads/${name}`,
           bytes: st.size,
@@ -1060,7 +1122,6 @@ app.get("/api/admin/images", (req, res) => {
   }
 });
 
-
 // 削除
 app.delete("/api/admin/images/:name", (req, res) => {
   if (!requireAdmin(req, res)) return;
@@ -1073,7 +1134,7 @@ app.delete("/api/admin/images/:name", (req, res) => {
   } catch(e) { res.status(500).json({ ok:false, error:"delete_error" }); }
 });
 
-// 商品に画像URLを紐付け
+// 商品に画像URLを紐付け（単機能API：既存管理画面用）
 app.post("/api/admin/products/set-image", (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {

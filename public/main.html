@@ -73,6 +73,24 @@
     .btn-main:disabled {
       opacity: 0.5;
     }
+
+    /* ▼ 追加：サブボタン（商品一覧へ） */
+    .btn-sub {
+      display: block;
+      width: 100%;
+      padding: 10px;
+      margin-top: 12px;
+      border-radius: 6px;
+      text-align: center;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: bold;
+      background: #ffffff;
+      border: 1px solid #b22222;
+      color: #b22222;
+      box-sizing: border-box;
+    }
+
     .info {
       font-size: 12px;
       color: #555;
@@ -102,6 +120,7 @@
 <div class="container">
   <h2>商品を選択してください</h2>
 
+  <!-- ▼ ここから従来の簡易入力フォーム -->
   <div class="product" data-id="kusuke" data-name="久助" data-price="250">
     <div class="product-header">
       <div class="product-name">久助</div>
@@ -139,6 +158,9 @@
   </div>
 
   <button id="toConfirmBtn" class="btn-main" disabled>注文内容を確認する</button>
+
+  <!-- ★ 追加：画像付きの商品一覧（products.html）への遷移リンク -->
+  <a href="products.html" class="btn-sub">画像付きの商品一覧を見る</a>
 
   <p class="info">
     ※ オンライン決済は GMOイプシロンの決済画面に遷移して行います。<br>

@@ -35,10 +35,12 @@
       flex-direction: column;
     }
 
+    /* ここを修正：画像が上下で切れないように contain に変更 */
     .card img {
       width: 100%;
-      height: 140px;
-      object-fit: cover;
+      height: 160px;           /* サムネイルの高さ（お好みで調整可） */
+      object-fit: contain;     /* 全体を表示（上下カットしない） */
+      background: #fff;        /* 余白部分の背景色 */
     }
 
     .card-body {

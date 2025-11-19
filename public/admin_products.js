@@ -361,11 +361,17 @@ document.addEventListener("DOMContentLoaded", () => {
         card.style.background = "#fff";
 
         const thumb = document.createElement("img");
-        thumb.src = img.url;
-        thumb.style.width = "100%";
-        thumb.style.height = "100px";
-        thumb.style.objectFit = "cover";
-        card.appendChild(thumb);
+thumb.src = img.url;
+
+// 全体が見えるように変更
+thumb.style.width = "100%";
+thumb.style.height = "auto";       // 自動高さ
+thumb.style.maxHeight = "120px";   // 高すぎないよう上限だけつける
+thumb.style.objectFit = "contain"; // 切らずに全体表示
+thumb.style.backgroundColor = "#f5f5f5"; // 余白部分の背景（あってもなくてもOK）
+
+card.appendChild(thumb);
+
 
         const nameDiv = document.createElement("div");
         nameDiv.textContent = img.name;

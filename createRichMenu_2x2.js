@@ -17,7 +17,7 @@ const { Readable } = require("stream");
 const LIFF_URL = "https://line-render-app-1.onrender.com/public/products.html";
 
 // ★ 会員ログインの遷移先（使うなら変更）
-const MEMBER_URL = process.env.MEMBER_URL || "https://example.com/member";
+const MEMBER_URL = process.env.MEMBER_URL || "";
 
 // ★ あなたの画像を使う
 const IMAGE_PATH = "/mnt/data/A_digital_graphic_design_menu_banner_in.png";

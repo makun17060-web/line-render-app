@@ -2,35 +2,134 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>商品管理画面</title>
-  <link rel="stylesheet" href="admin_products.css">
+  <title>商品管理（診断版）</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 16px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    #status { margin: 8px 0; font-size: 14px; }
+    table { border-collapse: collapse; width: 100%; background: #fff; }
+    th, td { border: 1px solid #ccc; padding: 4px 6px; font-size: 12px; }
+    th { background: #eee; }
+    pre { background:#222; color:#eee; padding:8px; font-size:12px; white-space:pre-wrap; }
+  </style>
 </head>
 <body>
-  <h1>商品管理</h1>
+  <h1>商品管理（診断版）</h1>
+  <div id="status">トークン入力待ち…</div>
+  <div id="output">ここに商品一覧またはエラー内容が表示されます。</div>
 
-  <!-- 管理トークン入力 -->
-  <section id="auth">
-    <label>
-      管理用トークン：
-      <input id="tokenInput" type="password" placeholder="ADMIN_API_TOKEN または ADMIN_CODE">
-    </label>
-    <button id="saveTokenBtn">保存</button>
-    <span id="authStatus" style="margin-left:8px;color:#666;"></span>
-  </section>
+  <script>
+    async function main() {
+      const statusEl = document.getElementById("status");
+      const outputEl = document.getElementById("output");
 
-  <hr>
+      // 1) 管理トークンを聞く
+      let token = window.prompt("管理用トークン（ADMIN_API_TOKEN または ADMIN_CODE の中身）を入力してください：", "");
+      if (!token) {
+        statusEl.textContent = "トークンが入力されていません。";
+        outputEl.textContent = "終了しました。";
+        return;
+      }
+      token = token.trim();
+      statusEl.textContent = "商品一覧を取得中…";
 
-  <!-- 操作ボタン -->
-  <section id="controls">
-    <button id="reloadBtn">商品一覧を再読み込み</button>
-  </section>
+      try {
+        const url = "/api/admin/products?token=" + encodeURIComponent(token);
+        const res = await fetch(url, {
+          headers: {
+            "Authorization": "Bearer " + token,
+            "Accept": "application/json"
+          }
+        });
 
-  <!-- 商品一覧 -->
-  <section id="listSection">
-    <h2>商品一覧</h2>
-    <div id="listArea">まだ読み込まれていません。</div>
-  </section>
+        const text = await res.text();
+        let data = null;
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          // JSON じゃない場合もそのまま診断表示
+        }
 
-  <script src="admin_products.js"></script>
+        if (!res.ok) {
+          statusEl.textContent = "HTTP エラー: " + res.status;
+          const pre = document.createElement("pre");
+          pre.textContent = "サーバーからの応答:\n" + text;
+          outputEl.innerHTML = "";
+          outputEl.appendChild(pre);
+          return;
+        }
+
+        if (!data || data.ok !== true) {
+          statusEl.textContent = "API エラー: " + (data && data.error ? data.error : "unknown");
+          const pre = document.createElement("pre");
+          pre.textContent = "レスポンス:\n" + text;
+          outputEl.innerHTML = "";
+          outputEl.appendChild(pre);
+          return;
+        }
+
+        // 正常に商品一覧が取れた場合
+        const items = data.items || [];
+        statusEl.textContent = "OK: 商品数 " + items.length + " 件";
+
+        if (items.length === 0) {
+          outputEl.textContent = "商品がありません。";
+          return;
+        }
+
+        const table = document.createElement("table");
+        const thead = document.createElement("thead");
+        const trh = document.createElement("tr");
+        ["ID","商品名","価格","在庫","説明","画像URL"].forEach(h => {
+          const th = document.createElement("th");
+          th.textContent = h;
+          trh.appendChild(th);
+        });
+        thead.appendChild(trh);
+        table.appendChild(thead);
+
+        const tbody = document.createElement("tbody");
+        items.forEach(p => {
+          const tr = document.createElement("tr");
+          function td(text) {
+            const c = document.createElement("td");
+            c.textContent = text == null ? "" : String(text);
+            return c;
+          }
+          tr.appendChild(td(p.id));
+          tr.appendChild(td(p.name));
+          tr.appendChild(td(p.price));
+          tr.appendChild(td(p.stock));
+          tr.appendChild(td(p.desc));
+
+          const tdImg = document.createElement("td");
+          if (p.image) {
+            const a = document.createElement("a");
+            a.href = p.image;
+            a.target = "_blank";
+            a.rel = "noopener";
+            a.textContent = p.image;
+            tdImg.appendChild(a);
+          }
+          tr.appendChild(tdImg);
+
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+
+        outputEl.innerHTML = "";
+        outputEl.appendChild(table);
+
+      } catch (e) {
+        statusEl.textContent = "JavaScript エラー";
+        const pre = document.createElement("pre");
+        pre.textContent = String(e && e.message ? e.message : e);
+        outputEl.innerHTML = "";
+        outputEl.appendChild(pre);
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", main);
+  </script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 // server.js — フル機能版 + Flex配信 + 「その他＝価格入力なし」 + 久助専用テキスト購入フロー
 // + 予約者連絡API/コマンド + 店頭受取Fix + 銀行振込案内（コメント対応）
 // + 画像アップロード/一覧/削除 + 商品へ画像URL紐付け（管理画面用）
+// + ミニアプリ用 /api/products（久助除外）
 // 必須 .env: LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, LIFF_ID, (ADMIN_API_TOKEN または ADMIN_CODE)
 // 任意 .env: PORT, ADMIN_USER_ID, MULTICAST_USER_IDS, BANK_INFO, BANK_NOTE, PUBLIC_BASE_URL
 
@@ -604,7 +605,6 @@ function confirmFlex(product, qty, method, region, payment, LIFF_ID) {
   };
 }
 
-
 function reserveOffer(product, needQty, stock) {
   return [
     { type: "text", text: [
@@ -681,7 +681,7 @@ app.get("/api/admin/surveys", (req, res) => {
   let items = readLogLines(SURVEYS_LOG, limit);
   let range = {};
   if (req.query.date) range = jstRangeFromYmd(String(req.query.date));
-  if (req.query.from || req.queryto) range = { from: req.query.from, to: req.query.to };
+  if (req.query.from || req.query.to) range = { from: req.query.from, to: req.query.to };
   if (range.from || range.to) items = filterByIsoRange(items, x => x.ts, range.from, range.to);
   res.json({ ok: true, items });
 });
@@ -783,71 +783,7 @@ app.get("/api/admin/products", (req, res) => {
   res.json({ ok:true, items });
 });
 
-// ★ 商品情報更新API（価格・画像・在庫・説明）
-app.post("/api/admin/products/update", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-
-  try {
-    const rawId = (req.body?.id || req.body?.productId || "").toString().trim();
-    if (!rawId) {
-      return res.status(400).json({ ok: false, error: "id required" });
-    }
-
-    const pid = resolveProductId(rawId);
-    const { products, idx, product } = findProductById(pid);
-    if (idx < 0 || !product) {
-      return res.status(404).json({ ok: false, error: "product_not_found" });
-    }
-
-    const body = req.body || {};
-
-    if (body.price !== undefined) {
-      products[idx].price = Number(body.price) || 0;
-    }
-    if (body.image !== undefined) {
-      products[idx].image = String(body.image || "");
-    }
-    if (body.stock !== undefined) {
-      products[idx].stock = Math.max(0, Number(body.stock) || 0);
-    }
-    if (body.desc !== undefined) {
-      products[idx].desc = String(body.desc || "");
-    }
-
-    writeProducts(products);
-    return res.json({ ok: true, product: products[idx] });
-
-  } catch (e) {
-    console.error("admin products/update error:", e);
-    return res.status(500).json({ ok: false, error: "update_error" });
-  }
-});
-
-app.get("/api/admin/stock/logs", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  const limit = Math.min(10000, Number(req.query.limit || 200));
-  const items = readLogLines(STOCK_LOG, limit);
-  res.json({ ok:true, items });
-});
-app.post("/api/admin/stock/set", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try{
-    const pid = resolveProductId((req.body?.productId || "").trim());
-    const qty = Number(req.body?.qty);
-    const r = setStock(pid, qty, "api");
-    res.json({ ok:true, productId: pid, ...r });
-  }catch(e){ res.status(400).json({ ok:false, error:String(e.message||e) }); }
-});
-app.post("/api/admin/stock/add", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try{
-    const pid = resolveProductId((req.body?.productId || "").trim());
-    const delta = Number(req.body?.delta);
-    const r = addStock(pid, delta, "api");
-    res.json({ ok:true, productId: pid, ...r });
-  }catch(e){ res.status(400).json({ ok:false, error:String(e.message||e) }); }
-});
-// ====== 商品情報更新 API（name / price / stock / desc / image） ======
+// ★ 商品情報更新 API（name / price / stock / desc / image）
 app.post("/api/admin/products/update", (req, res) => {
   if (!requireAdmin(req, res)) return;
 
@@ -915,17 +851,44 @@ app.post("/api/admin/products/update", (req, res) => {
   }
 });
 
-// ====== ミニアプリ用：商品一覧 API ======
+app.get("/api/admin/stock/logs", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const limit = Math.min(10000, Number(req.query.limit || 200));
+  const items = readLogLines(STOCK_LOG, limit);
+  res.json({ ok:true, items });
+});
+app.post("/api/admin/stock/set", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try{
+    const pid = resolveProductId((req.body?.productId || "").trim());
+    const qty = Number(req.body?.qty);
+    const r = setStock(pid, qty, "api");
+    res.json({ ok:true, productId: pid, ...r });
+  }catch(e){ res.status(400).json({ ok:false, error:String(e.message||e) }); }
+});
+app.post("/api/admin/stock/add", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try{
+    const pid = resolveProductId((req.body?.productId || "").trim());
+    const delta = Number(req.body?.delta);
+    const r = addStock(pid, delta, "api");
+    res.json({ ok:true, productId: pid, ...r });
+  }catch(e){ res.status(400).json({ ok:false, error:String(e.message||e) }); }
+});
+
+// ====== ミニアプリ用：商品一覧 API（久助除外） ======
 app.get("/api/products", (req, res) => {
   try {
-    const items = readProducts().map(p => ({
-      id: p.id,
-      name: p.name,
-      price: p.price,
-      stock: p.stock ?? 0,
-      desc: p.desc || "",
-      image: toPublicImageUrl(p.image || "")
-    }));
+    const items = readProducts()
+      .filter(p => p.id !== "kusuke-250") // ★ 久助を除外
+      .map(p => ({
+        id: p.id,
+        name: p.name,
+        price: p.price,
+        stock: p.stock ?? 0,
+        desc: p.desc || "",
+        image: toPublicImageUrl(p.image || "")
+      }));
     res.json({ ok: true, products: items });
   } catch (e) {
     console.error("/api/products error:", e);
@@ -970,7 +933,7 @@ app.post("/api/admin/segment/preview", (req, res) => {
     const t = (req.body?.type || "").trim();
 
     const uniqIds = (arr) => Array.from(new Set(arr.filter(Boolean)));
-    const rng = (key) => {
+    const rng = () => {
       if (req.body?.date) {
         const r = jstRangeFromYmd(String(req.body.date));
         return (items, getTs) => filterByIsoRange(items, getTs, r.from, r.to);

@@ -1,13 +1,36 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<title>商品管理画面</title>
-<link rel="stylesheet" href="admin_products.css">
+  <meta charset="UTF-8">
+  <title>商品管理画面</title>
+  <link rel="stylesheet" href="admin_products.css">
 </head>
 <body>
-<h1>商品管理</h1>
-<div id="app"></div>
-<script src="admin_products.js"></script>
+  <h1>商品管理</h1>
+
+  <!-- 管理トークン入力 -->
+  <section id="auth">
+    <label>
+      管理用トークン：
+      <input id="tokenInput" type="password" placeholder="ADMIN_API_TOKEN または ADMIN_CODE">
+    </label>
+    <button id="saveTokenBtn">保存</button>
+    <span id="authStatus" style="margin-left:8px;color:#666;"></span>
+  </section>
+
+  <hr>
+
+  <!-- 操作ボタン -->
+  <section id="controls">
+    <button id="reloadBtn">商品一覧を再読み込み</button>
+  </section>
+
+  <!-- 商品一覧 -->
+  <section id="listSection">
+    <h2>商品一覧</h2>
+    <div id="listArea">まだ読み込まれていません。</div>
+  </section>
+
+  <script src="admin_products.js"></script>
 </body>
 </html>

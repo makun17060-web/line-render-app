@@ -847,6 +847,73 @@ app.post("/api/admin/stock/add", (req, res) => {
     res.json({ ok:true, productId: pid, ...r });
   }catch(e){ res.status(400).json({ ok:false, error:String(e.message||e) }); }
 });
+// ====== 商品情報更新 API（name / price / stock / desc / image） ======
+app.post("/api/admin/products/update", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  try {
+    const pid = String(req.body?.productId || "").trim();
+    if (!pid) {
+      return res.status(400).json({ ok: false, error: "productId required" });
+    }
+
+    const products = readProducts();
+    const idx = products.findIndex(p => p.id === pid);
+    if (idx < 0) {
+      return res.status(404).json({ ok: false, error: "product_not_found" });
+    }
+
+    const p = products[idx];
+    const beforeStock = Number(p.stock || 0);
+
+    // 1) 商品名
+    if (typeof req.body.name === "string") {
+      p.name = req.body.name.trim().slice(0, 50);
+    }
+
+    // 2) 価格
+    if (req.body.price !== undefined) {
+      const v = Number(req.body.price);
+      if (!Number.isNaN(v) && v >= 0) {
+        p.price = v;
+      }
+    }
+
+    // 3) 在庫
+    if (req.body.stock !== undefined) {
+      const v = Number(req.body.stock);
+      if (!Number.isNaN(v) && v >= 0) {
+        const after = v;
+        p.stock = after;
+        // 在庫ログも残す
+        writeStockLog({
+          action: "set",
+          productId: pid,
+          before: beforeStock,
+          after,
+          delta: after - beforeStock,
+          actor: "api-update"
+        });
+      }
+    }
+
+    // 4) 説明
+    if (typeof req.body.desc === "string") {
+      p.desc = req.body.desc.trim().slice(0, 200);
+    }
+
+    // 5) 画像URL
+    if (typeof req.body.image === "string") {
+      p.image = req.body.image.trim();
+    }
+
+    writeProducts(products);
+    return res.json({ ok: true, product: p });
+  } catch (e) {
+    console.error("products/update error:", e);
+    return res.status(500).json({ ok: false, error: "update_error" });
+  }
+});
 
 // ====== ミニアプリ用：商品一覧 API ======
 app.get("/api/products", (req, res) => {

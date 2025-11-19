@@ -15,7 +15,7 @@ const { Readable } = require("stream");
 LINE_CHANNEL_ACCESS_TOKEN=your_token
 
 # ミニアプリ(LIFF)URL
-LIFF_URL=https://liff.line.me/xxxxxxxxxxxx
+LIFF_URL=https://liff.line.me/2008406620-G5j1gjzM
 
 # 会員ログインURL（なければ公式サイトでも可）
 MEMBER_URL=https://example.com/login

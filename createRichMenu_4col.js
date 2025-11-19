@@ -67,7 +67,7 @@ const richmenu = {
     // 中右：オンライン注文（ミニアプリ）
     {
       bounds: { x: CELL * 2, y: 0, width: CELL, height: HEIGHT },
-      action: { type: "uri", uri: LIFF_URL },
+      action: { type: "uri", uri: https://liff.line.me/2008406620-G5j1gjzM },
     },
     // 右：会員ログイン
     {

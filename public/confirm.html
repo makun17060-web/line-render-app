@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>注文内容の確認 | 手造りえびせんべい 磯屋</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+      margin: 0;
+      padding: 0;
+      background: #fafafa;
+    }
+    header {
+      background: #b22222;
+      color: #fff;
+      padding: 14px 16px;
+      text-align: center;
+      font-size: 18px;
+    }
+    .container {
+      padding: 16px;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 18px;
+      margin-bottom: 12px;
+    }
+    .item {
+      background: #fff;
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .btn-main {
+      display: block;
+      width: 100%;
+      padding: 14px;
+      margin-top: 16px;
+      border-radius: 6px;
+      border: none;
+      font-size: 16px;
+      font-weight: bold;
+      background: #b22222;
+      color: #fff;
+    }
+    .btn-back {
+      display: block;
+      width: 100%;
+      padding: 10px;
+      margin-top: 12px;
+      border-radius: 6px;
+      text-align: center;
+      text-decoration: none;
+      font-size: 14px;
+      background: #ffffff;
+      border: 1px solid #b22222;
+      color: #b22222;
+      box-sizing: border-box;
+    }
+  </style>
+</head>
+
+<body>
+<header>
+  手造りえびせんべい 磯屋<br>注文内容の確認
+</header>
+
+<div class="container">
+  <h1>ご注文内容</h1>
+
+  <div id="orderList"></div>
+
+  <h2 id="totalPrice" style="margin-top: 12px;"></h2>
+
+  <!-- ▼ クレジット決済へ進むボタン -->
+  <button id="payButton" class="btn-main">クレジットカードで支払う</button>
+
+  <!-- ▼ 商品選択へ戻る -->
+  <a class="btn-back" href="products.html">商品一覧に戻る</a>
+</div>
+
+<!-- ▼ イプシロン決済フォーム -->
+<form id="payForm" action="https://secure.epsilon.jp/cgi-bin/order/receive_order3.cgi" method="POST">
+
+  <!-- （必須）イプシロン契約情報 -->
+  <input type="hidden" name="contract_code" value="YOUR_CONTRACT_CODE">
+  <input type="hidden" name="user_id" value="YOUR_USER_ID">
+
+  <!-- クレジットカード固定 -->
+  <input type="hidden" name="process_code" value="1">
+  <input type="hidden" name="st_code" value="10000-0000-00000">
+
+  <!-- 商品情報（JSで付与） -->
+  <input type="hidden" name="item_code" id="pay_item_code">
+  <input type="hidden" name="item_price" id="pay_item_price">
+  <input type="hidden" name="item_quantity" id="pay_item_quantity">
+
+  <!-- 注文番号 -->
+  <input type="hidden" name="order_number" id="pay_order_number">
+
+  <!-- LINEユーザーID -->
+  <input type="hidden" name="memo1" id="pay_user_id">
+
+  <!-- 🔥 決済成功 / 失敗の戻り先（ここが質問の場所です！） -->
+  <input type="hidden" name="success_url" value="https://line-render-app-1.onrender.com/public/confirm-success.html">
+  <input type="hidden" name="failure_url" value="https://line-render-app-1.onrender.com/public/confirm-fail.html">
+
+</form>
+
+<script>
+  const LIFF_ID = "YOUR_LIFF_ID_HERE";
+
+  async function initLiff() {
+    try {
+      await liff.init({ liffId: LIFF_ID });
+    } catch (e) {
+      console.log("LIFF init error", e);
+    }
+  }
+  initLiff();
+
+  // 注文データを sessionStorage から取得
+  const order = JSON.parse(sessionStorage.getItem("currentOrder") || "{}");
+  const orderList = document.getElementById("orderList");
+  const totalPriceEl = document.getElementById("totalPrice");
+
+  let total = 0;
+  order.items.forEach(item => {
+    const div = document.createElement("div");
+    div.className = "item";
+    div.innerHTML = `
+      <strong>${item.name}</strong><br>
+      単価：${item.price}円 × ${item.qty}袋<br>
+      小計：${item.price * item.qty}円
+    `;
+    orderList.appendChild(div);
+    total += item.price * item.qty;
+  });
+
+  totalPriceEl.textContent = "合計金額：" + total + "円";
+
+  // ▼ 支払いボタン処理
+  document.getElementById("payButton").addEventListener("click", async () => {
+
+    // 商品情報（1商品ずつ決済する簡易版）
+    const item = order.items[0];
+    document.getElementById("pay_item_code").value = item.id;
+    document.getElementById("pay_item_price").value = item.price;
+    document.getElementById("pay_item_quantity").value = item.qty;
+
+    // 注文番号
+    document.getElementById("pay_order_number").value = "ISOYA-" + Date.now();
+
+    // LINEユーザーID
+    const profile = await liff.getProfile();
+    document.getElementById("pay_user_id").value = profile.userId;
+
+    // フォーム送信 → イプシロン決済ページへ
+    document.getElementById("payForm").submit();
+  });
+
+</script>
+
+</body>
+</html>

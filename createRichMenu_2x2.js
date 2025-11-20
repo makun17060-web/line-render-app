@@ -1,5 +1,6 @@
 // createRichMenu_2x2.js — 磯屋 2段2列リッチメニュー（2500x1686）
-// 左上=アンケート / 右上=直接注文
+// 左上=アンケート（いまは「アンケート」というメッセージ送信）
+// 右上=直接注文（メッセージ）
 // 左下=オンライン注文（ミニアプリ main.html）
 // 右下=会員登録（https://isoya-shop.com）
 
@@ -19,6 +20,7 @@ if (!CHANNEL_ACCESS_TOKEN) {
   process.exit(1);
 }
 
+// LIFF_URL は今は使いませんが、後でLIFFアンケートを作るとき用に残しておきます
 const LIFF_URL =
   (process.env.LIFF_URL || "").trim() || "https://liff.line.me/xxxxxxxx";
 
@@ -47,10 +49,14 @@ async function main() {
       name: "磯屋_2x2_メニュー",
       chatBarText: "メニューを開く",
       areas: [
-        // 左上：アンケート（LIFF）
+        // 左上：アンケート（今はメッセージ送信にしてエラー回避）
         {
           bounds: { x: 0, y: 0, width: 1250, height: 843 },
-          action: { type: "uri", label: "アンケート", uri: LIFF_URL },
+          action: {
+            type: "message",
+            label: "アンケート",
+            text: "アンケート",
+          },
         },
         // 右上：直接注文（テキスト送信）
         {
@@ -95,10 +101,10 @@ async function main() {
 
     console.log("画像を処理中:", INPUT_FILE);
 
-    // 🔧 413対策：JPEG化 + quality指定で容量を落とす
+    // 413対策：JPEG化 + quality指定で容量を落とす
     const buf = await sharp(INPUT_FILE)
       .resize(2500, 1686)
-      .jpeg({ quality: 80 }) // まだ大きければ 70 や 60 に下げる
+      .jpeg({ quality: 80 }) // 必要なら 70 や 60 に下げる
       .toBuffer();
 
     console.log("変換後のバイト数:", buf.length);

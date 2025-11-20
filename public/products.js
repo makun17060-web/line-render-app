@@ -1,5 +1,7 @@
-// public/products.js — 管理画面で設定した商品画像＆情報を使って商品一覧を描画
-// 前提：server.js 側に /api/products などの商品一覧APIがある想定
+// public/products.js
+// /api/products のレスポンス
+// { ok: true, products: [ { id, name, price, stock, desc, image }, ... ] }
+// を使って商品一覧を描画し、confirm.html へ注文データを渡す
 
 (async function () {
   const grid = document.getElementById("productGrid");
@@ -11,11 +13,11 @@
       const res = await fetch("/api/products", { cache: "no-store" });
       const data = await res.json();
 
-      // data が配列 or { products: [...] } 両対応にしておく
-      const list = Array.isArray(data) ? data :
-                   Array.isArray(data.products) ? data.products : [];
-
-      return list;
+      if (!data || !data.ok || !Array.isArray(data.products)) {
+        console.error("想定外のレスポンス形式:", data);
+        return [];
+      }
+      return data.products;
     } catch (e) {
       console.error("商品一覧の取得に失敗:", e);
       return [];
@@ -26,12 +28,12 @@
 
   // ====== 商品カード描画 ======
   products.forEach(p => {
-    // サーバー側のフィールド名に合わせてここを調整してください
-    const id    = p.id    || p.productId || p.code  || "";
-    const name  = p.name  || p.title     || "商品名未設定";
-    const price = Number(p.price || p.unitPrice || 0);
-    const image = p.image || p.imageUrl  || "";
-    const desc  = p.description || "";
+    const id    = p.id;
+    const name  = p.name;
+    const price = Number(p.price || 0);
+    const stock = Number(p.stock || 0);
+    const image = p.image || "";
+    const desc  = p.desc  || "";
 
     const card = document.createElement("div");
     card.className = "card";
@@ -44,10 +46,18 @@
       <div class="card-body">
         <div class="card-title">${name}</div>
         <div class="price">${price}円（税込）</div>
+        <div class="stock">在庫：${stock}袋</div>
         ${desc ? `<div class="desc">${desc}</div>` : ""}
         <div class="qty-row">
           数量：
-          <input type="number" min="0" step="1" value="0" class="qty-input">
+          <input
+            type="number"
+            min="0"
+            max="${stock}"
+            step="1"
+            value="0"
+            class="qty-input"
+          >
           袋
         </div>
       </div>
@@ -68,7 +78,14 @@
   }
 
   document.querySelectorAll(".qty-input").forEach(input => {
-    input.addEventListener("input", updateButtonState);
+    input.addEventListener("input", e => {
+      const max = Number(e.target.max || "0");
+      let v = Number(e.target.value || "0");
+      if (v < 0) v = 0;
+      if (max && v > max) v = max; // 在庫を超えないように
+      e.target.value = v;
+      updateButtonState();
+    });
   });
 
   // ====== 「注文内容を確認する」押下時 ======

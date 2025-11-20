@@ -1,112 +1,107 @@
 // createRichMenu_2x2.js — 磯屋 2段2列リッチメニュー（2500x1686）
+// 左上=アンケート / 右上=直接注文 / 左下=オンライン注文（ミニアプリ） / 右下=会員登録（isoya-shop.com）
 
 "use strict";
 
 require("dotenv").config();
 const line = require("@line/bot-sdk");
 const fs = require("fs");
+const path = require("path");
 const sharp = require("sharp");
 const { Readable } = require("stream");
 
-// ========= 必要環境変数 (.env) =========
-// LINE_CHANNEL_ACCESS_TOKEN=your_token
-// ======================================
+// ========= 環境変数 =========
+// LINE_CHANNEL_ACCESS_TOKEN=xxxxx
+// LIFF_URL=アンケート用LIFF URL
 
-// ★ オンライン注文 → ミニアプリのトップページ
-const LIFF_URL = "https://line-render-app-1.onrender.com/public/main.html";
-
-// ★ 会員ログイン → isoya-shop.com
-const MEMBER_URL = "https://isoya-shop.com";
-
-// ★ 使用するリッチメニュー画像
-const IMAGE_PATH = "/mnt/data/A_digital_graphic_design_menu_banner_in.png";
-
-// ★ LINE TOKEN
-const ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
-
-// === 基本設定 ===
-const RICHMENU_NAME = "Isoya-2x2";
-const CHAT_BAR_TEXT = "メニューを開く";
-
-// === リッチメニューのサイズ設定 ===
-const WIDTH = 2500;
-const HEIGHT = 1686;
-const CELL_W = 1250;
-const CELL_H = 843;
-
-const richmenu = {
-  size: { width: WIDTH, height: HEIGHT },
-  selected: true,
-  name: RICHMENU_NAME,
-  chatBarText: CHAT_BAR_TEXT,
-  areas: [
-    // 左上：アンケート
-    {
-      bounds: { x: 0, y: 0, width: CELL_W, height: CELL_H },
-      action: { type: "message", text: "アンケート" },
-    },
-    // 右上：直接注文
-    {
-      bounds: { x: CELL_W, y: 0, width: CELL_W, height: CELL_H },
-      action: { type: "message", text: "直接注文" },
-    },
-    // 左下：オンライン注文（ミニアプリ）
-    {
-      bounds: { x: 0, y: CELL_H, width: CELL_W, height: CELL_H },
-      action: { type: "uri", uri: LIFF_URL },
-    },
-    // 右下：会員ログイン（外部サイト）
-    {
-      bounds: { x: CELL_W, y: CELL_H, width: CELL_W, height: CELL_H },
-      action: { type: "uri", uri: MEMBER_URL },
-    },
-  ],
-};
-
-// ===== LINE クライアント =====
-const client = new line.Client({ channelAccessToken: ACCESS_TOKEN });
-
-// === JPEG圧縮して画像アップロード ===
-async function uploadRichMenuImage(richMenuId, imgPath) {
-  let quality = 80;
-
-  let buffer = await sharp(imgPath)
-    .resize(WIDTH, HEIGHT)
-    .jpeg({ quality, mozjpeg: true })
-    .toBuffer();
-
-  while (buffer.length >= 1024 * 1024 && quality > 40) {
-    quality -= 5;
-    buffer = await sharp(imgPath)
-      .resize(WIDTH, HEIGHT)
-      .jpeg({ quality, mozjpeg: true })
-      .toBuffer();
-  }
-
-  console.log(`Upload image: quality=${quality}, size=${buffer.length}`);
-
-  const stream = new Readable({
-    read() { this.push(buffer); this.push(null); }
-  });
-
-  await client.setRichMenuImage(richMenuId, stream, "image/jpeg");
+const CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN || "";
+if (!CHANNEL_ACCESS_TOKEN) {
+  console.error("ERROR: LINE_CHANNEL_ACCESS_TOKEN が .env にありません。");
+  process.exit(1);
 }
 
-(async () => {
+const LIFF_URL =
+  (process.env.LIFF_URL || "").trim() || "https://liff.line.me/xxxxxxxx";
+
+// ★★重要：ここを要望どおりに修正★★
+
+// オンライン注文 → ミニアプリのトップページ
+const ONLINE_ORDER_URL =
+  "https://line-render-app-1.onrender.com/public/main.html";
+
+// 会員登録 → isoya-shop.com
+const MEMBER_URL = "https://isoya-shop.com";
+
+// ★画像名を統一
+const INPUT_FILE = path.join(__dirname, "richmenu_2x2_2500x1686.png");
+
+// ========= LINE クライアント =========
+const client = new line.Client({
+  channelAccessToken: CHANNEL_ACCESS_TOKEN,
+});
+
+// ========= メイン =========
+async function main() {
   try {
-    console.log("▶ Creating RichMenu...");
-    const richMenuId = await client.createRichMenu(richmenu);
-    console.log("✔ RichMenu created:", richMenuId);
+    const richMenu = {
+      size: { width: 2500, height: 1686 },
+      selected: true,
+      name: "磯屋_2x2_メニュー",
+      chatBarText: "メニューを開く",
+      areas: [
+        // 左上：アンケート
+        {
+          bounds: { x: 0, y: 0, width: 1250, height: 843 },
+          action: { type: "uri", label: "アンケート", uri: LIFF_URL },
+        },
+        // 右上：直接注文
+        {
+          bounds: { x: 1250, y: 0, width: 1250, height: 843 },
+          action: { type: "message", label: "直接注文", text: "直接注文" },
+        },
+        // 左下：オンライン注文（ミニアプリ）
+        {
+          bounds: { x: 0, y: 843, width: 1250, height: 843 },
+          action: {
+            type: "uri",
+            label: "オンライン注文",
+            uri: ONLINE_ORDER_URL,
+          },
+        },
+        // 右下：会員登録（isoya-shop）
+        {
+          bounds: { x: 1250, y: 843, width: 1250, height: 843 },
+          action: {
+            type: "uri",
+            label: "会員登録",
+            uri: MEMBER_URL,
+          },
+        },
+      ],
+    };
 
-    console.log("▶ Uploading image...");
-    await uploadRichMenuImage(richMenuId, IMAGE_PATH);
-    console.log("✔ Image uploaded");
+    console.log("リッチメニューを作成中…");
+    const richMenuId = await client.createRichMenu(richMenu);
+    console.log("✔ richMenuId:", richMenuId);
 
-    console.log("▶ Setting as default...");
+    // 画像読み込み
+    if (!fs.existsSync(INPUT_FILE)) {
+      console.error("ERROR: 画像が見つかりません:", INPUT_FILE);
+      process.exit(1);
+    }
+    console.log("画像を処理中…");
+
+    const buf = await sharp(INPUT_FILE).resize(2500, 1686).png().toBuffer();
+    const stream = Readable.from(buf);
+
+    await client.setRichMenuImage(richMenuId, stream, "image/png");
+    console.log("✔ 画像アップロード完了");
+
     await client.setDefaultRichMenu(richMenuId);
-
-    console.log("🎉 完了！ LINE を再起動して新しいメニューをご確認ください！");
+    console.log("🎉 完了しました！ LINE側を確認してください。");
   } catch (err) {
-    console.error("❌ Error detail:", err.response?.data || err.message || err);
+    console.error("❌ エラー:", err.response?.data || err);
   }
-})();
+}
+
+main();

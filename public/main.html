@@ -27,63 +27,20 @@
     h2 {
       font-size: 18px;
       margin-top: 0;
-    }
-    .product {
-      background: #fff;
-      border-radius: 8px;
-      padding: 12px;
       margin-bottom: 12px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
-    .product-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      margin-bottom: 8px;
-    }
-    .product-name {
-      font-weight: bold;
-    }
-    .product-price {
-      font-size: 14px;
-      color: #b22222;
-    }
-    .qty-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-top: 4px;
-    }
-    input[type="number"] {
-      width: 70px;
-      padding: 4px 6px;
-    }
-    .btn-main {
+
+    /* メインボタンは今は使わないので削除 */
+    /* ▼ サブボタン（商品一覧へ） */
+    .btn-sub {
       display: block;
       width: 100%;
       padding: 12px;
       margin-top: 16px;
       border-radius: 6px;
-      border: none;
-      font-size: 16px;
-      font-weight: bold;
-      background: #b22222;
-      color: #fff;
-    }
-    .btn-main:disabled {
-      opacity: 0.5;
-    }
-
-    /* ▼ 追加：サブボタン（商品一覧へ） */
-    .btn-sub {
-      display: block;
-      width: 100%;
-      padding: 10px;
-      margin-top: 12px;
-      border-radius: 6px;
       text-align: center;
       text-decoration: none;
-      font-size: 14px;
+      font-size: 15px;
       font-weight: bold;
       background: #ffffff;
       border: 1px solid #b22222;
@@ -94,7 +51,7 @@
     .info {
       font-size: 12px;
       color: #555;
-      margin-top: 8px;
+      margin-top: 16px;
       line-height: 1.5;
     }
     .link-row {
@@ -118,48 +75,11 @@
 </header>
 
 <div class="container">
-  <h2>商品を選択してください</h2>
+  <!-- ★ 見出しも「商品を選択してください」から変更 or 削除 -->
+  <!-- 見出しごと消したい場合は次の h2 ブロックも削除してOK -->
+  <h2>オンライン商品一覧</h2>
 
-  <!-- ▼ ここから従来の簡易入力フォーム -->
-  <div class="product" data-id="kusuke" data-name="久助" data-price="250">
-    <div class="product-header">
-      <div class="product-name">久助</div>
-      <div class="product-price">250円（税込）</div>
-    </div>
-    <div class="qty-row">
-      数量：
-      <input type="number" min="0" step="1" value="0" class="qty-input">
-      袋
-    </div>
-  </div>
-
-  <div class="product" data-id="nori" data-name="四角のりせん" data-price="300">
-    <div class="product-header">
-      <div class="product-name">四角のりせん</div>
-      <div class="product-price">300円（税込）</div>
-    </div>
-    <div class="qty-row">
-      数量：
-      <input type="number" min="0" step="1" value="0" class="qty-input">
-      袋
-    </div>
-  </div>
-
-  <div class="product" data-id="premium" data-name="プレミアムえびせん" data-price="400">
-    <div class="product-header">
-      <div class="product-name">プレミアムえびせん</div>
-      <div class="product-price">400円（税込）</div>
-    </div>
-    <div class="qty-row">
-      数量：
-      <input type="number" min="0" step="1" value="0" class="qty-input">
-      袋
-    </div>
-  </div>
-
-  <button id="toConfirmBtn" class="btn-main" disabled>注文内容を確認する</button>
-
-  <!-- ★ 追加：画像付きの商品一覧（products.html）への遷移リンク -->
+  <!-- ★ ここだけ残して、商品選択フォームは削除 -->
   <a href="products.html" class="btn-sub">画像付きの商品一覧を見る</a>
 
   <p class="info">
@@ -179,7 +99,7 @@
 </div>
 
 <script>
-  // ★ここをあなたの本物のLIFF IDに変更してください
+  // ★ここをあなたの本物のLIFF IDに変更してください（必要なら）
   const LIFF_ID = "YOUR_LIFF_ID_HERE";
 
   async function initLiff() {
@@ -192,44 +112,6 @@
   }
 
   initLiff();
-
-  const btn = document.getElementById("toConfirmBtn");
-  const products = document.querySelectorAll(".product");
-
-  function updateButtonState() {
-    let hasItem = false;
-    products.forEach(p => {
-      const qty = Number(p.querySelector(".qty-input").value || "0");
-      if (qty > 0) hasItem = true;
-    });
-    btn.disabled = !hasItem;
-  }
-
-  products.forEach(p => {
-    p.querySelector(".qty-input").addEventListener("input", updateButtonState);
-  });
-
-  btn.addEventListener("click", () => {
-    const orderItems = [];
-    let total = 0;
-    products.forEach(p => {
-      const qty = Number(p.querySelector(".qty-input").value || "0");
-      if (qty > 0) {
-        const id = p.dataset.id;
-        const name = p.dataset.name;
-        const price = Number(p.dataset.price);
-        orderItems.push({ id, name, price, qty });
-        total += price * qty;
-      }
-    });
-    const order = {
-      items: orderItems,
-      total
-    };
-    // confirm.html で読めるように保存
-    sessionStorage.setItem("currentOrder", JSON.stringify(order));
-    location.href = "confirm.html";
-  });
 </script>
 </body>
 </html>

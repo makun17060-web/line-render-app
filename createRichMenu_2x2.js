@@ -22,14 +22,14 @@ if (!CHANNEL_ACCESS_TOKEN) {
 const LIFF_URL =
   (process.env.LIFF_URL || "").trim() || "https://liff.line.me/xxxxxxxx";
 
-// ★★ 要望どおり URLs を固定設定 ★★
-
+// オンライン注文 → ミニアプリのトップページ
 const ONLINE_ORDER_URL =
   "https://line-render-app-1.onrender.com/public/main.html";
 
+// 会員登録 → isoya-shop.com
 const MEMBER_URL = "https://isoya-shop.com";
 
-// ★★ public 内に置いた画像を読む ★★
+// public 内に置いた画像を読む
 const INPUT_FILE = path.join(__dirname, "public", "richmenu_2x2_2500x1686.png");
 
 // ========= LINE クライアント =========
@@ -95,14 +95,17 @@ async function main() {
 
     console.log("画像を処理中:", INPUT_FILE);
 
+    // 🔧 413対策：JPEG化 + quality指定で容量を落とす
     const buf = await sharp(INPUT_FILE)
       .resize(2500, 1686)
-      .png()
+      .jpeg({ quality: 80 }) // まだ大きければ 70 や 60 に下げる
       .toBuffer();
+
+    console.log("変換後のバイト数:", buf.length);
 
     const stream = Readable.from(buf);
 
-    await client.setRichMenuImage(richMenuId, stream, "image/png");
+    await client.setRichMenuImage(richMenuId, stream, "image/jpeg");
     console.log("✔ 画像アップロード完了");
 
     // 3. デフォルトリッチメニューに設定

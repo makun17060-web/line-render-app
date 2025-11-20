@@ -47,6 +47,9 @@
       background: #b22222;
       color: #fff;
     }
+    .btn-main:disabled {
+      opacity: 0.5;
+    }
     .btn-back {
       display: block;
       width: 100%;
@@ -86,7 +89,7 @@
 <!-- ▼ イプシロン決済フォーム -->
 <form id="payForm" action="https://secure.epsilon.jp/cgi-bin/order/receive_order3.cgi" method="POST">
 
-  <!-- （必須）イプシロン契約情報 -->
+  <!-- （必須）イプシロン契約情報 → 本番では必ず自分の値に変更 -->
   <input type="hidden" name="contract_code" value="YOUR_CONTRACT_CODE">
   <input type="hidden" name="user_id" value="YOUR_USER_ID">
 
@@ -105,14 +108,14 @@
   <!-- LINEユーザーID -->
   <input type="hidden" name="memo1" id="pay_user_id">
 
-  <!-- 🔥 決済成功 / 失敗の戻り先（ここが質問の場所です！） -->
+  <!-- 決済成功 / 失敗の戻り先 -->
   <input type="hidden" name="success_url" value="https://line-render-app-1.onrender.com/public/confirm-success.html">
   <input type="hidden" name="failure_url" value="https://line-render-app-1.onrender.com/public/confirm-fail.html">
 
 </form>
 
 <script>
-  const LIFF_ID = "YOUR_LIFF_ID_HERE";
+  const LIFF_ID = "YOUR_LIFF_ID_HERE"; // ★本番では自分の LIFF ID を入れてください
 
   async function initLiff() {
     try {
@@ -123,30 +126,54 @@
   }
   initLiff();
 
-  // 注文データを sessionStorage から取得
-  const order = JSON.parse(sessionStorage.getItem("currentOrder") || "{}");
   const orderList = document.getElementById("orderList");
   const totalPriceEl = document.getElementById("totalPrice");
+  const payButton = document.getElementById("payButton");
 
-  let total = 0;
-  order.items.forEach(item => {
+  // ▼ 安全に currentOrder を読む
+  let order = null;
+  try {
+    const raw = sessionStorage.getItem("currentOrder");
+    if (raw) {
+      order = JSON.parse(raw);
+    }
+  } catch (e) {
+    console.log("order parse error", e);
+  }
+
+  // ▼ 注文がない / 壊れている場合はボタン無効化
+  if (!order || !Array.isArray(order.items) || order.items.length === 0) {
     const div = document.createElement("div");
     div.className = "item";
-    div.innerHTML = `
-      <strong>${item.name}</strong><br>
-      単価：${item.price}円 × ${item.qty}袋<br>
-      小計：${item.price * item.qty}円
-    `;
+    div.textContent = "商品情報が見つかりません。もう一度商品を選択してください。";
     orderList.appendChild(div);
-    total += item.price * item.qty;
-  });
-
-  totalPriceEl.textContent = "合計金額：" + total + "円";
+    totalPriceEl.textContent = "";
+    payButton.disabled = true;
+  } else {
+    // ▼ 通常の表示
+    let total = 0;
+    order.items.forEach(item => {
+      const div = document.createElement("div");
+      div.className = "item";
+      div.innerHTML = `
+        <strong>${item.name}</strong><br>
+        単価：${item.price}円 × ${item.qty}袋<br>
+        小計：${item.price * item.qty}円
+      `;
+      orderList.appendChild(div);
+      total += item.price * item.qty;
+    });
+    totalPriceEl.textContent = "合計金額：" + total + "円";
+  }
 
   // ▼ 支払いボタン処理
-  document.getElementById("payButton").addEventListener("click", async () => {
+  payButton.addEventListener("click", async () => {
+    if (!order || !Array.isArray(order.items) || order.items.length === 0) {
+      alert("商品情報がありません。もう一度商品を選択してください。");
+      return;
+    }
 
-    // 商品情報（1商品ずつ決済する簡易版）
+    // ひとまず先頭の商品だけで決済（必要ならまとめ方をあとで拡張）
     const item = order.items[0];
     document.getElementById("pay_item_code").value = item.id;
     document.getElementById("pay_item_price").value = item.price;
@@ -155,14 +182,19 @@
     // 注文番号
     document.getElementById("pay_order_number").value = "ISOYA-" + Date.now();
 
-    // LINEユーザーID
-    const profile = await liff.getProfile();
-    document.getElementById("pay_user_id").value = profile.userId;
+    // LINEユーザーID（失敗してもフォームだけ流す）
+    try {
+      if (typeof liff !== "undefined" && liff.isLoggedIn && liff.isLoggedIn()) {
+        const profile = await liff.getProfile();
+        document.getElementById("pay_user_id").value = profile.userId || "";
+      }
+    } catch (e) {
+      console.log("getProfile error", e);
+    }
 
     // フォーム送信 → イプシロン決済ページへ
     document.getElementById("payForm").submit();
   });
-
 </script>
 
 </body>

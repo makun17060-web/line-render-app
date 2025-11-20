@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>商品一覧</title>
+  <title>商品一覧 | 手造りえびせんべい 磯屋</title>
   <link rel="stylesheet" href="style.css" />
 
   <style>
@@ -35,12 +35,11 @@
       flex-direction: column;
     }
 
-    /* ここを修正：画像が上下で切れないように contain に変更 */
     .card img {
       width: 100%;
-      height: 160px;           /* サムネイルの高さ（お好みで調整可） */
-      object-fit: contain;     /* 全体を表示（上下カットしない） */
-      background: #fff;        /* 余白部分の背景色 */
+      height: 160px;
+      object-fit: contain;   /* 管理画面からの画像でも上下カットしない */
+      background: #fff;
     }
 
     .card-body {
@@ -72,27 +71,56 @@
       margin-top: 6px;
     }
 
+    .qty-row {
+      margin-top: 8px;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .qty-row input[type="number"] {
+      width: 60px;
+      padding: 4px;
+    }
+
     .footer {
-      padding: 10px;
+      margin-top: 20px;
       text-align: center;
     }
 
-    .btn {
-      display: inline-block;
-      background: #28a745;
-      color: #fff;
-      padding: 8px 12px;
+    .btn-main {
+      display: block;
+      width: 100%;
+      max-width: 400px;
+      margin: 0 auto;
+      padding: 12px;
       border-radius: 6px;
-      text-decoration: none;
-      font-size: 14px;
+      border: none;
+      font-size: 16px;
+      font-weight: bold;
+      background: #b22222;
+      color: #fff;
+    }
+
+    .btn-main:disabled {
+      opacity: 0.5;
     }
   </style>
 </head>
 
 <body>
   <h1>商品一覧</h1>
+
+  <!-- 商品カードがここに動的に入る（products.jsが描画） -->
   <div id="productGrid" class="grid"></div>
 
+  <!-- 画面下に「注文内容を確認する」ボタンを追加 -->
+  <div class="footer">
+    <button id="toConfirmBtn" class="btn-main" disabled>注文内容を確認する</button>
+  </div>
+
+  <!-- 商品一覧の描画＆数量処理＆confirm.htmlへの遷移は products.js に任せる -->
   <script src="products.js"></script>
 </body>
 </html>

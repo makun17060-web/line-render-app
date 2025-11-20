@@ -1,5 +1,7 @@
 // createRichMenu_2x2.js — 磯屋 2段2列リッチメニュー（2500x1686）
-// 左上=アンケート / 右上=直接注文 / 左下=オンライン注文（ミニアプリ） / 右下=会員登録（isoya-shop.com）
+// 左上=アンケート / 右上=直接注文
+// 左下=オンライン注文（ミニアプリ main.html）
+// 右下=会員登録（https://isoya-shop.com）
 
 "use strict";
 
@@ -11,53 +13,53 @@ const sharp = require("sharp");
 const { Readable } = require("stream");
 
 // ========= 環境変数 =========
-// LINE_CHANNEL_ACCESS_TOKEN=xxxxx
-// LIFF_URL=アンケート用LIFF URL
-
 const CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN || "";
 if (!CHANNEL_ACCESS_TOKEN) {
-  console.error("ERROR: LINE_CHANNEL_ACCESS_TOKEN が .env にありません。");
+  console.error("ERROR: LINE_CHANNEL_ACCESS_TOKEN がありません");
   process.exit(1);
 }
 
 const LIFF_URL =
   (process.env.LIFF_URL || "").trim() || "https://liff.line.me/xxxxxxxx";
 
-// ★★重要：ここを要望どおりに修正★★
+// ★★ 要望どおり URLs を固定設定 ★★
 
-// オンライン注文 → ミニアプリのトップページ
 const ONLINE_ORDER_URL =
   "https://line-render-app-1.onrender.com/public/main.html";
 
-// 会員登録 → isoya-shop.com
 const MEMBER_URL = "https://isoya-shop.com";
 
-// ★画像名を統一
-const INPUT_FILE = path.join(__dirname, "richmenu_2x2_2500x1686.png");
+// ★★ public 内に置いた画像を読む ★★
+const INPUT_FILE = path.join(__dirname, "public", "richmenu_2x2_2500x1686.png");
 
 // ========= LINE クライアント =========
 const client = new line.Client({
   channelAccessToken: CHANNEL_ACCESS_TOKEN,
 });
 
-// ========= メイン =========
+// ========= メイン処理 =========
 async function main() {
   try {
+    // 1. リッチメニュー本体
     const richMenu = {
       size: { width: 2500, height: 1686 },
       selected: true,
       name: "磯屋_2x2_メニュー",
       chatBarText: "メニューを開く",
       areas: [
-        // 左上：アンケート
+        // 左上：アンケート（LIFF）
         {
           bounds: { x: 0, y: 0, width: 1250, height: 843 },
           action: { type: "uri", label: "アンケート", uri: LIFF_URL },
         },
-        // 右上：直接注文
+        // 右上：直接注文（テキスト送信）
         {
           bounds: { x: 1250, y: 0, width: 1250, height: 843 },
-          action: { type: "message", label: "直接注文", text: "直接注文" },
+          action: {
+            type: "message",
+            label: "直接注文",
+            text: "直接注文",
+          },
         },
         // 左下：オンライン注文（ミニアプリ）
         {
@@ -84,23 +86,30 @@ async function main() {
     const richMenuId = await client.createRichMenu(richMenu);
     console.log("✔ richMenuId:", richMenuId);
 
-    // 画像読み込み
+    // 2. 画像の読み込み確認
     if (!fs.existsSync(INPUT_FILE)) {
-      console.error("ERROR: 画像が見つかりません:", INPUT_FILE);
+      console.error("❌ ERROR: 画像が見つかりません:", INPUT_FILE);
+      console.error("public フォルダ内に richmenu_2x2_2500x1686.png を置いてください");
       process.exit(1);
     }
-    console.log("画像を処理中…");
 
-    const buf = await sharp(INPUT_FILE).resize(2500, 1686).png().toBuffer();
+    console.log("画像を処理中:", INPUT_FILE);
+
+    const buf = await sharp(INPUT_FILE)
+      .resize(2500, 1686)
+      .png()
+      .toBuffer();
+
     const stream = Readable.from(buf);
 
     await client.setRichMenuImage(richMenuId, stream, "image/png");
     console.log("✔ 画像アップロード完了");
 
+    // 3. デフォルトリッチメニューに設定
     await client.setDefaultRichMenu(richMenuId);
-    console.log("🎉 完了しました！ LINE側を確認してください。");
+    console.log("🎉 完了！リッチメニューが適用されました！");
   } catch (err) {
-    console.error("❌ エラー:", err.response?.data || err);
+    console.error("❌ エラー:", err.response?.data || err.message || err);
   }
 }
 

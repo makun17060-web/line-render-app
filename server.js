@@ -641,6 +641,120 @@ app.post("/api/liff/address", async (req, res) => {
   }
 });
 app.get("/api/liff/config", (_req, res) => res.json({ liffId: LIFF_ID }));
+// ====== イプシロン決済 API（クレジットカード用） ======
+//
+// 必須 .env:
+//   EPSILON_CONTRACT_CODE  … イプシロンの契約コード（半角数字）
+// 任意 .env:
+//   EPSILON_ST_CODE        … st_code（未設定なら "10000-0000-00000"）
+//   EPSILON_ORDER_URL      … 受注CGI URL（未設定なら本番URL）
+//   EPSILON_DEFAULT_MAIL   … 顧客メールアドレス未取得時に使うメール
+//   EPSILON_SUCCESS_URL    … 決済成功後の戻り先URL
+//   EPSILON_FAILURE_URL    … 決済失敗時の戻り先URL
+//
+// フロント（confirm.html）から JSON で受け取り、イプシロンとサーバー間通信し、
+// result="1" の場合は redirect URL を返す。
+
+app.post("/api/pay-epsilon", async (req, res) => {
+  try {
+    const contractCode = (process.env.EPSILON_CONTRACT_CODE || "").trim();
+    const stCode       = (process.env.EPSILON_ST_CODE || "10000-0000-00000").trim();
+    const orderUrl     = (process.env.EPSILON_ORDER_URL || "https://secure.epsilon.jp/cgi-bin/order/receive_order3.cgi").trim();
+    const defaultMail  = (process.env.EPSILON_DEFAULT_MAIL || "").trim();
+    const successUrlEnv= (process.env.EPSILON_SUCCESS_URL || "").trim();
+    const failureUrlEnv= (process.env.EPSILON_FAILURE_URL || "").trim();
+
+    if (!contractCode) {
+      return res.status(500).json({ ok: false, error: "EPSILON_CONTRACT_CODE is not set" });
+    }
+
+    const { items, total, lineUserId, lineUserName } = req.body || {};
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ ok: false, error: "no_items" });
+    }
+
+    const totalPrice = Math.max(0, Number(total || 0));
+    if (!Number.isFinite(totalPrice) || totalPrice <= 0) {
+      return res.status(400).json({ ok: false, error: "invalid_total" });
+    }
+
+    const first = items[0] || {};
+    const itemCode = String(first.id || "ISOYA-ONLINE");
+    let itemName = String(first.name || "商品");
+    if (items.length > 1) {
+      itemName += " 他";
+    }
+    // イプシロン側の制限を考慮して少し短く
+    itemName = itemName.slice(0, 50);
+
+    const orderNumber = "ISOYA-" + Date.now();
+    const userId   = (lineUserId || "guest").slice(0, 32);
+    const userName = (lineUserName || "LINEユーザー").slice(0, 50);
+    const userMail = defaultMail || "no-reply@example.com";
+
+    // 成功/失敗URL（env 未設定なら server.js から自動生成）
+    const proto = (req.headers["x-forwarded-proto"] || req.protocol || "https");
+    const host  = req.headers.host;
+    const base  = `${proto}://${host}`;
+    const successUrl = successUrlEnv || `${base}/public/confirm-success.html`;
+    const failureUrl = failureUrlEnv || `${base}/public/confirm-fail.html`;
+
+    const params = new URLSearchParams({
+      version:        "2",
+      contract_code:  contractCode,
+      user_id:        userId,
+      user_name:      userName,
+      user_mail_add:  userMail,
+      item_code:      itemCode,
+      item_name:      itemName,
+      order_number:   orderNumber,
+      st_code:        stCode,
+      mission_code:   "1",                       // 都度課金
+      item_price:     String(totalPrice),        // 合計金額
+      process_code:   "1",                       // 初回・都度
+      memo1:          lineUserId || "",
+      memo2:          "",
+      success_url:    successUrl,
+      failure_url:    failureUrl,
+      xml:            "1",
+      character_code: "UTF8"
+    });
+
+    console.log("[pay-epsilon] request to Epsilon:", orderUrl, params.toString());
+
+    const epsilonRes = await axios.post(orderUrl, params.toString(), {
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      timeout: 15000
+    });
+
+    const body = String(epsilonRes.data || "");
+    console.log("[pay-epsilon] response from Epsilon:", body);
+
+    const getAttr = (name) => {
+      const re = new RegExp(name + '="([^"]*)"', "i");
+      const m = body.match(re);
+      return m ? decodeURIComponent(m[1]) : "";
+    };
+
+    const result   = getAttr("result");
+    const redirect = getAttr("redirect");
+    const errCode  = getAttr("err_code");
+    const errDet   = getAttr("err_detail");
+
+    if (result === "1" && redirect) {
+      return res.json({ ok: true, redirectUrl: redirect });
+    }
+
+    const msg = `Epsilon error result=${result} code=${errCode} detail=${errDet}`;
+    console.error("[pay-epsilon] error:", msg);
+    return res.status(400).json({ ok: false, error: msg });
+
+  } catch (e) {
+    console.error("[pay-epsilon] exception:", e?.response?.data || e);
+    return res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
 
 // ★★★ ここから：イプシロン コンビニ・ペイジー入金通知 API ★★★
 app.post("/api/epsilon/notify", async (req, res) => {

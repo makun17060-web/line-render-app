@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>決済が完了しました | 手造りえびせんべい 磯屋</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+      margin: 0;
+      padding: 0;
+      background: #fafafa;
+    }
+    header {
+      background: #b22222;
+      color: #fff;
+      padding: 14px 16px;
+      text-align: center;
+      font-size: 18px;
+    }
+    .container {
+      padding: 16px;
+      max-width: 600px;
+      margin: 0 auto;
+      text-align: center;
+    }
+    h1 {
+      font-size: 20px;
+      margin: 16px 0 8px;
+      color: #333;
+    }
+    p {
+      font-size: 14px;
+      color: #555;
+      line-height: 1.6;
+    }
+    .btn-main {
+      display: inline-block;
+      padding: 12px 24px;
+      margin-top: 20px;
+      border-radius: 6px;
+      border: none;
+      font-size: 15px;
+      font-weight: bold;
+      background: #b22222;
+      color: #fff;
+      text-decoration: none;
+    }
+    footer {
+      margin-top: 24px;
+      font-size: 11px;
+      color: #777;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+<header>
+  手造りえびせんべい 磯屋
+</header>
+
+<div class="container">
+  <h1>決済が完了しました</h1>
+  <p>
+    この度はご注文ありがとうございます。<br>
+    クレジットカード決済が正常に完了しました。
+  </p>
+  <p>
+    ご注文内容の確認や出荷予定などにつきましては、<br>
+    後ほど LINE にてご案内いたします。
+  </p>
+
+  <!-- 必要ならここでサーバーに「決済完了」を通知する処理を追加できます -->
+  <!--
+  <script>
+    // 例：sessionStorage から注文情報を取り出して server.js へ送信
+    // const order = JSON.parse(sessionStorage.getItem("currentOrder") || "{}");
+    // fetch("/api/order/complete", {
+    //   method: "POST",
+    //   headers: { "Content-Type": "application/json" },
+    //   body: JSON.stringify(order)
+    // });
+  </script>
+  -->
+
+  <button class="btn-main" id="closeBtn">LINEに戻る</button>
+
+  <footer>
+    © 手造りえびせんべい 磯屋
+  </footer>
+</div>
+
+<script>
+  // 必要なら本物の LIFF ID を設定
+  const LIFF_ID = "YOUR_LIFF_ID_HERE";
+
+  async function initLiff() {
+    try {
+      await liff.init({ liffId: LIFF_ID });
+    } catch (e) {
+      console.log("LIFF init error", e);
+    }
+  }
+
+  initLiff();
+
+  document.getElementById("closeBtn").addEventListener("click", () => {
+    try {
+      // ミニアプリ内なら LINE 画面に戻る
+      if (window.liff && liff.isInClient()) {
+        liff.closeWindow();
+      } else {
+        // ブラウザで開いている場合は履歴を戻す
+        history.back();
+      }
+    } catch (e) {
+      console.log(e);
+      history.back();
+    }
+  });
+</script>
+</body>
+</html>

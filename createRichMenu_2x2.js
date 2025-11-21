@@ -31,14 +31,14 @@ if (!LIFF_ID_MINIAPP) {
 
 const client = new line.Client({
   channelAccessToken: LINE_CHANNEL_ACCESS_TOKEN,
-  channelSecret: LINE_CHANNEL_SECRET,
+ 
 });
 
 // オンライン注文 → ミニアプリLIFF URL
 const MINIAPP_LIFF_URL = `https://liff.line.me/${LIFF_ID_MINIAPP}?page=delivery`;
 
 // URL（未設定なら仮）
-const surveyUrl = (SURVEY_URL || "https://example.com/survey").trim();
+
 const directOrderUrl = (DIRECT_ORDER_URL || "https://example.com/order").trim();
 const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
 

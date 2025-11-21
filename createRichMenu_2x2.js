@@ -73,7 +73,7 @@ async function main() {
           action: {
             type: "uri",
             label: "オンライン注文",
-            uri: ONLINE_ORDER_URL,
+            uri: https://line-render-app-1.onrender.com/public/miniapp-delivery.html,
           },
         },
         // 右下：会員登録（isoya-shop）

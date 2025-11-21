@@ -1,3 +1,4 @@
+cat > createRichMenu_2x2.js <<'JS'
 // createRichMenu_2x2.js
 // 2段2列リッチメニュー(2500x1686)
 // 左上=アンケート / 右上=直接注文 / 左下=オンライン注文(ミニアプリLIFFへ) / 右下=会員ログイン
@@ -9,6 +10,29 @@ const line = require("@line/bot-sdk");
 const fs = require("fs");
 const path = require("path");
 
+const {
+  LINE_CHANNEL_ACCESS_TOKEN,
+  LINE_CHANNEL_SECRET,
+  LIFF_ID_MINIAPP,
+  SURVEY_URL,
+  DIRECT_ORDER_URL,
+  MEMBER_URL,
+  RICHMENU_IMAGE,
+} = process.env;
+
+if (!LINE_CHANNEL_ACCESS_TOKEN || !LINE_CHANNEL_SECRET) {
+  console.error("❌ LINE_CHANNEL_ACCESS_TOKEN / LINE_CHANNEL_SECRET が .env にありません");
+  process.exit(1);
+}
+if (!LIFF_ID_MINIAPP) {
+  console.error("❌ LIFF_ID_MINIAPP（ミニアプリ用 LIFF ID）が .env にありません");
+  process.exit(1);
+}
+
+const client = new line.Client({
+  channelAccessToken: LINE_CHANNEL_ACCESS_TOKEN,
+  channelSecret: LINE_CHANNEL_SECRET,
+});
 
 // オンライン注文 → ミニアプリLIFF URL
 const MINIAPP_LIFF_URL = `https://liff.line.me/${LIFF_ID_MINIAPP}?page=delivery`;
@@ -97,3 +121,4 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
     process.exit(1);
   }
 })();
+JS

@@ -587,7 +587,7 @@
     total += shipFee;
 
     try {
-      const res = await fetch("/api/pay-epsilon", {
+      const res = await fetch("/api/pay",{
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

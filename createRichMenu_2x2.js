@@ -98,7 +98,7 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
 
     // ===== 画像アップロード =====
     const imageFile = (RICHMENU_IMAGE || "richmenu_2x2_2500x1686.png").trim();
-    const imagePath = path.join(__dirname, imageFile);
+    const imagePath = path.join(__dirname, "public", imageFile);
 
     if (!fs.existsSync(imagePath)) {
       console.error("❌ 画像ファイルが見つかりません:", imagePath);

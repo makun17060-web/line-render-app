@@ -25,7 +25,7 @@ const LIFF_URL =
   (process.env.LIFF_URL || "").trim() || "https://liff.line.me/xxxxxxxx";
 
 // オンライン注文 → ミニアプリ（配送付き）のトップページ
-const ONLINE_ORDER_URL =　"https://line-render-app-1.onrender.com/public/miniapp-delivery.html";
+const ONLINE_ORDER_URL =　"https://liff.line.me/2008406620-G5j1gjzM?page=delivery";
 
 // 会員登録 → isoya-shop.com
 const MEMBER_URL = "https://isoya-shop.com";

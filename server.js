@@ -856,16 +856,16 @@ async function payWithEpsilon(req, res) {
 
 // ★★★ ここから：イプシロン コンビニ・ペイジー入金通知 API ★★★
 app.post("/api/epsilon/notify", async (req, res) => {
+  // イプシロンへ即OK返す（重要）
+  res.send("OK");
+
   try {
     const data = req.body || {};
 
-    // イプシロン側に「OK」をすぐ返す（重要）
-    res.send("OK");
-
-    // ログに保存
+    // ログ保存
     try {
-      const line = `[${new Date().toISOString()}] ${JSON.stringify(data)}\n`;
-      fs.appendFileSync(EPSILON_NOTIFY_LOG, line, "utf8");
+      const lineLog = `[${new Date().toISOString()}] ${JSON.stringify(data)}\n`;
+      fs.appendFileSync(EPSILON_NOTIFY_LOG, lineLog, "utf8");
     } catch (e) {
       console.error("EPSILON_NOTIFY_LOG 書き込みエラー:", e);
     }
@@ -873,7 +873,6 @@ app.post("/api/epsilon/notify", async (req, res) => {
     const orderNumber = data.order_number || data.order_no || "";
     const payMethod   = data.pay_method || "";
     const state       = data.state || data.pay_status || "";
-    // ★ memo1 に LINE の userId を送っている前提
     const userId      = data.memo1 || data.user_id || "";
 
     console.log("=== Epsilon 入金通知受信 ===");
@@ -882,7 +881,6 @@ app.post("/api/epsilon/notify", async (req, res) => {
     console.log("state      :", state);
     console.log("userId     :", userId);
 
-    // ※ state の値はイプシロン仕様に合わせて必要に応じて調整してください
     const isPaid = (state === "2" || state === "paid" || state === "1");
 
     if (isPaid && userId) {

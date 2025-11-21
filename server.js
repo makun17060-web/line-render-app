@@ -687,10 +687,19 @@ app.post("/api/pay-epsilon", async (req, res) => {
     // イプシロン側の制限を考慮して少し短く
     itemName = itemName.slice(0, 50);
 
-    const orderNumber = "ISOYA-" + Date.now();
+        // ===== オーダー番号生成（数字のみ・32桁以内） =====
+    let orderNumber = String(Date.now());   // 例: "1763650123456"
+
+    // 念のため、数字以外が入っていたら全部削除
+    orderNumber = orderNumber.replace(/[^0-9]/g, "");
+
+    // 長さ制限（イプシロン仕様は最大32文字）
+    orderNumber = orderNumber.slice(0, 32);
+
     const userId   = (lineUserId || "guest").slice(0, 32);
     const userName = (lineUserName || "LINEユーザー").slice(0, 50);
     const userMail = defaultMail || "no-reply@example.com";
+
 
     // 成功/失敗URL（env 未設定なら server.js から自動生成）
     const proto = (req.headers["x-forwarded-proto"] || req.protocol || "https");

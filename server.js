@@ -2,15 +2,8 @@
 // + 予約者連絡API/コマンド + 店頭受取Fix + 銀行振込案内（コメント対応）
 // + 画像アップロード/一覧/削除 + 商品へ画像URL紐付け（管理画面用）
 // + ミニアプリ用 /api/products（久助除外）
-// + イプシロンクレジット決済用 /api/pay-epsilon
-//
-// 必須 .env: 
-//   LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, LIFF_ID, (ADMIN_API_TOKEN または ADMIN_CODE)
-//   EPSILON_CONTRACT_CODE  （イプシロン契約コード）
-//
-// 任意 .env: 
-//   PORT, ADMIN_USER_ID, MULTICAST_USER_IDS, BANK_INFO, BANK_NOTE, PUBLIC_BASE_URL
-//   EPSILON_ST_CODE, EPSILON_ORDER_URL, EPSILON_DEFAULT_MAIL, EPSILON_SUCCESS_URL, EPSILON_FAILURE_URL
+// 必須 .env: LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET, LIFF_ID, (ADMIN_API_TOKEN または ADMIN_CODE)
+// 任意 .env: PORT, ADMIN_USER_ID, MULTICAST_USER_IDS, BANK_INFO, BANK_NOTE, PUBLIC_BASE_URL
 
 "use strict";
 
@@ -42,14 +35,6 @@ const BANK_NOTE = (process.env.BANK_NOTE || "").trim(); // 例: "振込手数料
 // ★ 公開URL（Renderのhttpsドメインを .env で指定推奨）
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "");
 
-// ★ イプシロン決済用（最低限 EPSILON_CONTRACT_CODE が必須）
-const EPSILON_CONTRACT_CODE = (process.env.EPSILON_CONTRACT_CODE || "").trim();
-const EPSILON_ST_CODE       = (process.env.EPSILON_ST_CODE || "10000-0000-00000").trim();
-const EPSILON_ORDER_URL     = (process.env.EPSILON_ORDER_URL || "https://secure.epsilon.jp/cgi-bin/order/receive_order3.cgi").trim();
-const EPSILON_DEFAULT_MAIL  = (process.env.EPSILON_DEFAULT_MAIL || "no-reply@example.com").trim();
-const EPSILON_SUCCESS_URL   = (process.env.EPSILON_SUCCESS_URL || "").trim();
-const EPSILON_FAILURE_URL   = (process.env.EPSILON_FAILURE_URL || "").trim();
-
 const config = {
   channelAccessToken: (process.env.LINE_CHANNEL_ACCESS_TOKEN || "").trim(),
   channelSecret:      (process.env.LINE_CHANNEL_SECRET || "").trim(),
@@ -79,6 +64,8 @@ const MESSAGES_LOG      = path.join(DATA_DIR, "messages.log");
 const SESSIONS_PATH     = path.join(DATA_DIR, "sessions.json");
 const NOTIFY_STATE_PATH = path.join(DATA_DIR, "notify_state.json");
 const STOCK_LOG         = path.join(DATA_DIR, "stock.log");
+// ★ 追加：イプシロン入金通知ログ
+const EPSILON_NOTIFY_LOG = path.join(DATA_DIR, "epsilon_notify.log");
 
 // 公開静的/アップロード
 const PUBLIC_DIR  = path.join(__dirname, "public");
@@ -212,7 +199,7 @@ function readLogLines(filePath, limit = 100) {
   return tail.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
 }
 function jstRangeFromYmd(ymd) {
-  const y = Number(ymd.slice(0,4)), m = Number(ymd.slice(4,6))-1, d = Number(ymd.slice(6,8));
+  const y = Number(ymd.slice(0,4)), m = Number(ymd.slice(6,8))-1, d = Number(ymd.slice(8,10));
   const startJST = new Date(Date.UTC(y, m, d, -9, 0, 0));
   const endJST   = new Date(Date.UTC(y, m, d+1, -9, 0, 0));
   return { from: startJST.toISOString(), to: endJST.toISOString() };
@@ -257,25 +244,20 @@ function toPublicImageUrl(raw) {
   let s = String(raw).trim();
   if (!s) return "";
 
-  // 以前のバグで付いた "onrender.com./" を修正
   s = s.replace(".onrender.com./", ".onrender.com/");
 
-  // すでに http/https ならそのまま使う
   if (/^https?:\/\//i.test(s)) {
     return s;
   }
 
-  // 相対パスやファイル名だけの場合 → ファイル名を取り出す
   let fname = s;
   const lastSlash = s.lastIndexOf("/");
   if (lastSlash >= 0) {
     fname = s.slice(lastSlash + 1);
   }
 
-  // 標準の公開パスに揃える
   const pathPart = `/public/uploads/${fname}`;
 
-  // Render のホスト名から https URL を組み立て
   const hostFromRender =
     process.env.RENDER_EXTERNAL_HOSTNAME ||
     (process.env.RENDER_EXTERNAL_URL || "")
@@ -286,7 +268,6 @@ function toPublicImageUrl(raw) {
     return `https://${hostFromRender}${pathPart}`;
   }
 
-  // 最悪テスト用に相対パスを返す（本番では Render のホスト名が入っているはず）
   return pathPart;
 }
 
@@ -344,7 +325,6 @@ function productsFlex(allProducts) {
     };
   });
 
-  // 「その他（自由入力）」：★価格入力なし版
   bubbles.push({
     type: "bubble",
     body: {
@@ -661,38 +641,50 @@ app.post("/api/liff/address", async (req, res) => {
   }
 });
 app.get("/api/liff/config", (_req, res) => res.json({ liffId: LIFF_ID }));
-
 // ====== イプシロン決済 API（クレジットカード用） ======
+//
+// 必須 .env:
+//   EPSILON_CONTRACT_CODE  … イプシロンの契約コード（半角数字）
+// 任意 .env:
+//   EPSILON_ST_CODE        … st_code（未設定なら "10000-0000-00000"）
+//   EPSILON_ORDER_URL      … 受注CGI URL（未設定なら本番URL）
+//   EPSILON_DEFAULT_MAIL   … 顧客メールアドレス未取得時に使うメール
+//   EPSILON_SUCCESS_URL    … 決済成功後の戻り先URL
+//   EPSILON_FAILURE_URL    … 決済失敗時の戻り先URL
+//
+// フロント（confirm.html）から JSON で受け取り、イプシロンとサーバー間通信し、
+// result="1" の場合は redirect URL を返す。
+
 app.post("/api/pay-epsilon", async (req, res) => {
   try {
-    const contractCode = EPSILON_CONTRACT_CODE;
-    const stCode       = EPSILON_ST_CODE;
-    const orderUrl     = EPSILON_ORDER_URL;
-    const defaultMail  = EPSILON_DEFAULT_MAIL;
-    const successUrlEnv= EPSILON_SUCCESS_URL;
-    const failureUrlEnv= EPSILON_FAILURE_URL;
+    const contractCode = (process.env.EPSILON_CONTRACT_CODE || "").trim();
+    const stCode       = (process.env.EPSILON_ST_CODE || "10000-0000-00000").trim();
+    const orderUrl     = (process.env.EPSILON_ORDER_URL || "https://secure.epsilon.jp/cgi-bin/order/receive_order3.cgi").trim();
+    const defaultMail  = (process.env.EPSILON_DEFAULT_MAIL || "").trim();
+    const successUrlEnv= (process.env.EPSILON_SUCCESS_URL || "").trim();
+    const failureUrlEnv= (process.env.EPSILON_FAILURE_URL || "").trim();
 
     if (!contractCode) {
-      return res.json({
-        ok: false,
-        error: "EPSILON_CONTRACT_CODE（契約コード）が設定されていません。.envに EPSILON_CONTRACT_CODE=イプシロンの契約コード を追加してください。"
-      });
+      return res.status(500).json({ ok: false, error: "EPSILON_CONTRACT_CODE is not set" });
     }
 
     const { items, total, lineUserId, lineUserName } = req.body || {};
     if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.json({ ok: false, error: "no_items: 注文内容が空です。" });
+      return res.status(400).json({ ok: false, error: "no_items" });
     }
 
     const totalPrice = Math.max(0, Number(total || 0));
     if (!Number.isFinite(totalPrice) || totalPrice <= 0) {
-      return res.json({ ok: false, error: "invalid_total: 合計金額が 0 円以下です。" });
+      return res.status(400).json({ ok: false, error: "invalid_total" });
     }
 
     const first = items[0] || {};
     const itemCode = String(first.id || "ISOYA-ONLINE");
     let itemName = String(first.name || "商品");
-    if (items.length > 1) itemName += " 他";
+    if (items.length > 1) {
+      itemName += " 他";
+    }
+    // イプシロン側の制限を考慮して少し短く
     itemName = itemName.slice(0, 50);
 
     const orderNumber = "ISOYA-" + Date.now();
@@ -700,6 +692,7 @@ app.post("/api/pay-epsilon", async (req, res) => {
     const userName = (lineUserName || "LINEユーザー").slice(0, 50);
     const userMail = defaultMail || "no-reply@example.com";
 
+    // 成功/失敗URL（env 未設定なら server.js から自動生成）
     const proto = (req.headers["x-forwarded-proto"] || req.protocol || "https");
     const host  = req.headers.host;
     const base  = `${proto}://${host}`;
@@ -716,9 +709,9 @@ app.post("/api/pay-epsilon", async (req, res) => {
       item_name:      itemName,
       order_number:   orderNumber,
       st_code:        stCode,
-      mission_code:   "1",
-      item_price:     String(totalPrice),
-      process_code:   "1",      // クレジット決済
+      mission_code:   "1",                       // 都度課金
+      item_price:     String(totalPrice),        // 合計金額
+      process_code:   "1",                       // 初回・都度
       memo1:          lineUserId || "",
       memo2:          "",
       success_url:    successUrl,
@@ -754,16 +747,69 @@ app.post("/api/pay-epsilon", async (req, res) => {
 
     const msg = `Epsilon error result=${result} code=${errCode} detail=${errDet}`;
     console.error("[pay-epsilon] error:", msg);
-    return res.json({ ok: false, error: msg });
+    return res.status(400).json({ ok: false, error: msg });
 
   } catch (e) {
     console.error("[pay-epsilon] exception:", e?.response?.data || e);
-    return res.json({
-      ok: false,
-      error: "server_error: " + (e?.message || String(e))
-    });
+    return res.status(500).json({ ok: false, error: "server_error" });
   }
 });
+
+
+// ★★★ ここから：イプシロン コンビニ・ペイジー入金通知 API ★★★
+app.post("/api/epsilon/notify", async (req, res) => {
+  try {
+    const data = req.body || {};
+
+    // イプシロン側に「OK」をすぐ返す（重要）
+    res.send("OK");
+
+    // ログに保存
+    try {
+      const line = `[${new Date().toISOString()}] ${JSON.stringify(data)}\n`;
+      fs.appendFileSync(EPSILON_NOTIFY_LOG, line, "utf8");
+    } catch (e) {
+      console.error("EPSILON_NOTIFY_LOG 書き込みエラー:", e);
+    }
+
+    const orderNumber = data.order_number || data.order_no || "";
+    const payMethod   = data.pay_method || "";
+    const state       = data.state || data.pay_status || "";
+    // ★ memo1 に LINE の userId を送っている前提
+    const userId      = data.memo1 || data.user_id || "";
+
+    console.log("=== Epsilon 入金通知受信 ===");
+    console.log("orderNumber:", orderNumber);
+    console.log("payMethod  :", payMethod);
+    console.log("state      :", state);
+    console.log("userId     :", userId);
+
+    // ※ state の値はイプシロン仕様に合わせて必要に応じて調整してください
+    const isPaid = (state === "2" || state === "paid" || state === "1");
+
+    if (isPaid && userId) {
+      const message = {
+        type: "text",
+        text:
+          "コンビニ・ペイジーでのご入金を確認しました。\n" +
+          (orderNumber ? `ご注文番号：${orderNumber}\n` : "") +
+          "\n商品の発送準備に入らせていただきます。\n今しばらくお待ちください。",
+      };
+
+      try {
+        await client.pushMessage(userId, message);
+        console.log("入金確認メッセージ送信OK →", userId);
+      } catch (e) {
+        console.error("入金確認メッセージ送信エラー:", e?.response?.data || e);
+      }
+    } else {
+      console.log("入金完了状態ではないか、userId 不明のため LINE送信スキップ");
+    }
+  } catch (err) {
+    console.error("Epsilon notify ハンドラでエラー:", err);
+  }
+});
+// ★★★ イプシロン入金通知 ここまで ★★★
 
 // ====== 管理API（要トークン） ======
 app.get("/api/admin/ping", (req, res) => { if (!requireAdmin(req, res)) return; res.json({ ok: true, ping: "pong" }); });
@@ -920,12 +966,10 @@ app.post("/api/admin/products/update", (req, res) => {
     const p = products[idx];
     const beforeStock = Number(p.stock || 0);
 
-    // 1) 商品名
     if (typeof req.body.name === "string") {
       p.name = req.body.name.trim().slice(0, 50);
     }
 
-    // 2) 価格
     if (req.body.price !== undefined) {
       const v = Number(req.body.price);
       if (!Number.isNaN(v) && v >= 0) {
@@ -933,13 +977,11 @@ app.post("/api/admin/products/update", (req, res) => {
       }
     }
 
-    // 3) 在庫
     if (req.body.stock !== undefined) {
       const v = Number(req.body.stock);
       if (!Number.isNaN(v) && v >= 0) {
         const after = v;
         p.stock = after;
-        // 在庫ログも残す
         writeStockLog({
           action: "set",
           productId: pid,
@@ -951,12 +993,10 @@ app.post("/api/admin/products/update", (req, res) => {
       }
     }
 
-    // 4) 説明
     if (typeof req.body.desc === "string") {
       p.desc = req.body.desc.trim().slice(0, 200);
     }
 
-    // 5) 画像URL
     if (typeof req.body.image === "string") {
       p.image = req.body.image.trim();
     }
@@ -1024,7 +1064,7 @@ app.post("/api/admin/reservations/notify", async (req, res) => {
     if (!msg) return res.status(400).json({ ok:false, error:"message required" });
 
     const items = readLogLines(RESERVATIONS_LOG, 100000).filter(r => r && r.productId === pid && r.userId);
-    const userIds = Array.from(new Set(items.map(r => r.userId)));
+    const userIds = Array.from(new Set(items.map(r=>r.userId)));
     if (userIds.length === 0) return res.json({ ok:true, sent:0, users:[] });
 
     const chunkSize = 500;
@@ -1327,7 +1367,6 @@ async function handleEvent(ev) {
       const text = (ev.message.text || "").trim();
       const t = text.replace(/\s+/g, " ").trim();
 
-      // 久助テキスト購入フロー
       const kusukeRe = /^久助(?:\s+(\d+))?$/i;
       const km = kusukeRe.exec(text);
       if (km) {
@@ -1354,7 +1393,6 @@ async function handleEvent(ev) {
         return;
       }
 
-      // その他（自由入力：商品名→個数）
       if (sess?.await === "otherName") {
         const name = (text || "").slice(0, 50).trim();
         if (!name) { await client.replyMessage(ev.replyToken, { type:"text", text:"商品名を入力してください。" }); return; }
@@ -1374,7 +1412,6 @@ async function handleEvent(ev) {
         return;
       }
 
-      // 管理者コマンド（在庫/予約連絡）
       if (ev.source?.userId && ADMIN_USER_ID && ev.source.userId === ADMIN_USER_ID) {
         if (t === "在庫一覧") {
           const items = readProducts().map(p => `・${p.name}（${p.id}）：${Number(p.stock||0)}個`).join("\n");
@@ -1538,4 +1575,205 @@ async function handleEvent(ev) {
 
       if (d.startsWith("order_qty?")) {
         const { id, qty } = parse(d.replace("order_qty?", ""));
-::contentReference[oaicite:0]{index=0}
+        return client.replyMessage(ev.replyToken, qtyFlex(id, qty));
+      }
+      if (d.startsWith("order_method?")) {
+        const { id, qty } = parse(d.replace("order_method?", ""));
+        return client.replyMessage(ev.replyToken, methodFlex(id, qty));
+      }
+      if (d.startsWith("order_region?")) {
+        const { id, qty, method } = parse(d.replace("order_region?", ""));
+        if (method === "delivery") return client.replyMessage(ev.replyToken, regionFlex(id, qty));
+        return client.replyMessage(ev.replyToken, paymentFlex(id, qty, "pickup", ""));
+      }
+      if (d.startsWith("order_payment?")) {
+        let { id, qty, method, region } = parse(d.replace("order_payment?", ""));
+        method = (method || "").trim();
+        region = (region || "").trim();
+        if (region === "-") region = "";
+
+        if (method === "pickup") {
+          return client.replyMessage(ev.replyToken, paymentFlex(id, qty, "pickup", ""));
+        }
+        if (method === "delivery") {
+          if (!region) return client.replyMessage(ev.replyToken, regionFlex(id, qty));
+          return client.replyMessage(ev.replyToken, paymentFlex(id, qty, "delivery", region));
+        }
+        return client.replyMessage(ev.replyToken, methodFlex(id, qty));
+      }
+      if (d.startsWith("order_confirm_view?")) {
+        const { id, qty, method, region, payment } = parse(d.replace("order_confirm_view?", ""));
+        let product;
+        if (String(id).startsWith("other:")) {
+          const parts = String(id).split(":");
+          const encName = parts[1] || "";
+          const priceStr = parts[2] || "0";
+          product = { id, name: decodeURIComponent(encName || "その他"), price: Number(priceStr || 0) };
+        } else {
+          const products = readProducts();
+          product = products.find(p => p.id === id);
+          if (!product) return client.replyMessage(ev.replyToken, { type: "text", text: "商品が見つかりませんでした。" });
+        }
+        return client.replyMessage(ev.replyToken, confirmFlex(product, qty, method, region, payment, LIFF_ID));
+      }
+      if (d === "order_back") {
+        return client.replyMessage(ev.replyToken, productsFlex(readProducts()));
+      }
+      if (d.startsWith("order_confirm?")) {
+        const { id, qty, method, region, payment } = parse(d.replace("order_confirm?", ""));
+        const need = Math.max(1, Number(qty) || 1);
+
+        let product = null;
+        let products = readProducts();
+        let idx = products.findIndex(p => p.id === id);
+
+        if (String(id).startsWith("other:")) {
+          const parts = String(id).split(":");
+          const encName = parts[1] || "";
+          const priceStr = parts[2] || "0";
+          product = { id, name: decodeURIComponent(encName || "その他"), price: Number(priceStr || 0), stock: Infinity };
+          idx = -1;
+        } else {
+          if (idx === -1) return client.replyMessage(ev.replyToken, { type: "text", text: "商品が見つかりませんでした。" });
+          product = products[idx];
+          if (!product.stock || product.stock < need) {
+            return client.replyMessage(ev.replyToken, reserveOffer(product, need, product.stock || 0));
+          }
+          products[idx].stock = Number(product.stock) - need;
+          writeProducts(products);
+          await maybeLowStockAlert(product.id, product.name, products[idx].stock);
+        }
+
+        const regionFee = method === "delivery" ? (SHIPPING_BY_REGION[region] || 0) : 0;
+        const codFee = payment === "cod" ? COD_FEE : 0;
+        const subtotal = Number(product.price) * need;
+        const total = subtotal + regionFee + codFee;
+
+        const addrBook = readAddresses();
+        const addr = addrBook[ev.source?.userId || ""] || null;
+
+        const order = {
+          ts: new Date().toISOString(),
+          userId: ev.source?.userId || "",
+          productId: product.id,
+          productName: product.name,
+          qty: need,
+          price: Number(product.price),
+          subtotal, region, shipping: regionFee,
+          payment, codFee, total, method,
+          address: addr,
+          image: product.image || ""
+        };
+        fs.appendFileSync(ORDERS_LOG, JSON.stringify(order) + "\n", "utf8");
+
+        const payText =
+          payment === "cod"  ? `代金引換（+${yen(COD_FEE)})` :
+          payment === "bank" ? "銀行振込" :
+          "現金（店頭）";
+
+        const userLines = [
+          "ご注文ありがとうございます！",
+          `受取方法：${method === "pickup" ? "店頭受取（送料0円）" : `宅配（${region}）`}`,
+          `支払い：${payText}`,
+          `商品：${product.name}`,
+          `数量：${need}個`,
+          `小計：${yen(subtotal)}`,
+          `送料：${yen(regionFee)}`,
+          `代引き手数料：${yen(codFee)}`,
+          `合計：${yen(total)}`
+        ];
+        if (method === "delivery") {
+          userLines.push("");
+          userLines.push(
+            addr
+              ? `お届け先：${addr.postal} ${addr.prefecture}${addr.city}${addr.address1}${addr.address2 ? " " + addr.address2 : ""}\n氏名：${addr.name}\n電話：${addr.phone}`
+              : "住所未登録です。メニューの「住所を入力（LIFF）」から登録してください。"
+          );
+        } else {
+          userLines.push("", "店頭でのお受け取りをお待ちしています。");
+        }
+        await client.replyMessage(ev.replyToken, { type: "text", text: userLines.join("\n") });
+
+        if (method === "delivery" && payment === "bank") {
+          const lines = [];
+          lines.push("▼ 振込先");
+          if (BANK_INFO) { lines.push(BANK_INFO); }
+          else { lines.push("（銀行口座情報が未設定です。管理者に連絡してください。）"); }
+          if (BANK_NOTE) { lines.push("", BANK_NOTE); }
+          lines.push("", "※ご入金確認後の発送となります。");
+          try { await client.pushMessage(ev.source.userId, { type:"text", text: lines.join("\n") }); }
+          catch (e) { console.error("bank info send error:", e?.response?.data || e); }
+        }
+
+        const adminMsg = [
+          "🧾 新規注文",
+          `ユーザーID：${ev.source?.userId || ""}`,
+          `商品：${product.name}`,
+          `数量：${need}個`,
+          `小計：${yen(subtotal)} / 送料：${yen(regionFee)} / 代引：${yen(codFee)} / 合計：${yen(total)}`,
+          `受取：${method}${method === "delivery" ? `（${region}）` : ""} / 支払：${payment}`,
+          (addr
+            ? `住所：${addr.postal} ${addr.prefecture}${addr.city}${addr.address1}${addr.address2 ? " " + addr.address2 : ""}\n氏名：${addr.name} / TEL：${addr.phone}`
+            : "住所：未登録"),
+          product.image ? `画像：${product.image}` : ""
+        ].filter(Boolean).join("\n");
+        try {
+          if (ADMIN_USER_ID) await client.pushMessage(ADMIN_USER_ID, { type: "text", text: adminMsg });
+          if (MULTICAST_USER_IDS.length > 0) await client.multicast(MULTICAST_USER_IDS, { type: "text", text: adminMsg });
+        } catch {}
+        return;
+      }
+      if (d.startsWith("order_reserve?")) {
+        const { id, qty } = parse(d.replace("order_reserve?", ""));
+        const products = readProducts();
+        const product = products.find(p => p.id === id);
+        if (!product) return client.replyMessage(ev.replyToken, { type: "text", text: "商品が見つかりませんでした。" });
+
+        const r = { ts: new Date().toISOString(), userId: ev.source?.userId || "", productId: product.id, productName: product.name, qty: Math.max(1, Number(qty) || 1), status: "reserved" };
+        fs.appendFileSync(RESERVATIONS_LOG, JSON.stringify(r) + "\n", "utf8");
+
+        await client.replyMessage(ev.replyToken, { type: "text", text: ["予約を受け付けました。入荷次第ご案内します。", `商品：${product.name}`, `数量：${r.qty}個`].join("\n") });
+
+        try {
+          const adminReserve = ["📝 予約受付", `ユーザーID：${ev.source?.userId || ""}`, `商品：${product.name}`, `数量：${r.qty}個`].join("\n");
+          if (ADMIN_USER_ID) await client.pushMessage(ADMIN_USER_ID, { type: "text", text: adminReserve });
+          if (MULTICAST_USER_IDS.length > 0) await client.multicast(MULTICAST_USER_IDS, { type: "text", text: adminReserve });
+        } catch {}
+        return;
+      }
+    }
+  } catch (err) {
+    console.error("handleEvent error:", err?.response?.data || err?.stack || err);
+    if (ev.replyToken) { try { await client.replyMessage(ev.replyToken, { type: "text", text: "エラーが発生しました。もう一度お試しください。" }); } catch {} }
+  }
+}
+
+// ====== Health checks ======
+app.get("/health", (_req, res) => res.status(200).type("text/plain").send("OK"));
+app.get("/healthz", (_req, res) => res.status(200).type("text/plain").send("OK"));
+app.head("/health", (_req, res) => res.status(200).end());
+app.get("/api/health", (_req, res) => {
+  res.json({
+    ok: true,
+    time: new Date().toISOString(),
+    node: process.version,
+    env: {
+      PORT: !!process.env.PORT,
+      LINE_CHANNEL_ACCESS_TOKEN: !!process.env.LINE_CHANNEL_ACCESS_TOKEN,
+      LINE_CHANNEL_SECRET: !!process.env.LINE_CHANNEL_SECRET,
+      LIFF_ID: !!process.env.LIFF_ID,
+      ADMIN_API_TOKEN: !!ADMIN_API_TOKEN_ENV,
+      ADMIN_CODE: !!ADMIN_CODE_ENV,
+      BANK_INFO: !!BANK_INFO,
+      BANK_NOTE: !!BANK_NOTE,
+      PUBLIC_BASE_URL: !!PUBLIC_BASE_URL,
+    }
+  });
+});
+
+// ====== 起動 ======
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Server started on port ${PORT}`);
+  console.log("   Webhook: POST /webhook");
+  console.log("   LIFF address page: /public/liff-address.html  (open via https://liff.line.me/LIFF_ID)");
+});

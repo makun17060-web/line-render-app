@@ -1,8 +1,6 @@
-// createRichMenu_2x2.js — 磯屋 2段2列リッチメニュー（2500x1686）
-// 左上=アンケート（いまは「アンケート」というメッセージ送信）
-// 右上=直接注文（メッセージ）
-// 左下=オンライン注文（ミニアプリ miniapp-delivery.html）
-// 右下=会員登録（https://isoya-shop.com）
+// createRichMenu_2x2.js
+// 2段2列リッチメニュー(2500x1686)
+// 左上=アンケート / 右上=直接注文 / 左下=オンライン注文(ミニアプリLIFFへ) / 右下=会員ログイン
 
 "use strict";
 
@@ -10,117 +8,115 @@ require("dotenv").config();
 const line = require("@line/bot-sdk");
 const fs = require("fs");
 const path = require("path");
-const sharp = require("sharp");
-const { Readable } = require("stream");
 
-// ========= 環境変数 =========
-const CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN || "";
-if (!CHANNEL_ACCESS_TOKEN) {
-  console.error("ERROR: LINE_CHANNEL_ACCESS_TOKEN がありません");
+const {
+  LINE_CHANNEL_ACCESS_TOKEN,
+  LINE_CHANNEL_SECRET,
+  LIFF_ID_MINIAPP,
+  SURVEY_URL,
+  DIRECT_ORDER_URL,
+  MEMBER_URL,
+  RICHMENU_IMAGE,
+} = process.env;
+
+if (!LINE_CHANNEL_ACCESS_TOKEN || !LINE_CHANNEL_SECRET) {
+  console.error("❌ LINE_CHANNEL_ACCESS_TOKEN / LINE_CHANNEL_SECRET が .env にありません");
+  process.exit(1);
+}
+if (!LIFF_ID_MINIAPP) {
+  console.error("❌ LIFF_ID_MINIAPP（ミニアプリ用 LIFF ID）が .env にありません");
   process.exit(1);
 }
 
-// LIFF_URL は今は使いませんが、後でLIFFアンケートを作るとき用に残しておきます
-const LIFF_URL =
-  (process.env.LIFF_URL || "").trim() || "https://liff.line.me/xxxxxxxx";
-
-// オンライン注文 → ミニアプリ（配送付き）のトップページ
-const ONLINE_ORDER_URL ="https://liff.line.me/2008406620-G5j1gjzM";
-LINE_CHANNEL_SECRET=あなたのチャネルシークレット
-
-
-// 会員登録 → isoya-shop.com
-const MEMBER_URL = "https://isoya-shop.com";
-
-// public 内に置いた画像を読む
-const INPUT_FILE = path.join(__dirname, "public", "richmenu_2x2_2500x1686.png");
-
-// ========= LINE クライアント =========
 const client = new line.Client({
-  channelAccessToken: CHANNEL_ACCESS_TOKEN,
+  channelAccessToken: LINE_CHANNEL_ACCESS_TOKEN,
+  channelSecret: LINE_CHANNEL_SECRET,
 });
 
-// ========= メイン処理 =========
-async function main() {
+// オンライン注文 → ミニアプリLIFF URL
+const MINIAPP_LIFF_URL = `https://liff.line.me/${LIFF_ID_MINIAPP}?page=delivery`;
+
+// URL（未設定なら仮）
+const surveyUrl = (SURVEY_URL || "https://example.com/survey").trim();
+const directOrderUrl = (DIRECT_ORDER_URL || "https://example.com/order").trim();
+const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
+
+(async () => {
   try {
-    // 1. リッチメニュー本体
     const richMenu = {
       size: { width: 2500, height: 1686 },
       selected: true,
-      name: "磯屋_2x2_メニュー",
-      chatBarText: "メニューを開く",
+      name: "磯屋_2x2",
+      chatBarText: "メニュー",
       areas: [
-        // 左上：アンケート（今はメッセージ送信にしてエラー回避）
+        // 左上：アンケート
         {
           bounds: { x: 0, y: 0, width: 1250, height: 843 },
-          action: {
-            type: "message",
-            label: "アンケート",
-            text: "アンケート",
-          },
+          action: { type: "uri", label: "アンケート", uri: surveyUrl },
         },
-        // 右上：直接注文（テキスト送信）
+        // 右上：直接注文
         {
           bounds: { x: 1250, y: 0, width: 1250, height: 843 },
-          action: {
-            type: "message",
-            label: "直接注文",
-            text: "直接注文",
-          },
+          action: { type: "uri", label: "直接注文", uri: directOrderUrl },
         },
-        // 左下：オンライン注文（ミニアプリ）
+        // 左下：オンライン注文（ミニアプリへ）
         {
           bounds: { x: 0, y: 843, width: 1250, height: 843 },
-          action: {
-            type: "uri",
-            label: "オンライン注文",
-            uri: ONLINE_ORDER_URL,
-          },
+          action: { type: "uri", label: "オンライン注文", uri: MINIAPP_LIFF_URL },
         },
-        // 右下：会員登録（isoya-shop）
+        // 右下：会員ログイン
         {
           bounds: { x: 1250, y: 843, width: 1250, height: 843 },
-          action: {
-            type: "uri",
-            label: "会員登録",
-            uri: MEMBER_URL,
-          },
+          action: { type: "uri", label: "会員ログイン", uri: memberUrl },
         },
       ],
     };
 
-    console.log("リッチメニューを作成中…");
-    const richMenuId = await client.createRichMenu(richMenu);
-    console.log("✔ richMenuId:", richMenuId);
+    console.log("=== createRichMenu start ===");
+    console.log("ONLINE→LIFF:", MINIAPP_LIFF_URL);
 
-    // 2. 画像の読み込み確認
-    if (!fs.existsSync(INPUT_FILE)) {
-      console.error("❌ ERROR: 画像が見つかりません:", INPUT_FILE);
-      console.error("public フォルダ内に richmenu_2x2_2500x1686.png を置いてください");
+    // 1) リッチメニュー作成
+    const richMenuId = await client.createRichMenu(richMenu);
+    console.log("✅ richMenuId:", richMenuId);
+
+    // 2) 画像アップロード（publicから読む）
+    const imageFile = (RICHMENU_IMAGE || "richmenu_2x2_2500x1686.png").trim();
+    const imagePath = path.join(__dirname, "public", imageFile);
+
+    if (!fs.existsSync(imagePath)) {
+      console.error("❌ 画像ファイルが見つかりません:", imagePath);
       process.exit(1);
     }
 
-    console.log("画像を処理中:", INPUT_FILE);
+    const stat = fs.statSync(imagePath);
+    const kb = stat.size / 1024;
+    console.log("IMAGE FILE:", imageFile);
+    console.log("IMAGE SIZE:", kb.toFixed(1), "KB");
+    if (stat.size > 1024 * 1024) {
+      console.error("❌ 画像が1MB超えです。JPEG圧縮(q60など)して再実行してください。");
+      process.exit(1);
+    }
 
-    // 413対策：JPEG化 + quality指定で容量を落とす
-    const buf = await sharp(INPUT_FILE)
-      .resize(2500, 1686)
-      .jpeg({ quality: 80 }) // 必要なら 70 や 60 に下げる
-      .toBuffer();
+    const imageBuffer = fs.readFileSync(imagePath);
+    const ext = path.extname(imageFile).toLowerCase();
+    const contentType =
+      ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" :
+      ext === ".png" ? "image/png" :
+      "image/png";
 
-    console.log("変換後のバイト数:", buf.length);
+    await client.setRichMenuImage(richMenuId, imageBuffer, contentType);
+    console.log("✅ setRichMenuImage OK");
 
-    const stream = Readable.from(buf);
-
-    await client.setRichMenuImage(richMenuId, stream, "image/jpeg");
-    console.log("✔ 画像アップロード完了");
-
-    // 3. デフォルトリッチメニューに設定
+    // 3) デフォルト設定
     await client.setDefaultRichMenu(richMenuId);
-    console.log("🎉 完了！リッチメニューが適用されました！");
-  } catch (err) {
-    console.error("❌ エラー:", err.response?.data || err.message || err);
-  }
-}
+    console.log("✅ setDefaultRichMenu OK");
 
-main();
+    console.log("🎉 完了！オンライン注文→ミニアプリが開きます。");
+
+  } catch (e) {
+    console.error("❌ Error:", e?.message);
+    console.error("STATUS:", e.statusCode || e.response?.status);
+    console.error("DATA:", e.response?.data);
+    process.exit(1);
+  }
+})();

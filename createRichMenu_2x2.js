@@ -25,7 +25,7 @@ const LIFF_URL =
   (process.env.LIFF_URL || "").trim() || "https://liff.line.me/xxxxxxxx";
 
 // オンライン注文 → ミニアプリ（配送付き）のトップページ
-const ONLINE_ORDER_URL =　"https://liff.line.me/2008406620-G5j1gjzM"
+const ONLINE_ORDER_URL =　"https://liff.line.me/2008406620-G5j1gjzM",
 LINE_CHANNEL_SECRET=あなたのチャネルシークレット
 
 # ★オンライン注文で開きたい「ミニアプリ用」LIFF ID

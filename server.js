@@ -816,7 +816,7 @@ async function payWithEpsilon(req, res) {
   }
 }
 
-    });
+    
 
     console.log("[pay-epsilon] request to Epsilon:", orderUrl, params.toString());
 

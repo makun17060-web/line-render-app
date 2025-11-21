@@ -15,6 +15,15 @@ const express = require("express");
 const line = require("@line/bot-sdk");
 const axios = require("axios");
 const multer = require("multer");
+// ====== 決済切替スイッチ（Stripe / Epsilon） ======
+const PAYMENT_PROVIDER = (process.env.PAYMENT_PROVIDER || "epsilon").trim(); // "stripe" or "epsilon"
+
+// Stripe 初期化（STRIPE_SECRET_KEY がある時だけ）
+let stripe = null;
+if (process.env.STRIPE_SECRET_KEY) {
+  const Stripe = require("stripe");
+  stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+}
 
 const app = express();
 
@@ -655,7 +664,62 @@ app.get("/api/liff/config", (_req, res) => res.json({ liffId: LIFF_ID }));
 // フロント（confirm.html）から JSON で受け取り、イプシロンとサーバー間通信し、
 // result="1" の場合は redirect URL を返す。
 
-app.post("/api/pay-epsilon", async (req, res) => {
+// ====== 決済：/api/pay（スイッチ本体） ======
+app.post("/api/pay", async (req, res) => {
+  try {
+    if (PAYMENT_PROVIDER === "stripe") {
+      return await payWithStripe(req, res);
+    }
+    // デフォルト epsilon
+    return await payWithEpsilon(req, res);
+  } catch (e) {
+    console.error("[api/pay] switch error:", e?.response?.data || e);
+    return res.status(500).json({ ok:false, error:"pay_switch_error" });
+  }
+});
+
+// （互換）以前のURLも残すならこれ
+app.post("/api/pay-epsilon", (req, res) => payWithEpsilon(req, res));
+
+
+// ====== Stripe決済（Checkout） ======
+async function payWithStripe(req, res) {
+  if (!stripe) {
+    return res.status(500).json({ ok:false, error:"stripe_not_configured" });
+  }
+
+  const { items, total, lineUserId, lineUserName } = req.body || {};
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ ok:false, error:"no_items" });
+  }
+
+  // Stripeは line_items で合計を作るので total は参考値でもOK
+  const session = await stripe.checkout.sessions.create({
+    mode: "payment",
+    payment_method_types: ["card"],
+    line_items: items.map(i => ({
+      quantity: Number(i.qty || 0),
+      price_data: {
+        currency: "jpy",
+        unit_amount: Number(i.price), // 円
+        product_data: { name: i.name },
+      }
+    })),
+    success_url: "https://line-render-app-1.onrender.com/public/confirm-success.html",
+    cancel_url:  "https://line-render-app-1.onrender.com/public/confirm-fail.html",
+    metadata: {
+      lineUserId: lineUserId || "",
+      lineUserName: lineUserName || "",
+      total: String(total || "")
+    }
+  });
+
+  return res.json({ ok:true, redirectUrl: session.url });
+}
+
+
+// ====== イプシロン決済（あなたの既存ロジックをそのまま関数化） ======
+async function payWithEpsilon(req, res) {
   try {
     const contractCode = (process.env.EPSILON_CONTRACT_CODE || "").trim();
     const stCode       = (process.env.EPSILON_ST_CODE || "10000-0000-00000").trim();
@@ -681,27 +745,15 @@ app.post("/api/pay-epsilon", async (req, res) => {
     const first = items[0] || {};
     const itemCode = String(first.id || "ISOYA-ONLINE");
     let itemName = String(first.name || "商品");
-    if (items.length > 1) {
-      itemName += " 他";
-    }
-    // イプシロン側の制限を考慮して少し短く
+    if (items.length > 1) itemName += " 他";
     itemName = itemName.slice(0, 50);
 
-        // ===== オーダー番号生成（数字のみ・32桁以内） =====
-    let orderNumber = String(Date.now());   // 例: "1763650123456"
-
-    // 念のため、数字以外が入っていたら全部削除
-    orderNumber = orderNumber.replace(/[^0-9]/g, "");
-
-    // 長さ制限（イプシロン仕様は最大32文字）
-    orderNumber = orderNumber.slice(0, 32);
+    let orderNumber = String(Date.now()).replace(/[^0-9]/g, "").slice(0, 32);
 
     const userId   = (lineUserId || "guest").slice(0, 32);
     const userName = (lineUserName || "LINEユーザー").slice(0, 50);
     const userMail = defaultMail || "no-reply@example.com";
 
-
-    // 成功/失敗URL（env 未設定なら server.js から自動生成）
     const proto = (req.headers["x-forwarded-proto"] || req.protocol || "https");
     const host  = req.headers.host;
     const base  = `${proto}://${host}`;
@@ -718,15 +770,52 @@ app.post("/api/pay-epsilon", async (req, res) => {
       item_name:      itemName,
       order_number:   orderNumber,
       st_code:        stCode,
-      mission_code:   "1",                       // 都度課金
-      item_price:     String(totalPrice),        // 合計金額
-      process_code:   "1",                       // 初回・都度
+      mission_code:   "1",
+      item_price:     String(totalPrice),
+      process_code:   "1",
       memo1:          lineUserId || "",
       memo2:          "",
       success_url:    successUrl,
       failure_url:    failureUrl,
       xml:            "1",
       character_code: "UTF8"
+    });
+
+    console.log("[pay-epsilon] request to Epsilon:", orderUrl, params.toString());
+
+    const epsilonRes = await axios.post(orderUrl, params.toString(), {
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      timeout: 15000
+    });
+
+    const body = String(epsilonRes.data || "");
+    console.log("[pay-epsilon] response from Epsilon:", body);
+
+    const getAttr = (name) => {
+      const re = new RegExp(name + '="([^"]*)"', "i");
+      const m = body.match(re);
+      return m ? decodeURIComponent(m[1]) : "";
+    };
+
+    const result   = getAttr("result");
+    const redirect = getAttr("redirect");
+    const errCode  = getAttr("err_code");
+    const errDet   = getAttr("err_detail");
+
+    if (result === "1" && redirect) {
+      return res.json({ ok: true, redirectUrl: redirect });
+    }
+
+    const msg = `Epsilon error result=${result} code=${errCode} detail=${errDet}`;
+    console.error("[pay-epsilon] error:", msg);
+    return res.status(400).json({ ok: false, error: msg });
+
+  } catch (e) {
+    console.error("[pay-epsilon] exception:", e?.response?.data || e);
+    return res.status(500).json({ ok: false, error: "server_error" });
+  }
+}
+
     });
 
     console.log("[pay-epsilon] request to Epsilon:", orderUrl, params.toString());

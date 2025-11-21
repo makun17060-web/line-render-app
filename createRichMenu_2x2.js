@@ -1,7 +1,7 @@
 // createRichMenu_2x2.js — 磯屋 2段2列リッチメニュー（2500x1686）
 // 左上=アンケート（いまは「アンケート」というメッセージ送信）
 // 右上=直接注文（メッセージ）
-// 左下=オンライン注文（ミニアプリ main.html）
+// 左下=オンライン注文（ミニアプリ miniapp-delivery.html）
 // 右下=会員登録（https://isoya-shop.com）
 
 "use strict";
@@ -24,9 +24,9 @@ if (!CHANNEL_ACCESS_TOKEN) {
 const LIFF_URL =
   (process.env.LIFF_URL || "").trim() || "https://liff.line.me/xxxxxxxx";
 
-// オンライン注文 → ミニアプリのトップページ
+// オンライン注文 → ミニアプリ（配送付き）のトップページ
 const ONLINE_ORDER_URL =
-  "https://liff.line.me/2008406620-G5j1gjzM";
+  "https://line-render-app-1.onrender.com/public/miniapp-delivery.html";
 
 // 会員登録 → isoya-shop.com
 const MEMBER_URL = "https://isoya-shop.com";
@@ -73,7 +73,7 @@ async function main() {
           action: {
             type: "uri",
             label: "オンライン注文",
-            uri: https://line-render-app-1.onrender.com/public/miniapp-delivery.html,
+            uri: ONLINE_ORDER_URL,
           },
         },
         // 右下：会員登録（isoya-shop）

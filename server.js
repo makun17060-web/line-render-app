@@ -719,60 +719,6 @@ async function payWithStripe(req, res) {
 
 
 // ====== イプシロン決済（あなたの既存ロジックをそのまま関数化） ======
-
-
-    const { items, total, lineUserId, lineUserName } = req.body || {};
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ ok: false, error: "no_items" });
-    }
-
-    const totalPrice = Math.max(0, Number(total || 0));
-    if (!Number.isFinite(totalPrice) || totalPrice <= 0) {
-      return res.status(400).json({ ok: false, error: "invalid_total" });
-    }
-
-    const first = items[0] || {};
-    const itemCode = String(first.id || "ISOYA-ONLINE");
-    let itemName = String(first.name || "商品");
-    if (items.length > 1) itemName += " 他";
-    itemName = itemName.slice(0, 50);
-
-    let orderNumber = String(Date.now()).replace(/[^0-9]/g, "").slice(0, 32);
-
-    const userId   = (lineUserId || "guest").slice(0, 32);
-    const userName = (lineUserName || "LINEユーザー").slice(0, 50);
-    const userMail = defaultMail || "no-reply@example.com";
-
-    const proto = (req.headers["x-forwarded-proto"] || req.protocol || "https");
-    const host  = req.headers.host;
-    const base  = `${proto}://${host}`;
-    const successUrl = successUrlEnv || `${base}/public/confirm-success.html`;
-    const failureUrl = failureUrlEnv || `${base}/public/confirm-fail.html`;
-
-    const params = new URLSearchParams({
-      version:        "2",
-      contract_code:  contractCode,
-      user_id:        userId,
-      user_name:      userName,
-      user_mail_add:  userMail,
-      item_code:      itemCode,
-      item_name:      itemName,
-      order_number:   orderNumber,
-      st_code:        stCode,
-      mission_code:   "1",
-      item_price:     String(totalPrice),
-      process_code:   "1",
-      memo1:          lineUserId || "",
-      memo2:          "",
-      success_url:    successUrl,
-      failure_url:    failureUrl,
-      xml:            "1",
-      character_code: "UTF8"
-    });
-
-    console.log("[pay-epsilon] request to Epsilon:", orderUrl, params.toString());
-
-    // ====== イプシロン決済（既存ロジックを関数化） ======
 async function payWithEpsilon(req, res) {
   try {
     const contractCode = (process.env.EPSILON_CONTRACT_CODE || "").trim();
@@ -870,36 +816,7 @@ async function payWithEpsilon(req, res) {
   }
 }
 
-
-    const body = String(epsilonRes.data || "");
-    console.log("[pay-epsilon] response from Epsilon:", body);
-
-    const getAttr = (name) => {
-      const re = new RegExp(name + '="([^"]*)"', "i");
-      const m = body.match(re);
-      return m ? decodeURIComponent(m[1]) : "";
-    };
-
-    const result   = getAttr("result");
-    const redirect = getAttr("redirect");
-    const errCode  = getAttr("err_code");
-    const errDet   = getAttr("err_detail");
-
-    if (result === "1" && redirect) {
-      return res.json({ ok: true, redirectUrl: redirect });
-    }
-
-    const msg = `Epsilon error result=${result} code=${errCode} detail=${errDet}`;
-    console.error("[pay-epsilon] error:", msg);
-    return res.status(400).json({ ok: false, error: msg });
-
-  } catch (e) {
-    console.error("[pay-epsilon] exception:", e?.response?.data || e);
-    return res.status(500).json({ ok: false, error: "server_error" });
-  }
-}
-
-    
+    });
 
     console.log("[pay-epsilon] request to Epsilon:", orderUrl, params.toString());
 
@@ -939,16 +856,16 @@ async function payWithEpsilon(req, res) {
 
 // ★★★ ここから：イプシロン コンビニ・ペイジー入金通知 API ★★★
 app.post("/api/epsilon/notify", async (req, res) => {
-  // イプシロンへ即OK返す（重要）
-  res.send("OK");
-
   try {
     const data = req.body || {};
 
-    // ログ保存
+    // イプシロン側に「OK」をすぐ返す（重要）
+    res.send("OK");
+
+    // ログに保存
     try {
-      const lineLog = `[${new Date().toISOString()}] ${JSON.stringify(data)}\n`;
-      fs.appendFileSync(EPSILON_NOTIFY_LOG, lineLog, "utf8");
+      const line = `[${new Date().toISOString()}] ${JSON.stringify(data)}\n`;
+      fs.appendFileSync(EPSILON_NOTIFY_LOG, line, "utf8");
     } catch (e) {
       console.error("EPSILON_NOTIFY_LOG 書き込みエラー:", e);
     }
@@ -956,6 +873,7 @@ app.post("/api/epsilon/notify", async (req, res) => {
     const orderNumber = data.order_number || data.order_no || "";
     const payMethod   = data.pay_method || "";
     const state       = data.state || data.pay_status || "";
+    // ★ memo1 に LINE の userId を送っている前提
     const userId      = data.memo1 || data.user_id || "";
 
     console.log("=== Epsilon 入金通知受信 ===");
@@ -964,6 +882,7 @@ app.post("/api/epsilon/notify", async (req, res) => {
     console.log("state      :", state);
     console.log("userId     :", userId);
 
+    // ※ state の値はイプシロン仕様に合わせて必要に応じて調整してください
     const isPaid = (state === "2" || state === "paid" || state === "1");
 
     if (isPaid && userId) {

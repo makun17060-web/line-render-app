@@ -18,6 +18,7 @@
       padding: 14px 16px;
       text-align: center;
       font-size: 18px;
+      line-height: 1.4;
     }
     .container {
       padding: 16px;
@@ -34,11 +35,28 @@
       border-radius: 6px;
       margin-bottom: 12px;
       box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      line-height: 1.6;
     }
-    .total {
-      margin-top: 12px;
-      font-size: 16px;
+    .summary {
+      background: #fff;
+      padding: 12px;
+      border-radius: 6px;
+      margin-top: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      line-height: 1.8;
+      font-size: 15px;
+    }
+    .summary .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .summary .total {
       font-weight: bold;
+      font-size: 16px;
+      border-top: 1px dashed #ddd;
+      padding-top: 8px;
+      margin-top: 6px;
     }
     .btn-main {
       display: block;
@@ -51,9 +69,11 @@
       font-weight: bold;
       background: #b22222;
       color: #fff;
+      cursor: pointer;
     }
     .btn-main:disabled {
       opacity: 0.6;
+      cursor: default;
     }
     .btn-back {
       display: block;
@@ -88,7 +108,7 @@
 
   <div id="orderList"></div>
 
-  <div id="totalPrice" class="total"></div>
+  <div id="summaryBox" class="summary" style="display:none;"></div>
 
   <!-- ▼ クレジット決済へ進むボタン -->
   <button id="payButton" class="btn-main" disabled>クレジットカードで支払う</button>
@@ -105,7 +125,6 @@
 
   async function initLiff() {
     try {
-      // サーバー側の /api/liff/config から本物の LIFF ID を取得
       const res = await fetch("/api/liff/config");
       const cfg = await res.json();
       if (!cfg.liffId) {
@@ -118,14 +137,13 @@
       console.log("LIFF init error", e);
     }
   }
-
   initLiff();
 
   // ====== 注文内容の表示 ======
-  const orderListEl = document.getElementById("orderList");
-  const totalPriceEl = document.getElementById("totalPrice");
-  const payButton = document.getElementById("payButton");
-  const msgArea = document.getElementById("msgArea");
+  const orderListEl  = document.getElementById("orderList");
+  const summaryBoxEl = document.getElementById("summaryBox");
+  const payButton    = document.getElementById("payButton");
+  const msgArea      = document.getElementById("msgArea");
 
   let order = {};
   try {
@@ -134,25 +152,51 @@
     order = {};
   }
 
+  function yen(n){
+    return (Number(n||0)).toLocaleString("ja-JP") + "円";
+  }
+
   if (!order || !Array.isArray(order.items) || order.items.length === 0) {
     orderListEl.innerHTML = "<p>注文情報が見つかりませんでした。もう一度商品を選択してください。</p>";
     payButton.disabled = true;
   } else {
-    let total = 0;
+    let subtotal = 0;
+    orderListEl.innerHTML = "";
+
     order.items.forEach(item => {
       const div = document.createElement("div");
       div.className = "item";
-      const sub = item.price * item.qty;
+      const sub = Number(item.price || 0) * Number(item.qty || 0);
       div.innerHTML = `
-        <strong>${item.name}</strong><br>
-        単価：${item.price}円 × ${item.qty}袋<br>
-        小計：${sub}円
+        <strong>${item.name || ""}</strong><br>
+        単価：${yen(item.price)} × ${item.qty}袋<br>
+        小計：${yen(sub)}
       `;
       orderListEl.appendChild(div);
-      total += sub;
+      subtotal += sub;
     });
+
+    // 送料（いろんな名前で来る可能性があるので吸収）
+    const shippingFee =
+      Number(order.shippingFee ?? order.shipping ?? order.regionFee ?? 0);
+
+    // 代引き手数料があれば
+    const codFee = Number(order.codFee ?? 0);
+
+    const total = subtotal + shippingFee + codFee;
+
+    // order に反映（サーバーへ送る）
+    order.subtotal = subtotal;
     order.total = total;
-    totalPriceEl.textContent = "合計金額：" + total.toLocaleString("ja-JP") + "円";
+
+    summaryBoxEl.style.display = "block";
+    summaryBoxEl.innerHTML = `
+      <div class="row"><span>商品小計</span><strong>${yen(subtotal)}</strong></div>
+      <div class="row"><span>送料</span><strong>${yen(shippingFee)}</strong></div>
+      <div class="row"><span>代引き手数料</span><strong>${yen(codFee)}</strong></div>
+      <div class="row total"><span>合計金額</span><strong>${yen(total)}</strong></div>
+    `;
+
     payButton.disabled = false;
   }
 
@@ -160,7 +204,7 @@
     msgArea.textContent = text || "";
   }
 
-  // ====== 支払いボタン ======
+  // ====== 支払いボタン（修正版） ======
   payButton.addEventListener("click", async () => {
     if (!order || !Array.isArray(order.items) || order.items.length === 0) {
       alert("注文情報がありません。もう一度商品を選択してください。");
@@ -176,20 +220,31 @@
 
       if (liffReady) {
         try {
-          const profile = await liff.getProfile();
-          lineUserId = profile.userId || "";
-          lineUserName = profile.displayName || "";
+          // ★LINE内なら getContext() で userId を安定取得
+          const ctx = liff.getContext && liff.getContext();
+          lineUserId = ctx?.userId || "";
+
+          // ★表示名は profile から（失敗OK）
+          try {
+            const profile = await liff.getProfile();
+            lineUserName = profile.displayName || "";
+            if (!lineUserId) lineUserId = profile.userId || "";
+          } catch (e) {
+            console.log("getProfile error", e);
+          }
         } catch (e) {
-          console.log("getProfile error", e);
+          console.log("LIFF context/profile error", e);
         }
       }
+
+      console.log("lineUserId to epsilon:", lineUserId);
 
       const res = await fetch("/api/pay-epsilon", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           items: order.items,
-          total: order.total || 0,
+          total: order.total || 0,   // ★送料込み合計を送る
           lineUserId,
           lineUserName
         })
@@ -205,7 +260,6 @@
         return;
       }
 
-      // イプシロンから返ってきた決済画面URLへ遷移
       const url = data.redirectUrl;
       if (!url) {
         alert("決済URLが取得できませんでした。");
@@ -216,6 +270,7 @@
 
       setMessage("イプシロンの決済画面に移動します…");
       location.href = url;
+
     } catch (e) {
       console.error("payButton click error:", e);
       alert("システムエラーが発生しました。時間をおいて再度お試しください。");

@@ -21,24 +21,24 @@ const {
 } = process.env;
 
 if (!LINE_CHANNEL_ACCESS_TOKEN || !LINE_CHANNEL_SECRET) {
-  console.error("❌ LINE_CHANNEL_ACCESS_TOKEN / LINE_CHANNEL_SECRET が .env にありません");
+  console.error("❌ LINE_CHANNEL_ACCESS_TOKEN / LINE_CHANNEL_SECRET がありません");
   process.exit(1);
 }
 if (!LIFF_ID_MINIAPP) {
-  console.error("❌ LIFF_ID_MINIAPP（ミニアプリ用 LIFF ID）が .env にありません");
+  console.error("❌ LIFF_ID_MINIAPP（ミニアプリ用LIFF ID）がありません");
   process.exit(1);
 }
 
 const client = new line.Client({
   channelAccessToken: LINE_CHANNEL_ACCESS_TOKEN,
- 
+  channelSecret: LINE_CHANNEL_SECRET,
 });
 
 // オンライン注文 → ミニアプリLIFF URL
 const MINIAPP_LIFF_URL = `https://liff.line.me/${LIFF_ID_MINIAPP}?page=delivery`;
 
 // URL（未設定なら仮）
-
+const surveyUrl = (SURVEY_URL || "https://example.com/survey").trim();
 const directOrderUrl = (DIRECT_ORDER_URL || "https://example.com/order").trim();
 const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
 
@@ -94,7 +94,7 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
     console.log("IMAGE FILE:", imageFile);
     console.log("IMAGE SIZE:", kb.toFixed(1), "KB");
     if (stat.size > 1024 * 1024) {
-      console.error("❌ 画像が1MB超えです。JPEG圧縮(q60など)して再実行してください。");
+      console.error("❌ 画像が1MB超えです。JPEG圧縮(q60など)にして下さい。");
       process.exit(1);
     }
 

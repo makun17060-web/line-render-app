@@ -72,7 +72,7 @@ async function main() {
           action: {
             type: "uri",
             label: "オンライン注文",
-            uri: https://liff.line.me/${process.env.2008406620-G5j1gjzM}?page=delivery,
+            uri: 'https://liff.line.me/${process.env.2008406620-G5j1gjzM}?page=delivery',
           },
         },
         // 右下：会員登録（isoya-shop）

@@ -1747,6 +1747,30 @@ async function handleEvent(ev) {
     if (ev.replyToken) { try { await client.replyMessage(ev.replyToken, { type: "text", text: "エラーが発生しました。もう一度お試しください。" }); } catch {} }
   }
 }
+// ====== Outbound IP チェック（イプシロン908対応用） ======
+app.get("/my-ip", async (_req, res) => {
+  try {
+    // Render サーバー自身から api.ipify.org へアクセス
+    const r = await axios.get("https://api.ipify.org?format=json", {
+      timeout: 5000,
+    });
+
+    // ipify のレスポンスは { ip: "xxx.xxx.xxx.xxx" } の形
+    const ip = (r.data && r.data.ip) ? r.data.ip : null;
+
+    res.json({
+      ok: true,
+      outbound_ip: ip,
+      note: "この outbound_ip をイプシロンの「注文情報発信元IP」に登録してください",
+    });
+  } catch (e) {
+    console.error("GET /my-ip error:", e?.message || e);
+    res.status(500).json({
+      ok: false,
+      error: String(e?.message || e),
+    });
+  }
+});
 
 // ====== Health checks ======
 app.get("/health", (_req, res) => res.status(200).type("text/plain").send("OK"));

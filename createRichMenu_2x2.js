@@ -25,7 +25,21 @@ const LIFF_URL =
   (process.env.LIFF_URL || "").trim() || "https://liff.line.me/xxxxxxxx";
 
 // オンライン注文 → ミニアプリ（配送付き）のトップページ
-const ONLINE_ORDER_URL =　"https://line-render-app-1.onrender.com/public/miniapp-delivery.html";
+const ONLINE_ORDER_URL =　"https://liff.line.me/2008406620-G5j1gjzM"
+LINE_CHANNEL_SECRET=あなたのチャネルシークレット
+
+# ★オンライン注文で開きたい「ミニアプリ用」LIFF ID
+LIFF_ID_MINIAPP=2008406620-G5j1gjzM
+
+# 各ボタンの遷移先
+SURVEY_URL=https://example.com/survey
+DIRECT_ORDER_URL=https://line-render-app-1.onrender.com/public/products.html
+MEMBER_URL=https://isoya-shop.com
+
+# 画像ファイル名（publicフォルダ内）
+RICHMENU_IMAGE=richmenu_2x2_2500x1686_q60.jpg
+# まだPNGなら richmenu_2x2_2500x1686.png でもOK（ただし1MB以下必須）
+";
 
 // 会員登録 → isoya-shop.com
 const MEMBER_URL = "https://isoya-shop.com";

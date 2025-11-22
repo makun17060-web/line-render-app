@@ -763,6 +763,32 @@ app.post("/api/liff/address", async (req, res) => {
     res.status(500).json({ ok: false, error: "server_error" });
   }
 });
+// ★ 住所取得 API（confirm.js / pay.js 用）
+app.get("/api/liff/address/me", (req, res) => {
+  try {
+    const userId =
+      String(req.query.userId || req.headers["x-line-userid"] || "").trim();
+
+    const book = readAddresses();
+
+    // userId が指定されていて、その住所があれば返す
+    if (userId && book[userId]) {
+      return res.json({ ok: true, address: book[userId] });
+    }
+
+    // fallback：最後に保存された住所（1ユーザー運用向け）
+    const last =
+      Object.values(book).sort((a, b) =>
+        new Date(b.ts || 0) - new Date(a.ts || 0)
+      )[0];
+
+    return res.json({ ok: true, address: last || null });
+
+  } catch (e) {
+    res.json({ ok: false, address: null });
+  }
+});
+
 app.get("/api/liff/config", (_req, res) => res.json({ liffId:"2008406620-G5j1gjzM" }));
 
 // ====== 決済：/api/pay（イプシロン専用） ======

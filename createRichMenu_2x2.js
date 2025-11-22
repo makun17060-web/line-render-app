@@ -71,7 +71,7 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
         // 右上：直接注文
         {
           bounds: { x: 1250, y: 0, width: 1250, height: 843 },
-          action: { type: "message", label: "直接注文", uri: directOrderUrl },
+          action: { type: "message", label: "直接注文" },
         },
         // 左下：オンライン注文（ミニアプリで products.html を開く）
         {

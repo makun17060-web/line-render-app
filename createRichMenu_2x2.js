@@ -1,7 +1,6 @@
-cat > createRichMenu_2x2.js <<'JS'
 // createRichMenu_2x2.js
 // 2段2列リッチメニュー(2500x1686)
-// 左上=アンケート / 右上=直接注文 / 左下=オンライン注文(ミニアプリLIFFへ) / 右下=会員ログイン
+// 左上=アンケート / 右上=直接注文 / 左下=オンライン注文(ミニアプリLIFF→products.html) / 右下=会員ログイン
 
 "use strict";
 
@@ -18,6 +17,7 @@ const {
   DIRECT_ORDER_URL,
   MEMBER_URL,
   RICHMENU_IMAGE,
+  PUBLIC_BASE_URL, // ★追加: RenderのベースURL（任意）
 } = process.env;
 
 if (!LINE_CHANNEL_ACCESS_TOKEN || !LINE_CHANNEL_SECRET) {
@@ -34,10 +34,23 @@ const client = new line.Client({
   channelSecret: LINE_CHANNEL_SECRET,
 });
 
-// オンライン注文 → ミニアプリLIFF URL
-const MINIAPP_LIFF_URL = `https://liff.line.me/${LIFF_ID_MINIAPP}?page=delivery`;
+// ============================
+// ★オンライン注文の遷移先
+// ============================
 
-// URL（未設定なら仮）
+// Renderの公開URL（envなければあなたのURLを既定値に）
+const baseUrl = (PUBLIC_BASE_URL || "https://line-render-app-1.onrender.com").replace(/\/+$/, "");
+
+// products.html（①商品選択）
+const PRODUCTS_URL = `${baseUrl}/public/products.html`;
+
+// LIFFでproducts.htmlを開く（redirect方式）
+const MINIAPP_LIFF_URL =
+  `https://liff.line.me/${LIFF_ID_MINIAPP}?redirect=${encodeURIComponent("/public/products.html")}`;
+
+// ============================
+// 他URL（未設定なら仮）
+// ============================
 const surveyUrl = (SURVEY_URL || "https://example.com/survey").trim();
 const directOrderUrl = (DIRECT_ORDER_URL || "https://example.com/order").trim();
 const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
@@ -60,7 +73,7 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
           bounds: { x: 1250, y: 0, width: 1250, height: 843 },
           action: { type: "uri", label: "直接注文", uri: directOrderUrl },
         },
-        // 左下：オンライン注文（ミニアプリへ）
+        // 左下：オンライン注文（ミニアプリで products.html を開く）
         {
           bounds: { x: 0, y: 843, width: 1250, height: 843 },
           action: { type: "uri", label: "オンライン注文", uri: MINIAPP_LIFF_URL },
@@ -74,7 +87,9 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
     };
 
     console.log("=== createRichMenu start ===");
+    console.log("BASE URL:", baseUrl);
     console.log("ONLINE→LIFF:", MINIAPP_LIFF_URL);
+    console.log("ONLINE direct products:", PRODUCTS_URL);
 
     // 1) リッチメニュー作成
     const richMenuId = await client.createRichMenu(richMenu);
@@ -112,7 +127,7 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
     await client.setDefaultRichMenu(richMenuId);
     console.log("✅ setDefaultRichMenu OK");
 
-    console.log("🎉 完了！オンライン注文→ミニアプリが開きます。");
+    console.log("🎉 完了！オンライン注文→LIFFで products.html が開きます。");
 
   } catch (e) {
     console.error("❌ Error:", e?.message);
@@ -121,4 +136,3 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
     process.exit(1);
   }
 })();
-JS

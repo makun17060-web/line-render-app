@@ -2,7 +2,7 @@
 // 2段2列リッチメニュー(2500x1686)
 // 左上=アンケート(URI)
 // 右上=直接注文(テキスト送信)
-// 左下=オンライン注文(ミニアプリLIFF→products.html)
+// 左下=オンライン注文(LIFFミニアプリ経由で products.html)
 // 右下=会員ログイン(URI)
 
 "use strict";
@@ -22,6 +22,7 @@ const {
   PUBLIC_BASE_URL,
 } = process.env;
 
+// ===== 必須チェック =====
 if (!LINE_CHANNEL_ACCESS_TOKEN || !LINE_CHANNEL_SECRET) {
   console.error("❌ LINE_CHANNEL_ACCESS_TOKEN / LINE_CHANNEL_SECRET がありません");
   process.exit(1);
@@ -45,13 +46,17 @@ const sanitizeBase = (u) =>
 // Renderの公開URL（envなければ既定値）
 const baseUrl = sanitizeBase(PUBLIC_BASE_URL || "https://line-render-app-1.onrender.com");
 
-// products.html（①商品選択）
+// products.html（①商品選択）の実URL（ログ用）
 const PRODUCTS_URL = `${baseUrl}/public/products.html`;
 
 // ✅ LIFFで products.html を開く（redirect + キャッシュ無視 v=）
-const CACHE_BUSTER = "20251122"; // ←数字を変えると強制更新
+const CACHE_BUSTER = "20251123_1"; 
+// ↑ 反映が怪しい時は数字を変えて再実行してください
+
 const MINIAPP_LIFF_URL =
-  `https://liff.line.me/${LIFF_ID_MINIAPP}?redirect=${encodeURIComponent(`/public/products.html?v=${CACHE_BUSTER}`)}`;
+  `https://liff.line.me/${LIFF_ID_MINIAPP}?redirect=${encodeURIComponent(
+    `/public/products.html?v=${CACHE_BUSTER}`
+  )}`;
 
 // 他URL（未設定なら仮）
 const surveyUrl = (SURVEY_URL || "https://example.com/survey").trim();
@@ -100,7 +105,7 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
     const richMenuId = await client.createRichMenu(richMenu);
     console.log("✅ richMenuId:", richMenuId);
 
-    // 2) 画像アップロード
+    // 2) 画像アップロード（publicから読む）
     const imageFile = (RICHMENU_IMAGE || "richmenu_2x2_2500x1686.jpg").trim();
     const imagePath = path.join(__dirname, "public", imageFile);
 

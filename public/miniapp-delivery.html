@@ -8,195 +8,79 @@
   <style>
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
-      margin: 0;
-      padding: 0;
-      background: #fafafa;
+      margin: 0; padding: 0; background: #fafafa;
     }
     header {
-      background: #b22222;
-      color: #fff;
-      padding: 14px 16px;
-      font-size: 18px;
-      text-align: center;
+      background: #b22222; color: #fff; padding: 14px 16px;
+      font-size: 18px; text-align: center;
     }
-    .container {
-      max-width: 720px;
-      margin: 0 auto;
-      padding: 12px 16px 24px;
-    }
-    h1 {
-      font-size: 18px;
-      margin: 8px 0 12px;
-    }
+    .container { max-width: 720px; margin: 0 auto; padding: 12px 16px 24px; }
+    h1 { font-size: 18px; margin: 8px 0 12px; }
     h2 {
-      font-size: 16px;
-      margin: 18px 0 8px;
-      border-left: 4px solid #b22222;
+      font-size: 16px; margin: 18px 0 8px; border-left: 4px solid #b22222;
       padding-left: 6px;
     }
-    .notice {
-      font-size: 12px;
-      color: #666;
-      margin-bottom: 8px;
-    }
-    .product-list {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
+    .notice { font-size: 12px; color: #666; margin-bottom: 8px; }
+    .product-list { display: flex; flex-direction: column; gap: 10px; }
     .product {
-      background: #fff;
-      border-radius: 6px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-      padding: 10px;
-      display: flex;
-      gap: 10px;
-      align-items: flex-start;
+      background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      padding: 10px; display: flex; gap: 10px; align-items: flex-start;
     }
     .product img {
-      width: 72px;
-      height: 72px;
-      object-fit: cover;
-      border-radius: 4px;
-      flex-shrink: 0;
-      background: #eee;
+      width: 72px; height: 72px; object-fit: cover; border-radius: 4px;
+      flex-shrink: 0; background: #eee;
     }
-    .product-body {
-      flex: 1;
-      min-width: 0;
-    }
-    .product-title {
-      font-weight: bold;
-      font-size: 14px;
-      margin-bottom: 4px;
-    }
-    .product-desc {
-      font-size: 12px;
-      color: #666;
-      margin-bottom: 4px;
-    }
-    .product-meta {
-      font-size: 12px;
-      color: #444;
-      margin-bottom: 4px;
-    }
-    .qty-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      margin-top: 4px;
-    }
+    .product-body { flex: 1; min-width: 0; }
+    .product-title { font-weight: bold; font-size: 14px; margin-bottom: 4px; }
+    .product-desc { font-size: 12px; color: #666; margin-bottom: 4px; }
+    .product-meta { font-size: 12px; color: #444; margin-bottom: 4px; }
+    .qty-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
     .qty-row button {
-      padding: 4px 8px;
-      border-radius: 4px;
-      border: 1px solid #ccc;
-      background: #fff;
-      font-size: 14px;
+      padding: 4px 8px; border-radius: 4px; border: 1px solid #ccc;
+      background: #fff; font-size: 14px;
     }
-    .qty-row span {
-      min-width: 24px;
-      text-align: center;
-      font-size: 14px;
-    }
+    .qty-row span { min-width: 24px; text-align: center; font-size: 14px; }
+
     .summary-card {
-      background: #fff;
-      border-radius: 6px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-      padding: 10px;
-      font-size: 14px;
-      margin-top: 8px;
+      background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      padding: 10px; font-size: 14px; margin-top: 8px;
     }
-    .summary-row {
-      display: flex;
-      justify-content: space-between;
-      margin: 2px 0;
-    }
+    .summary-row { display: flex; justify-content: space-between; margin: 2px 0; }
     .summary-row.total {
-      font-weight: bold;
-      margin-top: 6px;
-      border-top: 1px solid #eee;
-      padding-top: 4px;
+      font-weight: bold; margin-top: 6px; border-top: 1px solid #eee; padding-top: 4px;
     }
+    .detail-list { margin-top: 8px; font-size: 13px; }
+    .detail-item {
+      display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px dashed #eee;
+    }
+    .detail-item:last-child { border-bottom: none; }
+
     .btn-main {
-      display: block;
-      width: 100%;
-      padding: 12px;
-      margin-top: 16px;
-      border-radius: 6px;
-      border: none;
-      background: #b22222;
-      color: #fff;
-      font-size: 16px;
-      font-weight: bold;
+      display: block; width: 100%; padding: 12px; margin-top: 16px; border-radius: 6px; border: none;
+      background: #b22222; color: #fff; font-size: 16px; font-weight: bold;
     }
     .btn-sub {
-      display: block;
-      width: 100%;
-      padding: 10px;
-      margin-top: 10px;
-      border-radius: 6px;
-      border: 1px solid #b22222;
-      background: #fff;
-      color: #b22222;
-      font-size: 14px;
+      display: block; width: 100%; padding: 10px; margin-top: 10px; border-radius: 6px;
+      border: 1px solid #b22222; background: #fff; color: #b22222; font-size: 14px;
     }
-    .btn-main:disabled,
-    .btn-sub:disabled {
-      opacity: 0.5;
-    }
+    .btn-main:disabled, .btn-sub:disabled { opacity: 0.5; }
+
     .addr-form {
-      background: #fff;
-      border-radius: 6px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-      padding: 10px;
-      font-size: 14px;
-      margin-top: 8px;
+      background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      padding: 10px; font-size: 14px; margin-top: 8px;
     }
-    .form-row {
-      margin-bottom: 8px;
+    .form-row { margin-bottom: 8px; }
+    .form-row label { display: block; font-size: 12px; margin-bottom: 2px; }
+    .form-row input, .form-row select {
+      width: 100%; padding: 6px 8px; box-sizing: border-box; font-size: 14px;
+      border-radius: 4px; border: 1px solid #ccc;
     }
-    .form-row label {
-      display: block;
-      font-size: 12px;
-      margin-bottom: 2px;
-    }
-    .form-row input,
-    .form-row select {
-      width: 100%;
-      padding: 6px 8px;
-      box-sizing: border-box;
-      font-size: 14px;
-      border-radius: 4px;
-      border: 1px solid #ccc;
-    }
-    .small {
-      font-size: 11px;
-      color: #666;
-    }
-    .step-labels {
-      display: flex;
-      justify-content: space-between;
-      font-size: 11px;
-      margin: 6px 0 10px;
-      color: #666;
-    }
-    .step-labels span.active {
-      font-weight: bold;
-      color: #b22222;
-    }
-    .hidden {
-      display: none;
-    }
-    .error {
-      color: #c00;
-      font-size: 12px;
-      margin-top: 4px;
-    }
-    .ok-msg {
-      color: #060;
-      font-size: 12px;
-      margin-top: 4px;
-    }
+    .small { font-size: 11px; color: #666; }
+    .step-labels { display: flex; justify-content: space-between; font-size: 11px; margin: 6px 0 10px; color: #666; }
+    .step-labels span.active { font-weight: bold; color: #b22222; }
+    .hidden { display: none; }
+    .error { color: #c00; font-size: 12px; margin-top: 4px; }
+    .ok-msg { color: #060; font-size: 12px; margin-top: 4px; }
   </style>
 </head>
 <body>
@@ -218,9 +102,7 @@
       <span>LINEユーザー：</span>
       <span id="lineUserName">取得中...</span>
     </div>
-    <div class="small">
-      ※ LINEアプリの中から開いてください。
-    </div>
+    <div class="small">※ LINEアプリの中から開いてください。</div>
   </div>
 
   <!-- ① 商品選択 -->
@@ -229,34 +111,30 @@
     ご希望の商品と数量をお選びください。<br>
     ※久助はテキスト注文専用のため、この画面には表示していません。
   </div>
-  <div id="productList" class="product-list">
-    読み込み中...
-  </div>
+  <div id="productList" class="product-list">読み込み中...</div>
 
+  <!-- ▼ 注文明細（商品＋送料）& 合計：決済ボタンの直前に表示 -->
   <div id="cartSummary" class="summary-card hidden">
     <div class="summary-row">
-      <span>商品合計</span>
-      <span id="itemsTotal">0円</span>
+      <span>商品合計</span><span id="itemsTotal">0円</span>
     </div>
     <div class="summary-row">
-      <span>送料（概算）</span>
-      <span id="shipFee">0円</span>
+      <span>送料</span><span id="shipFee">0円</span>
     </div>
     <div class="summary-row total">
-      <span>お支払予定金額</span>
-      <span id="grandTotal">0円</span>
+      <span>お支払予定金額</span><span id="grandTotal">0円</span>
     </div>
+
+    <div class="detail-list" id="detailList"></div>
+
+    <div class="small" id="shipNote"></div>
   </div>
 
-  <button id="goAddressBtn" class="btn-main" disabled>
-    ② お届け先入力へ進む
-  </button>
+  <button id="goAddressBtn" class="btn-main" disabled>② お届け先入力へ進む</button>
 
   <!-- ② 住所入力 -->
   <h2>② お届け先情報</h2>
-  <div class="notice">
-    宅配をご希望の方は、お届け先住所をご入力ください。
-  </div>
+  <div class="notice">宅配をご希望の方は、お届け先住所をご入力ください。</div>
 
   <div id="addressSection" class="addr-form">
     <div class="form-row">
@@ -300,38 +178,51 @@
       <input type="text" id="addrAddress2" placeholder="任意" />
     </div>
 
-    <button id="saveAddressBtn" class="btn-sub">
-      この住所を登録する（②完了）
-    </button>
-    <div id="addrStatus" class=""></div>
+    <button id="saveAddressBtn" class="btn-sub">この住所を登録する（②完了）</button>
+    <div id="addrStatus"></div>
   </div>
 
   <!-- ③ お支払い -->
   <h2>③ クレジットカードでお支払い</h2>
-  <div class="notice">
-    「クレジットカードで支払う」ボタンを押すと、決済画面に移動します。
-  </div>
+  <div class="notice">「クレジットカードで支払う」ボタンを押すと、イプシロン決済画面に移動します。</div>
 
-  <button id="payButton" class="btn-main" disabled>
-    クレジットカードで支払う
-  </button>
+  <button id="payButton" class="btn-main" disabled>クレジットカードで支払う</button>
   <div id="payStatus" class="error hidden"></div>
 
-  <button id="backToLineBtn" class="btn-sub">
-    LINEトーク画面に戻る
-  </button>
+  <button id="backToLineBtn" class="btn-sub">LINEトーク画面に戻る</button>
 </div>
 
 <script>
-  // ★ここを、このミニアプリ用に作った LIFF ID に差し替える★
-  const LIFF_ID = "2008406620-G5j1gjzM";
+  // ====== 送料テーブル（server.js と合わせる） ======
+  const SHIPPING_BY_REGION = {
+    "北海道": 1100, "東北": 900, "関東": 800, "中部": 800,
+    "近畿": 900, "中国": 1000, "四国": 1000, "九州": 1100, "沖縄": 1400
+  };
+
+  // 都道府県 → 地域
+  const PREF_TO_REGION = {
+    "北海道": "北海道",
+    "青森県":"東北","岩手県":"東北","宮城県":"東北","秋田県":"東北","山形県":"東北","福島県":"東北",
+    "茨城県":"関東","栃木県":"関東","群馬県":"関東","埼玉県":"関東","千葉県":"関東","東京都":"関東","神奈川県":"関東",
+    "新潟県":"中部","富山県":"中部","石川県":"中部","福井県":"中部","山梨県":"中部","長野県":"中部",
+    "岐阜県":"中部","静岡県":"中部","愛知県":"中部","三重県":"中部",
+    "滋賀県":"近畿","京都府":"近畿","大阪府":"近畿","兵庫県":"近畿","奈良県":"近畿","和歌山県":"近畿",
+    "鳥取県":"中国","島根県":"中国","岡山県":"中国","広島県":"中国","山口県":"中国",
+    "徳島県":"四国","香川県":"四国","愛媛県":"四国","高知県":"四国",
+    "福岡県":"九州","佐賀県":"九州","長崎県":"九州","熊本県":"九州","大分県":"九州","宮崎県":"九州","鹿児島県":"九州",
+    "沖縄県":"沖縄"
+  };
 
   const STATE = {
+    liffId: "",
     lineUserId: "",
     lineUserName: "",
     products: [],
-    cart: {}, // { productId: qty }
+    cart: {},       // { productId: qty }
     addressSaved: false,
+    shipFee: 0,
+    shipRegion: "",
+    shipPref: "",
   };
 
   function yen(n) {
@@ -344,15 +235,27 @@
     document.getElementById("stepLabel3").classList.toggle("active", step === 3);
   }
 
+  // ====== LIFF初期化（/api/liff/config があれば使う） ======
   async function initLiff() {
+    let liffId = "";
     try {
-      await liff.init({ liffId: LIFF_ID });
-      if (!liff.isInClient()) {
+      const res = await fetch("/api/liff/config");
+      const cfg = await res.json();
+      liffId = cfg.liffId || "";
+    } catch {}
+    // fallback: 以前の固定IDが必要ならここに書く
+    if (!liffId) liffId = "2008406620-G5j1gjzM";
+
+    STATE.liffId = liffId;
+
+    try {
+      await liff.init({ liffId });
+      const inClient = liff.isInClient();
+      if (!inClient) {
         document.getElementById("lineUserName").textContent = "ブラウザで開いています";
       }
-
       const profile = await liff.getProfile();
-      STATE.lineUserId = profile.userId;
+      STATE.lineUserId = profile.userId || "";
       STATE.lineUserName = profile.displayName || "LINEユーザー";
       document.getElementById("lineUserName").textContent = STATE.lineUserName;
     } catch (e) {
@@ -419,7 +322,8 @@
       btnMinus.onclick = () => {
         const current = STATE.cart[p.id] || 0;
         const next = Math.max(0, current - 1);
-        if (next === 0) delete STATE.cart[p.id]; else STATE.cart[p.id] = next;
+        if (next === 0) delete STATE.cart[p.id];
+        else STATE.cart[p.id] = next;
         renderProducts();
         updateSummary();
       };
@@ -454,10 +358,18 @@
     updateSummary();
   }
 
+  function calcShipFeeFromPref(pref) {
+    const region = PREF_TO_REGION[pref] || "";
+    const fee = region ? (SHIPPING_BY_REGION[region] || 0) : 0;
+    return { region, fee };
+  }
+
   function updateSummary() {
     const cartSummary = document.getElementById("cartSummary");
     const goAddressBtn = document.getElementById("goAddressBtn");
     const payButton = document.getElementById("payButton");
+    const detailList = document.getElementById("detailList");
+    const shipNote = document.getElementById("shipNote");
 
     const ids = Object.keys(STATE.cart);
     if (!ids.length) {
@@ -467,44 +379,62 @@
       document.getElementById("itemsTotal").textContent = "0円";
       document.getElementById("shipFee").textContent = "0円";
       document.getElementById("grandTotal").textContent = "0円";
+      detailList.innerHTML = "";
+      shipNote.textContent = "";
       return;
     }
 
-    let total = 0;
+    let itemsTotal = 0;
+    detailList.innerHTML = "";
+
     ids.forEach(id => {
       const p = STATE.products.find(x => x.id === id);
       if (!p) return;
       const qty = STATE.cart[id] || 0;
-      total += Number(p.price) * qty;
+      const sub = Number(p.price) * qty;
+      itemsTotal += sub;
+
+      const row = document.createElement("div");
+      row.className = "detail-item";
+      row.innerHTML = `
+        <span>${p.name} × ${qty}</span>
+        <span>${yen(sub)}</span>
+      `;
+      detailList.appendChild(row);
     });
 
-    const shipFee = 800; // 仮の一律送料（仕様に合わせて後で調整可能）
+    // 送料（都道府県が選ばれていれば自動計算 / 未選択なら0円）
+    const pref = document.getElementById("addrPref").value.trim();
+    const { region, fee } = calcShipFeeFromPref(pref);
+    STATE.shipFee = fee;
+    STATE.shipRegion = region;
+    STATE.shipPref = pref;
 
-    document.getElementById("itemsTotal").textContent = yen(total);
-    document.getElementById("shipFee").textContent = yen(shipFee);
-    document.getElementById("grandTotal").textContent = yen(total + shipFee);
+    document.getElementById("itemsTotal").textContent = yen(itemsTotal);
+    document.getElementById("shipFee").textContent = yen(fee);
+    document.getElementById("grandTotal").textContent = yen(itemsTotal + fee);
+
+    shipNote.textContent = pref
+      ? `配送地域：${region} / 送料：${yen(fee)}`
+      : "※都道府県を選ぶと送料が確定します";
 
     cartSummary.classList.remove("hidden");
     goAddressBtn.disabled = false;
 
-    // 住所が一度保存されていれば決済も有効化
-    if (STATE.addressSaved) {
-      payButton.disabled = false;
-    }
+    if (STATE.addressSaved) payButton.disabled = false;
   }
 
   async function saveAddress() {
-    const name = document.getElementById("addrName").value.trim();
-    const phone = document.getElementById("addrPhone").value.trim();
+    const name   = document.getElementById("addrName").value.trim();
+    const phone  = document.getElementById("addrPhone").value.trim();
     const postal = document.getElementById("addrPostal").value.trim();
-    const pref = document.getElementById("addrPref").value.trim();
-    const city = document.getElementById("addrCity").value.trim();
-    const addr1 = document.getElementById("addrAddress1").value.trim();
-    const addr2 = document.getElementById("addrAddress2").value.trim();
+    const pref   = document.getElementById("addrPref").value.trim();
+    const city   = document.getElementById("addrCity").value.trim();
+    const addr1  = document.getElementById("addrAddress1").value.trim();
+    const addr2  = document.getElementById("addrAddress2").value.trim();
 
     const statusEl = document.getElementById("addrStatus");
-    statusEl.className = "";
-    statusEl.textContent = "";
+    statusEl.className = ""; statusEl.textContent = "";
 
     if (!name || !phone || !postal || !pref || !city || !addr1) {
       statusEl.className = "error";
@@ -523,13 +453,8 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: STATE.lineUserId,
-          name,
-          phone,
-          postal,
-          prefecture: pref,
-          city,
-          address1: addr1,
-          address2: addr2
+          name, phone, postal,
+          prefecture: pref, city, address1: addr1, address2: addr2
         })
       });
       const json = await res.json();
@@ -539,11 +464,10 @@
       statusEl.className = "ok-msg";
       statusEl.textContent = "住所を登録しました。③ クレジットカード決済に進めます。";
 
+      updateSummary();
       setStep(3);
-      const payButton = document.getElementById("payButton");
-      if (Object.keys(STATE.cart).length > 0) {
-        payButton.disabled = false;
-      }
+      document.getElementById("payButton").disabled = false;
+
     } catch (e) {
       console.error("saveAddress error", e);
       statusEl.className = "error";
@@ -569,25 +493,23 @@
       return;
     }
 
-    let total = 0;
+    // items と total 作成（送料含む）
+    let itemsTotal = 0;
     const items = [];
     ids.forEach(id => {
       const p = STATE.products.find(x => x.id === id);
       if (!p) return;
       const qty = STATE.cart[id] || 0;
-      total += Number(p.price) * qty;
-      items.push({
-        id: p.id,
-        name: p.name,
-        price: Number(p.price),
-        qty
-      });
+      const sub = Number(p.price) * qty;
+      itemsTotal += sub;
+      items.push({ id: p.id, name: p.name, price: Number(p.price), qty });
     });
-    const shipFee = 800; // 仮送料
-    total += shipFee;
+
+    const shipFee = STATE.shipFee || 0;
+    const total = itemsTotal + shipFee;
 
     try {
-      const res = await fetch("/api/pay",{
+      const res = await fetch("/api/pay-epsilon", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -597,20 +519,24 @@
           lineUserName: STATE.lineUserName
         })
       });
-      const json = await res.json();
-      if (!json.ok) {
+
+      const json = await res.json().catch(()=> ({}));
+      if (!res.ok || !json.ok) {
         throw new Error(json.error || "決済の開始に失敗しました");
       }
+
       if (json.redirectUrl) {
-        location.href = json.redirectUrl;
+        location.href = json.redirectUrl; // ← ここでイプシロン外部へ移動
         return;
-      } else {
-        throw new Error("決済画面URLが取得できませんでした");
       }
+      throw new Error("決済画面URLが取得できませんでした");
+
     } catch (e) {
       console.error("startPayment error", e);
       payStatus.classList.remove("hidden");
-      payStatus.textContent = "決済の開始に失敗しました。時間をおいて再度お試しください。";
+      payStatus.textContent =
+        "決済の開始に失敗しました。\n" +
+        "時間をおいて再度お試しください。";
     }
   }
 
@@ -626,12 +552,12 @@
     document.getElementById("saveAddressBtn").addEventListener("click", saveAddress);
     document.getElementById("payButton").addEventListener("click", startPayment);
 
+    // 都道府県が変わったら送料再計算
+    document.getElementById("addrPref").addEventListener("change", updateSummary);
+
     document.getElementById("backToLineBtn").addEventListener("click", () => {
-      if (window.liff && liff.isInClient()) {
-        liff.closeWindow();
-      } else {
-        window.history.back();
-      }
+      if (window.liff && liff.isInClient()) liff.closeWindow();
+      else window.history.back();
     });
   });
 </script>

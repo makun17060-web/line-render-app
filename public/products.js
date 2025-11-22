@@ -1,9 +1,13 @@
 // public/products.js
 // products.html 用：商品一覧表示 + 数量選択 + localStorage保存 + address.htmlへ遷移
+// ★修正版：住所ページ遷移を「絶対URL + キャッシュ無視(v=)」にしてLIFFの戻り問題を回避
 
 (function () {
   const grid = document.getElementById("productGrid");
   const toConfirmBtn = document.getElementById("toConfirmBtn");
+
+  // products.html 以外で読み込まれていたら何もしない
+  if (!grid || !toConfirmBtn) return;
 
   const STORAGE_KEY = "isoya_order_v1";
 
@@ -14,12 +18,14 @@
       return {};
     }
   }
+
   function saveOrder(partial) {
     const cur = loadOrder();
     const next = { ...cur, ...partial, updatedAt: Date.now() };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     return next;
   }
+
   function calcTotal(items = []) {
     return items.reduce(
       (sum, it) => sum + Number(it.price || 0) * Number(it.qty || 0),
@@ -62,9 +68,10 @@
         image: p.image || "",
       });
     }
+
     saveOrder({ items: cart });
 
-    // ボタン有効/無効
+    // ボタン有効/無効（合計が0なら進めない）
     toConfirmBtn.disabled = calcTotal(cart) <= 0;
   }
 
@@ -72,7 +79,7 @@
     grid.innerHTML = "";
 
     products.forEach((p) => {
-      // 久助は画面に出さない（名前に久助が入ってたらスキップ）
+      // 久助は画面に出さない
       if (String(p.name || "").includes("久助")) return;
 
       const qty = getQty(p.id);
@@ -100,8 +107,7 @@
         setQty(p, input.value);
       });
       input.addEventListener("blur", () => {
-        // 空欄などを整形
-        input.value = getQty(p.id);
+        input.value = getQty(p.id); // 整形
       });
 
       grid.appendChild(card);
@@ -111,10 +117,20 @@
     toConfirmBtn.disabled = calcTotal(cart) <= 0;
   }
 
-  // ②住所入力へ
+  // ②住所入力へ（★絶対URL + キャッシュ無視でLIFFの戻り対策）
   toConfirmBtn.addEventListener("click", () => {
-    saveOrder({ items: cart }); // 念のため保存
-    location.href = "/public/address.html";
+    // 念のため再チェック
+    if (calcTotal(cart) <= 0) {
+      toConfirmBtn.disabled = true;
+      return;
+    }
+
+    saveOrder({ items: cart });
+
+    const v = Date.now(); // 毎回変わる＝LIFF/LINEキャッシュ無視
+    const nextUrl = `${location.origin}/public/address.html?v=${v}`;
+
+    location.href = nextUrl;
   });
 
   // 起動

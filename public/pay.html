@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>④ 支払い | 磯屋ミニアプリ</title>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script src="/public/common.js"></script>
+<style>
+  body{font-family:system-ui;margin:0;background:#fafafa;}
+  header{background:#b22222;color:#fff;padding:14px;text-align:center;}
+  .container{max-width:720px;margin:0 auto;padding:12px 16px 24px;}
+  .card{background:#fff;border-radius:6px;padding:10px;box-shadow:0 1px 3px rgba(0,0,0,.08);}
+  .btn-main{width:100%;padding:12px;border:none;border-radius:6px;background:#b22222;color:#fff;font-size:16px;font-weight:bold;margin-top:12px;}
+  .btn-sub{width:100%;padding:10px;border:1px solid #b22222;border-radius:6px;background:#fff;color:#b22222;margin-top:8px;}
+  .error{color:#c00;font-size:12px;margin-top:8px;}
+</style>
+</head>
+<body>
+<header>④ クレジット決済</header>
+<div class="container">
+
+  <div class="card">
+    <div>最終確認済みの金額：</div>
+    <div style="font-size:18px;font-weight:bold;margin-top:4px;" id="grandTotal">0円</div>
+    <div style="font-size:12px;color:#666;margin-top:6px;">
+      「クレジットカードで支払う」を押すとイプシロンへ移動します。
+    </div>
+  </div>
+
+  <button id="payBtn" class="btn-main">クレジットカードで支払う</button>
+  <div id="status" class="error"></div>
+
+  <button id="backBtn" class="btn-sub">← ③ 最終確認へ戻る</button>
+</div>
+
+<script>
+(async()=>{
+  await initLiffAndProfile();
+
+  const st = loadState();
+  if(!Object.keys(st.cart).length){ location.href="/public/products.html"; return; }
+  if(!st.address){ location.href="/public/address.html"; return; }
+  if(!st.confirmed){ location.href="/public/confirm.html"; return; }
+
+  grandTotal.textContent = yen(st.grandTotal || 0);
+
+  payBtn.onclick = async ()=>{
+    status.textContent="";
+
+    try{
+      const products = await fetchProducts();
+      const ids = Object.keys(st.cart);
+      const items = ids.map(id=>{
+        const p=products.find(x=>x.id===id);
+        return { id:p.id, name:p.name, price:Number(p.price), qty:st.cart[id] };
+      });
+
+      const total = st.grandTotal;
+
+      const res = await fetch("/api/pay",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          items, total,
+          lineUserId: st.lineUserId,
+          lineUserName: st.lineUserName
+        })
+      });
+
+      const json = await res.json();
+      if(!res.ok || !json.ok) throw new Error(json.error||"決済開始失敗");
+      location.href = json.redirectUrl;
+    }catch(e){
+      console.error(e);
+      status.textContent="決済の開始に失敗しました。";
+    }
+  };
+
+  backBtn.onclick=()=>{
+    saveState({ confirmed:false });
+    location.href="/public/confirm.html";
+  };
+})();
+</script>
+</body>
+</html>

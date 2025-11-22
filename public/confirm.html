@@ -20,6 +20,9 @@
       font-size:18px;
       text-align:center;
       margin:-12px -12px 12px;
+      position:sticky;
+      top:0;
+      z-index:10;
     }
     h1{
       font-size:20px;
@@ -98,6 +101,10 @@
       color:#b22222;
       border:1px solid #b22222;
     }
+    .btn:disabled{
+      opacity:.5;
+      cursor:default;
+    }
 
     .empty{
       font-size:13px;
@@ -132,9 +139,7 @@
   <div class="section">
     <div class="section-title">お届け先</div>
     <div id="addressArea">読み込み中...</div>
-    <div class="notice">
-      ※住所が違う場合は「②へ戻る」で修正してください
-    </div>
+    <div class="notice">※住所が違う場合は「②へ戻る」で修正してください</div>
   </div>
 
   <div class="section">

@@ -105,10 +105,7 @@
       color:#b22222;
       border:1px solid #b22222;
     }
-    .btn:disabled{
-      opacity:.5;
-      cursor:default;
-    }
+    .btn:disabled{ opacity:.5; cursor:default; }
 
     .empty{
       font-size:13px;
@@ -126,8 +123,8 @@
       min-height:18px;
     }
   </style>
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
 
 <body>
@@ -137,13 +134,11 @@
 
   <h1>クレジット支払い（④ 決済）</h1>
 
-  <!-- 商品 -->
   <div class="section">
     <div class="section-title">ご注文商品</div>
     <div id="payItemsArea">読み込み中...</div>
   </div>
 
-  <!-- 合計 -->
   <div class="section">
     <div class="section-title">お支払い合計</div>
 
@@ -167,10 +162,8 @@
     </div>
   </div>
 
-  <!-- 状態 -->
   <div id="payStatusMsg"></div>
 
-  <!-- ボタン -->
   <div class="footer">
     <button id="backToConfirmBtn" class="btn btn-sub">
       ③ 最終確認へ戻る

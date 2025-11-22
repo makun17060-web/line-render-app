@@ -87,6 +87,14 @@ if (!fs.existsSync(UPLOAD_DIR)) {
 app.use("/api", express.json(), express.urlencoded({ extended: true }));
 app.use("/public", express.static(PUBLIC_DIR));
 app.get("/", (_req, res) => res.status(200).send("OK"));
+// ====== Epsilon 戻り先（GET/POST両対応） ======
+app.all("/public/confirm-success.html", (req, res) => {
+  return res.sendFile(path.join(PUBLIC_DIR, "confirm-success.html"));
+});
+
+app.all("/public/confirm-fail.html", (req, res) => {
+  return res.sendFile(path.join(PUBLIC_DIR, "confirm-fail.html"));
+});
 
 // ====== データ初期化 ======
 if (!fs.existsSync(PRODUCTS_PATH)) {

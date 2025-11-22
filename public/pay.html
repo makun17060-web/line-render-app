@@ -1,87 +1,183 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>④ 支払い | 磯屋ミニアプリ</title>
-<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-<script src="/public/common.js"></script>
-<style>
-  body{font-family:system-ui;margin:0;background:#fafafa;}
-  header{background:#b22222;color:#fff;padding:14px;text-align:center;}
-  .container{max-width:720px;margin:0 auto;padding:12px 16px 24px;}
-  .card{background:#fff;border-radius:6px;padding:10px;box-shadow:0 1px 3px rgba(0,0,0,.08);}
-  .btn-main{width:100%;padding:12px;border:none;border-radius:6px;background:#b22222;color:#fff;font-size:16px;font-weight:bold;margin-top:12px;}
-  .btn-sub{width:100%;padding:10px;border:1px solid #b22222;border-radius:6px;background:#fff;color:#b22222;margin-top:8px;}
-  .error{color:#c00;font-size:12px;margin-top:8px;}
-</style>
-</head>
-<body>
-<header>④ クレジット決済</header>
-<div class="container">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>クレジット支払い | 手造りえびせんべい 磯屋</title>
 
-  <div class="card">
-    <div>最終確認済みの金額：</div>
-    <div style="font-size:18px;font-weight:bold;margin-top:4px;" id="grandTotal">0円</div>
-    <div style="font-size:12px;color:#666;margin-top:6px;">
-      「クレジットカードで支払う」を押すとイプシロンへ移動します。
+  <style>
+    body{
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+      background:#fafafa;
+      margin:0;
+      padding:12px;
+      color:#222;
+    }
+    header{
+      background:#b22222;
+      color:#fff;
+      padding:14px 16px;
+      font-size:18px;
+      text-align:center;
+      margin:-12px -12px 12px;
+    }
+    h1{
+      font-size:20px;
+      margin:8px 0 12px;
+      text-align:center;
+    }
+    .section{
+      background:#fff;
+      border-radius:10px;
+      box-shadow:0 2px 6px rgba(0,0,0,0.08);
+      padding:12px;
+      margin-bottom:12px;
+    }
+    .section-title{
+      font-weight:bold;
+      margin-bottom:8px;
+      font-size:15px;
+      border-left:4px solid #b22222;
+      padding-left:8px;
+    }
+
+    .row{
+      display:flex;
+      gap:8px;
+      align-items:center;
+      border-bottom:1px dashed #eee;
+      padding:8px 0;
+      font-size:14px;
+    }
+    .row:last-child{ border-bottom:none; }
+    .name{ flex:1; }
+    .qty{ width:60px; text-align:right; color:#555; }
+    .price{ width:90px; text-align:right; font-weight:bold; }
+
+    .sum-line{
+      display:flex;
+      justify-content:space-between;
+      font-size:15px;
+      padding:6px 0;
+      border-bottom:1px dashed #eee;
+    }
+    .sum-line:last-child{ border-bottom:none; }
+    .sum-label{ color:#555; }
+    .sum-value{ font-weight:bold; }
+    .grand{
+      font-size:18px;
+      font-weight:bold;
+      color:#b22222;
+    }
+
+    .notice{
+      font-size:12px;
+      color:#666;
+      text-align:center;
+      margin-top:6px;
+      line-height:1.6;
+    }
+
+    .footer{
+      position:sticky;
+      bottom:0;
+      background:#fafafa;
+      padding:10px 0 6px;
+      border-top:1px solid #eee;
+      display:flex;
+      gap:8px;
+    }
+    .btn{
+      flex:1;
+      padding:12px;
+      border-radius:6px;
+      border:none;
+      font-size:15px;
+      font-weight:bold;
+      cursor:pointer;
+    }
+    .btn-main{
+      background:#b22222;
+      color:#fff;
+    }
+    .btn-sub{
+      background:#fff;
+      color:#b22222;
+      border:1px solid #b22222;
+    }
+    .btn:disabled{
+      opacity:.5;
+      cursor:default;
+    }
+
+    .empty{
+      font-size:13px;
+      color:#666;
+      text-align:center;
+      padding:12px 0;
+    }
+
+    #payStatusMsg{
+      white-space:pre-line;
+      text-align:center;
+      font-size:13px;
+      color:#333;
+      margin-top:6px;
+      min-height:18px;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    手造りえびせんべい 磯屋<br>宅配付きご注文ミニアプリ
+  </header>
+
+  <h1>クレジット支払い（④ 決済）</h1>
+
+  <!-- 商品 -->
+  <div class="section">
+    <div class="section-title">ご注文商品</div>
+    <div id="payItemsArea">読み込み中...</div>
+  </div>
+
+  <!-- 合計 -->
+  <div class="section">
+    <div class="section-title">お支払い合計</div>
+
+    <div class="sum-line">
+      <div class="sum-label">商品合計</div>
+      <div id="payItemsTotal" class="sum-value">計算中…</div>
+    </div>
+
+    <div class="sum-line">
+      <div class="sum-label">送料</div>
+      <div id="payShipping" class="sum-value">計算中…</div>
+    </div>
+
+    <div class="sum-line">
+      <div class="sum-label">合計</div>
+      <div id="payFinalTotal" class="sum-value grand">計算中…</div>
+    </div>
+
+    <div class="notice">
+      「支払いへ進む」を押すと、イプシロン決済ページへ移動します。
     </div>
   </div>
 
-  <button id="payBtn" class="btn-main">クレジットカードで支払う</button>
-  <div id="status" class="error"></div>
+  <!-- 状態 -->
+  <div id="payStatusMsg"></div>
 
-  <button id="backBtn" class="btn-sub">← ③ 最終確認へ戻る</button>
-</div>
+  <!-- ボタン -->
+  <div class="footer">
+    <button id="backToConfirmBtn" class="btn btn-sub">
+      ③ 最終確認へ戻る
+    </button>
+    <button id="payBtn" class="btn btn-main">
+      支払いへ進む
+    </button>
+  </div>
 
-<script>
-(async()=>{
-  await initLiffAndProfile();
-
-  const st = loadState();
-  if(!Object.keys(st.cart).length){ location.href="/public/products.html"; return; }
-  if(!st.address){ location.href="/public/address.html"; return; }
-  if(!st.confirmed){ location.href="/public/confirm.html"; return; }
-
-  grandTotal.textContent = yen(st.grandTotal || 0);
-
-  payBtn.onclick = async ()=>{
-    status.textContent="";
-
-    try{
-      const products = await fetchProducts();
-      const ids = Object.keys(st.cart);
-      const items = ids.map(id=>{
-        const p=products.find(x=>x.id===id);
-        return { id:p.id, name:p.name, price:Number(p.price), qty:st.cart[id] };
-      });
-
-      const total = st.grandTotal;
-
-      const res = await fetch("/api/pay",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({
-          items, total,
-          lineUserId: st.lineUserId,
-          lineUserName: st.lineUserName
-        })
-      });
-
-      const json = await res.json();
-      if(!res.ok || !json.ok) throw new Error(json.error||"決済開始失敗");
-      location.href = json.redirectUrl;
-    }catch(e){
-      console.error(e);
-      status.textContent="決済の開始に失敗しました。";
-    }
-  };
-
-  backBtn.onclick=()=>{
-    saveState({ confirmed:false });
-    location.href="/public/confirm.html";
-  };
-})();
-</script>
+  <script src="/public/pay.js"></script>
 </body>
 </html>

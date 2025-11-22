@@ -24,201 +24,78 @@
       margin: 0 auto;
       padding: 12px 16px 24px;
     }
-    h1 {
-      font-size: 18px;
-      margin: 8px 0 12px;
-    }
+    h1 { font-size: 18px; margin: 8px 0 12px; }
     h2 {
       font-size: 16px;
       margin: 18px 0 8px;
       border-left: 4px solid #b22222;
       padding-left: 6px;
     }
-    .notice {
-      font-size: 12px;
-      color: #666;
-      margin-bottom: 8px;
-    }
-    .product-list {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
+    .notice { font-size: 12px; color: #666; margin-bottom: 8px; }
+    .product-list { display: flex; flex-direction: column; gap: 10px; }
     .product {
-      background: #fff;
-      border-radius: 6px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-      padding: 10px;
-      display: flex;
-      gap: 10px;
-      align-items: flex-start;
+      background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      padding: 10px; display: flex; gap: 10px; align-items: flex-start;
     }
     .product img {
-      width: 72px;
-      height: 72px;
-      object-fit: cover;
-      border-radius: 4px;
-      flex-shrink: 0;
-      background: #eee;
+      width: 72px; height: 72px; object-fit: cover; border-radius: 4px;
+      flex-shrink: 0; background: #eee;
     }
-    .product-body {
-      flex: 1;
-      min-width: 0;
-    }
-    .product-title {
-      font-weight: bold;
-      font-size: 14px;
-      margin-bottom: 4px;
-    }
-    .product-desc {
-      font-size: 12px;
-      color: #666;
-      margin-bottom: 4px;
-    }
-    .product-meta {
-      font-size: 12px;
-      color: #444;
-      margin-bottom: 4px;
-    }
-    .qty-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      margin-top: 4px;
-    }
+    .product-body { flex: 1; min-width: 0; }
+    .product-title { font-weight: bold; font-size: 14px; margin-bottom: 4px; }
+    .product-desc { font-size: 12px; color: #666; margin-bottom: 4px; }
+    .product-meta { font-size: 12px; color: #444; margin-bottom: 4px; }
+    .qty-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
     .qty-row button {
-      padding: 4px 8px;
-      border-radius: 4px;
-      border: 1px solid #ccc;
-      background: #fff;
-      font-size: 14px;
+      padding: 4px 8px; border-radius: 4px; border: 1px solid #ccc; background: #fff; font-size: 14px;
     }
-    .qty-row span {
-      min-width: 24px;
-      text-align: center;
-      font-size: 14px;
-    }
+    .qty-row span { min-width: 24px; text-align: center; font-size: 14px; }
 
-    /* ▼ サマリーカード */
     .summary-card {
-      background: #fff;
-      border-radius: 6px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-      padding: 10px;
-      font-size: 14px;
-      margin-top: 8px;
+      background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      padding: 10px; font-size: 14px; margin-top: 8px;
     }
-    .summary-row {
-      display: flex;
-      justify-content: space-between;
-      margin: 2px 0;
-    }
+    .summary-row { display: flex; justify-content: space-between; margin: 2px 0; gap: 8px; }
     .summary-row.total {
-      font-weight: bold;
-      margin-top: 6px;
-      border-top: 1px solid #eee;
-      padding-top: 4px;
+      font-weight: bold; margin-top: 6px; border-top: 1px solid #eee; padding-top: 6px;
+      font-size: 16px;
     }
-
-    /* ▼ 明細リスト */
-    .detail-list {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      margin-top: 4px;
+    .summary-items { margin-top: 6px; font-size: 13px; color: #333; }
+    .summary-item-line {
+      display: flex; justify-content: space-between; padding: 2px 0; border-bottom: 1px dashed #eee;
     }
-    .detail-item {
-      display: flex;
-      justify-content: space-between;
-      font-size: 13px;
-      padding: 2px 0;
-      border-bottom: 1px dashed #eee;
-    }
+    .summary-item-line:last-child { border-bottom: none; }
 
     .btn-main {
-      display: block;
-      width: 100%;
-      padding: 12px;
-      margin-top: 16px;
-      border-radius: 6px;
-      border: none;
-      background: #b22222;
-      color: #fff;
-      font-size: 16px;
-      font-weight: bold;
+      display: block; width: 100%; padding: 12px; margin-top: 16px;
+      border-radius: 6px; border: none; background: #b22222; color: #fff;
+      font-size: 16px; font-weight: bold;
     }
     .btn-sub {
-      display: block;
-      width: 100%;
-      padding: 10px;
-      margin-top: 10px;
-      border-radius: 6px;
-      border: 1px solid #b22222;
-      background: #fff;
-      color: #b22222;
-      font-size: 14px;
+      display: block; width: 100%; padding: 10px; margin-top: 10px;
+      border-radius: 6px; border: 1px solid #b22222; background: #fff;
+      color: #b22222; font-size: 14px;
     }
-    .btn-main:disabled,
-    .btn-sub:disabled {
-      opacity: 0.5;
-    }
+    .btn-main:disabled, .btn-sub:disabled { opacity: 0.5; }
+
     .addr-form {
-      background: #fff;
-      border-radius: 6px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-      padding: 10px;
-      font-size: 14px;
-      margin-top: 8px;
+      background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      padding: 10px; font-size: 14px; margin-top: 8px;
     }
-    .form-row {
-      margin-bottom: 8px;
+    .form-row { margin-bottom: 8px; }
+    .form-row label { display: block; font-size: 12px; margin-bottom: 2px; }
+    .form-row input, .form-row select {
+      width: 100%; padding: 6px 8px; box-sizing: border-box; font-size: 14px;
+      border-radius: 4px; border: 1px solid #ccc;
     }
-    .form-row label {
-      display: block;
-      font-size: 12px;
-      margin-bottom: 2px;
-    }
-    .form-row input,
-    .form-row select {
-      width: 100%;
-      padding: 6px 8px;
-      box-sizing: border-box;
-      font-size: 14px;
-      border-radius: 4px;
-      border: 1px solid #ccc;
-    }
-    .small {
-      font-size: 11px;
-      color: #666;
-      margin-top: 4px;
-      white-space: pre-line;
-    }
+    .small { font-size: 11px; color: #666; }
     .step-labels {
-      display: flex;
-      justify-content: space-between;
-      font-size: 11px;
-      margin: 6px 0 10px;
-      color: #666;
+      display: flex; justify-content: space-between; font-size: 11px; margin: 6px 0 10px; color: #666;
     }
-    .step-labels span.active {
-      font-weight: bold;
-      color: #b22222;
-    }
-    .hidden {
-      display: none;
-    }
-    .error {
-      color: #c00;
-      font-size: 12px;
-      margin-top: 4px;
-      white-space: pre-line;
-    }
-    .ok-msg {
-      color: #060;
-      font-size: 12px;
-      margin-top: 4px;
-      white-space: pre-line;
-    }
+    .step-labels span.active { font-weight: bold; color: #b22222; }
+    .hidden { display: none; }
+    .error { color: #c00; font-size: 12px; margin-top: 4px; }
+    .ok-msg { color: #060; font-size: 12px; margin-top: 4px; }
   </style>
 </head>
 <body>
@@ -231,7 +108,7 @@
   <div class="step-labels">
     <span id="stepLabel1" class="active">① 商品選択</span>
     <span id="stepLabel2">② お届け先入力</span>
-    <span id="stepLabel3">③ 最終確認</span>
+    <span id="stepLabel3">③ お支払い</span>
   </div>
 
   <!-- ユーザー情報表示 -->
@@ -240,9 +117,7 @@
       <span>LINEユーザー：</span>
       <span id="lineUserName">取得中...</span>
     </div>
-    <div class="small">
-      ※ LINEアプリの中から開いてください。
-    </div>
+    <div class="small">※ LINEアプリの中から開いてください。</div>
   </div>
 
   <!-- ① 商品選択 -->
@@ -251,16 +126,14 @@
     ご希望の商品と数量をお選びください。<br>
     ※久助はテキスト注文専用のため、この画面には表示していません。
   </div>
-  <div id="productList" class="product-list">
-    読み込み中...
-  </div>
+  <div id="productList" class="product-list">読み込み中...</div>
 
-  <!-- 商品選択時のサマリー -->
-  <div id="cartSummary" class="summary-card hidden">
-    <div style="font-weight:bold; margin-bottom:6px;">ご注文明細（商品）</div>
-    <div id="detailList" class="detail-list"></div>
+  <!-- ✅ 決済前に1画面で見せる明細（商品＋送料＋合計） -->
+  <div id="orderSummary" class="summary-card hidden">
+    <div style="font-weight:bold;margin-bottom:4px;">ご注文明細（決済前の最終確認）</div>
+    <div id="summaryItems" class="summary-items"></div>
 
-    <div class="summary-row" style="margin-top:6px;">
+    <div class="summary-row">
       <span>商品合計</span>
       <span id="itemsTotal">0円</span>
     </div>
@@ -281,9 +154,7 @@
 
   <!-- ② 住所入力 -->
   <h2>② お届け先情報</h2>
-  <div class="notice">
-    宅配をご希望の方は、お届け先住所をご入力ください。
-  </div>
+  <div class="notice">宅配をご希望の方は、お届け先住所をご入力ください。</div>
 
   <div id="addressSection" class="addr-form">
     <div class="form-row">
@@ -299,7 +170,7 @@
       <input type="text" id="addrPostal" placeholder="例：4701234" />
     </div>
     <div class="form-row">
-      <label>都道府県</label>
+      <label>都道府県（送料計算に使います）</label>
       <select id="addrPref">
         <option value="">選択してください</option>
         <option>北海道</option>
@@ -330,36 +201,20 @@
     <button id="saveAddressBtn" class="btn-sub">
       この住所を登録する（②完了）
     </button>
-    <div id="addrStatus" class=""></div>
+    <div id="addrStatus"></div>
   </div>
 
-  <!-- ③ 最終確認＆決済 -->
-  <h2>③ ご注文の最終確認</h2>
+  <!-- ③ お支払い -->
+  <h2>③ クレジットカードでお支払い</h2>
   <div class="notice">
-    商品と送料、合計金額をご確認の上「クレジットカードで支払う」を押してください。
+    「クレジットカードで支払う」ボタンを押すと、イプシロン決済画面に移動します。<br>
+    ※決済はLINEの外部（Epsilon）へ移動します。
   </div>
 
-  <div id="finalConfirmCard" class="summary-card hidden">
-    <div style="font-weight:bold; margin-bottom:6px;">ご注文明細</div>
-    <div id="finalDetailList" class="detail-list"></div>
-
-    <div class="summary-row" style="margin-top:8px;">
-      <span>商品合計</span><span id="finalItemsTotal">0円</span>
-    </div>
-    <div class="summary-row">
-      <span>送料</span><span id="finalShipFee">0円</span>
-    </div>
-    <div class="summary-row total">
-      <span>お支払合計</span><span id="finalGrandTotal">0円</span>
-    </div>
-
-    <div class="small" id="finalShipNote"></div>
-
-    <button id="payButton" class="btn-main" disabled>
-      クレジットカードで支払う
-    </button>
-    <div id="payStatus" class="error hidden"></div>
-  </div>
+  <button id="payButton" class="btn-main" disabled>
+    クレジットカードで支払う
+  </button>
+  <div id="payStatus" class="error hidden"></div>
 
   <button id="backToLineBtn" class="btn-sub">
     LINEトーク画面に戻る
@@ -367,18 +222,35 @@
 </div>
 
 <script>
-  // ★このミニアプリ用の LIFF ID ★
+  // ★ このミニアプリの LIFF ID（あなたのもの）
   const LIFF_ID = "2008406620-G5j1gjzM";
+
+  // ===== server.js と同じ送料テーブル =====
+  const SHIPPING_BY_REGION = {
+    "北海道": 1100, "東北": 900, "関東": 800, "中部": 800,
+    "近畿": 900, "中国": 1000, "四国": 1000, "九州": 1100, "沖縄": 1400
+  };
+
+  // 都道府県 → 地域
+  const PREF_TO_REGION = {
+    "北海道":"北海道",
+    "青森県":"東北","岩手県":"東北","宮城県":"東北","秋田県":"東北","山形県":"東北","福島県":"東北",
+    "茨城県":"関東","栃木県":"関東","群馬県":"関東","埼玉県":"関東","千葉県":"関東","東京都":"関東","神奈川県":"関東",
+    "新潟県":"中部","富山県":"中部","石川県":"中部","福井県":"中部","山梨県":"中部","長野県":"中部",
+    "岐阜県":"中部","静岡県":"中部","愛知県":"中部","三重県":"中部",
+    "滋賀県":"近畿","京都府":"近畿","大阪府":"近畿","兵庫県":"近畿","奈良県":"近畿","和歌山県":"近畿",
+    "鳥取県":"中国","島根県":"中国","岡山県":"中国","広島県":"中国","山口県":"中国",
+    "徳島県":"四国","香川県":"四国","愛媛県":"四国","高知県":"四国",
+    "福岡県":"九州","佐賀県":"九州","長崎県":"九州","熊本県":"九州","大分県":"九州","宮崎県":"九州","鹿児島県":"九州",
+    "沖縄県":"沖縄"
+  };
 
   const STATE = {
     lineUserId: "",
     lineUserName: "",
     products: [],
-    cart: {}, // { productId: qty }
-    addressSaved: false,
-    shipFee: 0,
-    shipRegion: "",
-    shipPref: "",
+    cart: {},            // { productId: qty }
+    addressSaved: false, // ②完了フラグ
   };
 
   function yen(n) {
@@ -389,6 +261,12 @@
     document.getElementById("stepLabel1").classList.toggle("active", step === 1);
     document.getElementById("stepLabel2").classList.toggle("active", step === 2);
     document.getElementById("stepLabel3").classList.toggle("active", step === 3);
+  }
+
+  function calcShipFeeFromPref(pref) {
+    const r = PREF_TO_REGION[pref] || "";
+    const fee = r ? (SHIPPING_BY_REGION[r] || 0) : 0;
+    return { region: r, fee };
   }
 
   async function initLiff() {
@@ -403,7 +281,8 @@
       document.getElementById("lineUserName").textContent = STATE.lineUserName;
     } catch (e) {
       console.error("LIFF init error", e);
-      document.getElementById("lineUserName").textContent = "取得失敗（LINEアプリから再度お試しください）";
+      document.getElementById("lineUserName").textContent =
+        "取得失敗（LINEアプリから再度お試しください）";
     }
   }
 
@@ -418,7 +297,8 @@
       renderProducts();
     } catch (e) {
       console.error("loadProducts error", e);
-      listEl.textContent = "商品一覧の取得に失敗しました。時間をおいて再度お試しください。";
+      listEl.textContent =
+        "商品一覧の取得に失敗しました。時間をおいて再度お試しください。";
     }
   }
 
@@ -428,6 +308,7 @@
 
     if (!STATE.products.length) {
       listEl.textContent = "現在、販売中の商品がありません。";
+      updateSummary();
       return;
     }
 
@@ -465,7 +346,8 @@
       btnMinus.onclick = () => {
         const current = STATE.cart[p.id] || 0;
         const next = Math.max(0, current - 1);
-        if (next === 0) delete STATE.cart[p.id]; else STATE.cart[p.id] = next;
+        if (next === 0) delete STATE.cart[p.id];
+        else STATE.cart[p.id] = next;
         renderProducts();
         updateSummary();
       };
@@ -477,8 +359,7 @@
       btnPlus.textContent = "+";
       btnPlus.onclick = () => {
         const current = STATE.cart[p.id] || 0;
-        const next = current + 1;
-        STATE.cart[p.id] = next;
+        STATE.cart[p.id] = current + 1;
         renderProducts();
         updateSummary();
       };
@@ -500,77 +381,30 @@
     updateSummary();
   }
 
-  // ▼ 都道府県→送料地域の簡易判定（server.jsの設定に合わせた概算）
-  function calcShipFeeFromPref(pref) {
-    if (!pref) return { region:"未選択", fee:0 };
-
-    const map = {
-      "北海道": 1100,
-      "東北": 900,
-      "関東": 800,
-      "中部": 800,
-      "近畿": 900,
-      "中国": 1000,
-      "四国": 1000,
-      "九州": 1100,
-      "沖縄": 1400
-    };
-
-    const tohoku = ["青森県","岩手県","宮城県","秋田県","山形県","福島県"];
-    const kanto = ["茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県"];
-    const chubu = ["新潟県","富山県","石川県","福井県","山梨県","長野県","岐阜県","静岡県","愛知県"];
-    const kinki = ["三重県","滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県"];
-    const chugoku = ["鳥取県","島根県","岡山県","広島県","山口県"];
-    const shikoku = ["徳島県","香川県","愛媛県","高知県"];
-    const kyushu = ["福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県"];
-
-    let region = "中部";
-    if (pref === "北海道") region = "北海道";
-    else if (tohoku.includes(pref)) region = "東北";
-    else if (kanto.includes(pref)) region = "関東";
-    else if (chubu.includes(pref)) region = "中部";
-    else if (kinki.includes(pref)) region = "近畿";
-    else if (chugoku.includes(pref)) region = "中国";
-    else if (shikoku.includes(pref)) region = "四国";
-    else if (kyushu.includes(pref)) region = "九州";
-    else if (pref === "沖縄県") region = "沖縄";
-
-    return { region, fee: map[region] || 0 };
-  }
-
+  // ✅ 商品明細＋送料＋合計（決済前）
   function updateSummary() {
-    const cartSummary = document.getElementById("cartSummary");
+    const orderSummary = document.getElementById("orderSummary");
+    const summaryItemsEl = document.getElementById("summaryItems");
     const goAddressBtn = document.getElementById("goAddressBtn");
-    const detailList = document.getElementById("detailList");
-    const shipNote = document.getElementById("shipNote");
-
-    // ③ 最終確認側
-    const finalCard = document.getElementById("finalConfirmCard");
-    const finalDetailList = document.getElementById("finalDetailList");
-    const finalShipNote = document.getElementById("finalShipNote");
     const payButton = document.getElementById("payButton");
+    const shipNoteEl = document.getElementById("shipNote");
 
     const ids = Object.keys(STATE.cart);
 
     if (!ids.length) {
-      cartSummary.classList.add("hidden");
+      orderSummary.classList.add("hidden");
       goAddressBtn.disabled = true;
-
+      payButton.disabled = true;
+      summaryItemsEl.innerHTML = "";
       document.getElementById("itemsTotal").textContent = "0円";
       document.getElementById("shipFee").textContent = "0円";
       document.getElementById("grandTotal").textContent = "0円";
-      detailList.innerHTML = "";
-      shipNote.textContent = "";
-
-      finalCard.classList.add("hidden");
-      finalDetailList.innerHTML = "";
-      payButton.disabled = true;
+      shipNoteEl.textContent = "";
       return;
     }
 
     let itemsTotal = 0;
-    detailList.innerHTML = "";
-    finalDetailList.innerHTML = "";
+    summaryItemsEl.innerHTML = "";
 
     ids.forEach(id => {
       const p = STATE.products.find(x => x.id === id);
@@ -579,51 +413,29 @@
       const sub = Number(p.price) * qty;
       itemsTotal += sub;
 
-      const rowHtml = `
-        <div class="detail-item">
-          <span>${p.name} × ${qty}</span>
-          <span>${yen(sub)}</span>
-        </div>
-      `;
-      detailList.insertAdjacentHTML("beforeend", rowHtml);
-      finalDetailList.insertAdjacentHTML("beforeend", rowHtml);
+      const line = document.createElement("div");
+      line.className = "summary-item-line";
+      line.innerHTML = `<span>${p.name} × ${qty}</span><span>${yen(sub)}</span>`;
+      summaryItemsEl.appendChild(line);
     });
 
-    // 送料計算（都道府県から）
+    // 送料は都道府県から計算（未選択なら0円）
     const pref = document.getElementById("addrPref").value.trim();
-    const { region, fee } = calcShipFeeFromPref(pref);
-    STATE.shipFee = fee;
-    STATE.shipRegion = region;
-    STATE.shipPref = pref;
+    const { region, fee: shipFee } = calcShipFeeFromPref(pref);
 
-    const grandTotal = itemsTotal + fee;
-
-    // ①小サマリー
     document.getElementById("itemsTotal").textContent = yen(itemsTotal);
-    document.getElementById("shipFee").textContent = yen(fee);
-    document.getElementById("grandTotal").textContent = yen(grandTotal);
-    shipNote.textContent = pref
-      ? `配送地域：${region} / 送料：${yen(fee)}`
-      : "※都道府県を選ぶと送料が確定します";
+    document.getElementById("shipFee").textContent = yen(shipFee);
+    document.getElementById("grandTotal").textContent = yen(itemsTotal + shipFee);
 
-    cartSummary.classList.remove("hidden");
+    shipNoteEl.textContent = pref
+      ? `配送地域：${region} / 送料：${yen(shipFee)}`
+      : "※ 都道府県を選択すると送料が確定します";
+
+    orderSummary.classList.remove("hidden");
     goAddressBtn.disabled = false;
 
-    // ③最終確認
-    document.getElementById("finalItemsTotal").textContent = yen(itemsTotal);
-    document.getElementById("finalShipFee").textContent = yen(fee);
-    document.getElementById("finalGrandTotal").textContent = yen(grandTotal);
-    finalShipNote.textContent = pref
-      ? `配送地域：${region} / 送料：${yen(fee)}`
-      : "※都道府県を選ぶと送料が確定します";
-
-    if (STATE.addressSaved) {
-      finalCard.classList.remove("hidden");
-      payButton.disabled = false;
-    } else {
-      finalCard.classList.add("hidden");
-      payButton.disabled = true;
-    }
+    // 住所保存済みなら決済OK
+    payButton.disabled = !STATE.addressSaved;
   }
 
   async function saveAddress() {
@@ -656,9 +468,13 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: STATE.lineUserId,
-          name, phone, postal,
+          name,
+          phone,
+          postal,
           prefecture: pref,
-          city, address1: addr1, address2: addr2
+          city,
+          address1: addr1,
+          address2: addr2
         })
       });
       const json = await res.json();
@@ -666,14 +482,10 @@
 
       STATE.addressSaved = true;
       statusEl.className = "ok-msg";
-      statusEl.textContent = "住所を登録しました。③ 最終確認に進みます。";
+      statusEl.textContent = "住所を登録しました。③ クレジットカード決済に進めます。";
 
-      updateSummary();
       setStep(3);
-
-      document.getElementById("finalConfirmCard")
-        .scrollIntoView({ behavior:"smooth", block:"start" });
-
+      updateSummary();
     } catch (e) {
       console.error("saveAddress error", e);
       statusEl.className = "error";
@@ -710,8 +522,9 @@
       items.push({ id: p.id, name: p.name, price: Number(p.price), qty });
     });
 
-    // 送料を足した合計（最終確認と一致）
-    const total = itemsTotal + (STATE.shipFee || 0);
+    const pref = document.getElementById("addrPref").value.trim();
+    const { fee: shipFee } = calcShipFeeFromPref(pref);
+    const total = itemsTotal + shipFee;
 
     try {
       const res = await fetch("/api/pay", {
@@ -724,21 +537,21 @@
           lineUserName: STATE.lineUserName
         })
       });
-      const json = await res.json();
-      if (!json.ok) throw new Error(json.error || "決済の開始に失敗しました");
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) {
+        throw new Error(json.error || "決済の開始に失敗しました");
+      }
 
       if (json.redirectUrl) {
-        location.href = json.redirectUrl; // イプシロン決済画面へ移動
+        location.href = json.redirectUrl; // Epsilonへ外部遷移
         return;
       }
       throw new Error("決済画面URLが取得できませんでした");
-
     } catch (e) {
       console.error("startPayment error", e);
       payStatus.classList.remove("hidden");
-      payStatus.textContent =
-        "決済の開始に失敗しました。\n" +
-        "時間をおいて再度お試しください。";
+      payStatus.textContent = "決済の開始に失敗しました。時間をおいて再度お試しください。";
     }
   }
 
@@ -755,7 +568,7 @@
     document.getElementById("saveAddressBtn").addEventListener("click", saveAddress);
     document.getElementById("payButton").addEventListener("click", startPayment);
 
-    // 都道府県変更で送料再計算
+    // 都道府県が変わったら送料＆合計を即更新
     document.getElementById("addrPref").addEventListener("change", updateSummary);
 
     document.getElementById("backToLineBtn").addEventListener("click", () => {

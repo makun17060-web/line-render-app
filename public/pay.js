@@ -184,6 +184,19 @@
   }
 
   await initLiffAndProfile();
+  
+
+  // ★ userId取れない場合はLINEアプリ内で開くよう案内して止める
+  if (!lineUserId) {
+    statusMsg.textContent =
+      "LINEアプリ内で開いてください。\n" +
+      "（ブラウザで開くとユーザーIDが取得できません）";
+    payBtn.disabled = true;
+    return;
+  }
+
+  // ここまで来たら決済ボタン有効化
+  payBtn.disabled = false;
 
   // ここまで来たら決済ボタン有効化
   payBtn.disabled = false;

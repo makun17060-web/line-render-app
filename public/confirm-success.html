@@ -4,13 +4,17 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>決済が完了しました | 手造りえびせんべい 磯屋</title>
+
+  <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
   <style>
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
       margin: 0;
       padding: 0;
       background: #fafafa;
+      color:#222;
     }
     header {
       background: #b22222;
@@ -18,10 +22,11 @@
       padding: 14px 16px;
       text-align: center;
       font-size: 18px;
+      font-weight: bold;
     }
     .container {
       padding: 16px;
-      max-width: 600px;
+      max-width: 680px;
       margin: 0 auto;
       text-align: center;
     }
@@ -33,12 +38,52 @@
     p {
       font-size: 14px;
       color: #555;
-      line-height: 1.6;
+      line-height: 1.7;
+      margin: 6px 0;
     }
+    .card {
+      background:#fff;
+      border-radius:10px;
+      padding:14px;
+      margin:14px auto;
+      text-align:left;
+      box-shadow:0 1px 4px rgba(0,0,0,0.06);
+    }
+    .row {
+      display:flex;
+      justify-content:space-between;
+      gap:8px;
+      font-size:14px;
+      margin:4px 0;
+    }
+    .row .label { color:#666; }
+    .row .value { font-weight:600; }
+    .items {
+      margin-top:8px;
+      border-top:1px dashed #e5e5e5;
+      padding-top:8px;
+    }
+    .item {
+      display:flex;
+      justify-content:space-between;
+      gap:8px;
+      font-size:14px;
+      padding:4px 0;
+    }
+    .item .name { flex:1; }
+    .muted { color:#888; font-size:12px; }
+    .status {
+      margin-top:10px;
+      font-size:13px;
+      white-space: pre-line;
+    }
+    .ok { color:#0a7; }
+    .ng { color:#c33; }
+
     .btn-main {
       display: inline-block;
       padding: 12px 24px;
-      margin-top: 20px;
+      margin-top: 18px;
       border-radius: 6px;
       border: none;
       font-size: 15px;
@@ -46,6 +91,18 @@
       background: #b22222;
       color: #fff;
       text-decoration: none;
+      cursor:pointer;
+    }
+    .btn-sub {
+      display:inline-block;
+      padding:8px 14px;
+      margin-top:10px;
+      border-radius:6px;
+      border:1px solid #ccc;
+      background:#fff;
+      color:#333;
+      font-size:13px;
+      cursor:pointer;
     }
     footer {
       margin-top: 24px;
@@ -56,9 +113,7 @@
   </style>
 </head>
 <body>
-<header>
-  手造りえびせんべい 磯屋
-</header>
+<header>手造りえびせんべい 磯屋</header>
 
 <div class="container">
   <h1>決済が完了しました</h1>
@@ -66,81 +121,190 @@
     この度はご注文ありがとうございます。<br>
     クレジットカード決済が正常に完了しました。
   </p>
+
+  <!-- 注文概要 -->
+  <div class="card" id="summaryCard" style="display:none;">
+    <div class="row"><div class="label">注文番号</div><div class="value" id="orderNo">-</div></div>
+    <div class="items" id="itemsArea"></div>
+    <div class="items">
+      <div class="row"><div class="label">商品合計</div><div class="value" id="itemsTotal">0円</div></div>
+      <div class="row"><div class="label">送料</div><div class="value" id="shipping">0円</div></div>
+      <div class="row"><div class="label">代引き手数料</div><div class="value" id="codFee">0円</div></div>
+      <div class="row" style="border-top:1px solid #eee; padding-top:6px; margin-top:6px;">
+        <div class="label">合計</div><div class="value" id="finalTotal">0円</div>
+      </div>
+      <div class="muted" id="addrArea"></div>
+    </div>
+  </div>
+
   <p>
     ご注文内容の確認や出荷予定などにつきましては、<br>
     後ほど LINE にてご案内いたします。
   </p>
 
-  <!-- 必要ならここでサーバーに「決済完了」を通知する処理を追加できます -->
-  <!--
-  <script>
-    // 例：sessionStorage から注文情報を取り出して server.js へ送信
-    // const order = JSON.parse(sessionStorage.getItem("currentOrder") || "{}");
-    // fetch("/api/order/complete", {
-    //   method: "POST",
-    //   headers: { "Content-Type": "application/json" },
-    //   body: JSON.stringify(order)
-    // });
-  </script>
-  -->
-<script>
-async function sendOrderToServer() {
-  try {
-    // ローカル注文情報（products・address・shipping・total）
-    const order = JSON.parse(localStorage.getItem("isoya_order_v1") || "{}");
+  <div class="status" id="statusMsg"></div>
 
-    await fetch("/api/order/complete", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(order),
-    });
+  <button class="btn-main" id="closeBtn">LINEに戻る</button><br>
+  <button class="btn-sub" id="retryBtn" style="display:none;">管理者通知の再送信</button>
 
-    console.log("注文データ送信 OK");
-  } catch (e) {
-    console.log("注文送信エラー:", e);
-  }
-}
-
-// ページ読み込み時に送信（多重送信防止用フラグ）
-if (!sessionStorage.getItem("order_sent")) {
-  sendOrderToServer();
-  sessionStorage.setItem("order_sent", "1");
-}
-</script>
-
-  <button class="btn-main" id="closeBtn">LINEに戻る</button>
-
-  <footer>
-    © 手造りえびせんべい 磯屋
-  </footer>
+  <footer>© 手造りえびせんべい 磯屋</footer>
 </div>
 
 <script>
-  // 必要なら本物の LIFF ID を設定
-  const LIFF_ID = "2008406620-G5j1gjzM";
+  // ====== 設定 ======
+  const ORDER_STORAGE_KEY = "currentOrder"; // ミニアプリ側と合わせる
+  const yen = (n) => `${Number(n||0).toLocaleString("ja-JP")}円`;
 
-  async function initLiff() {
+  const $ = (id)=>document.getElementById(id);
+
+  // ====== LIFF init（liffIdはサーバーから取得→失敗したら直書きfallback） ======
+  const LIFF_ID_FALLBACK = "2008406620-G5j1gjzM"; // 念のための予備
+
+  async function initLiffSafely() {
     try {
-      await liff.init({ liffId: 2008406620-G5j1gjzM });
+      let liffId = LIFF_ID_FALLBACK;
+      try {
+        const r = await fetch("/api/liff/config", { cache:"no-store" });
+        const j = await r.json();
+        if (j && j.liffId) liffId = j.liffId;
+      } catch {}
+
+      await liff.init({ liffId });
     } catch (e) {
-      console.log("LIFF init error", e);
+      console.log("LIFF init error:", e);
     }
   }
 
-  initLiff();
+  // ====== 表示 ======
+  function renderSummary(order) {
+    if (!order) return;
 
-  document.getElementById("closeBtn").addEventListener("click", () => {
+    $("summaryCard").style.display = "block";
+    $("orderNo").textContent = order.orderNumber || "-";
+
+    const items = Array.isArray(order.items) ? order.items : [];
+    const area = $("itemsArea");
+    area.innerHTML = "<div class='row'><div class='label'>ご注文内容</div></div>";
+
+    items.forEach(it => {
+      const lineTotal = (Number(it.price)||0) * (Number(it.qty)||0);
+      const div = document.createElement("div");
+      div.className = "item";
+      div.innerHTML = `
+        <div class="name">${it.name} × ${it.qty}</div>
+        <div class="value">${yen(lineTotal)}</div>
+      `;
+      area.appendChild(div);
+    });
+
+    const itemsTotal = Number(order.itemsTotal ?? order.total ?? 0);
+    const shipping   = Number(order.shipping ?? 0);
+    const codFee     = Number(order.codFee ?? 0);
+    const finalTotal = Number(order.finalTotal ?? order.total ?? 0);
+
+    $("itemsTotal").textContent = yen(itemsTotal);
+    $("shipping").textContent   = yen(shipping);
+    $("codFee").textContent     = yen(codFee);
+    $("finalTotal").textContent = yen(finalTotal);
+
+    // 住所表示（あれば）
+    if (order.address) {
+      const a = order.address;
+      const addrText =
+        `お届け先：${a.zip || a.postal || ""} ` +
+        `${a.prefecture || a.pref || ""}${a.city || ""}${a.addr1 || a.address1 || ""}${a.addr2 || a.address2 ? " " + (a.addr2 || a.address2) : ""}\n` +
+        `氏名：${(a.lastName||"")}${(a.firstName||"") || a.name || ""}\n` +
+        `電話：${a.tel || a.phone || ""}`;
+      $("addrArea").textContent = addrText;
+    }
+  }
+
+  // ====== 注文データ読み込み ======
+  function loadOrder() {
     try {
-      // ミニアプリ内なら LINE 画面に戻る
+      const s = sessionStorage.getItem(ORDER_STORAGE_KEY);
+      if (s) return JSON.parse(s);
+    } catch {}
+    try {
+      const s2 = localStorage.getItem(ORDER_STORAGE_KEY);
+      if (s2) return JSON.parse(s2);
+    } catch {}
+    return null;
+  }
+
+  // ====== サーバーへ「決済完了→管理者通知」送信 ======
+  async function sendComplete(order) {
+    const status = $("statusMsg");
+    status.textContent = "管理者へ注文通知を送信中です…";
+
+    try {
+      const r = await fetch("/api/order/complete", {
+        method: "POST",
+        headers: { "Content-Type":"application/json" },
+        body: JSON.stringify(order || {})
+      });
+
+      const j = await r.json().catch(()=> ({}));
+      if (!r.ok || !j.ok) throw new Error(j.error || "send_failed");
+
+      status.textContent = "✅ 管理者へ注文通知を送信しました。";
+      status.className = "status ok";
+
+      // 送信成功したら二重送信防止に消す（必要なら外してOK）
+      try { sessionStorage.removeItem(ORDER_STORAGE_KEY); } catch {}
+      try { localStorage.removeItem(ORDER_STORAGE_KEY); } catch {}
+
+      $("retryBtn").style.display = "none";
+      return true;
+
+    } catch (e) {
+      console.log("complete send error:", e);
+      status.textContent =
+        "⚠ 管理者通知の送信に失敗した可能性があります。\n" +
+        "LINEに戻っても注文は完了しています。\n" +
+        "必要なら「再送信」ボタンを押してください。";
+      status.className = "status ng";
+      $("retryBtn").style.display = "inline-block";
+      return false;
+    }
+  }
+
+  // ====== 起動 ======
+  (async function boot(){
+    await initLiffSafely();
+
+    const order = loadOrder();
+    if (order) {
+      renderSummary(order);
+      await sendComplete(order);
+    } else {
+      $("statusMsg").textContent =
+        "（注文データが見つかりませんでした）\n" +
+        "決済は完了しています。LINEに戻ってください。";
+      $("statusMsg").className = "status ng";
+    }
+  })();
+
+  // 再送信
+  $("retryBtn").addEventListener("click", async ()=>{
+    const order = loadOrder();
+    if (!order) {
+      $("statusMsg").textContent = "注文データがありません。";
+      return;
+    }
+    await sendComplete(order);
+  });
+
+  // 閉じる
+  $("closeBtn").addEventListener("click", () => {
+    try {
       if (window.liff && liff.isInClient()) {
         liff.closeWindow();
       } else {
-        // ブラウザで開いている場合は履歴を戻す
-        history.back();
+        location.href = "/";
       }
     } catch (e) {
-      console.log(e);
-      history.back();
+      location.href = "/";
     }
   });
 </script>

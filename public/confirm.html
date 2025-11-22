@@ -1,161 +1,122 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>最終確認 | 手造りえびせんべい 磯屋</title>
+// public/confirm.js
+// confirm.html：サーバー送料を取得して「商品合計 / 送料 / 合計」を別表示
 
-  <style>
-    body{
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
-      background:#fafafa;
-      margin:0;
-      padding:12px;
-      color:#222;
-    }
-    header{
-      background:#b22222;
-      color:#fff;
-      padding:14px 16px;
-      font-size:18px;
-      text-align:center;
-      margin:-12px -12px 12px;
-    }
-    h1{
-      font-size:20px;
-      margin:8px 0 12px;
-      text-align:center;
-    }
-    .section{
-      background:#fff;
-      border-radius:10px;
-      box-shadow:0 2px 6px rgba(0,0,0,0.08);
-      padding:12px;
-      margin-bottom:12px;
-    }
-    .section-title{
-      font-weight:bold;
-      margin-bottom:8px;
-      font-size:15px;
-      border-left:4px solid #b22222;
-      padding-left:8px;
-    }
+(function () {
+  const STORAGE_KEY = "isoya_order_v1";
 
-    /* 商品行 */
-    .row{
-      display:flex;
-      gap:8px;
-      align-items:center;
-      border-bottom:1px dashed #eee;
-      padding:8px 0;
-      font-size:14px;
-    }
-    .row:last-child{ border-bottom:none; }
-    .name{ flex:1; }
-    .qty{ width:60px; text-align:right; color:#555; }
-    .price{ width:90px; text-align:right; font-weight:bold; }
+  const itemsEl   = document.getElementById("itemsArea");
+  const addrEl    = document.getElementById("addressArea");
+  const itemsTotEl= document.getElementById("itemsTotalPrice");
+  const shipEl    = document.getElementById("shippingPrice");
+  const finalEl   = document.getElementById("finalTotalPrice");
+  const backBtn   = document.getElementById("backToAddressBtn");
+  const payBtn    = document.getElementById("toPayBtn");
 
-    /* 合計エリア */
-    .total-box{
-      font-size:15px;
-      line-height:1.7;
-    }
-    .total-box strong{
-      font-size:17px;
-      color:#b22222;
-    }
+  if (!itemsEl || !addrEl || !itemsTotEl || !shipEl || !finalEl || !backBtn || !payBtn) {
+    console.warn("confirm.html の要素が見つかりません。confirm.html を丸ごと版に差し替えてください。");
+    return;
+  }
 
-    /* ボタン */
-    .footer{
-      position:sticky;
-      bottom:0;
-      background:#fafafa;
-      padding:10px 0 6px;
-      border-top:1px solid #eee;
-      display:flex;
-      gap:8px;
+  function loadOrder() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"); }
+    catch { return {}; }
+  }
+
+  function yen(n) {
+    const num = Number(n || 0);
+    return num.toLocaleString("ja-JP") + "円";
+  }
+
+  function calcItemsTotal(items = []) {
+    return items.reduce(
+      (sum, it) => sum + Number(it.price || 0) * Number(it.qty || 0),
+      0
+    );
+  }
+
+  async function fetchShipping(items, address) {
+    const res = await fetch("/api/shipping", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ items, address }),
+    });
+    return res.json();
+  }
+
+  const order = loadOrder();
+  const items = Array.isArray(order.items) ? order.items : [];
+  const address = order.address || {};
+
+  // 1) 商品一覧表示
+  if (!items.length) {
+    itemsEl.innerHTML = "<div class='empty'>商品が選択されていません。</div>";
+    payBtn.disabled = true;
+  } else {
+    itemsEl.innerHTML = items.map(it => `
+      <div class="row">
+        <div class="name">${it.name || ""}</div>
+        <div class="qty">× ${it.qty || 0}</div>
+        <div class="price">${yen((it.price||0)*(it.qty||0))}</div>
+      </div>
+    `).join("");
+  }
+
+  // 2) 住所表示
+  const addrText = [
+    `氏名：${address.lastName || ""} ${address.firstName || ""}`.trim(),
+    address.zip ? `〒${address.zip}` : "",
+    address.addr1 || "",
+    address.addr2 || "",
+    address.tel ? `TEL：${address.tel}` : ""
+  ].filter(Boolean).join("<br>");
+
+  addrEl.innerHTML = addrText || "<div class='empty'>住所が入力されていません。</div>";
+
+  // 3) まず商品合計だけ出す
+  const itemsTotal = calcItemsTotal(items);
+  itemsTotEl.textContent = yen(itemsTotal);
+  shipEl.textContent = "計算中…";
+  finalEl.textContent = "計算中…";
+
+  let shipping = 0;
+  let finalTotal = itemsTotal;
+
+  (async () => {
+    try {
+      const data = await fetchShipping(items, address);
+      if (!data || !data.ok) throw new Error(data?.error || "shipping api error");
+
+      shipping = Number(data.shipping || 0);
+      finalTotal = Number(data.finalTotal || (itemsTotal + shipping));
+
+      // ★個別表示
+      itemsTotEl.textContent = yen(itemsTotal);
+      shipEl.textContent = yen(shipping);
+      finalEl.textContent = yen(finalTotal);
+
+      payBtn.disabled = finalTotal <= 0;
+
+      // 次画面で使うため保存
+      const next = loadOrder();
+      next.shipping = shipping;
+      next.finalTotal = finalTotal;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+
+    } catch (e) {
+      console.error("送料取得失敗:", e);
+      shipEl.textContent = "取得失敗（0円）";
+      finalEl.textContent = yen(itemsTotal);
+      payBtn.disabled = itemsTotal <= 0;
     }
-    .btn{
-      flex:1;
-      padding:12px;
-      border-radius:6px;
-      border:none;
-      font-size:15px;
-      font-weight:bold;
-      cursor:pointer;
-    }
-    .btn-main{
-      background:#b22222;
-      color:#fff;
-    }
-    .btn-sub{
-      background:#fff;
-      color:#b22222;
-      border:1px solid #b22222;
-    }
-    .btn:disabled{
-      opacity:.5;
-      cursor:default;
-    }
+  })();
 
-    .empty{
-      font-size:13px;
-      color:#666;
-      text-align:center;
-      padding:12px 0;
-    }
-    .notice{
-      font-size:12px;
-      color:#666;
-      text-align:center;
-      margin:6px 0 0;
-      line-height:1.5;
-    }
-  </style>
-</head>
+  backBtn.addEventListener("click", () => {
+    location.href = `${location.origin}/public/address.html?v=${Date.now()}`;
+  });
 
-<body>
-  <header>
-    手造りえびせんべい 磯屋<br>宅配付きご注文ミニアプリ
-  </header>
-
-  <h1>最終確認（③ 注文内容確認）</h1>
-
-  <!-- ① 商品一覧 -->
-  <div class="section">
-    <div class="section-title">ご注文商品</div>
-    <div id="itemsArea">読み込み中...</div>
-  </div>
-
-  <!-- ② お届け先 -->
-  <div class="section">
-    <div class="section-title">お届け先</div>
-    <div id="addressArea">読み込み中...</div>
-    <div class="notice">
-      ※住所が違う場合は「戻る」で修正してください
-    </div>
-  </div>
-
-  <!-- ③ 合計（商品合計＋送料） -->
-  <div class="section">
-    <div class="section-title">お支払い合計</div>
-    <div id="totalPrice" class="total-box">計算中...</div>
-    <div class="notice">
-      ※送料はお届け先地域により自動計算されます
-    </div>
-  </div>
-
-  <!-- ボタン -->
-  <div class="footer">
-    <button id="backToAddressBtn" class="btn btn-sub">
-      ② お届け先入力へ戻る
-    </button>
-    <button id="toPayBtn" class="btn btn-main">
-      ④ クレジット支払いへ進む
-    </button>
-  </div>
-
-  <!-- confirm.js（サーバー送料計算版） -->
-  <script src="/public/confirm.js"></script>
-</body>
-</html>
+  payBtn.addEventListener("click", () => {
+    if (!items.length || finalTotal <= 0) return;
+    location.href = `${location.origin}/public/pay.html?v=${Date.now()}`;
+  });
+})();

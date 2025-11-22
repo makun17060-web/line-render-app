@@ -1,163 +1,129 @@
 // public/products.js
-// /api/products で商品一覧を描画し、カートを sessionStorage に保存して address.html へ進む
+// products.html 用：商品一覧表示 + 数量選択 + localStorage保存 + address.htmlへ遷移
 
-(async function () {
+(function () {
   const grid = document.getElementById("productGrid");
   const toConfirmBtn = document.getElementById("toConfirmBtn");
 
-  // ===== 共通：sessionStorage =====
-  const STATE_KEY = "miniapp_state";
+  const STORAGE_KEY = "isoya_order_v1";
 
-  function loadState() {
+  function loadOrder() {
     try {
-      return JSON.parse(sessionStorage.getItem(STATE_KEY) || "{}");
+      return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
     } catch {
       return {};
     }
   }
-  function saveState(partial) {
-    const cur = loadState();
-    const next = { ...cur, ...partial };
-    sessionStorage.setItem(STATE_KEY, JSON.stringify(next));
+  function saveOrder(partial) {
+    const cur = loadOrder();
+    const next = { ...cur, ...partial, updatedAt: Date.now() };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     return next;
   }
-
-  function yen(n) {
-    return (Number(n) || 0).toLocaleString("ja-JP") + "円";
+  function calcTotal(items = []) {
+    return items.reduce(
+      (sum, it) => sum + Number(it.price || 0) * Number(it.qty || 0),
+      0
+    );
   }
 
-  // ====== 商品一覧取得 ======
   async function fetchProducts() {
     try {
       const res = await fetch("/api/products", { cache: "no-store" });
       const data = await res.json();
-      if (!data || !data.ok || !Array.isArray(data.products)) {
-        console.error("想定外のレスポンス形式:", data);
-        return [];
-      }
+      if (!data || !data.ok || !Array.isArray(data.products)) return [];
       return data.products;
     } catch (e) {
-      console.error("商品一覧の取得に失敗:", e);
+      console.error("商品一覧取得失敗:", e);
       return [];
     }
   }
 
-  // 既存state（戻ってきた時に数量復元）
-  let st = loadState();
-  if (!st.cart) st.cart = {}; // { id: qty }
+  // カート復元
+  const order = loadOrder();
+  let cart = Array.isArray(order.items) ? order.items : [];
 
-  const products = await fetchProducts();
-
-  // ====== 商品カード描画 ======
-  products.forEach(p => {
-    const id    = p.id;
-    const name  = p.name;
-    const price = Number(p.price || 0);
-    const stock = Number(p.stock || 0);
-    const image = p.image || "";
-    const desc  = p.desc  || "";
-
-    const card = document.createElement("div");
-    card.className = "card";
-    card.dataset.id = id;
-    card.dataset.name = name;
-    card.dataset.price = String(price);
-    card.dataset.stock = String(stock);
-
-    // ★ 前回の入力があれば復元
-    const savedQty = Number(st.cart[id] || 0);
-
-    card.innerHTML = `
-      ${image ? `<img src="${image}" alt="${name}">` : ""}
-      <div class="card-body">
-        <div class="card-title">${name}</div>
-        <div class="price">${yen(price)}（税込）</div>
-        <div class="stock">在庫：${stock}袋</div>
-        ${desc ? `<div class="desc">${desc}</div>` : ""}
-        <div class="qty-row">
-          数量：
-          <input
-            type="number"
-            min="0"
-            max="${stock}"
-            step="1"
-            value="${savedQty}"
-            class="qty-input"
-          >
-          袋
-        </div>
-      </div>
-    `;
-
-    grid.appendChild(card);
-  });
-
-  // ====== ボタン活性/非活性制御 ======
-  function updateButtonStateAndSaveCart() {
-    const qtyInputs = document.querySelectorAll(".qty-input");
-
-    let hasItem = false;
-    const cart = {};
-
-    qtyInputs.forEach(input => {
-      const card = input.closest(".card");
-      const id = card.dataset.id;
-      const max = Number(input.max || "0");
-
-      let v = Number(input.value || "0");
-      if (v < 0) v = 0;
-      if (max && v > max) v = max;
-      input.value = v;
-
-      if (v > 0) {
-        hasItem = true;
-        cart[id] = v;
-      }
-    });
-
-    toConfirmBtn.disabled = !hasItem;
-
-    // ★ cart を保存（confirm 済みフラグはリセット）
-    saveState({ cart, confirmed: false });
-    st = loadState();
+  function getQty(pid) {
+    const it = cart.find((x) => x.id === pid);
+    return it ? Number(it.qty || 0) : 0;
   }
 
-  document.querySelectorAll(".qty-input").forEach(input => {
-    input.addEventListener("input", updateButtonStateAndSaveCart);
-  });
+  function setQty(p, qty) {
+    qty = Math.max(0, Math.floor(Number(qty || 0)));
 
-  // 初期状態のボタン反映
-  updateButtonStateAndSaveCart();
+    // 0なら削除
+    cart = cart.filter((x) => x.id !== p.id);
+    if (qty > 0) {
+      cart.push({
+        id: p.id,
+        name: p.name,
+        price: Number(p.price || 0),
+        qty,
+        image: p.image || "",
+      });
+    }
+    saveOrder({ items: cart });
 
-  // ====== 「注文内容を確認する」押下時 ======
+    // ボタン有効/無効
+    toConfirmBtn.disabled = calcTotal(cart) <= 0;
+  }
+
+  function renderProducts(products) {
+    grid.innerHTML = "";
+
+    products.forEach((p) => {
+      // 久助は画面に出さない（名前に久助が入ってたらスキップ）
+      if (String(p.name || "").includes("久助")) return;
+
+      const qty = getQty(p.id);
+
+      const card = document.createElement("div");
+      card.className = "card";
+
+      card.innerHTML = `
+        <img src="${p.image || ""}" alt="${p.name || ""}" onerror="this.style.display='none'" />
+        <div class="card-body">
+          <div class="card-title">${p.name || ""}</div>
+          <div class="price">${p.price || 0}円</div>
+          <div class="stock">在庫: ${p.stock ?? "-"}</div>
+          ${p.desc ? `<div class="desc">${p.desc}</div>` : ""}
+
+          <div class="qty-row">
+            数量：
+            <input type="number" min="0" step="1" value="${qty}" inputmode="numeric" />
+          </div>
+        </div>
+      `;
+
+      const input = card.querySelector('input[type="number"]');
+      input.addEventListener("input", () => {
+        setQty(p, input.value);
+      });
+      input.addEventListener("blur", () => {
+        // 空欄などを整形
+        input.value = getQty(p.id);
+      });
+
+      grid.appendChild(card);
+    });
+
+    // 初期状態のボタン判定
+    toConfirmBtn.disabled = calcTotal(cart) <= 0;
+  }
+
+  // ②住所入力へ
   toConfirmBtn.addEventListener("click", () => {
-    const cards = document.querySelectorAll(".card");
-    const orderItems = [];
-    let itemsTotal = 0;
-
-    cards.forEach(card => {
-      const qty = Number(card.querySelector(".qty-input").value || "0");
-      if (qty > 0) {
-        const id    = card.dataset.id;
-        const name  = card.dataset.name;
-        const price = Number(card.dataset.price);
-        orderItems.push({ id, name, price, qty });
-        itemsTotal += price * qty;
-      }
-    });
-
-    if (orderItems.length === 0) return;
-
-    // ★ items と商品合計を保存（送料は address/confirm 側で計算）
-    saveState({
-      cart: Object.fromEntries(orderItems.map(it => [it.id, it.qty])),
-      items: orderItems,
-      itemsTotal,
-      confirmed: false
-    });
-
-    // ★ 次は住所ページへ
+    saveOrder({ items: cart }); // 念のため保存
     location.href = "/public/address.html";
   });
 
+  // 起動
+  (async () => {
+    const products = await fetchProducts();
+    if (!products.length) {
+      grid.innerHTML = "商品がありません。";
+      return;
+    }
+    renderProducts(products);
+  })();
 })();

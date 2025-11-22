@@ -1,83 +1,58 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>③ 最終確認 | 磯屋ミニアプリ</title>
-<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-<script src="/public/common.js"></script>
-<style>
-  body{font-family:system-ui;margin:0;background:#fafafa;}
-  header{background:#b22222;color:#fff;padding:14px;text-align:center;}
-  .container{max-width:720px;margin:0 auto;padding:12px 16px 24px;}
-  .card{background:#fff;border-radius:6px;padding:10px;box-shadow:0 1px 3px rgba(0,0,0,.08);}
-  .line{display:flex;justify-content:space-between;border-bottom:1px dashed #eee;padding:4px 0;}
-  .total{font-weight:bold;font-size:16px;margin-top:6px;border-top:1px solid #eee;padding-top:6px;}
-  .btn-main{width:100%;padding:12px;border:none;border-radius:6px;background:#b22222;color:#fff;font-size:16px;font-weight:bold;margin-top:10px;}
-  .btn-sub{width:100%;padding:10px;border:1px solid #b22222;border-radius:6px;background:#fff;color:#b22222;margin-top:8px;}
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>最終確認 | 磯屋</title>
+
+  <!-- キャッシュ抑制 -->
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+
+  <style>
+    body { font-family: system-ui, sans-serif; background:#fafafa; margin:0; padding:12px; color:#222; }
+    header { background:#b22222; color:#fff; padding:14px 16px; font-size:18px; text-align:center; margin:-12px -12px 12px; }
+    h1 { font-size:20px; margin:8px 0 10px; text-align:center; }
+    .box { background:#fff; padding:12px; border-radius:10px; box-shadow:0 2px 6px rgba(0,0,0,0.08); margin-bottom:12px; }
+    .box h2 { font-size:15px; margin:0 0 8px; }
+    .row { display:grid; grid-template-columns: 1fr auto auto; gap:8px; padding:6px 0; border-bottom:1px dashed #eee; font-size:14px; }
+    .row:last-child{ border-bottom:none; }
+    .name{ font-weight:600; }
+    .qty{ color:#555; }
+    .price{ text-align:right; font-weight:700; color:#b22222; }
+    .total { font-size:18px; font-weight:bold; text-align:right; }
+    .empty{ color:#888; font-size:13px; }
+    .addr { font-size:14px; line-height:1.6; }
+    .footer { position:sticky; bottom:0; background:#fafafa; padding:12px 0 6px; border-top:1px solid #eee; display:grid; gap:8px; }
+    .btn { width:100%; max-width:420px; margin:0 auto; padding:12px; border-radius:6px; border:none; font-size:16px; font-weight:bold; cursor:pointer; }
+    .btn-main { background:#b22222; color:#fff; }
+    .btn-sub { background:#ddd; color:#222; }
+    .btn:disabled{ opacity:.5; cursor:default; }
+  </style>
 </head>
 <body>
-<header>③ 最終確認</header>
-<div class="container">
+  <header>手造りえびせんべい 磯屋<br>宅配付きご注文ミニアプリ</header>
+  <h1>最終確認（③ 内容確認）</h1>
 
-  <div id="summary" class="card">読み込み中...</div>
-
-  <button id="okBtn" class="btn-main">この内容で支払いへ進む</button>
-  <button id="backBtn" class="btn-sub">← ② 住所入力へ戻る</button>
-</div>
-
-<script>
-(async()=>{
-  await initLiffAndProfile();
-
-  let st = loadState();
-  if(!Object.keys(st.cart).length){ location.href="/public/products.html"; return; }
-  if(!st.address){ location.href="/public/address.html"; return; }
-
-  const products = await fetchProducts();
-  const ids = Object.keys(st.cart);
-
-  let itemsTotal=0;
-  const lines=[];
-
-  ids.forEach(id=>{
-    const p=products.find(x=>x.id===id);
-    if(!p) return;
-    const qty=st.cart[id];
-    const sub=p.price*qty;
-    itemsTotal+=sub;
-    lines.push({name:p.name, qty, sub});
-  });
-
-  const shipFee = st.shipFee || 0;
-  const grandTotal = itemsTotal + shipFee;
-
-  saveState({ itemsTotal, grandTotal });
-
-  const sumEl=document.getElementById("summary");
-  sumEl.innerHTML = `
-    <div style="font-weight:bold;margin-bottom:6px;">ご注文明細</div>
-    ${lines.map(l=>`<div class="line"><span>${l.name} × ${l.qty}</span><span>${yen(l.sub)}</span></div>`).join("")}
-    <div class="line"><span>商品合計</span><span>${yen(itemsTotal)}</span></div>
-    <div class="line"><span>送料（${st.shipRegion}）</span><span>${yen(shipFee)}</span></div>
-    <div class="total line"><span>お支払予定金額</span><span>${yen(grandTotal)}</span></div>
-
-    <div style="font-size:12px;color:#666;margin-top:8px;">
-      お届け先：${st.address.postal} ${st.address.prefecture}${st.address.city}${st.address.address1} ${st.address.address2||""}<br>
-      氏名：${st.address.name} / TEL：${st.address.phone}
+  <div class="box">
+    <h2>ご注文商品</h2>
+    <div id="itemsArea">読み込み中...</div>
+    <div style="margin-top:8px" class="total">
+      合計：<span id="totalPrice">0円</span>
     </div>
-  `;
+  </div>
 
-  okBtn.onclick=()=>{
-    saveState({ confirmed:true });
-    location.href="/public/pay.html";
-  };
-  backBtn.onclick=()=>{
-    saveState({ confirmed:false });
-    location.href="/public/address.html";
-  };
-})();
-</script>
+  <div class="box">
+    <h2>お届け先</h2>
+    <div id="addressArea" class="addr">読み込み中...</div>
+  </div>
+
+  <div class="footer">
+    <button id="backToAddressBtn" class="btn btn-sub">② お届け先入力へ戻る</button>
+    <button id="toPayBtn" class="btn btn-main">④ クレジット支払いへ進む</button>
+  </div>
+
+  <script src="/public/confirm.js?v=20251123_1"></script>
 </body>
 </html>

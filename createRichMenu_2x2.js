@@ -1,6 +1,6 @@
 // createRichMenu_2x2.js
 // 2段2列リッチメニュー(2500x1686)
-// 左上=アンケート / 右上=直接注文 / 左下=オンライン注文(ミニアプリLIFF→products.html) / 右下=会員ログイン
+// 左上=アンケート / 右上=直接注文(テキスト送信) / 左下=オンライン注文(LIFF→products.html) / 右下=会員ログイン
 
 "use strict";
 
@@ -14,10 +14,10 @@ const {
   LINE_CHANNEL_SECRET,
   LIFF_ID_MINIAPP,
   SURVEY_URL,
-  DIRECT_ORDER_URL,
+  DIRECT_ORDER_URL, // ※使わなくてもOK（残してOK）
   MEMBER_URL,
   RICHMENU_IMAGE,
-  PUBLIC_BASE_URL, // ★追加: RenderのベースURL（任意）
+  PUBLIC_BASE_URL,
 } = process.env;
 
 if (!LINE_CHANNEL_ACCESS_TOKEN || !LINE_CHANNEL_SECRET) {
@@ -34,12 +34,10 @@ const client = new line.Client({
   channelSecret: LINE_CHANNEL_SECRET,
 });
 
-// ============================
-// ★オンライン注文の遷移先
-// ============================
-
-// Renderの公開URL（envなければあなたのURLを既定値に）
-const baseUrl = (PUBLIC_BASE_URL || "https://line-render-app-1.onrender.com").replace(/\/+$/, "");
+// Renderの公開URL（末尾の / や . を掃除）
+const baseUrl = (PUBLIC_BASE_URL || "https://line-render-app-1.onrender.com")
+  .trim()
+  .replace(/[\/\.\s]+$/, "");
 
 // products.html（①商品選択）
 const PRODUCTS_URL = `${baseUrl}/public/products.html`;
@@ -48,11 +46,8 @@ const PRODUCTS_URL = `${baseUrl}/public/products.html`;
 const MINIAPP_LIFF_URL =
   `https://liff.line.me/${LIFF_ID_MINIAPP}?redirect=${encodeURIComponent("/public/products.html")}`;
 
-// ============================
 // 他URL（未設定なら仮）
-// ============================
 const surveyUrl = (SURVEY_URL || "https://example.com/survey").trim();
-const directOrderUrl = (DIRECT_ORDER_URL || "https://example.com/order").trim();
 const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
 
 (async () => {
@@ -68,10 +63,10 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
           bounds: { x: 0, y: 0, width: 1250, height: 843 },
           action: { type: "uri", label: "アンケート", uri: surveyUrl },
         },
-        // 右上：直接注文
+        // 右上：直接注文（★テキスト送信）
         {
           bounds: { x: 1250, y: 0, width: 1250, height: 843 },
-          action: { type: "message", label: "直接注文" },
+          action: { type: "message", label: "直接注文", text: "直接注文" },
         },
         // 左下：オンライン注文（ミニアプリで products.html を開く）
         {
@@ -95,7 +90,7 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
     const richMenuId = await client.createRichMenu(richMenu);
     console.log("✅ richMenuId:", richMenuId);
 
-    // 2) 画像アップロード（publicから読む）
+    // 2) 画像アップロード
     const imageFile = (RICHMENU_IMAGE || "richmenu_2x2_2500x1686.jpg").trim();
     const imagePath = path.join(__dirname, "public", imageFile);
 
@@ -127,7 +122,7 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
     await client.setDefaultRichMenu(richMenuId);
     console.log("✅ setDefaultRichMenu OK");
 
-    console.log("🎉 完了！オンライン注文→LIFFで products.html が開きます。");
+    console.log("🎉 完了！右上タップで『直接注文』が送信されます。");
 
   } catch (e) {
     console.error("❌ Error:", e?.message);

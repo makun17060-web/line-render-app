@@ -83,6 +83,30 @@
     // });
   </script>
   -->
+<script>
+async function sendOrderToServer() {
+  try {
+    // ローカル注文情報（products・address・shipping・total）
+    const order = JSON.parse(localStorage.getItem("isoya_order_v1") || "{}");
+
+    await fetch("/api/order/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(order),
+    });
+
+    console.log("注文データ送信 OK");
+  } catch (e) {
+    console.log("注文送信エラー:", e);
+  }
+}
+
+// ページ読み込み時に送信（多重送信防止用フラグ）
+if (!sessionStorage.getItem("order_sent")) {
+  sendOrderToServer();
+  sessionStorage.setItem("order_sent", "1");
+}
+</script>
 
   <button class="btn-main" id="closeBtn">LINEに戻る</button>
 

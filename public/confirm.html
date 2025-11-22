@@ -18,7 +18,7 @@
       padding: 14px 16px;
       text-align: center;
       font-size: 18px;
-      line-height: 1.4;
+      font-weight: 700;
     }
     .container {
       padding: 16px;
@@ -35,28 +35,28 @@
       border-radius: 6px;
       margin-bottom: 12px;
       box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      font-size: 14px;
       line-height: 1.6;
     }
     .summary {
-      background: #fff;
-      padding: 12px;
-      border-radius: 6px;
-      margin-top: 8px;
+      background:#fff;
+      padding:12px;
+      border-radius:6px;
       box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-      line-height: 1.8;
-      font-size: 15px;
+      font-size:14px;
+      line-height:1.7;
     }
-    .summary .row {
-      display: flex;
-      justify-content: space-between;
-      gap: 8px;
+    .summary .row{
+      display:flex;
+      justify-content:space-between;
+      padding:4px 0;
+      border-bottom:1px dashed #eee;
     }
-    .summary .total {
-      font-weight: bold;
-      font-size: 16px;
-      border-top: 1px dashed #ddd;
-      padding-top: 8px;
-      margin-top: 6px;
+    .summary .row:last-child{ border-bottom:none; }
+    .summary .total{
+      font-weight:700;
+      font-size:16px;
+      padding-top:8px;
     }
     .btn-main {
       display: block;
@@ -71,10 +71,7 @@
       color: #fff;
       cursor: pointer;
     }
-    .btn-main:disabled {
-      opacity: 0.6;
-      cursor: default;
-    }
+    .btn-main:disabled { opacity: 0.6; cursor: default; }
     .btn-back {
       display: block;
       width: 100%;
@@ -108,12 +105,11 @@
 
   <div id="orderList"></div>
 
+  <!-- 合計・送料の表示 -->
   <div id="summaryBox" class="summary" style="display:none;"></div>
 
-  <!-- ▼ クレジット決済へ進むボタン -->
   <button id="payButton" class="btn-main" disabled>クレジットカードで支払う</button>
 
-  <!-- ▼ 商品選択へ戻る -->
   <a class="btn-back" href="main.html">商品選択に戻る</a>
 
   <div id="msgArea" class="msg"></div>
@@ -127,10 +123,7 @@
     try {
       const res = await fetch("/api/liff/config");
       const cfg = await res.json();
-      if (!cfg.liffId) {
-        console.log("LIFF ID not found in /api/liff/config");
-        return;
-      }
+      if (!cfg.liffId) return;
       await liff.init({ liffId: cfg.liffId });
       liffReady = true;
     } catch (e) {
@@ -139,21 +132,40 @@
   }
   initLiff();
 
-  // ====== 注文内容の表示 ======
-  const orderListEl  = document.getElementById("orderList");
-  const summaryBoxEl = document.getElementById("summaryBox");
-  const payButton    = document.getElementById("payButton");
-  const msgArea      = document.getElementById("msgArea");
+  const orderListEl = document.getElementById("orderList");
+  const summaryBox  = document.getElementById("summaryBox");
+  const payButton   = document.getElementById("payButton");
+  const msgArea     = document.getElementById("msgArea");
 
+  function setMessage(text){ msgArea.textContent = text || ""; }
+
+  // ====== 注文情報の取得 ======
   let order = {};
   try {
     order = JSON.parse(sessionStorage.getItem("currentOrder") || "{}");
-  } catch (e) {
-    order = {};
-  }
+  } catch(e){ order = {}; }
 
-  function yen(n){
-    return (Number(n||0)).toLocaleString("ja-JP") + "円";
+  // 送料テーブル（server.jsと同じ）
+  const SHIPPING_BY_REGION = {
+    "北海道": 1100, "東北": 900, "関東": 800, "中部": 800,
+    "近畿": 900, "中国": 1000, "四国": 1000, "九州": 1100, "沖縄": 1400
+  };
+
+  // region / shipFee を order から読む（無ければ0）
+  const region = order.region || ""; // main.html側で入れておくとベスト
+  let shipFee = 0;
+
+  // 1) order.shipFee が入っていればそれを使う
+  if (Number.isFinite(Number(order.shipFee))) {
+    shipFee = Number(order.shipFee);
+  }
+  // 2) 無ければ region から自動計算
+  else if (region && SHIPPING_BY_REGION[region] != null) {
+    shipFee = SHIPPING_BY_REGION[region];
+  }
+  // 3) それも無ければ「仮送料 800円」を表示したい場合はここ
+  else {
+    shipFee = 0; // 不明なら0（必要なら 800 に変更OK）
   }
 
   if (!order || !Array.isArray(order.items) || order.items.length === 0) {
@@ -161,50 +173,40 @@
     payButton.disabled = true;
   } else {
     let subtotal = 0;
-    orderListEl.innerHTML = "";
 
     order.items.forEach(item => {
       const div = document.createElement("div");
       div.className = "item";
-      const sub = Number(item.price || 0) * Number(item.qty || 0);
+      const sub = Number(item.price||0) * Number(item.qty||0);
       div.innerHTML = `
-        <strong>${item.name || ""}</strong><br>
-        単価：${yen(item.price)} × ${item.qty}袋<br>
-        小計：${yen(sub)}
+        <strong>${item.name}</strong><br>
+        単価：${Number(item.price||0).toLocaleString("ja-JP")}円 × ${item.qty}袋<br>
+        小計：${sub.toLocaleString("ja-JP")}円
       `;
       orderListEl.appendChild(div);
       subtotal += sub;
     });
 
-    // 送料（いろんな名前で来る可能性があるので吸収）
-    const shippingFee =
-      Number(order.shippingFee ?? order.shipping ?? order.regionFee ?? 0);
+    const total = subtotal + shipFee;
 
-    // 代引き手数料があれば
-    const codFee = Number(order.codFee ?? 0);
-
-    const total = subtotal + shippingFee + codFee;
-
-    // order に反映（サーバーへ送る）
+    // order に保存（決済送信に使う）
     order.subtotal = subtotal;
-    order.total = total;
+    order.shipFee  = shipFee;
+    order.total    = total;
+    sessionStorage.setItem("currentOrder", JSON.stringify(order));
 
-    summaryBoxEl.style.display = "block";
-    summaryBoxEl.innerHTML = `
-      <div class="row"><span>商品小計</span><strong>${yen(subtotal)}</strong></div>
-      <div class="row"><span>送料</span><strong>${yen(shippingFee)}</strong></div>
-      <div class="row"><span>代引き手数料</span><strong>${yen(codFee)}</strong></div>
-      <div class="row total"><span>合計金額</span><strong>${yen(total)}</strong></div>
+    // 明細ボックス表示
+    summaryBox.style.display = "";
+    summaryBox.innerHTML = `
+      <div class="row"><span>商品小計</span><span>${subtotal.toLocaleString("ja-JP")}円</span></div>
+      <div class="row"><span>送料${region ? "（" + region + "）" : ""}</span><span>${shipFee.toLocaleString("ja-JP")}円</span></div>
+      <div class="row total"><span>合計金額</span><span>${total.toLocaleString("ja-JP")}円</span></div>
     `;
 
     payButton.disabled = false;
   }
 
-  function setMessage(text) {
-    msgArea.textContent = text || "";
-  }
-
-  // ====== 支払いボタン（修正版） ======
+  // ====== 支払いボタン ======
   payButton.addEventListener("click", async () => {
     if (!order || !Array.isArray(order.items) || order.items.length === 0) {
       alert("注文情報がありません。もう一度商品を選択してください。");
@@ -217,43 +219,31 @@
     try {
       let lineUserId = "";
       let lineUserName = "";
-
       if (liffReady) {
         try {
-          // ★LINE内なら getContext() で userId を安定取得
-          const ctx = liff.getContext && liff.getContext();
-          lineUserId = ctx?.userId || "";
-
-          // ★表示名は profile から（失敗OK）
-          try {
-            const profile = await liff.getProfile();
-            lineUserName = profile.displayName || "";
-            if (!lineUserId) lineUserId = profile.userId || "";
-          } catch (e) {
-            console.log("getProfile error", e);
-          }
-        } catch (e) {
-          console.log("LIFF context/profile error", e);
-        }
+          const profile = await liff.getProfile();
+          lineUserId = profile.userId || "";
+          lineUserName = profile.displayName || "";
+        } catch(e){}
       }
 
-      console.log("lineUserId to epsilon:", lineUserId);
-
+      // ✅ total は “送料込み” を送る
       const res = await fetch("/api/pay-epsilon", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type":"application/json" },
         body: JSON.stringify({
           items: order.items,
-          total: order.total || 0,   // ★送料込み合計を送る
+          total: order.total || 0,
+          shipFee: order.shipFee || 0,   // サーバー側で使いたければ送る
+          region: order.region || "",
           lineUserId,
           lineUserName
         })
       });
 
-      const data = await res.json().catch(() => ({}));
+      const data = await res.json().catch(()=>({}));
 
       if (!res.ok || !data.ok) {
-        console.log("pay-epsilon error:", data);
         alert("決済の開始に失敗しました。\n再度お試しください。\n\n" + (data.error || ""));
         payButton.disabled = false;
         setMessage("");
@@ -271,8 +261,8 @@
       setMessage("イプシロンの決済画面に移動します…");
       location.href = url;
 
-    } catch (e) {
-      console.error("payButton click error:", e);
+    } catch(e){
+      console.error(e);
       alert("システムエラーが発生しました。時間をおいて再度お試しください。");
       payButton.disabled = false;
       setMessage("");

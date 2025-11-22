@@ -763,7 +763,7 @@ app.post("/api/liff/address", async (req, res) => {
     res.status(500).json({ ok: false, error: "server_error" });
   }
 });
-app.get("/api/liff/config", (_req, res) => res.json({ liffId: 2008406620-G5j1gjzM }));
+app.get("/api/liff/config", (_req, res) => res.json({ liffId: "2008406620-G5j1gjzM" }));
 
 // ====== 決済：/api/pay（イプシロン専用） ======
 app.post("/api/pay", async (req, res) => {

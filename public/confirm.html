@@ -98,10 +98,6 @@
       color:#b22222;
       border:1px solid #b22222;
     }
-    .btn:disabled{
-      opacity:.5;
-      cursor:default;
-    }
 
     .empty{
       font-size:13px;
@@ -117,6 +113,8 @@
       line-height:1.5;
     }
   </style>
+
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
 
 <body>
@@ -126,22 +124,19 @@
 
   <h1>最終確認（③ 注文内容確認）</h1>
 
-  <!-- ① 商品一覧 -->
   <div class="section">
     <div class="section-title">ご注文商品</div>
     <div id="itemsArea">読み込み中...</div>
   </div>
 
-  <!-- ② お届け先 -->
   <div class="section">
     <div class="section-title">お届け先</div>
     <div id="addressArea">読み込み中...</div>
     <div class="notice">
-      ※住所が違う場合は「戻る」で修正してください
+      ※住所が違う場合は「②へ戻る」で修正してください
     </div>
   </div>
 
-  <!-- ③ 合計（個別表示） -->
   <div class="section">
     <div class="section-title">お支払い合計</div>
 
@@ -160,12 +155,9 @@
       <div id="finalTotalPrice" class="sum-value grand">計算中…</div>
     </div>
 
-    <div class="notice">
-      ※送料はお届け先地域により自動計算されます
-    </div>
+    <div class="notice">※送料はお届け先地域により自動計算されます</div>
   </div>
 
-  <!-- ボタン -->
   <div class="footer">
     <button id="backToAddressBtn" class="btn btn-sub">
       ② お届け先入力へ戻る

@@ -96,7 +96,7 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
     console.log("✅ richMenuId:", richMenuId);
 
     // 2) 画像アップロード（publicから読む）
-    const imageFile = (RICHMENU_IMAGE || "richmenu_2x2_2500x1686.jpg").trim();
+    const imageFile = (RICHMENU_IMAGE || "richmenu_2x2_2500x1686.png").trim();
     const imagePath = path.join(__dirname, "public", imageFile);
 
     if (!fs.existsSync(imagePath)) {

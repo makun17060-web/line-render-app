@@ -1178,6 +1178,57 @@ app.get("/api/products", (req, res) => {
     res.status(500).json({ ok: false, error: "server_error" });
   }
 });
+// ====== ミニアプリ用：送料計算 API ======
+// 受け取り例: { items:[{id,price,qty}], address:{ zip, prefecture, addr1, ... } }
+// 返す例: { ok:true, itemsTotal, shipping, finalTotal }
+
+function detectRegionFromAddress(address = {}) {
+  // 1) 明示 prefecture があれば最優先
+  const pref =
+    String(address.prefecture || address.pref || "").trim();
+
+  // 2) ミニアプリの住所(addr1)に都道府県が入ってる想定
+  const addr1 =
+    String(address.addr1 || address.address1 || "").trim();
+
+  const hay = pref || addr1;
+
+  // SHIPPING_BY_REGION のキー（北海道/東北/関東...）にマッチさせる
+  // もし addr1 に「大阪府」等が入ってても、近畿に寄せる簡易対応
+  if (/北海道/.test(hay)) return "北海道";
+  if (/(青森|岩手|宮城|秋田|山形|福島|東北)/.test(hay)) return "東北";
+  if (/(茨城|栃木|群馬|埼玉|千葉|東京|神奈川|山梨|関東)/.test(hay)) return "関東";
+  if (/(新潟|富山|石川|福井|長野|岐阜|静岡|愛知|三重|中部)/.test(hay)) return "中部";
+  if (/(滋賀|京都|大阪|兵庫|奈良|和歌山|近畿)/.test(hay)) return "近畿";
+  if (/(鳥取|島根|岡山|広島|山口|中国)/.test(hay)) return "中国";
+  if (/(徳島|香川|愛媛|高知|四国)/.test(hay)) return "四国";
+  if (/(福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|九州)/.test(hay)) return "九州";
+  if (/(沖縄)/.test(hay)) return "沖縄";
+
+  return ""; // 不明
+}
+
+app.post("/api/shipping", (req, res) => {
+  try {
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    const address = req.body?.address || {};
+
+    const itemsTotal = items.reduce(
+      (sum, it) => sum + (Number(it.price)||0) * (Number(it.qty)||0),
+      0
+    );
+
+    // 都道府県(or住所から)地域判定 → 送料
+    const region = detectRegionFromAddress(address);
+    const shipping = region ? (SHIPPING_BY_REGION[region] || 0) : 0;
+
+    const finalTotal = itemsTotal + shipping;
+
+    res.json({ ok:true, itemsTotal, region, shipping, finalTotal });
+  } catch (e) {
+    res.status(400).json({ ok:false, error: e.message || "shipping_error" });
+  }
+});
 
 // ====== 予約者一括連絡 ======
 app.post("/api/admin/reservations/notify", async (req, res) => {

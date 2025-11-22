@@ -1,8 +1,9 @@
 // createRichMenu_2x2.js
 // 2段2列リッチメニュー(2500x1686)
-// 左上=アンケート / 右上=直接注文(テキスト送信)
+// 左上=アンケート(URI)
+// 右上=直接注文(テキスト送信)
 // 左下=オンライン注文(ミニアプリLIFF→products.html)
-// 右下=会員ログイン
+// 右下=会員ログイン(URI)
 
 "use strict";
 
@@ -35,17 +36,22 @@ const client = new line.Client({
   channelSecret: LINE_CHANNEL_SECRET,
 });
 
-// Renderの公開URL（末尾の / や . を掃除）
-const baseUrl = (PUBLIC_BASE_URL || "https://line-render-app-1.onrender.com")
-  .trim()
-  .replace(/[\/\.\s]+$/, "");
+// ===== URL整形（末尾の / . 空白 を除去）=====
+const sanitizeBase = (u) =>
+  String(u || "")
+    .trim()
+    .replace(/[\/\.\s]+$/, "");
+
+// Renderの公開URL（envなければ既定値）
+const baseUrl = sanitizeBase(PUBLIC_BASE_URL || "https://line-render-app-1.onrender.com");
 
 // products.html（①商品選択）
 const PRODUCTS_URL = `${baseUrl}/public/products.html`;
 
-// ✅ LIFFで products.html を開く（redirect方式）
+// ✅ LIFFで products.html を開く（redirect + キャッシュ無視 v=）
+const CACHE_BUSTER = "20251122"; // ←数字を変えると強制更新
 const MINIAPP_LIFF_URL =
-  `https://liff.line.me/${LIFF_ID_MINIAPP}?redirect=${encodeURIComponent("/public/products.html")}`;
+  `https://liff.line.me/${LIFF_ID_MINIAPP}?redirect=${encodeURIComponent(`/public/products.html?v=${CACHE_BUSTER}`)}`;
 
 // 他URL（未設定なら仮）
 const surveyUrl = (SURVEY_URL || "https://example.com/survey").trim();
@@ -71,7 +77,7 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
           action: { type: "message", label: "直接注文", text: "直接注文" },
         },
 
-        // 左下：オンライン注文（✅ミニアプリLIFF経由で products.html）
+        // 左下：オンライン注文（LIFF経由で products.html）
         {
           bounds: { x: 0, y: 843, width: 1250, height: 843 },
           action: { type: "uri", label: "オンライン注文", uri: MINIAPP_LIFF_URL },
@@ -90,9 +96,11 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
     console.log("PRODUCTS_URL:", PRODUCTS_URL);
     console.log("ONLINE→LIFF:", MINIAPP_LIFF_URL);
 
+    // 1) リッチメニュー作成
     const richMenuId = await client.createRichMenu(richMenu);
     console.log("✅ richMenuId:", richMenuId);
 
+    // 2) 画像アップロード
     const imageFile = (RICHMENU_IMAGE || "richmenu_2x2_2500x1686.jpg").trim();
     const imagePath = path.join(__dirname, "public", imageFile);
 
@@ -102,25 +110,29 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
     }
 
     const stat = fs.statSync(imagePath);
+    const kb = stat.size / 1024;
+    console.log("IMAGE FILE:", imageFile);
+    console.log("IMAGE SIZE:", kb.toFixed(1), "KB");
     if (stat.size > 1024 * 1024) {
-      console.error("❌ 画像が1MB超えです。圧縮してください。");
+      console.error("❌ 画像が1MB超えです。JPEG圧縮(q60など)にして下さい。");
       process.exit(1);
     }
 
     const imageBuffer = fs.readFileSync(imagePath);
     const ext = path.extname(imageFile).toLowerCase();
     const contentType =
-      ext === ".jpg" || ext === ".jpeg" ? "image/jpeg"
-      : ext === ".png" ? "image/png"
-      : "image/png";
+      ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" :
+      ext === ".png" ? "image/png" :
+      "image/png";
 
     await client.setRichMenuImage(richMenuId, imageBuffer, contentType);
     console.log("✅ setRichMenuImage OK");
 
+    // 3) デフォルト設定
     await client.setDefaultRichMenu(richMenuId);
     console.log("✅ setDefaultRichMenu OK");
 
-    console.log("🎉 完了！左下→LIFF経由で products.html を開きます");
+    console.log("🎉 完了！左下→LIFF経由 products.html / 右上→直接注文送信");
 
   } catch (e) {
     console.error("❌ Error:", e?.message);

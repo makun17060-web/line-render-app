@@ -1,5 +1,5 @@
 // /public/pay.js
-// ④決済画面
+// ④決済画面（修正版・丸ごと）
 // - sessionStorage の注文情報を表示
 // - /api/shipping で送料算出
 // - /api/pay に lineUserId / lineUserName を入れて投げる（memo1 へ入る）
@@ -59,7 +59,8 @@
   const items = normalizeItems(order);
 
   if (!items.length) {
-    itemsArea.innerHTML = `<div class="empty">注文データが見つかりません。<br>③の最終確認からやり直してください。</div>`;
+    itemsArea.innerHTML =
+      `<div class="empty">注文データが見つかりません。<br>③の最終確認からやり直してください。</div>`;
     statusMsg.textContent = "注文データなし";
     return;
   }
@@ -162,7 +163,7 @@
     try {
       if (!window.liff) return;
 
-      // サーバから LIFF ID を取得（あなたの server.js に /api/liff/config がある前提）
+      // サーバから LIFF ID を取得（server.js に /api/liff/config がある前提）
       const confRes = await fetch("/api/liff/config", { cache: "no-store" });
       const conf = await confRes.json();
       const liffId = (conf?.liffId || "").trim();
@@ -183,20 +184,17 @@
     }
   }
 
+  // ★ ここは1回だけ！
   await initLiffAndProfile();
-  
 
-  // ★ userId取れない場合はLINEアプリ内で開くよう案内して止める
+  // LINEアプリ外で開かれた場合は userId が取れないので止める
   if (!lineUserId) {
     statusMsg.textContent =
       "LINEアプリ内で開いてください。\n" +
-      "（ブラウザで開くとユーザーIDが取得できません）";
+      "（ブラウザではユーザーIDが取得できません）";
     payBtn.disabled = true;
     return;
   }
-
-  // ここまで来たら決済ボタン有効化
-  payBtn.disabled = false;
 
   // ここまで来たら決済ボタン有効化
   payBtn.disabled = false;

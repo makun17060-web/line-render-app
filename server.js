@@ -752,6 +752,38 @@ function labelOf(q, code){ return code; }
 
 // ====== LIFF API ======
 app.post("/api/liff/address", async (req, res) => {
+  // ====== LIFF API ======
+app.post("/api/liff/address", async (req, res) => {
+  try {
+    const { userId, name, phone, postal, prefecture, city, address1, address2 } = req.body || {};
+    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
+    const book = readAddresses();
+    book[userId] = { name, phone, postal, prefecture, city, address1, address2, ts: new Date().toISOString() };
+    writeAddresses(book);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+// ★★★ これを追加：自分の住所取得 API ★★★
+app.get("/api/liff/address/me", (req, res) => {
+  try {
+    const userId = String(req.query?.userId || "").trim();
+    if (!userId) return res.status(400).json({ ok:false, error:"userId required" });
+
+    const book = readAddresses();
+    const address = book[userId] || null;
+
+    return res.json({ ok:true, address });
+  } catch (e) {
+    return res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
+// ★★★ 追加ここまで ★★★
+
+app.get("/api/liff/config", (_req, res) => res.json({ liffId:"2008406620-G5j1gjzM" }));
+
   try {
     const { userId, name, phone, postal, prefecture, city, address1, address2 } = req.body || {};
     if (!userId) return res.status(400).json({ ok: false, error: "userId required" });

@@ -1,122 +1,59 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>② 住所入力 | 磯屋ミニアプリ</title>
-<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-<script src="/public/common.js"></script>
-<style>
-  body{font-family:system-ui;margin:0;background:#fafafa;}
-  header{background:#b22222;color:#fff;padding:14px;text-align:center;}
-  .container{max-width:720px;margin:0 auto;padding:12px 16px 24px;}
-  .card{background:#fff;border-radius:6px;padding:10px;box-shadow:0 1px 3px rgba(0,0,0,.08);}
-  .row{margin-bottom:8px;}
-  label{font-size:12px;display:block;margin-bottom:2px;}
-  input,select{width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;}
-  .btn-main{width:100%;padding:12px;border:none;border-radius:6px;background:#b22222;color:#fff;font-size:16px;font-weight:bold;margin-top:8px;}
-  .btn-sub{width:100%;padding:10px;border:1px solid #b22222;border-radius:6px;background:#fff;color:#b22222;margin-top:8px;}
-  .error{color:#c00;font-size:12px;margin-top:6px;}
-  .ok{color:#060;font-size:12px;margin-top:6px;}
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>お届け先入力 | 磯屋</title>
+
+  <style>
+    body { font-family: system-ui, sans-serif; background:#fafafa; margin:0; padding:12px; color:#222; }
+    header { background:#b22222; color:#fff; padding:14px 16px; font-size:18px; text-align:center; margin:-12px -12px 12px; }
+    h1 { font-size:20px; margin:8px 0 16px; text-align:center; }
+    .notice { font-size:12px; color:#666; text-align:center; margin-bottom:10px; }
+    .form { background:#fff; padding:12px; border-radius:10px; box-shadow:0 2px 6px rgba(0,0,0,0.08); display:grid; gap:10px; }
+    label { font-size:14px; display:grid; gap:4px; }
+    input { font-size:16px; padding:8px; border:1px solid #ccc; border-radius:6px; }
+    .footer { position:sticky; bottom:0; background:#fafafa; padding:12px 0 6px; margin-top:14px; text-align:center; border-top:1px solid #eee; display:grid; gap:8px; }
+    .btn { width:100%; max-width:420px; margin:0 auto; padding:12px; border-radius:6px; border:none; font-size:16px; font-weight:bold; cursor:pointer; }
+    .btn-main { background:#b22222; color:#fff; }
+    .btn-sub { background:#ddd; color:#222; }
+    .small { font-size:11px; color:#666; text-align:center; }
+  </style>
 </head>
 <body>
-<header>② お届け先入力</header>
-<div class="container">
+  <header>手造りえびせんべい 磯屋<br>宅配付きご注文ミニアプリ</header>
 
-  <div class="card">
-    <div class="row"><label>お名前</label><input id="addrName"></div>
-    <div class="row"><label>電話番号</label><input id="addrPhone"></div>
-    <div class="row"><label>郵便番号</label><input id="addrPostal"></div>
-    <div class="row"><label>都道府県</label>
-      <select id="addrPref">
-        <option value="">選択してください</option>
-        <option>北海道</option>
-        <option>青森県</option><option>岩手県</option><option>宮城県</option><option>秋田県</option><option>山形県</option><option>福島県</option>
-        <option>茨城県</option><option>栃木県</option><option>群馬県</option><option>埼玉県</option><option>千葉県</option><option>東京都</option><option>神奈川県</option>
-        <option>新潟県</option><option>富山県</option><option>石川県</option><option>福井県</option><option>山梨県</option><option>長野県</option>
-        <option>岐阜県</option><option>静岡県</option><option>愛知県</option><option>三重県</option>
-        <option>滋賀県</option><option>京都府</option><option>大阪府</option><option>兵庫県</option><option>奈良県</option><option>和歌山県</option>
-        <option>鳥取県</option><option>島根県</option><option>岡山県</option><option>広島県</option><option>山口県</option>
-        <option>徳島県</option><option>香川県</option><option>愛媛県</option><option>高知県</option>
-        <option>福岡県</option><option>佐賀県</option><option>長崎県</option><option>熊本県</option><option>大分県</option><option>宮崎県</option><option>鹿児島県</option>
-        <option>沖縄県</option>
-      </select>
+  <h1>お届け先入力（② 住所入力）</h1>
+  <div class="notice">※ 必須項目を入力して次へ進んでください</div>
+
+  <form id="addrForm" class="form">
+    <label>名字（必須）
+      <input id="lastName" required />
+    </label>
+    <label>名前
+      <input id="firstName" />
+    </label>
+    <label>郵便番号（必須）
+      <input id="zip" required placeholder="123-4567" />
+    </label>
+    <label>住所（必須）
+      <input id="addr1" required placeholder="都道府県 市区町村 番地" />
+    </label>
+    <label>建物名など
+      <input id="addr2" />
+    </label>
+    <label>電話番号（必須）
+      <input id="tel" required placeholder="090xxxxxxxx" />
+    </label>
+
+    <div class="footer">
+      <button type="button" id="backBtn" class="btn btn-sub">① 商品選択へ戻る</button>
+      <button type="submit" class="btn btn-main">③ 最終確認へ進む</button>
+      <div class="small">入力内容は一時保存されます</div>
     </div>
-    <div class="row"><label>市区町村</label><input id="addrCity"></div>
-    <div class="row"><label>番地・建物名</label><input id="addrAddress1"></div>
-    <div class="row"><label>建物名・部屋番号（任意）</label><input id="addrAddress2"></div>
+  </form>
 
-    <button id="saveBtn" class="btn-main">住所を登録する</button>
-    <div id="status"></div>
-  </div>
-
-  <button id="backBtn" class="btn-sub">← ① 商品選択へ戻る</button>
-</div>
-
-<script>
-(async()=>{
-  await initLiffAndProfile();
-
-  const st = loadState();
-  if(!Object.keys(st.cart).length){
-    location.href="/public/products.html"; return;
-  }
-
-  // 既存住所がsessionStorageにあれば復元
-  if(st.address){
-    addrName.value=st.address.name||"";
-    addrPhone.value=st.address.phone||"";
-    addrPostal.value=st.address.postal||"";
-    addrPref.value=st.address.prefecture||"";
-    addrCity.value=st.address.city||"";
-    addrAddress1.value=st.address.address1||"";
-    addrAddress2.value=st.address.address2||"";
-  }
-
-  saveBtn.onclick = async ()=>{
-    const status = document.getElementById("status");
-    status.textContent=""; status.className="";
-
-    const address={
-      name: addrName.value.trim(),
-      phone: addrPhone.value.trim(),
-      postal: addrPostal.value.trim(),
-      prefecture: addrPref.value.trim(),
-      city: addrCity.value.trim(),
-      address1: addrAddress1.value.trim(),
-      address2: addrAddress2.value.trim(),
-    };
-    if(!address.name||!address.phone||!address.postal||!address.prefecture||!address.city||!address.address1){
-      status.className="error"; status.textContent="未入力の項目があります"; return;
-    }
-
-    try{
-      const res = await fetch("/api/liff/address",{
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ userId: loadState().lineUserId, ...address })
-      });
-      const json=await res.json();
-      if(!json.ok) throw new Error();
-
-      const { region, fee } = calcShipFeeFromPref(address.prefecture);
-      saveState({
-        address,
-        shipRegion: region,
-        shipFee: fee,
-        confirmed:false
-      });
-
-      status.className="ok";
-      status.textContent="住所を登録しました。最終確認へ進みます。";
-      location.href="/public/confirm.html";
-    }catch(e){
-      status.className="error"; status.textContent="住所登録に失敗しました";
-    }
-  };
-
-  backBtn.onclick=()=>location.href="/public/products.html";
-})();
-</script>
+  <!-- ★ address.js を必ず置く -->
+  <script src="/public/address.js"></script>
 </body>
 </html>

@@ -1,6 +1,8 @@
 // createRichMenu_2x2.js
 // 2段2列リッチメニュー(2500x1686)
-// 左上=アンケート / 右上=直接注文(テキスト送信) / 左下=オンライン注文(LIFF→products.html) / 右下=会員ログイン
+// 左上=アンケート / 右上=直接注文(テキスト送信)
+// 左下=products.html を開く
+// 右下=会員ログイン
 
 "use strict";
 
@@ -12,9 +14,7 @@ const path = require("path");
 const {
   LINE_CHANNEL_ACCESS_TOKEN,
   LINE_CHANNEL_SECRET,
-  LIFF_ID_MINIAPP,
   SURVEY_URL,
-  DIRECT_ORDER_URL, // ※使わなくてもOK（残してOK）
   MEMBER_URL,
   RICHMENU_IMAGE,
   PUBLIC_BASE_URL,
@@ -22,10 +22,6 @@ const {
 
 if (!LINE_CHANNEL_ACCESS_TOKEN || !LINE_CHANNEL_SECRET) {
   console.error("❌ LINE_CHANNEL_ACCESS_TOKEN / LINE_CHANNEL_SECRET がありません");
-  process.exit(1);
-}
-if (!LIFF_ID_MINIAPP) {
-  console.error("❌ LIFF_ID_MINIAPP（ミニアプリ用LIFF ID）がありません");
   process.exit(1);
 }
 
@@ -41,10 +37,6 @@ const baseUrl = (PUBLIC_BASE_URL || "https://line-render-app-1.onrender.com")
 
 // products.html（①商品選択）
 const PRODUCTS_URL = `${baseUrl}/public/products.html`;
-
-// LIFFでproducts.htmlを開く（redirect方式）
-const MINIAPP_LIFF_URL =
-  `https://liff.line.me/${LIFF_ID_MINIAPP}?redirect=${encodeURIComponent("/public/products.html")}`;
 
 // 他URL（未設定なら仮）
 const surveyUrl = (SURVEY_URL || "https://example.com/survey").trim();
@@ -63,16 +55,19 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
           bounds: { x: 0, y: 0, width: 1250, height: 843 },
           action: { type: "uri", label: "アンケート", uri: surveyUrl },
         },
-        // 右上：直接注文（★テキスト送信）
+
+        // 右上：直接注文（テキスト送信）
         {
           bounds: { x: 1250, y: 0, width: 1250, height: 843 },
           action: { type: "message", label: "直接注文", text: "直接注文" },
         },
-        // 左下：オンライン注文（ミニアプリで products.html を開く）
+
+        // 左下：products.html に直で飛ばす
         {
           bounds: { x: 0, y: 843, width: 1250, height: 843 },
-          action: { type: "uri", label: "オンライン注文", uri: MINIAPP_LIFF_URL },
+          action: { type: "uri", label: "オンライン注文", uri: PRODUCTS_URL },
         },
+
         // 右下：会員ログイン
         {
           bounds: { x: 1250, y: 843, width: 1250, height: 843 },
@@ -83,8 +78,7 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
 
     console.log("=== createRichMenu start ===");
     console.log("BASE URL:", baseUrl);
-    console.log("ONLINE→LIFF:", MINIAPP_LIFF_URL);
-    console.log("ONLINE direct products:", PRODUCTS_URL);
+    console.log("PRODUCTS_URL:", PRODUCTS_URL);
 
     // 1) リッチメニュー作成
     const richMenuId = await client.createRichMenu(richMenu);
@@ -100,20 +94,17 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
     }
 
     const stat = fs.statSync(imagePath);
-    const kb = stat.size / 1024;
-    console.log("IMAGE FILE:", imageFile);
-    console.log("IMAGE SIZE:", kb.toFixed(1), "KB");
     if (stat.size > 1024 * 1024) {
-      console.error("❌ 画像が1MB超えです。JPEG圧縮(q60など)にして下さい。");
+      console.error("❌ 画像が1MB超えです。圧縮してください。");
       process.exit(1);
     }
 
     const imageBuffer = fs.readFileSync(imagePath);
     const ext = path.extname(imageFile).toLowerCase();
     const contentType =
-      ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" :
-      ext === ".png" ? "image/png" :
-      "image/png";
+      ext === ".jpg" || ext === ".jpeg" ? "image/jpeg"
+      : ext === ".png" ? "image/png"
+      : "image/png";
 
     await client.setRichMenuImage(richMenuId, imageBuffer, contentType);
     console.log("✅ setRichMenuImage OK");
@@ -122,7 +113,7 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
     await client.setDefaultRichMenu(richMenuId);
     console.log("✅ setDefaultRichMenu OK");
 
-    console.log("🎉 完了！右上タップで『直接注文』が送信されます。");
+    console.log("🎉 完了！左下→products.html／右上→直接注文送信");
 
   } catch (e) {
     console.error("❌ Error:", e?.message);

@@ -156,7 +156,7 @@
     sessionStorage.setItem("cart", JSON.stringify(order)); // 互換キー
 
     // ★ここが変更点：confirmじゃなく住所入力へ
-    location.href = "/public/address.html";
+    location.href = "/public/liff-address.html";
   });
 
   // -----------------------------

@@ -1,9 +1,9 @@
 // public/products.js
-// ① 商品選択画面
+// ① 商品選択画面（②住所入力へ進む版）
 // - /api/products を読み込み
 // - 数量カートを管理
 // - sessionStorage.currentOrder に items[] 形式で保存
-//   → confirm.js / pay.js が確実に拾える形
+// - 「② お届け先入力へ進む」→ /public/liff-address.html へ
 
 (async function () {
   const $ = (id) => document.getElementById(id);
@@ -127,7 +127,6 @@
       });
       card.querySelector(".plus").addEventListener("click", () => {
         const now = cart.get(id)?.qty || 0;
-        // 在庫以上は増やさない
         const stock = Number(p.stock ?? 0);
         if (stock > 0 && now + 1 > stock) return;
         setQty(p, now + 1);
@@ -139,27 +138,25 @@
   updateFooter();
 
   // -----------------------------
-  // 4) 最終確認へ：保存して遷移
+  // 4) ②住所入力へ：保存して遷移
   // -----------------------------
   toConfirmBtn.addEventListener("click", () => {
     const items = Array.from(cart.values());
 
-    // confirm.js / pay.js が拾う形に統一
     const order = {
-      items,               // ★必須
-      method: "delivery",  // 仮（confirm側で上書きOK）
-      address: null,       // 住所はLIFF入力で入る想定
+      items,               // ★必須（confirm.js / pay.js が拾う）
+      method: "delivery",
+      address: null,
       itemsTotal: calcTotal(),
       shipping: 0,
       finalTotal: calcTotal()
     };
 
-    // ★これが一番大事（pay.jsは currentOrder を探す）
     sessionStorage.setItem("currentOrder", JSON.stringify(order));
-    // 保険で互換キーも入れる
-    sessionStorage.setItem("cart", JSON.stringify(order));
+    sessionStorage.setItem("cart", JSON.stringify(order)); // 互換キー
 
-    location.href = "/public/confirm.html";
+    // ★ここが変更点：confirmじゃなく住所入力へ
+    location.href = "/public/address.html";
   });
 
   // -----------------------------

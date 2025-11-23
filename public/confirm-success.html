@@ -1,125 +1,94 @@
+<!-- /public/confirm-success.html -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>決済完了 | 手造りえびせんべい 磯屋</title>
-
   <style>
     body{
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
-      background:#fafafa;
-      margin:0;
-      padding:12px;
-      color:#222;
-      text-align:center;
+      background:#fafafa; margin:0; padding:16px; color:#222; text-align:center;
     }
     header{
-      background:#b22222;
-      color:#fff;
-      padding:14px 16px;
-      font-size:18px;
-      text-align:center;
-      margin:-12px -12px 16px;
+      background:#b22222; color:#fff; padding:14px 16px; font-size:18px;
+      margin:-16px -16px 16px;
     }
-    h1{ font-size:20px; margin:10px 0 12px; }
-    .box{
-      background:#fff;
-      border-radius:10px;
-      box-shadow:0 2px 6px rgba(0,0,0,0.08);
-      padding:16px;
-      margin-bottom:12px;
-      text-align:left;
+    .card{
+      background:#fff; border-radius:10px; box-shadow:0 2px 6px rgba(0,0,0,.08);
+      padding:16px; margin:0 auto; max-width:520px;
     }
-    .small{ font-size:12px; color:#666; line-height:1.6; }
-    .center{ text-align:center; }
-    #statusMsg{
-      white-space:pre-line;
-      font-size:13px;
-      margin-top:8px;
-      min-height:18px;
+    h1{ font-size:20px; margin:8px 0 12px; }
+    .msg{ font-size:14px; color:#555; line-height:1.7; }
+    .btn{
+      margin-top:14px; width:100%; padding:12px; border-radius:6px; border:none;
+      font-size:16px; font-weight:bold; cursor:pointer; background:#b22222; color:#fff;
     }
+    #status{ margin-top:10px; font-size:13px; color:#333; white-space:pre-line; min-height:18px; }
   </style>
 </head>
-
 <body>
   <header>
     手造りえびせんべい 磯屋<br>宅配付きご注文ミニアプリ
   </header>
 
-  <h1>決済が完了しました</h1>
+  <div class="card">
+    <h1>決済が完了しました</h1>
+    <div class="msg">
+      ご注文ありがとうございます。<br>
+      明細をLINEにお送りしました。<br>
+      商品の発送準備ができ次第、改めてご連絡します。
+    </div>
 
-  <div class="box">
-    <div id="orderSummary">注文内容を読み込み中…</div>
+    <button id="backBtn" class="btn">LINEに戻る</button>
+    <div id="status"></div>
   </div>
 
-  <p class="small center">
-    ご注文内容の確認や出荷予定などにつきましては、<br>
-    後ほど LINE にてご案内いたします。
-  </p>
+<script>
+(async function(){
+  const status = document.getElementById("status");
+  const backBtn = document.getElementById("backBtn");
 
-  <div id="statusMsg"></div>
+  function readOrder(){
+    try{
+      const v = sessionStorage.getItem("currentOrder") || localStorage.getItem("currentOrder");
+      return v ? JSON.parse(v) : null;
+    }catch{
+      return null;
+    }
+  }
 
-  <script>
-    (async function(){
-      const orderSummary = document.getElementById("orderSummary");
-      const statusMsg = document.getElementById("statusMsg");
-
-      function yen(n){ return `${Number(n||0).toLocaleString("ja-JP")}円`; }
-      function esc(s){
-        return String(s||"")
-          .replaceAll("&","&amp;").replaceAll("<","&lt;")
-          .replaceAll(">","&gt;").replaceAll('"',"&quot;")
-          .replaceAll("'","&#039;");
-      }
-
-      let order = {};
-      try{
-        order = JSON.parse(sessionStorage.getItem("currentOrder")||"{}");
-      }catch{}
-
-      const items = Array.isArray(order.items) ? order.items : [];
-      if(!items.length){
-        orderSummary.innerHTML = "<div style='text-align:center;color:#666;font-size:13px;'>注文データが見つかりません。</div>";
-        statusMsg.textContent = "（送信できませんでした）";
-        return;
-      }
-
-      const itemsText = items.map(it=>{
-        const lt = (it.price||0)*(it.qty||0);
-        return `・${esc(it.name)} ×${it.qty} = ${yen(lt)}`;
-      }).join("<br>");
-
-      orderSummary.innerHTML = `
-        ${itemsText}<br><br>
-        商品合計：${yen(order.itemsTotal)}<br>
-        送料：${yen(order.shipping)}<br>
-        合計：<b style="color:#b22222;">${yen(order.finalTotal || order.total)}</b>
-      `;
-
-      // サーバへ完了通知
-      try{
-        statusMsg.textContent = "注文を確定しています…";
-
-        const res = await fetch("/api/order/complete", {
-          method:"POST",
-          headers:{ "Content-Type":"application/json" },
-          body: JSON.stringify(order)
-        });
-        const data = await res.json();
-        if(!data?.ok) throw new Error(data?.error || "complete_failed");
-
-        statusMsg.textContent = "ご注文を受け付けました！";
-        // ここで消す（2重送信防止）
+  const order = readOrder();
+  if (!order || !Array.isArray(order.items) || order.items.length === 0) {
+    status.textContent = "注文データが見つかりませんでした。";
+  } else {
+    try {
+      status.textContent = "注文処理を確定しています…";
+      const res = await fetch("/api/order/complete", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify(order)
+      });
+      const data = await res.json();
+      if (data?.ok) {
+        status.textContent = "完了しました。";
+        // ここで消してもOK（再送防止）
         sessionStorage.removeItem("currentOrder");
-
-      }catch(e){
-        console.log(e);
-        statusMsg.textContent =
-          "注文の確定送信に失敗しました。\n" +
-          "LINEのチャットで連絡するか、再度お試しください。";
+        sessionStorage.removeItem("cart");
+      } else {
+        status.textContent = "確定処理に失敗しました。\nもう一度お試しください。";
       }
-    })();
-  </script>
+    } catch(e){
+      status.textContent = "通信に失敗しました。\n電波状況をご確認ください。";
+    }
+  }
+
+  backBtn.addEventListener("click", ()=>{
+    // LIFFなら閉じる。普通のブラウザならトップへ
+    if (window.liff && liff.isInClient()) liff.closeWindow();
+    else location.href = "/";
+  });
+})();
+</script>
 </body>
 </html>

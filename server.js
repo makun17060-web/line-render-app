@@ -959,6 +959,46 @@ async function payWithEpsilon(req, res) {
 app.post("/api/order/complete", async (req, res) => {
   try {
     const order = req.body || {};
+    // ====== 注文者へ「商品明細入り」通知 ======
+    try {
+      const userId = order.lineUserId || order.userId || "";
+      if (userId) {
+        const userItemsText = items
+          .map(it => `・${it.name} × ${it.qty} = ${yen((it.price||0)*(it.qty||0))}`)
+          .join("\n");
+
+        const itemsTotal2 = Number(order.itemsTotal ?? order.total ?? 0);
+        const shipping2   = Number(order.shipping ?? 0);
+        const finalTotal2 = Number(order.finalTotal ?? order.total ?? 0);
+
+        let addrShort = "";
+        if (order.address) {
+          const a = order.address;
+          addrShort =
+            `\n【お届け先】\n` +
+            `〒${a.postal || a.zip || ""}\n` +
+            `${a.prefecture || a.pref || ""}${a.city || ""}${a.address1 || a.addr1 || ""}` +
+            `${a.address2 || a.addr2 ? " " + (a.address2 || a.addr2) : ""}\n` +
+            `氏名：${(a.name || (a.lastName||"")+(a.firstName||""))}\n` +
+            `TEL：${a.phone || a.tel || ""}`;
+        }
+
+        const userMsg =
+          `✅ ご注文ありがとうございます！\n` +
+          `決済が完了しました。\n\n` +
+          `【ご注文内容】\n${userItemsText}\n\n` +
+          `商品合計：${yen(itemsTotal2)}\n` +
+          `送料：${yen(shipping2)}\n` +
+          `合計：${yen(finalTotal2)}\n` +
+          addrShort +
+          `\n\n発送準備ができ次第、改めてご連絡いたします。`;
+
+        await client.pushMessage(userId, { type:"text", text: userMsg });
+        console.log("✅ user receipt sent:", userId);
+      }
+    } catch (e) {
+      console.error("user receipt push error:", e?.response?.data || e);
+    }
 
     // 最低限のバリデーション
     const items = Array.isArray(order.items) ? order.items : [];

@@ -1741,7 +1741,7 @@ async function handleEvent(ev) {
       const text = (ev.message.text || "").trim();
       const t = text.replace(/\s+/g, " ").trim();
      
-      }// ====== ★問い合わせ 最優先（直接注文などに反応させない） ======
+      // ====== ★問い合わせ 最優先（直接注文などに反応させない） ======
 if (t === "問い合わせ") {
   await client.replyMessage(ev.replyToken, {
     type: "text",

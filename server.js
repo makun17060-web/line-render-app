@@ -2197,9 +2197,16 @@ app.get("/my-ip", async (_req, res) => {
 });
 
 // ====== Health checks ======
-app.get("/health", (_req, res) => res.status(200).type("text/plain").send("OK"));
-app.get("/healthz", (_req, res) => res.status(200).type("text/plain").send("OK"));
+app.get("/health", (_req, res) =>
+  res.status(200).type("text/plain").send("OK")
+);
+
+app.get("/healthz", (_req, res) =>
+  res.status(200).type("text/plain").send("OK")
+);
+
 app.head("/health", (_req, res) => res.status(200).end());
+
 app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,

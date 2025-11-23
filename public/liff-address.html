@@ -1,102 +1,151 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>住所入力（LIFF）</title>
-  <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 16px; }
-    h1 { font-size: 18px; margin: 8px 0 16px; }
-    label { display:block; margin:8px 0 4px; font-size: 14px; }
-    input { width:100%; padding:10px; border:1px solid #ccc; border-radius:8px; box-sizing:border-box; }
-    button { padding: 12px 16px; border:none; border-radius: 8px; margin-top: 16px; }
-    .primary { background:#06C755; color:white; font-weight:600; width:100%; }
-    .note { font-size:12px; color:#444; margin-top:10px; }
-    .ok { color: #0a7a3c; }
-    .err { color: #b00020; white-space: pre-line; }
-  </style>
-</head>
-<body>
-  <h1>お届け先の入力</h1>
-  <div id="status" class="note">LIFF 初期化中...</div>
+// /public/liff-address.js
+// ②住所入力ページ用（ddress.html）
+// - LIFF init → profile取得（userId）
+// - 既存住所のプリフィル
+// - /api/liff/address に保存
+// - 保存後 confirm.html へ
 
-  <form id="f">
-    <label>お名前</label>
-    <input id="name" required />
-    <label>電話番号</label>
-    <input id="phone" required />
-    <label>郵便番号</label>
-    <input id="postal" placeholder="例: 123-4567" required />
-    <label>都道府県</label>
-    <input id="prefecture" required />
-    <label>市区町村</label>
-    <input id="city" required />
-    <label>番地・建物名</label>
-    <input id="address1" required />
-    <label>部屋番号など（任意）</label>
-    <input id="address2" />
-    <button type="submit" class="primary">この内容で送信</button>
-  </form>
+(async function () {
+  const $ = (id) => document.getElementById(id);
 
-  <p class="note">※ LINE 内のブラウザで開くと、自動的にユーザーIDと紐づきます。</p>
+  const postal     = $("postal");
+  const prefecture = $("prefecture");
+  const city       = $("city");
+  const address1   = $("address1");
+  const address2   = $("address2");
+  const name       = $("name");
+  const phone      = $("phone");
+  const saveBtn    = $("saveBtn");
+  const backBtn    = $("backBtn");
+  const statusMsg  = $("statusMsg");
 
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <script>
-    const $ = (id)=>document.getElementById(id);
-    const status = $("status");
-    let userId = "";
+  const setStatus = (m) => statusMsg.textContent = m || "";
 
-    async function init() {
-      try {
-        const cfg = await fetch("/api/liff/config").then(r=>r.json());
-        if (!cfg.liffId) throw new Error("LIFF ID がサーバーに設定されていません (.env LIFF_ID)");
-        await liff.init({ liffId: cfg.liffId });
-        if (!liff.isLoggedIn()) liff.login();
-        const prof = await liff.getProfile();
-        userId = prof.userId || "";
-        status.textContent = "LIFF 認証OK";
-      } catch (e) {
-        status.className = "note err";
-        status.textContent = "LIFF 初期化エラー: " + (e.message || e);
+  let lineUserId = "";
+  let lineUserName = "";
+
+  // -----------------------------
+  // 1) LIFF init + profile
+  // -----------------------------
+  async function initLiffAndProfile() {
+    try {
+      const confRes = await fetch("/api/liff/config", { cache: "no-store" });
+      const conf = await confRes.json();
+      const liffId = (conf?.liffId || "").trim();
+      if (!liffId) throw new Error("liffId missing");
+
+      await liff.init({ liffId });
+
+      if (!liff.isLoggedIn()) {
+        liff.login();
+        return false;
       }
+
+      const prof = await liff.getProfile();
+      lineUserId = prof.userId || "";
+      lineUserName = prof.displayName || "";
+      return true;
+    } catch (e) {
+      console.log("LIFF init error:", e);
+      return false;
+    }
+  }
+
+  // -----------------------------
+  // 2) 既存住所を読み込み → 入力欄へ
+  // -----------------------------
+  async function loadMyAddress() {
+    try {
+      if (!lineUserId) return null;
+      const res = await fetch(`/api/liff/address/me?userId=${encodeURIComponent(lineUserId)}`, { cache:"no-store" });
+      const data = await res.json();
+      return data?.address || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function fillForm(a) {
+    if (!a) return;
+    postal.value     = a.postal || "";
+    prefecture.value = a.prefecture || "";
+    city.value       = a.city || "";
+    address1.value   = a.address1 || "";
+    address2.value   = a.address2 || "";
+    name.value       = a.name || lineUserName || "";
+    phone.value      = a.phone || "";
+  }
+
+  setStatus("LINE認証中…");
+  const ok = await initLiffAndProfile();
+  if (!ok || !lineUserId) {
+    setStatus("LINEアプリ内で開いてください。");
+    saveBtn.disabled = true;
+    return;
+  }
+
+  const existing = await loadMyAddress();
+  fillForm(existing);
+  setStatus("");
+
+  // -----------------------------
+  // 3) 保存
+  // -----------------------------
+  async function saveAddress() {
+    saveBtn.disabled = true;
+    setStatus("保存しています…");
+
+    const payload = {
+      userId: lineUserId,
+      name: name.value.trim(),
+      phone: phone.value.trim(),
+      postal: postal.value.trim(),
+      prefecture: prefecture.value.trim(),
+      city: city.value.trim(),
+      address1: address1.value.trim(),
+      address2: address2.value.trim(),
+    };
+
+    if (!payload.postal || !payload.prefecture || !payload.city || !payload.address1 || !payload.name) {
+      setStatus("未入力の項目があります。");
+      saveBtn.disabled = false;
+      return;
     }
 
-    $("f").addEventListener("submit", async (ev)=>{
-      ev.preventDefault();
-      status.className = "note";
-      status.textContent = "送信中...";
+    try {
+      const res = await fetch("/api/liff/address", {
+        method: "POST",
+        headers: { "Content-Type":"application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!data?.ok) throw new Error(data?.error || "save_failed");
 
-      const payload = {
-        userId,
-        name: $("name").value.trim(),
-        phone: $("phone").value.trim(),
-        postal: $("postal").value.trim(),
-        prefecture: $("prefecture").value.trim(),
-        city: $("city").value.trim(),
-        address1: $("address1").value.trim(),
-        address2: $("address2").value.trim(),
-      };
-      try {
-        const r = await fetch("/api/liff/address", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        }).then(r=>r.json());
+      // currentOrder に住所を入れてから confirm へ
+      let order = {};
+      try { order = JSON.parse(sessionStorage.getItem("currentOrder") || "{}"); } catch {}
+      order.address = payload;
+      order.lineUserId = lineUserId;
+      order.lineUserName = lineUserName;
+      sessionStorage.setItem("currentOrder", JSON.stringify(order));
 
-        if (r.ok) {
-          status.className = "note ok";
-          status.textContent = "登録しました。画面を閉じてLINEトークに戻ってください。";
-          try { if (liff.isInClient()) liff.closeWindow(); } catch {}
-        } else {
-          throw new Error(r.error || "unknown_error");
-        }
-      } catch (e) {
-        status.className = "note err";
-        status.textContent = "送信エラー: " + (e.message || e);
-      }
-    });
+      setStatus("保存しました。最終確認へ移動します…");
+      location.href = "/public/confirm.html";
 
-    init();
-  </script>
-</body>
-</html>
+    } catch (e) {
+      console.log(e);
+      setStatus("保存に失敗しました。\n通信状況をご確認ください。");
+      saveBtn.disabled = false;
+    }
+  }
+
+  saveBtn.addEventListener("click", saveAddress);
+
+  // -----------------------------
+  // 4) 戻る（confirmへ）
+  // -----------------------------
+  backBtn.addEventListener("click", () => {
+    location.href = "/public/confirm.html";
+  });
+
+})();

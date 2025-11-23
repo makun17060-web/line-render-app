@@ -70,11 +70,15 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
       name: "磯屋_2x2",
       chatBarText: "メニュー",
       areas: [
-        // 左上：アンケート
-        {
-          bounds: { x: 0, y: 0, width: 1250, height: 843 },
-          action: { type: "uri", label: "アンケート", uri: surveyUrl },
-        },
+       // 左上：問い合わせ
+{
+  bounds: { x: 0, y: 0, width: 1250, height: 843 },
+  action: {
+    type: "message",
+    text: "問い合わせ"
+  }
+},
+
 
         // 右上：直接注文（テキスト送信）
         {

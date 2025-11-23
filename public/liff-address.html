@@ -1,151 +1,119 @@
-// /public/liff-address.js
-// ②住所入力ページ用（ddress.html）
-// - LIFF init → profile取得（userId）
-// - 既存住所のプリフィル
-// - /api/liff/address に保存
-// - 保存後 confirm.html へ
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>住所入力 | 手造りえびせんべい 磯屋</title>
 
-(async function () {
-  const $ = (id) => document.getElementById(id);
-
-  const postal     = $("postal");
-  const prefecture = $("prefecture");
-  const city       = $("city");
-  const address1   = $("address1");
-  const address2   = $("address2");
-  const name       = $("name");
-  const phone      = $("phone");
-  const saveBtn    = $("saveBtn");
-  const backBtn    = $("backBtn");
-  const statusMsg  = $("statusMsg");
-
-  const setStatus = (m) => statusMsg.textContent = m || "";
-
-  let lineUserId = "";
-  let lineUserName = "";
-
-  // -----------------------------
-  // 1) LIFF init + profile
-  // -----------------------------
-  async function initLiffAndProfile() {
-    try {
-      const confRes = await fetch("/api/liff/config", { cache: "no-store" });
-      const conf = await confRes.json();
-      const liffId = (conf?.liffId || "").trim();
-      if (!liffId) throw new Error("liffId missing");
-
-      await liff.init({ liffId });
-
-      if (!liff.isLoggedIn()) {
-        liff.login();
-        return false;
-      }
-
-      const prof = await liff.getProfile();
-      lineUserId = prof.userId || "";
-      lineUserName = prof.displayName || "";
-      return true;
-    } catch (e) {
-      console.log("LIFF init error:", e);
-      return false;
+  <style>
+    body{
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+      background:#fafafa;
+      margin:0;
+      padding:12px;
+      color:#222;
     }
-  }
-
-  // -----------------------------
-  // 2) 既存住所を読み込み → 入力欄へ
-  // -----------------------------
-  async function loadMyAddress() {
-    try {
-      if (!lineUserId) return null;
-      const res = await fetch(`/api/liff/address/me?userId=${encodeURIComponent(lineUserId)}`, { cache:"no-store" });
-      const data = await res.json();
-      return data?.address || null;
-    } catch {
-      return null;
+    header{
+      background:#b22222;
+      color:#fff;
+      padding:14px 16px;
+      font-size:18px;
+      text-align:center;
+      margin:-12px -12px 12px;
+      position:sticky;
+      top:0;
+      z-index:10;
     }
-  }
+    h1{ font-size:20px; margin:8px 0 12px; text-align:center; }
 
-  function fillForm(a) {
-    if (!a) return;
-    postal.value     = a.postal || "";
-    prefecture.value = a.prefecture || "";
-    city.value       = a.city || "";
-    address1.value   = a.address1 || "";
-    address2.value   = a.address2 || "";
-    name.value       = a.name || lineUserName || "";
-    phone.value      = a.phone || "";
-  }
-
-  setStatus("LINE認証中…");
-  const ok = await initLiffAndProfile();
-  if (!ok || !lineUserId) {
-    setStatus("LINEアプリ内で開いてください。");
-    saveBtn.disabled = true;
-    return;
-  }
-
-  const existing = await loadMyAddress();
-  fillForm(existing);
-  setStatus("");
-
-  // -----------------------------
-  // 3) 保存
-  // -----------------------------
-  async function saveAddress() {
-    saveBtn.disabled = true;
-    setStatus("保存しています…");
-
-    const payload = {
-      userId: lineUserId,
-      name: name.value.trim(),
-      phone: phone.value.trim(),
-      postal: postal.value.trim(),
-      prefecture: prefecture.value.trim(),
-      city: city.value.trim(),
-      address1: address1.value.trim(),
-      address2: address2.value.trim(),
-    };
-
-    if (!payload.postal || !payload.prefecture || !payload.city || !payload.address1 || !payload.name) {
-      setStatus("未入力の項目があります。");
-      saveBtn.disabled = false;
-      return;
+    .section{
+      background:#fff;
+      border-radius:10px;
+      box-shadow:0 2px 6px rgba(0,0,0,0.08);
+      padding:12px;
+      margin-bottom:12px;
     }
-
-    try {
-      const res = await fetch("/api/liff/address", {
-        method: "POST",
-        headers: { "Content-Type":"application/json" },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (!data?.ok) throw new Error(data?.error || "save_failed");
-
-      // currentOrder に住所を入れてから confirm へ
-      let order = {};
-      try { order = JSON.parse(sessionStorage.getItem("currentOrder") || "{}"); } catch {}
-      order.address = payload;
-      order.lineUserId = lineUserId;
-      order.lineUserName = lineUserName;
-      sessionStorage.setItem("currentOrder", JSON.stringify(order));
-
-      setStatus("保存しました。最終確認へ移動します…");
-      location.href = "/public/confirm.html";
-
-    } catch (e) {
-      console.log(e);
-      setStatus("保存に失敗しました。\n通信状況をご確認ください。");
-      saveBtn.disabled = false;
+    label{ display:block; font-size:13px; color:#555; margin-top:10px; }
+    input{
+      width:100%;
+      padding:10px;
+      font-size:16px;
+      border:1px solid #ddd;
+      border-radius:6px;
+      box-sizing:border-box;
+      margin-top:4px;
     }
-  }
+    .btn{
+      width:100%;
+      padding:12px;
+      border-radius:6px;
+      border:none;
+      font-size:16px;
+      font-weight:bold;
+      cursor:pointer;
+      margin-top:12px;
+    }
+    .btn-main{ background:#b22222; color:#fff; }
+    .btn-sub{ background:#fff; color:#b22222; border:1px solid #b22222; }
 
-  saveBtn.addEventListener("click", saveAddress);
+    #statusMsg{
+      white-space:pre-line;
+      text-align:center;
+      font-size:13px;
+      color:#333;
+      margin-top:10px;
+      min-height:18px;
+    }
+    .note{
+      font-size:12px;
+      color:#666;
+      text-align:center;
+      margin-top:6px;
+      line-height:1.5;
+    }
+  </style>
 
-  // -----------------------------
-  // 4) 戻る（confirmへ）
-  // -----------------------------
-  backBtn.addEventListener("click", () => {
-    location.href = "/public/confirm.html";
-  });
+  <!-- LIFF SDK -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+</head>
 
-})();
+<body>
+  <header>
+    手造りえびせんべい 磯屋<br>宅配付きご注文ミニアプリ
+  </header>
+
+  <h1>住所入力（② お届け先）</h1>
+
+  <div class="section">
+    <label>郵便番号</label>
+    <input id="postal" placeholder="例：123-4567">
+
+    <label>都道府県</label>
+    <input id="prefecture" placeholder="例：大阪府">
+
+    <label>市区町村</label>
+    <input id="city" placeholder="例：大阪市中央区">
+
+    <label>番地・建物名</label>
+    <input id="address1" placeholder="例：1-2-3 磯屋ビル">
+
+    <label>部屋番号など（任意）</label>
+    <input id="address2" placeholder="例：101号室">
+
+    <label>氏名</label>
+    <input id="name" placeholder="例：磯屋 太郎">
+
+    <label>電話番号</label>
+    <input id="phone" placeholder="例：090-1234-5678">
+
+    <button id="saveBtn" class="btn btn-main">住所を保存</button>
+    <button id="backBtn" class="btn btn-sub">③ 最終確認へ戻る</button>
+
+    <div id="statusMsg"></div>
+    <div class="note">※住所はLINEユーザーごとに保存されます</div>
+  </div>
+
+  <!-- ★パスは /public/liff-address.js に統一 -->
+  <script src="/public/liff-address.js"></script>
+</body>
+</html>

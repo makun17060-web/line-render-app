@@ -1740,17 +1740,19 @@ async function handleEvent(ev) {
       const sess = sessions[uid] || null;
       const text = (ev.message.text || "").trim();
       const t = text.replace(/\s+/g, " ").trim();
-      // ====== ★問い合わせ 最優先（直接注文などに反応させない） ======
-      if (t === "問い合わせ") {
-        await client.replyMessage(ev.replyToken, {
-          type: "text",
-          text:
-            "お問い合わせありがとうございます。\n" +
-            "このままトークにご質問内容を送ってください。\n" +
-            "スタッフが確認して返信します。"
-        });
-        return;
-      }
+     
+      }// ====== ★問い合わせ 最優先（直接注文などに反応させない） ======
+if (t === "問い合わせ") {
+  await client.replyMessage(ev.replyToken, {
+    type: "text",
+    text:
+      "お問い合わせありがとうございます。\n" +
+      "このままトークに内容を送ってください。\n" +
+      "スタッフが確認して返信します。"
+  });
+  return; 
+}
+
       // ====== ★問い合わせ ここまで ======
 
       // 久助テキスト注文

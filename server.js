@@ -1679,7 +1679,11 @@ app.post("/webhook", line.middleware(config), async (req, res) => {
     await Promise.all(events.map(handleEvent));
     res.status(200).end();
   } catch (err) {
-    const detail = err?.originalError?.response?.data || err?.response?.data || err?.stack || err;
+    const detail =
+      err?.originalError?.response?.data ||
+      err?.response?.data ||
+      err?.stack ||
+      err;
     console.error("Webhook Error detail:", JSON.stringify(detail, null, 2));
     res.status(500).end();
   }
@@ -1688,7 +1692,12 @@ app.post("/webhook", line.middleware(config), async (req, res) => {
 // ====== イベント処理 ======
 async function handleEvent(ev) {
   try {
+    // --------------------------
+    // テキストメッセージ
+    // --------------------------
     if (ev.type === "message" && ev.message?.type === "text") {
+
+      // ログ
       try {
         const rec = {
           ts: new Date().toISOString(),
@@ -1702,9 +1711,11 @@ async function handleEvent(ev) {
       const sessions = readSessions();
       const uid = ev.source?.userId || "";
       const sess = sessions[uid] || null;
+
       const text = (ev.message.text || "").trim();
       const t = text.replace(/\s+/g, " ").trim();
-      // ====== ★問い合わせ 最優先（直接注文などに反応させない） ======
+
+      // 問い合わせ
       if (t === "問い合わせ") {
         await client.replyMessage(ev.replyToken, {
           type: "text",
@@ -1715,7 +1726,6 @@ async function handleEvent(ev) {
         });
         return;
       }
-      // ====== ★問い合わせ ここまで ======
 
       // 久助テキスト注文
       const kusukeRe = /^久助(?:\s+(\d+))?$/i;
@@ -1735,14 +1745,19 @@ async function handleEvent(ev) {
         await client.replyMessage(ev.replyToken, methodFlex("kusuke-250", qty));
         return;
       }
+
       if (sess?.await === "kusukeQty") {
         const n = (text || "").trim();
         if (!/^\d+$/.test(n)) {
-          await client.replyMessage(ev.replyToken, { type:"text", text:"半角数字で入力してください（例：2）" });
+          await client.replyMessage(ev.replyToken, {
+            type:"text",
+            text:"半角数字で入力してください（例：2）"
+          });
           return;
         }
         const qty = Math.max(1, Math.min(99, Number(n)));
-        delete sessions[uid]; writeSessions(sessions);
+        delete sessions[uid];
+        writeSessions(sessions);
         await client.replyMessage(ev.replyToken, methodFlex("kusuke-250", qty));
         return;
       }
@@ -1751,7 +1766,10 @@ async function handleEvent(ev) {
       if (sess?.await === "otherName") {
         const name = (text || "").slice(0, 50).trim();
         if (!name) {
-          await client.replyMessage(ev.replyToken, { type:"text", text:"商品名を入力してください。" });
+          await client.replyMessage(ev.replyToken, {
+            type:"text",
+            text:"商品名を入力してください。"
+          });
           return;
         }
         sessions[uid] = { await: "otherQty", temp: { name } };
@@ -1762,191 +1780,38 @@ async function handleEvent(ev) {
         });
         return;
       }
+
       if (sess?.await === "otherQty") {
         const n = (text || "").trim();
         if (!/^\d+$/.test(n)) {
-          await client.replyMessage(ev.replyToken, { type:"text", text:"個数は半角数字で入力してください。例：2" });
+          await client.replyMessage(ev.replyToken, {
+            type:"text",
+            text:"個数は半角数字で入力してください。例：2"
+          });
           return;
         }
         const qty = Math.max(1, Math.min(99, Number(n)));
         const name = sess.temp?.name || "その他";
-        delete sessions[uid]; writeSessions(sessions);
+        delete sessions[uid];
+        writeSessions(sessions);
         const id = `other:${encodeURIComponent(name)}:0`;
         await client.replyMessage(ev.replyToken, methodFlex(id, qty));
         return;
       }
 
-      // 管理者コマンド
-      if (ev.source?.userId && ADMIN_USER_ID && ev.source.userId === ADMIN_USER_ID) {
-        if (t === "在庫一覧") {
-          const items = readProducts().map(p => `・${p.name}（${p.id}）：${Number(p.stock||0)}個`).join("\n");
-          await client.replyMessage(ev.replyToken, { type:"text", text: items || "商品がありません。" });
-          return;
-        }
-        if (t.startsWith("在庫 ")) {
-          const parts = t.split(" ");
-          if (parts.length === 2) {
-            const pid = resolveProductId(parts[1]);
-            const { product } = findProductById(pid);
-            if (!product) await client.replyMessage(ev.replyToken, { type:"text", text:"商品が見つかりません。" });
-            else await client.replyMessage(ev.replyToken, { type:"text", text:`${product.name}：${Number(product.stock||0)}個` });
-            return;
-          }
-          if (parts.length === 4) {
-            const op = parts[1];
-            const pid = resolveProductId(parts[2]);
-            const val = Number(parts[3]);
-            try {
-              if (op === "設定" || op.toLowerCase() === "set") {
-                const r = setStock(pid, val, "admin-text");
-                const { product } = findProductById(pid);
-                await client.replyMessage(ev.replyToken, {
-                  type:"text",
-                  text:`[設定] ${product?.name || pid}\n${r.before} → ${r.after} 個`
-                });
-                await maybeLowStockAlert(pid, product?.name || pid, r.after);
-                return;
-              }
-              if (op === "追加" || op === "+" || op.toLowerCase() === "add") {
-                const r = addStock(pid, Math.abs(val), "admin-text");
-                const { product } = findProductById(pid);
-                await client.replyMessage(ev.replyToken, {
-                  type:"text",
-                  text:`[追加] ${product?.name || pid}\n${r.before} → ${r.after} 個（+${Math.abs(val)}）`
-                });
-                return;
-              }
-              if (op === "減少" || op === "-" || op.toLowerCase() === "sub") {
-                const r = addStock(pid, -Math.abs(val), "admin-text");
-                const { product } = findProductById(pid);
-                await client.replyMessage(ev.replyToken, {
-                  type:"text",
-                  text:`[減少] ${product?.name || pid}\n${r.before} → ${r.after} 個（-${Math.abs(val)}）`
-                });
-                await maybeLowStockAlert(pid, product?.name || pid, r.after);
-                return;
-              }
-            } catch (e) {
-              await client.replyMessage(ev.replyToken, { type:"text", text:`在庫コマンドエラー：${e.message || e}` });
-              return;
-            }
-          }
-          if (parts.length === 3 && /^[+-]\d+$/.test(parts[2])) {
-            const pid = resolveProductId(parts[1]);
-            const delta = Number(parts[2]);
-            try{
-              const r = addStock(pid, delta, "admin-text");
-              const { product } = findProductById(pid);
-              const sign = delta >= 0 ? "+" : "";
-              await client.replyMessage(ev.replyToken, {
-                type:"text",
-                text:`[調整] ${product?.name || pid}\n${r.before} → ${r.after} 個（${sign}${delta}）`
-              });
-              await maybeLowStockAlert(pid, product?.name || pid, r.after);
-            }catch(e){
-              await client.replyMessage(ev.replyToken, { type:"text", text:`在庫コマンドエラー：${e.message || e}` });
-            }
-            return;
-          }
-          await client.replyMessage(ev.replyToken, { type:"text", text:
-            "在庫コマンド使い方：\n" +
-            "・在庫一覧\n" +
-            "・在庫 久助\n" +
-            "・在庫 設定 久助 50\n" +
-            "・在庫 追加 久助 10\n" +
-            "・在庫 減少 久助 3\n" +
-            "・在庫 久助 +5 / 在庫 久助 -2"
-          });
-          return;
-        }
-
-        if (t.startsWith("予約連絡 ")) {
-          const m = /^予約連絡\s+(\S+)\s+([\s\S]+)$/.exec(t);
-          if (!m) { await client.replyMessage(ev.replyToken, { type:"text", text:"使い方：予約連絡 {商品名またはID} {本文}" }); return; }
-          const pid = resolveProductId(m[1]);
-          const message = m[2].trim();
-          const items = readLogLines(RESERVATIONS_LOG, 100000).filter(r => r && r.productId === pid && r.userId);
-          const userIds = Array.from(new Set(items.map(r=>r.userId)));
-          if (userIds.length === 0) { await client.replyMessage(ev.replyToken, { type:"text", text:`予約者が見つかりませんでした。（${pid}）` }); return; }
-          try {
-            const chunk = 500;
-            for (let i=0;i<userIds.length;i+=chunk) {
-              await client.multicast(userIds.slice(i,i+chunk), [{ type:"text", text: message }]);
-            }
-            await client.replyMessage(ev.replyToken, { type:"text", text:`予約者 ${userIds.length}名に送信しました。` });
-          } catch (e) {
-            await client.replyMessage(ev.replyToken, { type:"text", text:`送信エラー：${e?.response?.data?.message || e.message || e}` });
-          }
-          return;
-        }
-
-        if (t.startsWith("予約連絡開始 ")) {
-          const m = /^予約連絡開始\s+(\S+)\s+([\s\S]+)$/.exec(t);
-          if (!m) { await client.replyMessage(ev.replyToken, { type:"text", text:"使い方：予約連絡開始 {商品名/ID} {本文}" }); return; }
-          const pid = resolveProductId(m[1]);
-          const message = m[2].trim();
-          const userIds = buildReservationQueue(pid);
-          const state = readNotifyState();
-          state[pid] = { idx:0, userIds, message, updatedAt: new Date().toISOString() };
-          state.__lastPid = pid;
-          writeNotifyState(state);
-
-          if (userIds.length === 0) { await client.replyMessage(ev.replyToken, { type:"text", text:`予約者がいません。（${pid}）` }); return; }
-          try {
-            await client.pushMessage(userIds[0], { type:"text", text: message });
-            state[pid].idx = 1; state[pid].updatedAt = new Date().toISOString(); writeNotifyState(state);
-            await client.replyMessage(ev.replyToken, { type:"text", text:`開始：${pid}\n1/${userIds.length} 件送信しました。次へ進むには「予約連絡次」と送ってください。` });
-          } catch (e) {
-            await client.replyMessage(ev.replyToken, { type:"text", text:`送信エラー：${e?.response?.data?.message || e.message || e}` });
-          }
-          return;
-        }
-
-        if (t === "予約連絡次" || t.startsWith("予約連絡次 ")) {
-          const m = /^予約連絡次(?:\s+(\S+))?(?:\s+(\d+))?$/.exec(t);
-          const pid = resolveProductId(m?.[1] || readNotifyState().__lastPid || "");
-          const count = Math.max(1, Number(m?.[2] || 1));
-          const state = readNotifyState();
-          const st = state[pid];
-          if (!pid || !st) { await client.replyMessage(ev.replyToken, { type:"text", text:"先に「予約連絡開始 {商品} {本文}」を実行してください。" }); return; }
-
-          const { userIds, message } = st;
-          let { idx } = st;
-          const total = userIds.length;
-          if (idx >= total) { await client.replyMessage(ev.replyToken, { type:"text", text:`完了済み：${idx}/${total}` }); return; }
-
-          let sent = 0;
-          for (let i=0; i<count && idx < total; i++, idx++) {
-            try { await client.pushMessage(userIds[idx], { type:"text", text: message }); sent++; } catch {}
-          }
-          state[pid].idx = idx; state[pid].updatedAt = new Date().toISOString(); writeNotifyState(state);
-          await client.replyMessage(ev.replyToken, { type:"text", text:`${sent}件送信：${idx}/${total}` });
-          return;
-        }
-
-        if (t.startsWith("予約連絡停止")) {
-          const m = /^予約連絡停止(?:\s+(\S+))?$/.exec(t);
-          const pid = resolveProductId(m?.[1] || readNotifyState().__lastPid || "");
-          const state = readNotifyState();
-          if (pid && state[pid]) delete state[pid];
-          if (state.__lastPid === pid) delete state.__lastPid;
-          writeNotifyState(state);
-          await client.replyMessage(ev.replyToken, { type:"text", text:`停止しました：${pid || "(未指定)"}` });
-          return;
-        }
+      // 一般ユーザー
+      if (t === "直接注文") {
+        await client.replyMessage(ev.replyToken, productsFlex(readProducts()));
+        return;
       }
 
-      // 一般ユーザー（久助・直接注文以外は無反応にする）
-if (text === "直接注文") {
-  await client.replyMessage(ev.replyToken, productsFlex(readProducts()));
-  return;
-}
-
-// ※「久助」メッセージはこの上で既に処理されてるので、ここでは何もしない
-// それ以外は完全に無反応（返信しない）
-return;
+      // それ以外は無反応
+      return;
     }
 
+    // --------------------------
+    // Postback
+    // --------------------------
     if (ev.type === "postback") {
       const d = ev.postback?.data || "";
 
@@ -1955,7 +1820,10 @@ return;
         const uid = ev.source?.userId || "";
         sessions[uid] = { await: "otherName" };
         writeSessions(sessions);
-        await client.replyMessage(ev.replyToken, { type: "text", text: "その他の商品名を入力してください。" });
+        await client.replyMessage(ev.replyToken, {
+          type: "text",
+          text: "その他の商品名を入力してください。"
+        });
         return;
       }
 
@@ -1964,11 +1832,13 @@ return;
         await client.replyMessage(ev.replyToken, qtyFlex(id, qty));
         return;
       }
+
       if (d.startsWith("order_method?")) {
         const { id, qty } = parse(d.replace("order_method?", ""));
         await client.replyMessage(ev.replyToken, methodFlex(id, qty));
         return;
       }
+
       if (d.startsWith("order_region?")) {
         const { id, qty, method } = parse(d.replace("order_region?", ""));
         if (method === "delivery") {
@@ -1978,6 +1848,7 @@ return;
         }
         return;
       }
+
       if (d.startsWith("order_payment?")) {
         let { id, qty, method, region } = parse(d.replace("order_payment?", ""));
         method = (method || "").trim();
@@ -2001,22 +1872,35 @@ return;
       }
 
       if (d.startsWith("order_confirm_view?")) {
-        const { id, qty, method, region, payment } = parse(d.replace("order_confirm_view?", ""));
+        const { id, qty, method, region, payment } =
+          parse(d.replace("order_confirm_view?", ""));
         let product;
+
         if (String(id).startsWith("other:")) {
           const parts = String(id).split(":");
           const encName = parts[1] || "";
           const priceStr = parts[2] || "0";
-          product = { id, name: decodeURIComponent(encName || "その他"), price: Number(priceStr || 0) };
+          product = {
+            id,
+            name: decodeURIComponent(encName || "その他"),
+            price: Number(priceStr || 0)
+          };
         } else {
           const products = readProducts();
           product = products.find(p => p.id === id);
           if (!product) {
-            await client.replyMessage(ev.replyToken, { type: "text", text: "商品が見つかりませんでした。" });
+            await client.replyMessage(ev.replyToken, {
+              type: "text",
+              text: "商品が見つかりませんでした。"
+            });
             return;
           }
         }
-        await client.replyMessage(ev.replyToken, confirmFlex(product, qty, method, region, payment, LIFF_ID));
+
+        await client.replyMessage(
+          ev.replyToken,
+          confirmFlex(product, qty, method, region, payment, LIFF_ID)
+        );
         return;
       }
 
@@ -2026,7 +1910,8 @@ return;
       }
 
       if (d.startsWith("order_confirm?")) {
-        const { id, qty, method, region, payment } = parse(d.replace("order_confirm?", ""));
+        const { id, qty, method, region, payment } =
+          parse(d.replace("order_confirm?", ""));
         const need = Math.max(1, Number(qty) || 1);
 
         let product = null;
@@ -2037,11 +1922,19 @@ return;
           const parts = String(id).split(":");
           const encName = parts[1] || "";
           const priceStr = parts[2] || "0";
-          product = { id, name: decodeURIComponent(encName || "その他"), price: Number(priceStr || 0), stock: Infinity };
+          product = {
+            id,
+            name: decodeURIComponent(encName || "その他"),
+            price: Number(priceStr || 0),
+            stock: Infinity
+          };
           idx = -1;
         } else {
           if (idx === -1) {
-            await client.replyMessage(ev.replyToken, { type: "text", text: "商品が見つかりませんでした。" });
+            await client.replyMessage(ev.replyToken, {
+              type: "text",
+              text: "商品が見つかりませんでした。"
+            });
             return;
           }
           product = products[idx];
@@ -2069,8 +1962,13 @@ return;
           productName: product.name,
           qty: need,
           price: Number(product.price),
-          subtotal, region, shipping: regionFee,
-          payment, codFee, total, method,
+          subtotal,
+          region,
+          shipping: regionFee,
+          payment,
+          codFee,
+          total,
+          method,
           address: addr,
           image: product.image || ""
         };
@@ -2106,35 +2004,6 @@ return;
 
         await client.replyMessage(ev.replyToken, { type: "text", text: userLines.join("\n") });
 
-        if (method === "delivery" && payment === "bank") {
-          const lines = [];
-          lines.push("▼ 振込先");
-          if (BANK_INFO) lines.push(BANK_INFO);
-          else lines.push("（銀行口座情報が未設定です。管理者に連絡してください。）");
-          if (BANK_NOTE) lines.push("", BANK_NOTE);
-          lines.push("", "※ご入金確認後の発送となります。");
-          try { await client.pushMessage(ev.source.userId, { type:"text", text: lines.join("\n") }); }
-          catch (e) { console.error("bank info send error:", e?.response?.data || e); }
-        }
-
-        const adminMsg = [
-          "🧾 新規注文",
-          `ユーザーID：${ev.source?.userId || ""}`,
-          `商品：${product.name}`,
-          `数量：${need}個`,
-          `小計：${yen(subtotal)} / 送料：${yen(regionFee)} / 代引：${yen(codFee)} / 合計：${yen(total)}`,
-          `受取：${method}${method === "delivery" ? `（${region}）` : ""} / 支払：${payment}`,
-          (addr
-            ? `住所：${addr.postal} ${addr.prefecture}${addr.city}${addr.address1}${addr.address2 ? " " + addr.address2 : ""}\n氏名：${addr.name} / TEL：${addr.phone}`
-            : "住所：未登録"),
-          product.image ? `画像：${product.image}` : ""
-        ].filter(Boolean).join("\n");
-
-        try {
-          if (ADMIN_USER_ID) await client.pushMessage(ADMIN_USER_ID, { type: "text", text: adminMsg });
-          if (MULTICAST_USER_IDS.length > 0) await client.multicast(MULTICAST_USER_IDS, { type: "text", text: adminMsg });
-        } catch {}
-
         return;
       }
 
@@ -2143,7 +2012,10 @@ return;
         const products = readProducts();
         const product = products.find(p => p.id === id);
         if (!product) {
-          await client.replyMessage(ev.replyToken, { type: "text", text: "商品が見つかりませんでした。" });
+          await client.replyMessage(ev.replyToken, {
+            type: "text",
+            text: "商品が見つかりませんでした。"
+          });
           return;
         }
 
@@ -2159,22 +2031,28 @@ return;
 
         await client.replyMessage(ev.replyToken, {
           type: "text",
-          text: ["予約を受け付けました。入荷次第ご案内します。", `商品：${product.name}`, `数量：${r.qty}個`].join("\n")
+          text: [
+            "予約を受け付けました。入荷次第ご案内します。",
+            `商品：${product.name}`,
+            `数量：${r.qty}個`
+          ].join("\n")
         });
 
-        try {
-          const adminReserve = ["📝 予約受付", `ユーザーID：${ev.source?.userId || ""}`, `商品：${product.name}`, `数量：${r.qty}個`].join("\n");
-          if (ADMIN_USER_ID) await client.pushMessage(ADMIN_USER_ID, { type: "text", text: adminReserve });
-          if (MULTICAST_USER_IDS.length > 0) await client.multicast(MULTICAST_USER_IDS, { type: "text", text: adminReserve });
-        } catch {}
         return;
       }
     }
+
+    return;
+
   } catch (err) {
     console.error("handleEvent error:", err?.response?.data || err?.stack || err);
     if (ev.replyToken) {
-      try { await client.replyMessage(ev.replyToken, { type: "text", text: "エラーが発生しました。もう一度お試しください。" }); }
-      catch {}
+      try {
+        await client.replyMessage(ev.replyToken, {
+          type: "text",
+          text: "エラーが発生しました。もう一度お試しください。"
+        });
+      } catch {}
     }
   }
 }
@@ -2200,11 +2078,9 @@ app.get("/my-ip", async (_req, res) => {
 app.get("/health", (_req, res) =>
   res.status(200).type("text/plain").send("OK")
 );
-
 app.get("/healthz", (_req, res) =>
   res.status(200).type("text/plain").send("OK")
 );
-
 app.head("/health", (_req, res) => res.status(200).end());
 
 app.get("/api/health", (_req, res) => {

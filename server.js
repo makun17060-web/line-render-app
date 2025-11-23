@@ -959,54 +959,36 @@ async function payWithEpsilon(req, res) {
 app.post("/api/order/complete", async (req, res) => {
   try {
     const order = req.body || {};
-    // ====== 注文者へ「商品明細入り」通知 ======
-    try {
-      const userId = order.lineUserId || order.userId || "";
-      if (userId) {
-        const userItemsText = items
-          .map(it => `・${it.name} × ${it.qty} = ${yen((it.price||0)*(it.qty||0))}`)
-          .join("\n");
 
-        const itemsTotal2 = Number(order.itemsTotal ?? order.total ?? 0);
-        const shipping2   = Number(order.shipping ?? 0);
-        const finalTotal2 = Number(order.finalTotal ?? order.total ?? 0);
-
-        let addrShort = "";
-        if (order.address) {
-          const a = order.address;
-          addrShort =
-            `\n【お届け先】\n` +
-            `〒${a.postal || a.zip || ""}\n` +
-            `${a.prefecture || a.pref || ""}${a.city || ""}${a.address1 || a.addr1 || ""}` +
-            `${a.address2 || a.addr2 ? " " + (a.address2 || a.addr2) : ""}\n` +
-            `氏名：${(a.name || (a.lastName||"")+(a.firstName||""))}\n` +
-            `TEL：${a.phone || a.tel || ""}`;
-        }
-
-        const userMsg =
-          `✅ ご注文ありがとうございます！\n` +
-          `決済が完了しました。\n\n` +
-          `【ご注文内容】\n${userItemsText}\n\n` +
-          `商品合計：${yen(itemsTotal2)}\n` +
-          `送料：${yen(shipping2)}\n` +
-          `合計：${yen(finalTotal2)}\n` +
-          addrShort +
-          `\n\n発送準備ができ次第、改めてご連絡いたします。`;
-
-        await client.pushMessage(userId, { type:"text", text: userMsg });
-        console.log("✅ user receipt sent:", userId);
-      }
-    } catch (e) {
-      console.error("user receipt push error:", e?.response?.data || e);
-    }
-
-    // 最低限のバリデーション
+    // ① items を最初に確定させる（←ここが最重要）
     const items = Array.isArray(order.items) ? order.items : [];
     if (items.length === 0) {
       return res.status(400).json({ ok: false, error: "no_items" });
     }
 
-    // ログ保存（orders.log に 1行JSONで追記）
+    // ② 明細テキスト作成（items を使うのは “宣言後”）
+    const itemsText = items
+      .map(it => `・${it.name} x ${it.qty} = ${yen((it.price||0)*(it.qty||0))}`)
+      .join("\n");
+
+    const itemsTotal = Number(order.itemsTotal ?? order.total ?? 0);
+    const shipping   = Number(order.shipping ?? 0);
+    const codFee     = Number(order.codFee ?? 0);
+    const finalTotal = Number(order.finalTotal ?? order.total ?? 0);
+
+    // ③ 住所テキスト
+    let addrText = "住所：未登録";
+    if (order.address) {
+      const a = order.address;
+      addrText =
+        `住所：${a.zip || a.postal || ""} ` +
+        `${a.prefecture || a.pref || ""}${a.city || ""}${a.addr1 || a.address1 || ""}` +
+        `${a.addr2 || a.address2 ? " " + (a.addr2 || a.address2) : ""}\n` +
+        `氏名：${(a.lastName||"")}${(a.firstName||"") || a.name || ""}\n` +
+        `TEL：${a.tel || a.phone || ""}`;
+    }
+
+    // ④ ログ保存
     try {
       const log = {
         ts: new Date().toISOString(),
@@ -1018,26 +1000,7 @@ app.post("/api/order/complete", async (req, res) => {
       console.error("orders.log write error:", e);
     }
 
-    // 管理者通知メッセージを組み立て
-    const itemsText = items
-      .map(it => `・${it.name} x ${it.qty} = ${yen((it.price||0)*(it.qty||0))}`)
-      .join("\n");
-
-    const itemsTotal = Number(order.itemsTotal ?? order.total ?? 0);
-    const shipping   = Number(order.shipping ?? 0);
-    const codFee     = Number(order.codFee ?? 0);
-    const finalTotal = Number(order.finalTotal ?? order.total ?? 0);
-
-    let addrText = "住所：未登録";
-    if (order.address) {
-      const a = order.address;
-      addrText =
-        `住所：${a.zip || a.postal || ""} ` +
-        `${a.prefecture || a.pref || ""}${a.city || ""}${a.addr1 || a.address1 || ""}${a.addr2 || a.address2 ? " " + (a.addr2 || a.address2) : ""}\n` +
-        `氏名：${(a.lastName||"")}${(a.firstName||"") || a.name || ""}\n` +
-        `TEL：${a.tel || a.phone || ""}`;
-    }
-
+    // ⑤ 管理者通知
     const adminMsg =
       `🧾【Epsilon決済 新規注文】\n` +
       (order.lineUserId ? `ユーザーID：${order.lineUserId}\n` : "") +
@@ -1049,16 +1012,37 @@ app.post("/api/order/complete", async (req, res) => {
       `合計：${yen(finalTotal)}\n` +
       `\n${addrText}`;
 
-    // 管理者へ push（あなた＋必要ならマルチキャスト）
     try {
       if (ADMIN_USER_ID) {
-        await client.pushMessage(ADMIN_USER_ID, { type: "text", text: adminMsg });
+        await client.pushMessage(ADMIN_USER_ID, { type:"text", text: adminMsg });
       }
       if (MULTICAST_USER_IDS.length > 0) {
-        await client.multicast(MULTICAST_USER_IDS, { type: "text", text: adminMsg });
+        await client.multicast(MULTICAST_USER_IDS, { type:"text", text: adminMsg });
       }
     } catch (e) {
       console.error("admin push error:", e?.response?.data || e);
+    }
+
+    // ⑥ ★購入者へ明細通知（itemsTextが作られた“後”）
+    try {
+      if (order.lineUserId) {
+        const userMsg =
+          "ご注文ありがとうございます！\n\n" +
+          "【ご注文内容】\n" + itemsText + "\n\n" +
+          `商品合計：${yen(itemsTotal)}\n` +
+          `送料：${yen(shipping)}\n` +
+          (codFee ? `代引き手数料：${yen(codFee)}\n` : "") +
+          `合計：${yen(finalTotal)}\n\n` +
+          addrText;
+
+        await client.pushMessage(order.lineUserId, {
+          type: "text",
+          text: userMsg
+        });
+        console.log("user receipt push OK:", order.lineUserId);
+      }
+    } catch (e) {
+      console.error("user receipt push error:", e?.response?.data || e);
     }
 
     return res.json({ ok: true });

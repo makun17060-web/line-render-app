@@ -752,6 +752,33 @@ function labelOf(q, code){ return code; }
 
 // ====== LIFF API ======
 app.post("/api/liff/address", async (req, res) => {
+  // 住所保存（すでにあるやつ）
+app.post("/api/liff/address", async (req, res) => {
+  try {
+    const { userId, name, phone, postal, prefecture, city, address1, address2 } = req.body || {};
+    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
+    const book = readAddresses();
+    book[userId] = { name, phone, postal, prefecture, city, address1, address2, ts: new Date().toISOString() };
+    writeAddresses(book);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+// ★ 追加：住所取得（confirm.js が使う）
+app.get("/api/liff/address/me", (req, res) => {
+  try {
+    const userId = String(req.query.userId || "").trim();
+    if (!userId) return res.status(400).json({ ok:false, error:"userId required" });
+    const book = readAddresses();
+    const address = book[userId] || null;
+    res.json({ ok:true, address });
+  } catch (e) {
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
+
   // ====== LIFF API ======
 app.post("/api/liff/address", async (req, res) => {
   try {

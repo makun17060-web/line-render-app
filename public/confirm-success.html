@@ -5,6 +5,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>決済完了 | 手造りえびせんべい 磯屋</title>
+
   <style>
     body{
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
@@ -26,7 +27,11 @@
     }
     #status{ margin-top:10px; font-size:13px; color:#333; white-space:pre-line; min-height:18px; }
   </style>
+
+  <!-- ★ LIFF SDK 読み込み（これがないと closeWindow できません） -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
+
 <body>
   <header>
     手造りえびせんべい 磯屋<br>宅配付きご注文ミニアプリ
@@ -58,6 +63,9 @@
     }
   }
 
+  // -----------------------------
+  // 1) 注文データ読み込み → /api/order/complete へ確定通知
+  // -----------------------------
   const order = readOrder();
   if (!order || !Array.isArray(order.items) || order.items.length === 0) {
     status.textContent = "注文データが見つかりませんでした。";
@@ -72,9 +80,11 @@
       const data = await res.json();
       if (data?.ok) {
         status.textContent = "完了しました。";
-        // ここで消してもOK（再送防止）
+        // 再送防止（消してOK）
         sessionStorage.removeItem("currentOrder");
         sessionStorage.removeItem("cart");
+        localStorage.removeItem("currentOrder");
+        localStorage.removeItem("cart");
       } else {
         status.textContent = "確定処理に失敗しました。\nもう一度お試しください。";
       }
@@ -83,10 +93,33 @@
     }
   }
 
-  backBtn.addEventListener("click", ()=>{
-    // LIFFなら閉じる。普通のブラウザならトップへ
-    if (window.liff && liff.isInClient()) liff.closeWindow();
-    else location.href = "/";
+  // -----------------------------
+  // 2) LIFF 初期化（/api/liff/config から LIFF ID を取得）
+  // -----------------------------
+  let liffReadyInClient = false;
+  try {
+    const conf = await fetch("/api/liff/config", { cache:"no-store" }).then(r => r.json());
+    const liffId = conf?.liffId;
+
+    if (liffId && window.liff) {
+      await liff.init({ liffId });
+      liffReadyInClient = liff.isInClient();
+    }
+  } catch (e) {
+    console.log("LIFF init failed:", e);
+  }
+
+  // -----------------------------
+  // 3) 「LINEに戻る」ボタン
+  //    LINE内なら closeWindow / 外なら商品一覧へ戻す
+  // -----------------------------
+  backBtn.addEventListener("click", () => {
+    if (liffReadyInClient) {
+      liff.closeWindow();
+    } else {
+      // 外部ブラウザで開かれた場合の戻り先
+      location.href = "/public/products.html";
+    }
   });
 })();
 </script>

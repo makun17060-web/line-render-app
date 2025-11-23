@@ -1750,8 +1750,23 @@ if (t === "問い合わせ") {
       "このままトークに内容を送ってください。\n" +
       "スタッフが確認して返信します。"
   });
-  return; 
+  return;
 }
+
+  // 一般ユーザー
+if (text === "直接注文") {
+  await client.replyMessage(ev.replyToken, productsFlex(readProducts()));
+  return;
+}
+if (text === "アンケート") {
+  await client.replyMessage(ev.replyToken, { type:"text", text:"アンケート機能は準備中です。" });
+  return;
+}
+
+// ★ここまでのどれにも当てはまらないテキストは無視
+return;
+}
+
 
       // ====== ★問い合わせ ここまで ======
 

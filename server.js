@@ -1322,11 +1322,7 @@ app.get("/api/products", (req, res) => {
 });
 // ====== ミニアプリ用：送料計算 API ======
 // 受け取り例:　{
-  items: [
-    { id, price, qty }
-  ],
-  address: { ...address }
-}
+ 
 
 // 返す例: { ok:true, itemsTotal, shipping, finalTotal }
 

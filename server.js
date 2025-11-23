@@ -1943,7 +1943,7 @@ if (text === "直接注文") {
 // ※「久助」メッセージはこの上で既に処理されてるので、ここでは何もしない
 // それ以外は完全に無反応（返信しない）
 return;
-
+    }
 
     if (ev.type === "postback") {
       const d = ev.postback?.data || "";

@@ -1972,16 +1972,16 @@ async function handleEvent(ev) {
         }
       }
 
-      // 一般ユーザー
-      if (text === "直接注文") { await client.replyMessage(ev.replyToken, productsFlex(readProducts())); return; }
-      if (text === "アンケート") { await client.replyMessage(ev.replyToken, { type:"text", text:"アンケート機能は準備中です。" }); return; }
+      // 一般ユーザー（久助・直接注文以外は無反応にする）
+if (text === "直接注文") {
+  await client.replyMessage(ev.replyToken, productsFlex(readProducts()));
+  return;
+}
 
-      await client.replyMessage(ev.replyToken, {
-        type: "text",
-        text: "「直接注文」と送ると、商品一覧が表示されます。\n久助は「久助 2」のように、商品名＋半角個数でご入力ください。"
-      });
-      return;
-    }
+// ※「久助」メッセージはこの上で既に処理されてるので、ここでは何もしない
+// それ以外は完全に無反応（返信しない）
+return;
+
 
     if (ev.type === "postback") {
       const d = ev.postback?.data || "";

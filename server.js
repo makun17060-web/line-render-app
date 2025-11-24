@@ -416,12 +416,24 @@ function productsFlex(allProducts) {
             size: "md",
             wrap: true,
           },
+
+          // ★ ここで内容量を表示
+          p.volume
+            ? {
+                type: "text",
+                text: `内容量：${p.volume}`,
+                size: "sm",
+                wrap: true,
+              }
+            : null,
+
           {
             type: "text",
             text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`,
             size: "sm",
             wrap: true,
           },
+
           p.desc
             ? { type: "text", text: p.desc, size: "sm", wrap: true }
             : { type: "box", layout: "vertical", contents: [] },
@@ -507,6 +519,7 @@ function productsFlex(allProducts) {
           },
   };
 }
+
 
 function qtyFlex(id, qty = 1) {
   const q = Math.max(1, Math.min(99, Number(qty) || 1));
@@ -1605,7 +1618,7 @@ app.post("/api/admin/products/update", (req, res) => {
         .json({ ok: false, error: "product_not_found" });
 
     const p = products[idx];
-     if (typeof req.body.volume === "string") {
+    if (typeof req.body.volume === "string") {
       p.volume = req.body.volume.trim().slice(0, 30);
     }
     const beforeStock = Number(p.stock || 0);
@@ -2522,6 +2535,7 @@ async function handleEvent(ev) {
                 text: `在庫コマンドエラー：${
                   e.message || e
                 }`,
+
               });
               return;
             }
@@ -2785,6 +2799,15 @@ async function handleEvent(ev) {
     if (ev.type === "postback") {
       const d = ev.postback?.data || "";
 
+      // ★ キャンセル（予約「やめる」）
+      if (d === "order_cancel") {
+        await client.replyMessage(ev.replyToken, {
+          type: "text",
+          text: "キャンセルしました。またのご利用をお待ちしています。",
+        });
+        return;
+      }
+
       if (d === "other_start") {
         const sessions = readSessions();
         const uid = ev.source?.userId || "";
@@ -2941,13 +2964,6 @@ async function handleEvent(ev) {
             });
             return;
           }
-          if (d === "order_cancel") {
-  await client.replyMessage(ev.replyToken, {
-    type: "text",
-    text: "キャンセルしました。またのご利用をお待ちしています。",
-  });
-  return;
-}
           product = products[idx];
           if (!product.stock || product.stock < need) {
             await client.replyMessage(
@@ -3102,7 +3118,7 @@ async function handleEvent(ev) {
                 addr.address2
                   ? " " + addr.address2
                   : ""
-              }\n氏名：${addr.name || ""} / TEL：${
+              }\n氏名：${addr.name || ""} / TEL：{
                 addr.phone || ""
               }`
             : "住所：未登録",

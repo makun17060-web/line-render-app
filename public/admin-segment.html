@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>セグメント配信 | 磯屋 管理</title>
+  <style>
+    body{ font-family: system-ui, -apple-system, "Helvetica Neue", sans-serif; background:#fafafa; margin:0; color:#222; }
+    header{ background:#b22222; color:#fff; padding:14px 16px; font-size:18px; font-weight:700; }
+    .wrap{ max-width:980px; margin:0 auto; padding:16px; }
+    .card{ background:#fff; border-radius:12px; box-shadow:0 2px 8px rgba(0,0,0,.08); padding:16px; margin-bottom:14px; }
+    .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    label{ font-size:13px; color:#444; }
+    input, select, textarea{
+      width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; font-size:14px;
+      box-sizing:border-box; background:#fff;
+    }
+    textarea{ min-height:140px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .col{ flex:1; min-width:220px; }
+    .btn{
+      appearance:none; border:0; border-radius:9px; padding:10px 14px; font-size:14px; font-weight:700;
+      cursor:pointer; background:#b22222; color:#fff;
+    }
+    .btn.sub{ background:#333; }
+    .btn.ghost{ background:#eee; color:#111; }
+    .small{ font-size:12px; color:#666; }
+    .ok{ color:#0a7a2f; font-weight:700; }
+    .ng{ color:#b00020; font-weight:700; }
+    .log{
+      background:#0f172a; color:#e2e8f0; padding:10px; border-radius:8px;
+      font-family: ui-monospace, Menlo, Consolas, monospace; font-size:12px; white-space:pre-wrap;
+      max-height:280px; overflow:auto;
+    }
+    .hr{ height:1px; background:#eee; margin:10px 0; }
+    .tabs{ display:flex; gap:8px; margin-bottom:10px; }
+    .tab{ padding:8px 12px; border-radius:999px; background:#eee; cursor:pointer; font-weight:700; font-size:13px; }
+    .tab.active{ background:#b22222; color:#fff; }
+    .hide{ display:none; }
+  </style>
+</head>
+<body>
+<header>セグメント配信 管理画面（磯屋）</header>
+
+<div class="wrap">
+
+  <div class="card">
+    <div class="row">
+      <div class="col">
+        <label>管理トークン（ADMIN_API_TOKEN または ADMIN_CODE）</label>
+        <input id="adminToken" type="password" placeholder="例：xxxxx">
+        <div class="small">※ server.js の requireAdmin() が見ている値を入れてください。</div>
+      </div>
+      <div class="col">
+        <label>APIベースURL（通常は空でOK）</label>
+        <input id="apiBase" placeholder="例：https://line-render-app-1.onrender.com">
+        <div class="small">空なら同じドメイン（/api/〜）へ送ります。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="seg">セグメント配信</div>
+    <div class="tab" data-tab="manual">手動ユーザー指定</div>
+  </div>
+
+  <!-- セグメント配信タブ -->
+  <div id="tab-seg">
+
+    <div class="card">
+      <div class="row">
+        <div class="col">
+          <label>セグメント種別</label>
+          <select id="segmentType">
+            <option value="all">全友だち</option>
+            <option value="text_senders">テキスト送信者</option>
+            <option value="purchasers">購入者</option>
+            <option value="reservations">予約者</option>
+            <option value="roulette_winners">抽選当選者</option>
+          </select>
+          <div class="small">※ 種別名は server.js のセグメント定義に合わせて変更できます。</div>
+        </div>
+
+        <div class="col">
+          <label>期間From（任意）</label>
+          <input id="fromDate" type="date">
+        </div>
+        <div class="col">
+          <label>期間To（任意）</label>
+          <input id="toDate" type="date">
+        </div>
+        <div class="col">
+          <label>&nbsp;</label>
+          <button class="btn ghost" id="previewBtn">対象数を確認</button>
+          <div class="small" id="previewResult">対象数：未確認</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <div class="col">
+          <label>メッセージ形式</label>
+          <select id="messageType">
+            <option value="text">テキスト</option>
+            <option value="flex">Flex JSON</option>
+          </select>
+        </div>
+        <div class="col">
+          <label>送信モード</label>
+          <select id="sendMode">
+            <option value="broadcast">broadcast（全体配信）</option>
+            <option value="multicast">multicast（ID抽出型）</option>
+          </select>
+          <div class="small">※ server.js 側で mode を見て処理したい場合に使います。</div>
+        </div>
+      </div>
+
+      <div class="hr"></div>
+
+      <div id="textAreaWrap">
+        <label>配信テキスト</label>
+        <textarea id="textMessage" placeholder="例：久助が入荷しました！オンライン注文はこちら…"></textarea>
+      </div>
+
+      <div id="flexAreaWrap" class="hide">
+        <label>Flex JSON（そのまま貼り付け）</label>
+        <textarea id="flexJson" placeholder='{"type":"flex","altText":"...","contents":{...}}'></textarea>
+      </div>
+
+      <div class="hr"></div>
+
+      <div class="row">
+        <button class="btn" id="sendBtn">セグメント配信する</button>
+        <button class="btn sub" id="dryRunBtn">送信せずテスト（dry-run）</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 手動ユーザー指定タブ -->
+  <div id="tab-manual" class="hide">
+
+    <div class="card">
+      <label>送信先ユーザーID（改行 or カンマ区切り）</label>
+      <textarea id="manualUserIds" placeholder="Uxxxxxxxx...\nUyyyyyyyy..."></textarea>
+
+      <div class="hr"></div>
+
+      <div class="row">
+        <div class="col">
+          <label>メッセージ形式</label>
+          <select id="manualMessageType">
+            <option value="text">テキスト</option>
+            <option value="flex">Flex JSON</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="manualTextWrap">
+        <label>テキスト</label>
+        <textarea id="manualText"></textarea>
+      </div>
+
+      <div id="manualFlexWrap" class="hide">
+        <label>Flex JSON</label>
+        <textarea id="manualFlex"></textarea>
+      </div>
+
+      <div class="hr"></div>
+      <button class="btn" id="manualSendBtn">指定ユーザーへ送信</button>
+    </div>
+
+  </div>
+
+  <div class="card">
+    <label>ログ</label>
+    <div id="log" class="log">ready.</div>
+  </div>
+
+</div>
+
+<script src="/public/admin-segment.js"></script>
+</body>
+</html>

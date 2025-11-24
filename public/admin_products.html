@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>商品管理（磯屋）</title>
+  <link rel="stylesheet" href="admin_products.css">
+</head>
+<body>
+  <h1>商品管理（磯屋）</h1>
+
+  <!-- トークン入力 -->
+  <section id="auth">
+    <label>
+      管理用トークン：
+      <input id="tokenInput" type="password" placeholder="ADMIN_API_TOKEN または ADMIN_CODE">
+    </label>
+    <button id="saveTokenBtn">保存</button>
+    <span id="authStatus"></span>
+  </section>
+
+  <hr>
+
+  <!-- 上部の操作 -->
+  <section id="topControls">
+    <button id="reloadBtn">商品一覧を再読み込み</button>
+    <span id="status"></span>
+  </section>
+
+  <!-- 商品一覧テーブル -->
+  <section id="productsSection">
+    <h2>商品一覧</h2>
+    <div id="listArea">「商品一覧を再読み込み」を押してください。</div>
+  </section>
+
+  <hr>
+
+  <!-- 画像アップロード＆一覧 -->
+  <section id="imagesSection">
+    <h2>商品画像 管理</h2>
+
+    <div id="uploadArea">
+      <div>画像アップロード（JPEG/PNG 等・8MBまで）</div>
+      <input type="file" id="uploadInput" accept="image/*">
+      <button id="uploadBtn">アップロード</button>
+      <span id="uploadStatus"></span>
+    </div>
+
+    <div id="imagesListWrapper">
+      <h3>アップロード済み画像一覧</h3>
+      <button id="reloadImagesBtn">画像一覧を再読み込み</button>
+      <div id="imagesList">まだ読み込まれていません。</div>
+      <p style="font-size:12px;color:#555;">
+        ※「URLコピー」ボタンで画像URLをコピーできます。<br>
+        ※ 商品行の「画像URL」欄に貼り付けた後、「保存」ボタンで反映されます。
+      </p>
+    </div>
+  </section>
+
+  <script src="admin_products.js"></script>
+</body>
+</html>

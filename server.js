@@ -2941,6 +2941,13 @@ async function handleEvent(ev) {
             });
             return;
           }
+          if (d === "order_cancel") {
+  await client.replyMessage(ev.replyToken, {
+    type: "text",
+    text: "キャンセルしました。またのご利用をお待ちしています。",
+  });
+  return;
+}
           product = products[idx];
           if (!product.stock || product.stock < need) {
             await client.replyMessage(

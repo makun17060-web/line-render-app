@@ -1,0 +1,327 @@
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>セグメント Flex 配信 管理画面</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 16px; }
+    h1 { font-size: 20px; margin-bottom: 8px; }
+    h2 { margin-top: 24px; font-size: 18px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
+    .section {
+      margin-top: 12px;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+    .row { margin: 4px 0; }
+    button { margin: 2px 0; }
+    #log {
+      margin-top: 12px;
+      max-height: 220px;
+      overflow: auto;
+      font-size: 12px;
+      background: #f5f5f5;
+      padding: 4px;
+      white-space: pre-wrap;
+    }
+    textarea {
+      width: 100%;
+      box-sizing: border-box;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 12px;
+    }
+    select, input[type="text"] {
+      box-sizing: border-box;
+    }
+  </style>
+</head>
+<body>
+  <h1>セグメント Flex 配信 管理画面</h1>
+
+  <!-- トークン設定 & 接続テスト -->
+  <div class="section">
+    <div class="row">
+      接続トークン（?code= または ?token= でも可）:
+      <input type="text" id="tokenInput" style="width:260px;" />
+      <button id="saveTokenBtn">保存</button>
+    </div>
+    <div class="row">
+      <button id="pingBtn">接続テスト</button>
+      <span id="status"></span>
+    </div>
+  </div>
+
+  <!-- セグメント条件 & 集計 -->
+  <h2>① 対象ユーザーのセグメント</h2>
+  <div class="section">
+    <div class="row">
+      <label>セグメント種別：
+        <select id="segmentType">
+          <option value="activeChatters">最近トークした人</option>
+  <option value="textSenders">テキスト送信者</option>
+  <option value="addresses">住所登録者</option>
+  <option value="orders">注文履歴から（※要 server 側改造）</option>
+  <option value="survey">アンケート回答から（※要 server 側改造）</option>
+        </select>
+      </label>
+      <button id="segmentPreviewBtn">対象を集計</button>
+    </div>
+    <div class="row">
+      対象人数：<span id="segmentCount">0</span> 人
+    </div>
+    <div class="row">
+      ※ 今は <b>activeChatters / addresses</b> が使えます。orders / survey は
+      server.js の `/api/admin/segment/preview` を拡張すれば対応可能です。
+    </div>
+  </div>
+
+  <!-- Flex JSON 入力 -->
+  <h2>② Flex メッセージ内容</h2>
+  <div class="section">
+    <div class="row">
+      代替テキスト（altText）：<br />
+      <input type="text" id="altText" style="width:100%;" placeholder="例）久助キャンペーンのお知らせ" />
+    </div>
+    <div class="row">
+      Flex JSON（<b>bubble または carousel 部分</b> をそのまま貼り付けてください）：<br />
+      <textarea id="flexJson" rows="18" placeholder='例）
+{
+  "type": "bubble",
+  "hero": {
+    "type": "image",
+    "url": "https://example.com/sample.png",
+    "size": "full",
+    "aspectRatio": "20:13",
+    "aspectMode": "cover"
+  },
+  "body": {
+    "type": "box",
+    "layout": "vertical",
+    "contents": [
+      { "type": "text", "text": "久助 30%増量キャンペーン！", "weight": "bold", "size": "lg" },
+      { "type": "text", "text": "本日限定でお得にご案内中です。", "wrap": true }
+    ]
+  }
+}'></textarea>
+    </div>
+    <div class="row">
+      <button id="previewFlexBtn">JSONチェック（構文確認）</button>
+    </div>
+  </div>
+
+  <!-- 送信操作 -->
+  <h2>③ 配信</h2>
+  <div class="section">
+    <div class="row">
+      <b>対象：</b>
+      <label><input type="radio" name="sendMode" value="segment" checked />  セグメント対象者のみに配信</label>
+      <label style="margin-left:12px;">
+        <input type="radio" name="sendMode" value="broadcast" />
+        全友だちに一斉配信（broadcast）
+      </label>
+    </div>
+    <div class="row">
+      <button id="sendFlexBtn">Flex メッセージを配信</button>
+    </div>
+    <div class="row">
+      ※ broadcast は `/api/admin/broadcast-flex` を呼び出します。  
+      ※ セグメント配信は `/api/admin/segment/send-flex` を使用します。
+    </div>
+  </div>
+
+  <div id="log"></div>
+
+  <script>
+    (function(){
+      const $ = (id) => document.getElementById(id);
+      const logEl = $("log");
+      const STATUS = $("status");
+      let currentSegmentUserIds = [];
+
+      function log(msg) {
+        const line = "[" + new Date().toLocaleString() + "] " + msg + "\n";
+        logEl.textContent = line + logEl.textContent;
+      }
+
+      // ===== トークン周り =====
+      function getTokenFromUrlOrStorage() {
+        const params = new URLSearchParams(location.search);
+        const fromUrl = params.get("code") || params.get("token") || "";
+        if (fromUrl) {
+          localStorage.setItem("adminToken", fromUrl);
+          return fromUrl;
+        }
+        return localStorage.getItem("adminToken") || "";
+      }
+      function getToken() {
+        return $("tokenInput").value.trim();
+      }
+
+      const initToken = getTokenFromUrlOrStorage();
+      $("tokenInput").value = initToken;
+      if (!initToken) {
+        STATUS.textContent = "トークン未設定です。?code=ADMIN_CODE をURLにつけるか、上に入力してください。";
+      }
+
+      $("saveTokenBtn").addEventListener("click", () => {
+        const t = getToken();
+        if (!t) {
+          alert("トークンを入力してください。");
+          return;
+        }
+        localStorage.setItem("adminToken", t);
+        STATUS.textContent = "トークンを保存しました。";
+        log("トークン保存: " + t);
+      });
+
+      // 共通 fetch
+      async function apiFetch(path, options = {}) {
+        const token = getToken();
+        if (!token) throw new Error("トークン未設定");
+        const url = path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token);
+        const opt = Object.assign({
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+        }, options);
+        const res = await fetch(url, opt);
+        let data = {};
+        try { data = await res.json(); } catch (e) {}
+        if (!res.ok || data.ok === false) {
+          throw new Error(data.error || (res.status + " error"));
+        }
+        return data;
+      }
+
+      // ===== 接続テスト =====
+      $("pingBtn").addEventListener("click", async () => {
+        try {
+          STATUS.textContent = "接続テスト中...";
+          const data = await apiFetch("/api/admin/ping");
+          STATUS.textContent = "接続OK";
+          log("接続テスト: " + JSON.stringify(data));
+        } catch (e) {
+          STATUS.textContent = "接続エラー: " + e.message;
+          log("接続エラー: " + e.message);
+          alert("接続に失敗しました: " + e.message + "\nトークンやURLを確認してください。");
+        }
+      });
+
+      // ===== セグメント集計 =====
+      $("segmentPreviewBtn").addEventListener("click", async () => {
+        try {
+          const t = $("segmentType").value;
+          const body = JSON.stringify({ type: t });
+          const data = await apiFetch("/api/admin/segment/preview", {
+            method: "POST",
+            body
+          });
+          currentSegmentUserIds = data.userIds || [];
+          $("segmentCount").textContent = currentSegmentUserIds.length;
+          log("セグメント集計: " + t + " → " + currentSegmentUserIds.length + "人");
+        } catch (e) {
+          alert("セグメント集計エラー: " + e.message);
+          log("セグメント集計エラー: " + e.message);
+        }
+      });
+
+      // ===== Flex JSON チェック =====
+      $("previewFlexBtn").addEventListener("click", () => {
+        const altText = $("altText").value.trim();
+        if (!altText) {
+          alert("altText（代替テキスト）を入力してください。");
+          return;
+        }
+        const raw = $("flexJson").value.trim();
+        if (!raw) {
+          alert("Flex JSON を入力してください。");
+          return;
+        }
+        try {
+          const obj = JSON.parse(raw);
+          if (obj.type !== "bubble" && obj.type !== "carousel") {
+            alert('JSON は "type": "bubble" または "type": "carousel" である必要があります。');
+            return;
+          }
+          alert("JSON OK です。（構文エラーはありません）");
+          log("Flex JSON 構文チェック OK");
+        } catch (e) {
+          alert("JSON 構文エラー: " + e.message);
+          log("Flex JSON 構文エラー: " + e.message);
+        }
+      });
+
+      // ===== 配信処理 =====
+      $("sendFlexBtn").addEventListener("click", async () => {
+        try {
+          const altText = $("altText").value.trim();
+          if (!altText) {
+            alert("altText（代替テキスト）を入力してください。");
+            return;
+          }
+          const raw = $("flexJson").value.trim();
+          if (!raw) {
+            alert("Flex JSON を入力してください。");
+            return;
+          }
+          let contents;
+          try {
+            contents = JSON.parse(raw);
+          } catch (e) {
+            alert("JSON 構文エラー: " + e.message);
+            log("Flex JSON 構文エラー: " + e.message);
+            return;
+          }
+          if (contents.type !== "bubble" && contents.type !== "carousel") {
+            alert('JSON は "type": "bubble" または "type": "carousel" である必要があります。');
+            return;
+          }
+
+          const mode = Array.from(document.getElementsByName("sendMode"))
+            .find(r => r.checked)?.value || "segment";
+
+          if (mode === "segment") {
+            if (!currentSegmentUserIds.length) {
+              alert("まず「対象を集計」を押して、セグメント対象を取得してください。");
+              return;
+            }
+            if (!confirm(currentSegmentUserIds.length + "人に Flex を配信します。よろしいですか？")) {
+              return;
+            }
+            const body = JSON.stringify({
+              userIds: currentSegmentUserIds,
+              altText,
+              contents
+            });
+            const data = await apiFetch("/api/admin/segment/send-flex", {
+              method: "POST",
+              body
+            });
+            alert("セグメント Flex 配信完了: 送信 " + data.sent + " / 失敗 " + data.failed);
+            log("セグメント send-flex: " + JSON.stringify(data));
+          } else {
+            // broadcast
+            if (!confirm("友だち全員に Flex を一斉配信します。よろしいですか？")) {
+              return;
+            }
+            const body = JSON.stringify({ altText, contents });
+            const data = await apiFetch("/api/admin/broadcast-flex", {
+              method: "POST",
+              body
+            });
+            alert("broadcast-flex リクエスト完了: " + (data.ok ? "OK" : "NG"));
+            log("broadcast-flex: " + JSON.stringify(data));
+          }
+        } catch (e) {
+          alert("配信エラー: " + e.message);
+          log("配信エラー: " + e.message);
+        }
+      });
+
+      // 初期ログ
+      log("ページ読み込み完了。トークンを設定して接続テストを行ってください。");
+    })();
+  </script>
+</body>
+</html>

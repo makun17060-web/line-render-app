@@ -1,0 +1,22 @@
+{
+  "name": "line-admin-server",
+  "version": "1.0.0",
+  "description": "LINE Bot 管理画面＋Flex配信＋画像アップロード＋リサイズ機能付き",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@line/bot-sdk": "^7.6.0",
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "fs-extra": "^11.2.0",
+    "multer": "^1.4.5-lts.1",
+    "sharp": "^0.33.4"
+  },
+  "engines": {
+    "node": ">=18.x"
+  },
+  "license": "MIT"
+}

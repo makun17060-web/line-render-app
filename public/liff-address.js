@@ -2,7 +2,7 @@
 // ② 住所入力画面
 // - LIFF で userId を取得
 // - /api/liff/address に住所を保存
-// - 保存したら confirm.html へ進む
+// - 保存後：カートがあれば confirm.html、なければ products.html へ
 
 (async function () {
   const $ = (id) => document.getElementById(id);
@@ -27,7 +27,6 @@
 
   async function initLiff() {
     try {
-      // server.js にある /api/liff/config から LIFF ID を取得
       const confRes = await fetch("/api/liff/config", { cache: "no-store" });
       const conf = await confRes.json();
       const liffId = (conf?.liffId || "").trim();
@@ -63,14 +62,13 @@
   // -----------------------------
   async function loadAddress() {
     try {
-      // sessionStorage に残っていれば優先
       const cur = JSON.parse(sessionStorage.getItem("currentOrder") || "{}");
       if (cur.address) return cur.address;
 
-      // サーバーに保存されている住所を取得
-      const res = await fetch(`/api/liff/address/me?userId=${encodeURIComponent(lineUserId)}`, {
-        cache: "no-store",
-      });
+      const res = await fetch(
+        `/api/liff/address/me?userId=${encodeURIComponent(lineUserId)}`,
+        { cache: "no-store" }
+      );
       const data = await res.json();
       return data?.address || null;
     } catch (e) {
@@ -103,7 +101,6 @@
       phone: phone.value.trim(),
     };
 
-    // 入力チェック
     if (!addr.postal || !addr.prefecture || !addr.city || !addr.address1 ||
         !addr.name || !addr.phone) {
       statusMsg.textContent = "未入力の項目があります。すべて入力してください。";
@@ -128,19 +125,28 @@
         throw new Error("住所の保存に失敗しました");
       }
 
-      // sessionStorage の注文データにも保持
+      // sessionStorage の注文データにも保持（カートが無い場合も壊さない）
       const cur = JSON.parse(sessionStorage.getItem("currentOrder") || "{}");
       cur.address = addr;
       cur.lineUserId = lineUserId;
       cur.lineUserName = lineUserName;
       sessionStorage.setItem("currentOrder", JSON.stringify(cur));
 
-      statusMsg.textContent = "住所を保存しました。③ 最終確認へ移動します…";
+      // ★カート（items）があるかチェック
+      const hasItems = Array.isArray(cur.items) && cur.items.length > 0;
 
-      // confirm.html へ遷移
-      setTimeout(() => {
-        location.href = "/public/confirm.html";
-      }, 600);
+      if (hasItems) {
+        statusMsg.textContent = "住所を保存しました。最終確認へ移動します…";
+        setTimeout(() => {
+          location.href = "/public/confirm.html";
+        }, 600);
+      } else {
+        // カートが無い → confirmに行っても弾かれるので商品選択へ戻す
+        statusMsg.textContent = "住所を保存しました。商品選択画面へ戻ります…";
+        setTimeout(() => {
+          location.href = "/public/products.html";
+        }, 800);
+      }
 
     } catch (e) {
       console.log(e);
@@ -150,10 +156,12 @@
   });
 
   // -----------------------------
-  // 4) 戻るボタン
+  // 4) 戻るボタン（カート有無で分岐）
   // -----------------------------
   backBtn.addEventListener("click", () => {
-    location.href = "/public/confirm.html";
+    const cur = JSON.parse(sessionStorage.getItem("currentOrder") || "{}");
+    const hasItems = Array.isArray(cur.items) && cur.items.length > 0;
+    location.href = hasItems ? "/public/confirm.html" : "/public/products.html";
   });
 
 })();

@@ -1,7 +1,7 @@
 // /public/products.js
 // 商品一覧 → カート → 「②お届け先入力へ」
-// ★全員 住所入力（LIFF）へ遷移する
-// 住所画面で自動補完 → confirmへ
+// ②を押したら必ず LIFFエンドポイントへ戻す（need=shipping付き）
+// products.html が need=shipping を検知して住所入力へ自然遷移する
 
 (async function () {
   const grid = document.getElementById("productGrid");
@@ -93,6 +93,7 @@
         const img = document.createElement("img");
         img.src = p.image;
         img.alt = p.name;
+        img.loading = "lazy";
         imgWrap.appendChild(img);
       } else {
         imgWrap.textContent = "画像なし";
@@ -159,7 +160,6 @@
 
       card.appendChild(imgWrap);
       card.appendChild(body);
-
       grid.appendChild(card);
     });
 
@@ -177,14 +177,14 @@
     const items = cartItems();
     if (!items.length) return;
 
-    // 注文下書きを保存（住所画面→confirmで使う）
+    // いったん注文下書きを保存して住所へ
     const payload = {
       items,
       itemsTotal: calcTotal(items),
     };
     sessionStorage.setItem("orderDraft", JSON.stringify(payload));
 
-    // ★ 全員 住所入力画面へ
+    // LIFF ID を取り、need=shipping 付きでエンドポイント(products)へ戻す
     try {
       const confRes = await fetch("/api/liff/config", { cache: "no-store" });
       const conf = await confRes.json();
@@ -194,9 +194,11 @@
         location.href = `https://liff.line.me/${liffId}?from=products&need=shipping`;
         return;
       }
-    } catch {}
+    } catch (e) {
+      console.error("liff config fetch error", e);
+    }
 
-    // LIFF_ID 取れない時の保険
+    // 保険（LIFF ID 取れない場合）
     location.href = "/public/liff-address.html";
   };
 

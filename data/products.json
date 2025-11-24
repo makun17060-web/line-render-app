@@ -7,4 +7,3 @@
   { "id": "iso-akasha-340",    "name": "磯あかしゃ",           "price": 340,  "stock": 30, "volume": 80g, "desc": "海老せんべいに高級海苔をトッピング" },
   { "id": "goma-akasha-340",   "name": "ごまあかしゃ",         "price": 340,  "stock": 30, "volume": 80g, "desc": "海老せんべいに風味豊かなごまをトッピング" },
   { "id": "original-set-2000", "name": "磯屋オリジナルセット", "price": 2000, "stock": 30, "desc": "6袋をセットにしたオリジナル" }
-]

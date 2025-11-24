@@ -8,7 +8,7 @@
 // + 画像アップロード/一覧/削除 + 商品へ画像URL紐付け
 // + ミニアプリ用 /api/products（久助除外）
 // + ミニアプリ用 /api/shipping（住所から地域判定して送料）
-// + LIFF 住所保存/取得 API（/api/liff/address, /api/liff/address/me, /api/liff/config）
+// + LIFF 住所保存/取得 API（/api/liff/address, /api/liff/address/me, /api/liff/config)
 // + イプシロン決済 /api/pay + 旧URL /api/pay-epsilon
 // + イプシロン入金通知 /api/epsilon/notify
 // + 汎用 Health チェック, /my-ip

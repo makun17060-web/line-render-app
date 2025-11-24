@@ -1,4 +1,9 @@
 // /public/liff-address.js
+// 住所入力画面
+// - LIFFでuserId取得
+// - 登録済み住所を自動入力
+// - 保存→confirm.htmlへ
+
 (async function () {
   const $ = (id) => document.getElementById(id);
 
@@ -10,125 +15,133 @@
   const name       = $("name");
   const phone      = $("phone");
 
-  const saveBtn   = $("saveBtn");
-  const backBtn   = $("backBtn");
+  const saveBtn = $("saveBtn");
+  const backBtn = $("backBtn");
   const statusMsg = $("statusMsg");
 
-  function setStatus(msg) {
-    if (statusMsg) statusMsg.textContent = msg;
-    console.log("[liff-address]", msg);
-  }
-
-  // 0) まず要素が取れてるかチェック
-  const requiredEls = [postal, prefecture, city, address1, name, phone, saveBtn];
-  if (requiredEls.some((x) => !x)) {
-    setStatus("画面部品の読み込みに失敗しました（id名を確認してください）");
-    return;
-  }
-
-  // 1) LIFF初期化
   let lineUserId = "";
   let lineUserName = "";
 
-  try {
-    const confRes = await fetch("/api/liff/config", { cache: "no-store" });
-    const conf = await confRes.json();
-    const liffId = conf?.liffId;
-
-    if (!liffId) {
-      setStatus("LIFF_ID が取得できません。/api/liff/config を確認してください。");
-      return;
-    }
-
-    await liff.init({ liffId });
-
-    if (!liff.isLoggedIn()) {
-      setStatus("LINEアプリ内で開いてください（ログインが必要です）");
-      liff.login();
-      return;
-    }
-
-    const prof = await liff.getProfile();
-    lineUserId = prof.userId;
-    lineUserName = prof.displayName || "";
-
-    setStatus("読み込み完了しました。");
-  } catch (e) {
-    setStatus("LIFF初期化でエラー。LINEアプリ内で開いているか確認してください。");
-    console.error(e);
-    return;
+  function setStatus(t) {
+    statusMsg.textContent = t || "";
   }
 
-  // 2) 既存住所の読み込み
-  try {
-    const meRes = await fetch(`/api/liff/address/me?userId=${encodeURIComponent(lineUserId)}`, { cache: "no-store" });
-    const me = await meRes.json();
-    if (me?.ok && me.address) {
-      const a = me.address;
+  async function initLiff() {
+    try {
+      // server.js から LIFF ID を取得
+      const confRes = await fetch("/api/liff/config", { cache: "no-store" });
+      const conf = await confRes.json();
+      const liffId = conf?.liffId;
+
+      if (!liffId) throw new Error("no_liff_id");
+
+      await liff.init({ liffId });
+
+      if (!liff.isLoggedIn()) {
+        liff.login();
+        return;
+      }
+
+      const profile = await liff.getProfile();
+      lineUserId = profile.userId || "";
+      lineUserName = profile.displayName || "";
+
+      if (lineUserId) {
+        localStorage.setItem("lineUserId", lineUserId);
+        localStorage.setItem("lineUserName", lineUserName);
+      }
+    } catch (e) {
+      console.error("LIFF init error", e);
+      setStatus("LIFF初期化に失敗しました。LINE内で開いてください。");
+    }
+  }
+
+  async function loadSavedAddress() {
+    try {
+      const userId = lineUserId || localStorage.getItem("lineUserId") || "";
+      const url = userId
+        ? `/api/liff/address/me?userId=${encodeURIComponent(userId)}`
+        : `/api/liff/address/me`;
+
+      const res = await fetch(url, { cache: "no-store" });
+      const data = await res.json();
+      const a = data?.address;
+
+      if (!data?.ok || !a) return false;
+
+      // 自動入力
       postal.value     = a.postal || "";
       prefecture.value = a.prefecture || "";
       city.value       = a.city || "";
       address1.value   = a.address1 || "";
       address2.value   = a.address2 || "";
-      name.value       = a.name || lineUserName || "";
+      name.value       = a.name || "";
       phone.value      = a.phone || "";
-    } else {
-      name.value = lineUserName || "";
+
+      setStatus("住所は登録済みです。必要なら修正して保存してください。");
+      return true;
+    } catch (e) {
+      console.error("loadSavedAddress error", e);
+      return false;
     }
-  } catch (e) {
-    console.warn("address load error:", e);
   }
 
-  // 3) 保存
-  saveBtn.addEventListener("click", async () => {
+  async function saveAddress() {
+    const body = {
+      userId: lineUserId || localStorage.getItem("lineUserId") || "",
+      name: name.value.trim(),
+      phone: phone.value.trim(),
+      postal: postal.value.trim(),
+      prefecture: prefecture.value.trim(),
+      city: city.value.trim(),
+      address1: address1.value.trim(),
+      address2: address2.value.trim(),
+    };
+
+    if (!body.userId) {
+      setStatus("userIdが取得できません。LINE内で開いてください。");
+      return false;
+    }
+
+    if (!body.postal || !body.prefecture || !body.city || !body.address1 || !body.name) {
+      setStatus("必須項目（郵便番号/都道府県/市区町村/番地/氏名）を入力してください。");
+      return false;
+    }
+
     try {
-      saveBtn.disabled = true;
       setStatus("保存中...");
-
-      const payload = {
-        userId: lineUserId,
-        name: name.value.trim(),
-        phone: phone.value.trim(),
-        postal: postal.value.trim(),
-        prefecture: prefecture.value.trim(),
-        city: city.value.trim(),
-        address1: address1.value.trim(),
-        address2: address2.value.trim(),
-      };
-
       const res = await fetch("/api/liff/address", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(body),
       });
-
       const data = await res.json();
-      if (!data?.ok) {
-        setStatus("保存に失敗しました。入力内容を確認してください。");
-        saveBtn.disabled = false;
-        return;
-      }
+      if (!data?.ok) throw new Error("save_failed");
 
-      setStatus("保存しました。前の画面に戻ります。");
-
-      // ★ LIFF の戻り（productsへ飛ばないように closeWindow）
-      if (liff.isInClient()) {
-        liff.closeWindow();
-      } else {
-        history.back();
-      }
+      setStatus("保存しました。最終確認へ進みます。");
+      return true;
     } catch (e) {
-      console.error(e);
-      setStatus("保存時にエラーが発生しました。");
-      saveBtn.disabled = false;
+      console.error("saveAddress error", e);
+      setStatus("保存に失敗しました。もう一度お試しください。");
+      return false;
     }
-  });
-
-  // 4) 戻る
-  if (backBtn) {
-    backBtn.addEventListener("click", () => {
-      if (liff.isInClient()) liff.closeWindow();
-      else history.back();
-    });
   }
+
+  function goConfirm() {
+    location.href = "/public/confirm.html";
+  }
+
+  saveBtn.onclick = async () => {
+    const ok = await saveAddress();
+    if (ok) goConfirm();
+  };
+
+  backBtn.onclick = () => {
+    // 「③最終確認へ戻る」＝confirmへ
+    goConfirm();
+  };
+
+  // init
+  await initLiff();
+  await loadSavedAddress();
 })();

@@ -1605,6 +1605,9 @@ app.post("/api/admin/products/update", (req, res) => {
         .json({ ok: false, error: "product_not_found" });
 
     const p = products[idx];
+     if (typeof req.body.volume === "string") {
+      p.volume = req.body.volume.trim().slice(0, 30);
+    }
     const beforeStock = Number(p.stock || 0);
 
     if (typeof req.body.name === "string") {

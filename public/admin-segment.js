@@ -11,182 +11,129 @@
     tab.addEventListener("click", ()=>{
       document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
       tab.classList.add("active");
+
       const name = tab.dataset.tab;
       $("tab-seg").classList.toggle("hide", name!=="seg");
       $("tab-manual").classList.toggle("hide", name!=="manual");
     });
   });
 
-  // メッセージ形式切替（セグメント）
+  // メッセージ種類切替（セグメント）
   $("messageType").addEventListener("change", ()=>{
-    const isFlex = $("messageType").value==="flex";
+    const isFlex = $("messageType").value === "flex";
     $("textAreaWrap").classList.toggle("hide", isFlex);
     $("flexAreaWrap").classList.toggle("hide", !isFlex);
   });
 
-  // メッセージ形式切替（手動）
+  // メッセージ種類切替（手動）
   $("manualMessageType").addEventListener("change", ()=>{
-    const isFlex = $("manualMessageType").value==="flex";
+    const isFlex = $("manualMessageType").value === "flex";
     $("manualTextWrap").classList.toggle("hide", isFlex);
     $("manualFlexWrap").classList.toggle("hide", !isFlex);
   });
 
   const api = (path)=>{
     const base = ($("apiBase").value||"").trim();
-    return base ? (base.replace(/\/$/,"")+path) : path;
+    return base ? base.replace(/\/$/, "") + path : path;
   };
 
-  // ★あなたの server.js のAPIに合わせてここだけ変えればOK
   const ENDPOINTS = {
-    preview: "/api/admin/segment/preview",
-    send:    "/api/admin/segment/send",
-    manual:  "/api/admin/multicast"
+    preview:  "/api/admin/segment/preview",
+    sendText: "/api/admin/segment/send",
+    sendFlex: "/api/admin/segment/send-flex",
   };
 
-  // 対象数プレビュー
+  // token を URL に付与
+  const withToken = (path)=>{
+    const tok = $("adminToken").value.trim();
+    return api(path) + "?token=" + encodeURIComponent(tok);
+  };
+
+  // UI → server.js の type 名に変換
+  function uiSegmentToType(uiVal){
+    switch(uiVal){
+      case "text_senders":  return "textSenders";
+      case "purchasers":    return "orders";
+      case "addresses":     return "addresses";
+      case "survey":        return "survey";
+      default: return "orders";
+    }
+  }
+
+  // 日付: yyyy-mm-dd → yyyymmdd
+  function ymd(dateStr){
+    return dateStr ? dateStr.replaceAll("-", "") : "";
+  }
+
+  // ▼ 対象数プレビュー
   $("previewBtn").addEventListener("click", async ()=>{
-    const adminToken = $("adminToken").value.trim();
-    if(!adminToken){ alert("管理トークンを入力してください"); return; }
+    const token = $("adminToken").value.trim();
+    if(!token){ alert("管理トークンを入力してください"); return; }
+
+    const type = uiSegmentToType($("segmentType").value);
 
     const payload = {
-      adminToken,
-      segmentType: $("segmentType").value,
-      from: $("fromDate").value || null,
-      to: $("toDate").value || null
+      type,
+      limit: 50000,
     };
 
-    log("preview start: " + JSON.stringify(payload));
+    const d = ymd($("fromDate").value);
+    if(d) payload.date = d;
+
+    log("preview start: "+JSON.stringify(payload));
 
     try{
-      const res = await fetch(api(ENDPOINTS.preview),{
+      const res = await fetch(withToken(ENDPOINTS.preview),{
         method:"POST",
         headers:{ "Content-Type":"application/json" },
         body:JSON.stringify(payload)
       });
-      const data = await res.json().catch(()=>null);
+      const data = await res.json();
 
-      if(!res.ok || !data?.ok){
-        $("previewResult").innerHTML = `対象数：<span class="ng">取得失敗</span>`;
-        log("preview NG: " + res.status + " " + JSON.stringify(data));
-        alert("対象数プレビューに失敗。ENDPOINTS.preview を server.js に合わせてください。");
+      if(!res.ok || !data.ok){
+        log("preview NG: "+JSON.stringify(data));
+        $("previewResult").textContent = "対象数：取得失敗";
+        alert("対象数プレビューに失敗しました。");
         return;
       }
 
-      $("previewResult").innerHTML = `対象数：<span class="ok">${data.count ?? data.total ?? "?"}人</span>`;
-      log("preview OK: " + JSON.stringify(data));
+      const count = data.total ?? (data.userIds?.length ?? 0);
+      $("previewResult").textContent = `対象数：${count}人`;
+      log("preview OK: "+JSON.stringify({type:data.type, total:count}));
+
     }catch(e){
-      log("preview ERR: " + e);
-      alert("通信エラー。URL/Render起動状態を確認してください。");
+      log("preview ERR: "+e);
+      alert("通信エラー。");
     }
   });
 
-  // セグメント配信（本番）
+  // ▼ セグメント配信
   $("sendBtn").addEventListener("click", ()=>sendSegment(false));
   $("dryRunBtn").addEventListener("click", ()=>sendSegment(true));
 
   async function sendSegment(dryRun){
-    const adminToken = $("adminToken").value.trim();
-    if(!adminToken){ alert("管理トークンを入力してください"); return; }
+    const token = $("adminToken").value.trim();
+    if(!token){ alert("管理トークンを入力してください"); return; }
 
-    const messageType = $("messageType").value;
-    const msg =
-      messageType==="text"
-        ? { type:"text", text: $("textMessage").value.trim() }
-        : (()=> {
-            const raw = $("flexJson").value.trim();
-            if(!raw) return null;
-            try{ return JSON.parse(raw); }catch{ return "INVALID_JSON"; }
-          })();
+    // Step1: preview で対象取得
+    const type = uiSegmentToType($("segmentType").value);
+    const payloadPreview = { type, limit:50000 };
+    const d = ymd($("fromDate").value);
+    if(d) payloadPreview.date = d;
 
-    if(!msg){ alert("メッセージを入力してください"); return; }
-    if(msg==="INVALID_JSON"){ alert("Flex JSONが不正です"); return; }
+    log("send step1 preview: "+JSON.stringify(payloadPreview));
 
-    const payload = {
-      adminToken,
-      dryRun: !!dryRun,
-      sendMode: $("sendMode").value,
-      segment: {
-        type: $("segmentType").value,
-        from: $("fromDate").value || null,
-        to: $("toDate").value || null
-      },
-      message: msg
-    };
-
-    log("segment send start: " + JSON.stringify(payload));
-
+    let preview;
     try{
-      const res = await fetch(api(ENDPOINTS.send),{
+      const pres = await fetch(withToken(ENDPOINTS.preview),{
         method:"POST",
         headers:{ "Content-Type":"application/json" },
-        body:JSON.stringify(payload)
+        body:JSON.stringify(payloadPreview)
       });
-      const data = await res.json().catch(()=>null);
-
-      if(!res.ok || !data?.ok){
-        log("segment send NG: " + res.status + " " + JSON.stringify(data));
-        alert("セグメント配信に失敗。ENDPOINTS.send を server.js に合わせてください。");
-        return;
-      }
-
-      log("segment send OK: " + JSON.stringify(data));
-      alert(`送信OK！ 対象: ${data.count ?? data.total ?? "?"}人`);
+      preview = await pres.json();
+      if(!pres.ok || !preview.ok) throw new Error("previewFailed");
     }catch(e){
-      log("segment send ERR: " + e);
-      alert("通信エラー。URL/Render起動状態を確認してください。");
+      log("send preview ERR: "+e);
+      alert("対象抽出に失敗しました。");
+      return;
     }
-  }
-
-  // 手動 multicast
-  $("manualSendBtn").addEventListener("click", async ()=>{
-    const adminToken = $("adminToken").value.trim();
-    if(!adminToken){ alert("管理トークンを入力してください"); return; }
-
-    const ids = $("manualUserIds").value
-      .split(/[\n, ]+/)
-      .map(s=>s.trim())
-      .filter(Boolean);
-
-    if(ids.length===0){ alert("ユーザーIDを入力してください"); return; }
-
-    const t = $("manualMessageType").value;
-    const msg =
-      t==="text"
-        ? { type:"text", text:$("manualText").value.trim() }
-        : (()=> {
-            const raw = $("manualFlex").value.trim();
-            if(!raw) return null;
-            try{ return JSON.parse(raw); }catch{ return "INVALID_JSON"; }
-          })();
-
-    if(!msg){ alert("メッセージを入力してください"); return; }
-    if(msg==="INVALID_JSON"){ alert("Flex JSONが不正です"); return; }
-
-    const payload = { adminToken, userIds: ids, message: msg };
-
-    log("manual send start: " + JSON.stringify(payload));
-
-    try{
-      const res = await fetch(api(ENDPOINTS.manual),{
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
-        body:JSON.stringify(payload)
-      });
-      const data = await res.json().catch(()=>null);
-
-      if(!res.ok || !data?.ok){
-        log("manual send NG: " + res.status + " " + JSON.stringify(data));
-        alert("指定ユーザー送信に失敗。ENDPOINTS.manual を server.js に合わせてください。");
-        return;
-      }
-
-      log("manual send OK: " + JSON.stringify(data));
-      alert("送信OK！");
-    }catch(e){
-      log("manual send ERR: " + e);
-      alert("通信エラー。URL/Render起動状態を確認してください。");
-    }
-  });
-
-  log("admin-segment loaded. ENDPOINTS=" + JSON.stringify(ENDPOINTS));
-})();

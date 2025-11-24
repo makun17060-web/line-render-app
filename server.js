@@ -1577,6 +1577,7 @@ app.get("/api/admin/products", (req, res) => {
   const items = readProducts().map((p) => ({
     id: p.id,
     name: p.name,
+    volume: p.volume || "",
     price: p.price,
     stock: p.stock ?? 0,
     desc: p.desc || "",

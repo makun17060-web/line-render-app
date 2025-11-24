@@ -1700,6 +1700,7 @@ app.get("/api/products", (req, res) => {
       .map((p) => ({
         id: p.id,
         name: p.name,
+        volume: p.volume || "",
         price: p.price,
         stock: p.stock ?? 0,
         desc: p.desc || "",

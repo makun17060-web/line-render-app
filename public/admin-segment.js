@@ -164,4 +164,90 @@
       return;
     }
 
-    // ---
+    // ---- messageType
+    const mt = $("messageType").value;
+
+    // ---- text
+    if (mt === "text") {
+      const msg = $("textMessage").value.trim();
+      if (!msg) {
+        alert("テキストを入力してください");
+        return;
+      }
+
+      const payloadSend = { userIds, message: msg };
+      log("send text start: " + userIds.length);
+
+      try {
+        const res = await fetch(withToken(ENDPOINTS.sendText), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payloadSend)
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data?.ok) {
+          log("send text NG: " + JSON.stringify(data));
+          alert("テキスト送信に失敗しました");
+          return;
+        }
+
+        log("send text OK: " + JSON.stringify(data));
+        alert(`送信OK！ 対象:${data.requested} / 送信:${data.sent}`);
+
+      } catch (e) {
+        log("send text ERR: " + e);
+        alert("通信エラー");
+      }
+      return;
+    }
+
+    // ---- Flex
+    const raw = $("flexJson").value.trim();
+    if (!raw) {
+      alert("Flex JSON を入力してください");
+      return;
+    }
+
+    let flex;
+    try {
+      flex = JSON.parse(raw);
+    } catch {
+      alert("Flex JSON が不正です");
+      return;
+    }
+
+    const altText = flex.altText || flex.alt || "お知らせ";
+    const contents = flex.contents;
+    if (!contents) {
+      alert("Flex JSON に contents が必要です");
+      return;
+    }
+
+    const payloadSendFlex = { userIds, altText, contents };
+    log("send flex start: " + userIds.length);
+
+    try {
+      const res = await fetch(withToken(ENDPOINTS.sendFlex), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payloadSendFlex)
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.ok) {
+        log("send flex NG: " + JSON.stringify(data));
+        alert("Flex送信に失敗しました");
+        return;
+      }
+
+      log("send flex OK: " + JSON.stringify(data));
+      alert(`Flex送信OK！ 対象:${data.requested} / 送信:${data.sent}`);
+
+    } catch (e) {
+      log("send flex ERR: " + e);
+      alert("通信エラー");
+    }
+  }
+
+  log("admin-segment loaded.");
+
+})();

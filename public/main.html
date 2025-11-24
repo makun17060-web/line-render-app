@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>手造りえびせんべい 磯屋 ミニアプリ</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+      margin: 0;
+      padding: 0;
+      background: #fafafa;
+    }
+    header {
+      background: #b22222;
+      color: #fff;
+      padding: 14px 16px;
+      text-align: center;
+      font-size: 18px;
+    }
+    .container {
+      padding: 16px;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    h2 {
+      font-size: 18px;
+      margin-top: 0;
+      margin-bottom: 12px;
+    }
+
+    /* メインボタンは今は使わないので削除 */
+    /* ▼ サブボタン（商品一覧へ） */
+    .btn-sub {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      margin-top: 16px;
+      border-radius: 6px;
+      text-align: center;
+      text-decoration: none;
+      font-size: 15px;
+      font-weight: bold;
+      background: #ffffff;
+      border: 1px solid #b22222;
+      color: #b22222;
+      box-sizing: border-box;
+    }
+
+    .info {
+      font-size: 12px;
+      color: #555;
+      margin-top: 16px;
+      line-height: 1.5;
+    }
+    .link-row {
+      margin-top: 16px;
+      font-size: 14px;
+    }
+    .link-row a {
+      color: #0066cc;
+    }
+    footer {
+      margin-top: 24px;
+      font-size: 11px;
+      color: #777;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+<header>
+  手造りえびせんべい 磯屋<br>オンライン注文ミニアプリ
+</header>
+
+<div class="container">
+  <!-- ★ 見出しも「商品を選択してください」から変更 or 削除 -->
+  <!-- 見出しごと消したい場合は次の h2 ブロックも削除してOK -->
+  <h2>オンライン商品一覧</h2>
+
+  <!-- ★ ここだけ残して、商品選択フォームは削除 -->
+  <a href="products.html" class="btn-sub">画像付きの商品一覧を見る</a>
+
+  <p class="info">
+    ※ オンライン決済は GMOイプシロンの決済画面に遷移して行います。<br>
+    ※ クレジットカード番号等は当店では保持せず、イプシロン側のみで処理されます。
+  </p>
+
+  <div class="link-row">
+    <a href="support.html" target="_blank">お問い合わせ（カスタマーサポート）</a><br>
+    <a href="privacy.html" target="_blank">プライバシーポリシー</a> ／
+    <a href="terms.html" target="_blank">利用規約</a>
+  </div>
+
+  <footer>
+    © 手造りえびせんべい 磯屋
+  </footer>
+</div>
+
+<script>
+  // ★ここをあなたの本物のLIFF IDに変更してください（必要なら）
+  const LIFF_ID = "YOUR_LIFF_ID_HERE";
+
+  async function initLiff() {
+    try {
+      await liff.init({ liffId: LIFF_ID });
+      // 必要ならここでプロフィール取得などが可能
+    } catch (e) {
+      console.log("LIFF init error", e);
+    }
+  }
+
+  initLiff();
+</script>
+</body>
+</html>

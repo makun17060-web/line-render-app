@@ -1020,38 +1020,36 @@ function labelOf(q, code) {
 }
 
 // ====== LIFF API ======
-// 住所保存
+// 住所保存（LIFF）
 app.post("/api/liff/address", async (req, res) => {
   try {
-    const {
-      userId,
-      name,
-      phone,
-      postal,
-      prefecture,
-      city,
-      address1,
-      address2,
-    } = req.body || {};
-    if (!userId)
+    const userId = String(req.body?.userId || "").trim();
+    const addr = req.body?.address || {};   // ★ address を受け取る
+
+    if (!userId) {
       return res.status(400).json({ ok: false, error: "userId required" });
+    }
+
     const book = readAddresses();
     book[userId] = {
-      name,
-      phone,
-      postal,
-      prefecture,
-      city,
-      address1,
-      address2,
+      name:        String(addr.name || "").trim(),
+      phone:       String(addr.phone || "").trim(),
+      postal:      String(addr.postal || "").trim(),
+      prefecture:  String(addr.prefecture || "").trim(),
+      city:        String(addr.city || "").trim(),
+      address1:    String(addr.address1 || "").trim(),
+      address2:    String(addr.address2 || "").trim(),
       ts: new Date().toISOString(),
     };
+
     writeAddresses(book);
     res.json({ ok: true });
   } catch (e) {
+    console.error("/api/liff/address error:", e);
     res.status(500).json({ ok: false, error: "server_error" });
   }
 });
+
 
 // 自分の住所取得（confirm.js / pay.js 用）
 app.get("/api/liff/address/me", (req, res) => {

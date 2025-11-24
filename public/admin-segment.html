@@ -1,184 +1,226 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>セグメント配信 | 磯屋 管理</title>
-  <style>
-    body{ font-family: system-ui, -apple-system, "Helvetica Neue", sans-serif; background:#fafafa; margin:0; color:#222; }
-    header{ background:#b22222; color:#fff; padding:14px 16px; font-size:18px; font-weight:700; }
-    .wrap{ max-width:980px; margin:0 auto; padding:16px; }
-    .card{ background:#fff; border-radius:12px; box-shadow:0 2px 8px rgba(0,0,0,.08); padding:16px; margin-bottom:14px; }
-    .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-    label{ font-size:13px; color:#444; }
-    input, select, textarea{
-      width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; font-size:14px;
-      box-sizing:border-box; background:#fff;
+(async function(){
+  const $ = (id)=>document.getElementById(id);
+  const logEl = $("log");
+  const log = (m)=>{
+    const t = new Date().toLocaleString();
+    logEl.textContent = `[${t}] ${m}\n` + logEl.textContent;
+  };
+
+  // タブ切替（そのまま）
+  document.querySelectorAll(".tab").forEach(tab=>{
+    tab.addEventListener("click", ()=>{
+      document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
+      tab.classList.add("active");
+      const name = tab.dataset.tab;
+      $("tab-seg").classList.toggle("hide", name!=="seg");
+      $("tab-manual").classList.toggle("hide", name!=="manual");
+    });
+  });
+
+  // メッセージ形式切替（セグメント）
+  $("messageType").addEventListener("change", ()=>{
+    const isFlex = $("messageType").value==="flex";
+    $("textAreaWrap").classList.toggle("hide", isFlex);
+    $("flexAreaWrap").classList.toggle("hide", !isFlex);
+  });
+
+  // メッセージ形式切替（手動）
+  $("manualMessageType").addEventListener("change", ()=>{
+    const isFlex = $("manualMessageType").value==="flex";
+    $("manualTextWrap").classList.toggle("hide", isFlex);
+    $("manualFlexWrap").classList.toggle("hide", !isFlex);
+  });
+
+  const api = (path)=>{
+    const base = ($("apiBase").value||"").trim();
+    return base ? (base.replace(/\/$/,"")+path) : path;
+  };
+
+  // ★あなたの server.js と一致するエンドポイント
+  const ENDPOINTS = {
+    preview:  "/api/admin/segment/preview",
+    sendText: "/api/admin/segment/send",
+    sendFlex: "/api/admin/segment/send-flex",
+  };
+
+  // server.js の requireAdmin が見る token をURLにつける
+  const withToken = (path)=>{
+    const tok = $("adminToken").value.trim();
+    return api(path) + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(tok);
+  };
+
+  // server.js の type 名に合わせたマップ
+  function uiSegmentToType(uiVal){
+    switch(uiVal){
+      case "all":           return "addresses";      // 全友だち的に一番近いのは addresses（住所登録者）
+      case "text_senders":  return "textSenders";    // or activeChatters
+      case "purchasers":    return "orders";
+      case "reservations":  return "orders";         // 予約ログ単体typeは無いので注文者扱いに寄せる
+      case "roulette_winners": return "survey";      // 抽選=アンケート経由なら survey
+      default: return uiVal || "orders";
     }
-    textarea{ min-height:140px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    .col{ flex:1; min-width:220px; }
-    .btn{
-      appearance:none; border:0; border-radius:9px; padding:10px 14px; font-size:14px; font-weight:700;
-      cursor:pointer; background:#b22222; color:#fff;
+  }
+
+  // 日付→ server.js は date=YYYYMMDD を想定
+  function ymdFromInput(dateStr){
+    if(!dateStr) return "";
+    return dateStr.replaceAll("-","");
+  }
+
+  // ===== 対象数プレビュー =====
+  $("previewBtn").addEventListener("click", async ()=>{
+    const adminToken = $("adminToken").value.trim();
+    if(!adminToken){ alert("管理トークンを入力してください"); return; }
+
+    const type = uiSegmentToType($("segmentType").value);
+
+    const payload = {
+      type,
+      limit: 50000
+    };
+
+    // date指定がある場合のみ付与（server.js仕様）
+    const from = ymdFromInput($("fromDate").value);
+    const to   = ymdFromInput($("toDate").value);
+    // あなたの preview は「単日(date)」だけ対応。
+    // 期間が入ってたら「fromDateを代表日」として扱う。
+    if(from) payload.date = from;
+
+    log("preview start: " + JSON.stringify(payload));
+
+    try{
+      const res = await fetch(withToken(ENDPOINTS.preview),{
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body:JSON.stringify(payload)
+      });
+      const data = await res.json().catch(()=>null);
+
+      if(!res.ok || !data?.ok){
+        $("previewResult").innerHTML = `対象数：<span class="ng">取得失敗</span>`;
+        log("preview NG: " + res.status + " " + JSON.stringify(data));
+        alert("対象数プレビューに失敗しました。");
+        return;
+      }
+
+      const count = data.total ?? (data.userIds?.length ?? "?");
+      $("previewResult").innerHTML = `対象数：<span class="ok">${count}人</span>`;
+      log("preview OK: " + JSON.stringify({type:data.type, total:count}));
+    }catch(e){
+      log("preview ERR: " + e);
+      alert("通信エラー。URL/Render起動状態を確認してください。");
     }
-    .btn.sub{ background:#333; }
-    .btn.ghost{ background:#eee; color:#111; }
-    .small{ font-size:12px; color:#666; }
-    .ok{ color:#0a7a2f; font-weight:700; }
-    .ng{ color:#b00020; font-weight:700; }
-    .log{
-      background:#0f172a; color:#e2e8f0; padding:10px; border-radius:8px;
-      font-family: ui-monospace, Menlo, Consolas, monospace; font-size:12px; white-space:pre-wrap;
-      max-height:280px; overflow:auto;
+  });
+
+  // ===== セグメント配信 =====
+  $("sendBtn").addEventListener("click", ()=>sendSegment(false));
+  $("dryRunBtn").addEventListener("click", ()=>sendSegment(true));
+
+  async function sendSegment(dryRun){
+    const adminToken = $("adminToken").value.trim();
+    if(!adminToken){ alert("管理トークンを入力してください"); return; }
+
+    const type = uiSegmentToType($("segmentType").value);
+    const payloadPreview = { type, limit: 50000 };
+    const from = ymdFromInput($("fromDate").value);
+    if(from) payloadPreview.date = from;
+
+    // まず preview して対象IDを取得
+    log("send step1 preview: " + JSON.stringify(payloadPreview));
+    let preview;
+    try{
+      const pres = await fetch(withToken(ENDPOINTS.preview),{
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body:JSON.stringify(payloadPreview)
+      });
+      preview = await pres.json().catch(()=>null);
+      if(!pres.ok || !preview?.ok) throw new Error("preview_failed");
+    }catch(e){
+      log("send preview ERR: " + e);
+      alert("対象抽出に失敗しました。");
+      return;
     }
-    .hr{ height:1px; background:#eee; margin:10px 0; }
-    .tabs{ display:flex; gap:8px; margin-bottom:10px; }
-    .tab{ padding:8px 12px; border-radius:999px; background:#eee; cursor:pointer; font-weight:700; font-size:13px; }
-    .tab.active{ background:#b22222; color:#fff; }
-    .hide{ display:none; }
-  </style>
-</head>
-<body>
-<header>セグメント配信 管理画面（磯屋）</header>
 
-<div class="wrap">
+    const userIds = Array.isArray(preview.userIds) ? preview.userIds : [];
+    if(userIds.length===0){
+      alert("対象ユーザーが0人です。");
+      return;
+    }
 
-  <div class="card">
-    <div class="row">
-      <div class="col">
-        <label>管理トークン（ADMIN_API_TOKEN または ADMIN_CODE）</label>
-        <input id="adminToken" type="password" placeholder="例：xxxxx">
-        <div class="small">※ server.js の requireAdmin() が見ている値を入れてください。</div>
-      </div>
-      <div class="col">
-        <label>APIベースURL（通常は空でOK）</label>
-        <input id="apiBase" placeholder="例：https://line-render-app-1.onrender.com">
-        <div class="small">空なら同じドメイン（/api/〜）へ送ります。</div>
-      </div>
-    </div>
-  </div>
+    if(dryRun){
+      log(`dry-run only. targets=${userIds.length}`);
+      alert(`dry-run：対象 ${userIds.length}人（送信はしていません）`);
+      return;
+    }
 
-  <div class="tabs">
-    <div class="tab active" data-tab="seg">セグメント配信</div>
-    <div class="tab" data-tab="manual">手動ユーザー指定</div>
-  </div>
+    const messageType = $("messageType").value;
 
-  <!-- セグメント配信タブ -->
-  <div id="tab-seg">
+    // ===== テキスト送信 =====
+    if(messageType==="text"){
+      const text = $("textMessage").value.trim();
+      if(!text){ alert("テキストを入力してください"); return; }
 
-    <div class="card">
-      <div class="row">
-        <div class="col">
-          <label>セグメント種別</label>
-          <select id="segmentType">
-            <option value="all">全友だち</option>
-            <option value="text_senders">テキスト送信者</option>
-            <option value="purchasers">購入者</option>
-            <option value="reservations">予約者</option>
-            <option value="roulette_winners">抽選当選者</option>
-          </select>
-          <div class="small">※ 種別名は server.js のセグメント定義に合わせて変更できます。</div>
-        </div>
+      const payloadSend = { userIds, message: text };
+      log("send text start: " + JSON.stringify({targets:userIds.length}));
 
-        <div class="col">
-          <label>期間From（任意）</label>
-          <input id="fromDate" type="date">
-        </div>
-        <div class="col">
-          <label>期間To（任意）</label>
-          <input id="toDate" type="date">
-        </div>
-        <div class="col">
-          <label>&nbsp;</label>
-          <button class="btn ghost" id="previewBtn">対象数を確認</button>
-          <div class="small" id="previewResult">対象数：未確認</div>
-        </div>
-      </div>
-    </div>
+      try{
+        const res = await fetch(withToken(ENDPOINTS.sendText),{
+          method:"POST",
+          headers:{ "Content-Type":"application/json" },
+          body:JSON.stringify(payloadSend)
+        });
+        const data = await res.json().catch(()=>null);
+        if(!res.ok || !data?.ok){
+          log("send text NG: " + res.status + " " + JSON.stringify(data));
+          alert("テキスト配信に失敗しました。");
+          return;
+        }
+        log("send text OK: " + JSON.stringify(data));
+        alert(`送信OK！ 対象:${data.requested} / 送信:${data.sent}`);
+      }catch(e){
+        log("send text ERR: " + e);
+        alert("通信エラー。");
+      }
+      return;
+    }
 
-    <div class="card">
-      <div class="row">
-        <div class="col">
-          <label>メッセージ形式</label>
-          <select id="messageType">
-            <option value="text">テキスト</option>
-            <option value="flex">Flex JSON</option>
-          </select>
-        </div>
-        <div class="col">
-          <label>送信モード</label>
-          <select id="sendMode">
-            <option value="broadcast">broadcast（全体配信）</option>
-            <option value="multicast">multicast（ID抽出型）</option>
-          </select>
-          <div class="small">※ server.js 側で mode を見て処理したい場合に使います。</div>
-        </div>
-      </div>
+    // ===== Flex送信 =====
+    const raw = $("flexJson").value.trim();
+    if(!raw){ alert("Flex JSONを入力してください"); return; }
 
-      <div class="hr"></div>
+    let flex;
+    try{ flex = JSON.parse(raw); }catch{ alert("Flex JSONが不正です"); return; }
 
-      <div id="textAreaWrap">
-        <label>配信テキスト</label>
-        <textarea id="textMessage" placeholder="例：久助が入荷しました！オンライン注文はこちら…"></textarea>
-      </div>
+    // 期待形式：
+    // {"type":"flex","altText":"...","contents":{...}}
+    const altText = flex.altText || flex.alt || "お知らせ";
+    const contents = flex.contents || flex.body || null;
+    if(!contents){ alert("Flex JSONに contents が必要です"); return; }
 
-      <div id="flexAreaWrap" class="hide">
-        <label>Flex JSON（そのまま貼り付け）</label>
-        <textarea id="flexJson" placeholder='{"type":"flex","altText":"...","contents":{...}}'></textarea>
-      </div>
+    const payloadSendFlex = { userIds, altText, contents };
 
-      <div class="hr"></div>
+    log("send flex start: " + JSON.stringify({targets:userIds.length}));
 
-      <div class="row">
-        <button class="btn" id="sendBtn">セグメント配信する</button>
-        <button class="btn sub" id="dryRunBtn">送信せずテスト（dry-run）</button>
-      </div>
-    </div>
+    try{
+      const res = await fetch(withToken(ENDPOINTS.sendFlex),{
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body:JSON.stringify(payloadSendFlex)
+      });
+      const data = await res.json().catch(()=>null);
+      if(!res.ok || !data?.ok){
+        log("send flex NG: " + res.status + " " + JSON.stringify(data));
+        alert("Flex配信に失敗しました。");
+        return;
+      }
+      log("send flex OK: " + JSON.stringify(data));
+      alert(`Flex送信OK！ 対象:${data.requested} / 送信:${data.sent}`);
+    }catch(e){
+      log("send flex ERR: " + e);
+      alert("通信エラー。");
+    }
+  }
 
-  </div>
-
-  <!-- 手動ユーザー指定タブ -->
-  <div id="tab-manual" class="hide">
-
-    <div class="card">
-      <label>送信先ユーザーID（改行 or カンマ区切り）</label>
-      <textarea id="manualUserIds" placeholder="Uxxxxxxxx...\nUyyyyyyyy..."></textarea>
-
-      <div class="hr"></div>
-
-      <div class="row">
-        <div class="col">
-          <label>メッセージ形式</label>
-          <select id="manualMessageType">
-            <option value="text">テキスト</option>
-            <option value="flex">Flex JSON</option>
-          </select>
-        </div>
-      </div>
-
-      <div id="manualTextWrap">
-        <label>テキスト</label>
-        <textarea id="manualText"></textarea>
-      </div>
-
-      <div id="manualFlexWrap" class="hide">
-        <label>Flex JSON</label>
-        <textarea id="manualFlex"></textarea>
-      </div>
-
-      <div class="hr"></div>
-      <button class="btn" id="manualSendBtn">指定ユーザーへ送信</button>
-    </div>
-
-  </div>
-
-  <div class="card">
-    <label>ログ</label>
-    <div id="log" class="log">ready.</div>
-  </div>
-
-</div>
-
-<script src="/public/admin-segment.js"></script>
-</body>
-</html>
+  log("admin-segment loaded. ENDPOINTS=" + JSON.stringify(ENDPOINTS));
+})();

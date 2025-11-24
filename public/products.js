@@ -1,7 +1,7 @@
 // /public/products.js
 // 商品一覧 → カート → 「②お届け先入力へ」
-// 住所が未登録なら LIFF住所入力へ飛ばす
-// 登録済みなら confirm.html へ
+// ★全員 住所入力（LIFF）へ遷移する
+// 住所画面で自動補完 → confirmへ
 
 (async function () {
   const grid = document.getElementById("productGrid");
@@ -166,26 +166,6 @@
     updateFooter();
   }
 
-  // --------- 住所チェック ---------
-  async function hasSavedAddress() {
-    try {
-      // LIFF内なら userId を持てる場合がある
-      let userId = localStorage.getItem("lineUserId") || "";
-
-      // /api/liff/address/me は userIdが無くても最後の住所を返す仕様
-      const url = userId
-        ? `/api/liff/address/me?userId=${encodeURIComponent(userId)}`
-        : `/api/liff/address/me`;
-
-      const res = await fetch(url, { cache: "no-store" });
-      const data = await res.json();
-      return !!(data && data.ok && data.address && (data.address.postal || data.address.prefecture));
-    } catch (e) {
-      console.error("address check error", e);
-      return false;
-    }
-  }
-
   // --------- events ---------
   clearCartBtn.onclick = () => {
     cart = {};
@@ -197,37 +177,27 @@
     const items = cartItems();
     if (!items.length) return;
 
-    // ★ ここで住所チェック
-    const okAddr = await hasSavedAddress();
-
-    if (!okAddr) {
-      alert("お届け先住所が未登録です。住所入力へ進みます。");
-
-      // LIFF住所入力へ（あなたの server.js から LIFF_ID を取得）
-      try {
-        const confRes = await fetch("/api/liff/config", { cache: "no-store" });
-        const conf = await confRes.json();
-        const liffId = conf?.liffId;
-
-        if (liffId) {
-          location.href = `https://liff.line.me/${liffId}?from=products&need=shipping`;
-          return;
-        }
-      } catch {}
-
-      // LIFF_ID 取れない時の保険
-      location.href = "/public/liff-address.html";
-      return;
-    }
-
-    // 住所OKなら confirmへ
+    // 注文下書きを保存（住所画面→confirmで使う）
     const payload = {
       items,
       itemsTotal: calcTotal(items),
     };
     sessionStorage.setItem("orderDraft", JSON.stringify(payload));
 
-    location.href = "/public/confirm.html";
+    // ★ 全員 住所入力画面へ
+    try {
+      const confRes = await fetch("/api/liff/config", { cache: "no-store" });
+      const conf = await confRes.json();
+      const liffId = conf?.liffId;
+
+      if (liffId) {
+        location.href = `https://liff.line.me/${liffId}?from=products&need=shipping`;
+        return;
+      }
+    } catch {}
+
+    // LIFF_ID 取れない時の保険
+    location.href = "/public/liff-address.html";
   };
 
   // --------- init ---------

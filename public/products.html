@@ -193,6 +193,16 @@
       ② お届け先入力へ進む
     </button>
   </div>
+<script>
+  // LIFF経由で need=shipping が付いている場合は住所入力に転送
+  (function () {
+    const params = new URLSearchParams(location.search);
+    if (params.get("need") === "shipping") {
+      // 自然に住所画面へ移動
+      location.replace("/public/liff-address.html");
+    }
+  })();
+</script>
 
   <script src="/public/products.js"></script>
 </body>

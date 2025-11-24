@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>管理画面｜リッチメッセージ配信（Flex）</title>
+  <style>
+    :root { --gap:12px; --fg:#222; --muted:#666; --bd:#e5e7eb; --ok:#10b981; --ng:#ef4444; --pri:#2563eb; --bg:#fafafa; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans JP", "Apple Color Emoji", "Segoe UI Emoji"; color:var(--fg); background:var(--bg); }
+    header { position:sticky; top:0; background:#fff; border-bottom:1px solid var(--bd); padding:10px 14px; display:flex; flex-wrap:wrap; gap:10px; align-items:center; z-index:10; }
+    header h1 { font-size:16px; margin:0 8px 0 0; }
+    header input[type="password"]{ width:360px; padding:8px; border:1px solid var(--bd); border-radius:8px; }
+    header button { padding:8px 12px; border-radius:8px; border:1px solid var(--bd); background:#fff; cursor:pointer; }
+    header .pill { font-size:12px; color:var(--muted); }
+    main { padding:16px; display:grid; grid-template-columns: 1.2fr .8fr; gap:16px; }
+    section { background:#fff; border:1px solid var(--bd); border-radius:12px; padding:16px; }
+    section h2 { font-size:16px; margin:0 0 8px; }
+    label { display:block; font-size:12px; color:var(--muted); margin:14px 0 6px; }
+    textarea, input[type="text"] { width:100%; min-height:42px; padding:10px; border:1px solid var(--bd); border-radius:10px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    textarea { min-height:160px; }
+    .row { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+    .btn { display:inline-flex; align-items:center; gap:8px; padding:10px 14px; border-radius:10px; border:1px solid var(--bd); background:#fff; cursor:pointer; }
+    .btn.pri { background: var(--pri); color:#fff; border-color: transparent; }
+    .btn.ok  { background: var(--ok); color:#fff; border-color: transparent; }
+    .btn.ng  { background: var(--ng); color:#fff; border-color: transparent; }
+    .btn.ghost { background:#fff; }
+    .stack { display:flex; gap:10px; flex-wrap:wrap; }
+    .help { font-size:12px; color:var(--muted); }
+    .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background:#f3f4f6; border:1px solid var(--bd); border-radius:6px; padding:0 6px; }
+    .log { background:#0b1021; color:#d1e7ff; padding:12px; border-radius:10px; font-size:12px; overflow:auto; max-height:240px; }
+    .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; border:1px solid var(--bd); }
+    .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+    .muted { color:var(--muted); }
+    .hr { height:1px; background:var(--bd); margin:12px 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>リッチメッセージ配信（Flex）管理</h1>
+    <span class="pill">/api/admin/broadcast-flex・/segment/send(-flex)</span>
+    <input id="token" type="password" placeholder="Admin API Token を入力" />
+    <button id="ping" class="btn">API接続テスト</button>
+    <span id="pingStat" class="badge">未接続</span>
+  </header>
+
+  <main>
+    <section>
+      <h2>送信内容</h2>
+      <label>altText（受信通知や低機能端末向けのテキスト）</label>
+      <input id="altText" type="text" placeholder="例：本日のおすすめ商品" />
+
+      <div class="row">
+        <div>
+          <label>Flex contents（JSON）</label>
+          <textarea id="contents" placeholder='{ "type":"bubble", "...": "..." }'></textarea>
+          <div class="stack">
+            <button class="btn ghost" id="presetAnnounce">プリセット：告知バナー（1バブル）</button>
+            <button class="btn ghost" id="presetProducts">プリセット：商品一覧（カルーセル）</button>
+            <button class="btn ghost" id="minify">JSON 整形</button>
+            <button class="btn ghost" id="validate">JSON 構文チェック</button>
+          </div>
+          <div id="validMsg" class="help"></div>
+        </div>
+        <div>
+          <label>ユーザーID（Multicast 用・1行1ID）</label>
+          <textarea id="userIds" placeholder="Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx&#10;Uyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"></textarea>
+          <div class="help">空の場合は Broadcast を使ってください。</div>
+          <div class="hr"></div>
+          <div class="grid2">
+            <div>
+              <label>テキスト配信（Flex ではなく純テキスト）</label>
+              <input id="plainText" type="text" placeholder="例：本日18時に配信します" />
+            </div>
+            <div class="stack" style="align-items:flex-end; justify-content:flex-end;">
+              <button class="btn" id="sendText">Multicast Text</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hr"></div>
+      <div class="stack" style="justify-content:flex-end;">
+        <button class="btn pri" id="sendFlex">Multicast Flex（User IDs）</button>
+        <button class="btn ok"  id="broadcastFlex">Broadcast Flex（全友だち）</button>
+        <button class="btn ng"  id="clear">クリア</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>プレビュー & 結果</h2>
+      <div class="help">※Flexの実機レンダリングはLINEクライアントのみ。本画面は JSON の妥当性チェックと送信結果ログを表示します。</div>
+      <label>解析プレビュー</label>
+      <pre id="preview" class="log">ここに JSON の解析結果やエラーが表示されます。</pre>
+
+      <label>送信ログ</label>
+      <pre id="out" class="log"></pre>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const out = (msg) => { const el = $("out"); el.textContent += (typeof msg === "string" ? msg : JSON.stringify(msg, null, 2)) + "\\n"; el.scrollTop = el.scrollHeight; };
+    const preview = (obj) => { $("preview").textContent = JSON.stringify(obj, null, 2); };
+
+    // API base（同一オリジン前提）
+    const API = {
+      ping:         "/api/admin/ping",
+      segSend:      "/api/admin/segment/send",
+      segSendFlex:  "/api/admin/segment/send-flex",
+      broadcastFlex:"/api/admin/broadcast-flex"
+    };
+
+    function hdr() {
+      const token = $("token").value.trim();
+      return token ? { "Content-Type":"application/json", "Authorization": "Bearer " + token } : { "Content-Type":"application/json" };
+    }
+
+    function parseJSON(txt) {
+      try { return { ok:true, data: JSON.parse(txt) }; }
+      catch (e) { return { ok:false, error: e.message }; }
+    }
+
+    function setValid(ok, msg) {
+      const el = $("validMsg");
+      el.textContent = msg || (ok ? "OK" : "");
+      el.style.color = ok ? "#10b981" : "#ef4444";
+    }
+
+    // プリセット：告知1バブル
+    const presetAnnounceObj = {
+      type: "bubble",
+      body: {
+        type: "box", layout: "vertical", spacing: "md",
+        contents: [
+          { type: "text", text: "【本日のお知らせ】", weight: "bold", size: "lg" },
+          { type: "text", text: "新価格スタート＆30%増量キャンペーン実施中！", wrap: true },
+          { type: "separator" },
+          { type: "text", text: "詳しくは下のボタンから。", size: "sm", color: "#666666" }
+        ]
+      },
+      footer: {
+        type: "box", layout: "vertical", spacing: "md",
+        contents: [
+          { type: "button", style: "primary",
+            action: { type: "postback", label: "直接注文", data: "order_back" } }
+        ]
+      }
+    };
+
+    // プリセット：商品カルーセル（久助は一覧非表示の仕様を踏襲せず、テンプレとして全表示）
+    const presetProductsObj = {
+      type: "carousel",
+      contents: [
+        ["のりあかしゃ","nori-akasha-340",340,20],
+        ["うずあかしゃ","uzu-akasha-340",340,10],
+        ["潮あかしゃ","shio-akasha-340",340,5],
+        ["松あかしゃ","matsu-akasha-340",340,30],
+        ["磯あかしゃ","iso-akasha-340",340,30],
+        ["ごまあかしゃ","goma-akasha-340",340,30],
+        ["オリジナルセット","original-set-2000",2000,30]
+      ].map(([name,id,price,stock]) => ({
+        type: "bubble",
+        body: { type: "box", layout: "vertical", spacing: "sm",
+          contents: [
+            { type: "text", text: name, weight: "bold", size: "md", wrap:true },
+            { type: "text", text: `価格：${price.toLocaleString("ja-JP")}円　在庫：${stock}`, size:"sm", wrap:true }
+          ]
+        },
+        footer: { type:"box", layout:"horizontal", spacing:"md",
+          contents: [
+            { type:"button", style:"primary",
+              action:{ type:"postback", label:"数量を選ぶ", data:`order_qty?id=${encodeURIComponent(id)}&qty=1` } }
+          ]
+        }
+      }))
+    };
+
+    // ボタン動作
+    $("ping").addEventListener("click", async () => {
+      $("pingStat").textContent = "確認中…";
+      try {
+        const r = await fetch(API.ping, { headers: hdr() });
+        const j = await r.json();
+        out(j);
+        $("pingStat").textContent = j.ok ? "接続OK" : "認証エラー";
+        $("pingStat").style.borderColor = j.ok ? "#10b981" : "#ef4444";
+      } catch (e) {
+        $("pingStat").textContent = "接続失敗";
+        $("pingStat").style.borderColor = "#ef4444";
+        out(String(e));
+      }
+    });
+
+    $("presetAnnounce").addEventListener("click", () => {
+      $("altText").value = "本日のお知らせ";
+      $("contents").value = JSON.stringify(presetAnnounceObj, null, 2);
+      setValid(true, "プリセットを読み込みました。");
+      preview(presetAnnounceObj);
+    });
+    $("presetProducts").addEventListener("click", () => {
+      $("altText").value = "商品一覧";
+      const flex = { type:"carousel", contents: presetProductsObj.contents };
+      $("contents").value = JSON.stringify(flex, null, 2);
+      setValid(true, "プリセットを読み込みました。");
+      preview(flex);
+    });
+
+    $("minify").addEventListener("click", () => {
+      const p = parseJSON($("contents").value);
+      if (!p.ok) { setValid(false, "JSONエラー: " + p.error); return; }
+      $("contents").value = JSON.stringify(p.data, null, 2);
+      setValid(true, "整形しました。");
+      preview(p.data);
+    });
+
+    $("validate").addEventListener("click", () => {
+      const p = parseJSON($("contents").value);
+      if (!p.ok) { setValid(false, "JSONエラー: " + p.error); preview({error:p.error}); return; }
+      // 簡易チェック
+      const t = p.data?.type;
+      if (!t || (t !== "bubble" && t !== "carousel")) {
+        setValid(false, 'contents.type は "bubble" か "carousel" が必要です');
+      } else {
+        setValid(true, "OK");
+      }
+      preview(p.data);
+    });
+
+    $("sendFlex").addEventListener("click", async () => {
+      const alt = $("altText").value.trim();
+      const ids = $("userIds").value.split(/\\r?\\n/).map(s=>s.trim()).filter(Boolean);
+      const p = parseJSON($("contents").value);
+      if (!alt) { alert("altText を入力してください"); return; }
+      if (!ids.length) { alert("User IDs を1つ以上入力してください（Broadcastは右のボタン）"); return; }
+      if (!p.ok) { alert("contents がJSONエラー: " + p.error); return; }
+      try {
+        const r = await fetch(API.segSendFlex, {
+          method: "POST",
+          headers: hdr(),
+          body: JSON.stringify({ userIds: ids, altText: alt, contents: p.data })
+        });
+        const j = await r.json();
+        out(["[Multicast Flex] 結果:", j]);
+      } catch (e) {
+        out(["[Multicast Flex] 送信失敗:", String(e)]);
+      }
+    });
+
+    $("broadcastFlex").addEventListener("click", async () => {
+      const alt = $("altText").value.trim();
+      const p = parseJSON($("contents").value);
+      if (!alt) { alert("altText を入力してください"); return; }
+      if (!p.ok) { alert("contents がJSONエラー: " + p.error); return; }
+      try {
+        const r = await fetch(API.broadcastFlex, {
+          method: "POST",
+          headers: hdr(),
+          body: JSON.stringify({ altText: alt, contents: p.data })
+        });
+        const j = await r.json();
+        out(["[Broadcast Flex] 結果:", j]);
+      } catch (e) {
+        out(["[Broadcast Flex] 送信失敗:", String(e)]);
+      }
+    });
+
+    $("sendText").addEventListener("click", async () => {
+      const text = $("plainText").value.trim();
+      const ids = $("userIds").value.split(/\\r?\\n/).map(s=>s.trim()).filter(Boolean);
+      if (!text) { alert("テキストを入力してください"); return; }
+      if (!ids.length) { alert("User IDs を1つ以上入力してください"); return; }
+      try {
+        const r = await fetch(API.segSend, {
+          method: "POST",
+          headers: hdr(),
+          body: JSON.stringify({ userIds: ids, message: text })
+        });
+        const j = await r.json();
+        out(["[Multicast Text] 結果:", j]);
+      } catch (e) {
+        out(["[Multicast Text] 送信失敗:", String(e)]);
+      }
+    });
+
+    $("clear").addEventListener("click", () => {
+      $("altText").value = "";
+      $("contents").value = "";
+      $("userIds").value = "";
+      $("plainText").value = "";
+      $("preview").textContent = "";
+      $("out").textContent = "";
+      setValid(true, "");
+    });
+  </script>
+</body>
+</html>

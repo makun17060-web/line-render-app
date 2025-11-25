@@ -1,172 +1,118 @@
-// public/confirm.js
-// ③ 最終確認画面（修正版・丸ごと）
-// - currentOrder.items を表示
-// - LIFFで userId を取得
-// - order.address が無ければ /api/liff/address/me から取得
-// - /api/shipping で送料計算
-// - currentOrder を最新化して pay.html へ
+// /public/confirm.js
+// ONLINE の confirm。住所がなければ liff-address.html へ。
 
-(async function () {
-  const $ = (id) => document.getElementById(id);
+(async function(){
+  const itemsBox = document.getElementById("itemsBox");
+  const addressBox = document.getElementById("addressBox");
+  const totalsBox = document.getElementById("totalsBox");
+  const addrBtn = document.getElementById("addrBtn");
+  const payBtn = document.getElementById("payBtn");
+  const backBtn = document.getElementById("backBtn");
+  const statusMsg = document.getElementById("statusMsg");
 
-  const itemsArea = $("itemsArea");
-  const addressArea = $("addressArea");
-  const itemsTotalEl = $("itemsTotalPrice");
-  const shippingEl = $("shippingPrice");
-  const finalTotalEl = $("finalTotalPrice");
-  const backBtn = $("backToAddressBtn");
-  const toPayBtn = $("toPayBtn");
+  let lineUserId=""; let lineUserName="";
 
-  function yen(n){ return `${Number(n||0).toLocaleString("ja-JP")}円`; }
-  function escapeHtml(s){
-    return String(s||"")
-      .replaceAll("&","&amp;").replaceAll("<","&lt;")
-      .replaceAll(">","&gt;").replaceAll('"',"&quot;")
-      .replaceAll("'","&#039;");
-  }
-
-  function readOrder() {
-    const keys = ["currentOrder", "confirmOrder", "cart", "orderDraft"];
-    for (const k of keys) {
-      try {
-        const v = sessionStorage.getItem(k) || localStorage.getItem(k);
-        if (!v) continue;
-        const o = JSON.parse(v);
-        if (o && Array.isArray(o.items)) return o;
-      } catch {}
-    }
-    return {};
-  }
-
-  const order = readOrder();
-  const items = Array.isArray(order.items) ? order.items : [];
-
-  if (!items.length) {
-    itemsArea.innerHTML =
-      `<div class="empty">注文データが見つかりません。①商品選択からやり直してください。</div>`;
-    addressArea.innerHTML = `<div class="empty">住所データがありません。</div>`;
-    toPayBtn.disabled = true;
-    return;
-  }
-
-  // --- items 表示 ---
-  itemsArea.innerHTML = items.map(it => {
-    const lineTotal = (it.price||0) * (it.qty||0);
-    return `
-      <div class="row">
-        <div class="name">${escapeHtml(it.name)}</div>
-        <div class="qty">×${it.qty}</div>
-        <div class="price">${yen(lineTotal)}</div>
-      </div>
-    `;
-  }).join("");
-
-  const itemsTotal = items.reduce((s,it)=>s+(it.price||0)*(it.qty||0),0);
-  itemsTotalEl.textContent = yen(itemsTotal);
-
-  // --- LIFF init + userId 取得 ---
-  let lineUserId = "";
-
-  async function initLiff() {
-    try {
-      const confRes = await fetch("/api/liff/config", { cache:"no-store" });
+  async function initLiff(){
+    try{
+      const confRes = await fetch("/api/liff/config?kind=online", { cache:"no-store" });
       const conf = await confRes.json();
-      const liffId = (conf?.liffId || "").trim();
-      if (!liffId || !window.liff) return false;
-
+      const liffId = (conf?.liffId||"").trim();
+      if(!liffId) throw new Error("no liffId online");
       await liff.init({ liffId });
-
-      if (!liff.isLoggedIn()) {
-        liff.login();
-        return false;
-      }
-
+      if(!liff.isLoggedIn()){ liff.login(); return false; }
       const prof = await liff.getProfile();
-      lineUserId = prof.userId || "";
-      order.lineUserId = lineUserId;
-      order.lineUserName = prof.displayName || "";
-      sessionStorage.setItem("currentOrder", JSON.stringify(order));
+      lineUserId = prof.userId;
+      lineUserName = prof.displayName;
       return true;
-    } catch (e) {
-      console.log("LIFF error:", e);
+    }catch(e){
+      statusMsg.textContent="LIFF初期化に失敗。LINEアプリから開いてください。";
       return false;
     }
   }
+  const ok = await initLiff(); if(!ok) return;
 
-  await initLiff();
+  const cur = JSON.parse(sessionStorage.getItem("currentOrder")||"{}");
+  if(!Array.isArray(cur.items) || cur.items.length===0){
+    location.href="/public/products.html"; return;
+  }
+  cur.lineUserId=lineUserId; cur.lineUserName=lineUserName;
 
-  // --- 住所取得 ---
-  async function loadAddress() {
-    // すでに order に住所があればそれ採用
-    if (order.address) return order.address;
-
-    if (!lineUserId) return null;
-
-    try {
+  async function loadAddress(){
+    try{
       const res = await fetch(`/api/liff/address/me?userId=${encodeURIComponent(lineUserId)}`, { cache:"no-store" });
       const data = await res.json();
       return data?.address || null;
-    } catch {
-      return null;
-    }
+    }catch{ return null; }
   }
 
-  const address = await loadAddress();
+  const savedAddr = await loadAddress();
+  if(savedAddr) cur.address = savedAddr;
+  sessionStorage.setItem("currentOrder", JSON.stringify(cur));
 
-  if (!address) {
-    addressArea.innerHTML =
-      `<div class="empty">住所が未登録です。②で入力してください。</div>`;
-    toPayBtn.disabled = true;
-  } else {
-    addressArea.innerHTML = `
-      <div style="font-size:14px;line-height:1.6;">
-        〒${escapeHtml(address.postal || "")}<br>
-        ${escapeHtml(address.prefecture || "")}${escapeHtml(address.city || "")}<br>
-        ${escapeHtml(address.address1 || "")} ${escapeHtml(address.address2 || "")}<br>
-        氏名：${escapeHtml(address.name || "")}<br>
-        TEL：${escapeHtml(address.phone || "")}
-      </div>
+  // items描画
+  const itemsTotal = cur.items.reduce((s,it)=>s+(it.price*it.qty),0);
+  itemsBox.innerHTML = cur.items.map(it=>`
+    <div class="row"><div>${it.name} x ${it.qty}</div><div>${it.price*it.qty}円</div></div>
+  `).join("") + `<hr><div class="row"><b>商品合計</b><b>${itemsTotal}円</b></div>`;
+
+  // address描画
+  if(cur.address){
+    const a=cur.address;
+    addressBox.innerHTML = `
+      <b>お届け先</b><br>
+      ${a.postal||""} ${a.prefecture||""}${a.city||""}${a.address1||""} ${a.address2||""}<br>
+      ${a.name||""} / ${a.phone||""}
     `;
-    order.address = address;
-    sessionStorage.setItem("currentOrder", JSON.stringify(order));
+  }else{
+    addressBox.innerHTML = `<b>お届け先</b><br>未登録です。住所入力ボタンから登録してください。`;
   }
 
-  // --- 送料計算 ---
-  let shipping = 0;
-  let region = "";
+  // 送料計算
+  const shipRes = await fetch("/api/shipping", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ items: cur.items, address: cur.address||{} })
+  });
+  const ship = await shipRes.json();
+  const shipping = Number(ship.shipping||0);
+  const finalTotal = Number(ship.finalTotal||itemsTotal);
 
-  try {
-    const res = await fetch("/api/shipping", {
-      method:"POST",
-      headers:{ "Content-Type": "application/json" },
-      body: JSON.stringify({ items, address })
-    });
-    const data = await res.json();
-    if (data?.ok) {
-      shipping = Number(data.shipping||0);
-      region = data.region||"";
+  totalsBox.innerHTML = `
+    <div class="row"><div>送料</div><div>${shipping}円</div></div>
+    <div class="row"><b>合計</b><b>${finalTotal}円</b></div>
+  `;
+
+  addrBtn.onclick = ()=>{
+    location.href="/public/liff-address.html";
+  };
+
+  backBtn.onclick = ()=>{
+    location.href="/public/products.html";
+  };
+
+  payBtn.onclick = async ()=>{
+    if(!cur.address){
+      statusMsg.textContent="住所が未登録です。住所入力を開いてください。";
+      return;
     }
-  } catch {}
+    statusMsg.textContent="決済準備中…";
 
-  shippingEl.textContent = region ? `${yen(shipping)}（${region}）` : yen(shipping);
-  const finalTotal = itemsTotal + shipping;
-  finalTotalEl.textContent = yen(finalTotal);
+    const res = await fetch("/api/pay", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        items: cur.items,
+        total: finalTotal,
+        lineUserId,
+        lineUserName
+      })
+    });
 
-  order.itemsTotal = itemsTotal;
-  order.shipping = shipping;
-  order.region = region;
-  order.finalTotal = finalTotal;
-
-  sessionStorage.setItem("currentOrder", JSON.stringify(order));
-
-  // --- ボタン ---
-  // ②の画面に戻す（あなたの住所入力ページURLに合わせて変えてOK）
-  backBtn.addEventListener("click", () => {
-    history.back(); // ← 迷ったらこれが一番安全
-  });
-
-  toPayBtn.addEventListener("click", () => {
-    location.href = "/public/pay.html";
-  });
-
+    const data = await res.json();
+    if(!data?.ok || !data.redirectUrl){
+      statusMsg.textContent="決済開始に失敗しました。";
+      return;
+    }
+    location.href = data.redirectUrl;
+  };
 })();

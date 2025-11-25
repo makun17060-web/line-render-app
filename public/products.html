@@ -117,11 +117,6 @@
     .btn-primary:disabled {
       opacity: 0.5;
     }
-    .btn-secondary {
-      background: #fff;
-      border: 1px solid #ccc;
-      color: #333;
-    }
     #statusMsg {
       margin-top: 6px;
       font-size: 11px;
@@ -134,14 +129,14 @@
   <header>
     <h1>オンライン注文（商品一覧）</h1>
     <p>
-商品を選んで「クレジット決済」または
-「代引き」で注文内容の確認へ進みます。
+商品を選んで「住所入力へ進む」ボタンを押してください。
+その後、確認画面で「クレジット決済」または「代引き」を選べます。
     </p>
   </header>
 
   <main>
     <div id="productGrid">
-      <!-- JS で商品カードを挿入 -->
+      <!-- JSで商品カードを挿入 -->
     </div>
 
     <div id="cartSummary">
@@ -149,22 +144,14 @@
     </div>
 
     <div class="btn-row">
-      <!-- クレジット決済（イプシロン） -->
-      <button id="toConfirmCardBtn" class="btn btn-primary">
-        クレジット決済で注文内容を確認
-      </button>
-      <!-- 代引き用ボタン（★今回追加） -->
-      <button id="toConfirmCodBtn" class="btn btn-secondary">
-        代引きで注文内容を確認
+      <button id="toAddressBtn" class="btn btn-primary">
+        住所入力へ進む
       </button>
     </div>
 
     <div id="statusMsg"></div>
   </main>
 
-  <!-- LIFF SDK（confirm.html などで使う場合に備えて） -->
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <!-- 商品一覧ロジック -->
   <script src="./products.js"></script>
 </body>
 </html>

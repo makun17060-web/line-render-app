@@ -4,31 +4,167 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>オンライン注文（商品一覧）</title>
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style>
-    body { font-family: sans-serif; margin:0; padding:12px; background:#fafafa; }
-    h2 { margin:6px 0 10px; }
-    #statusMsg { font-size:13px; color:#555; white-space:pre-line; margin-bottom:8px; }
-    #productGrid { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
-    .card { background:#fff; border-radius:10px; padding:10px; box-shadow:0 1px 4px rgba(0,0,0,.08); }
-    .img { width:100%; aspect-ratio:1/1; background:#eee; border-radius:8px; object-fit:cover; }
-    .name { font-weight:bold; margin-top:6px; }
-    .price { font-size:14px; color:#333; margin-top:2px; }
-    .qtyRow { display:flex; gap:6px; align-items:center; margin-top:6px; }
-    .qtyRow button { width:34px; height:34px; }
-    .qtyRow input { width:46px; text-align:center; }
-    .addBtn { width:100%; padding:10px; margin-top:8px; }
-    #toConfirmBtn { width:100%; padding:12px; font-size:16px; margin-top:12px; }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 12px;
+      background: #f7f7f7;
+    }
+    header {
+      margin-bottom: 12px;
+    }
+    header h1 {
+      font-size: 18px;
+      margin: 0 0 4px;
+    }
+    header p {
+      font-size: 12px;
+      margin: 0;
+      color: #555;
+      white-space: pre-line;
+    }
+    #productGrid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 8px;
+      padding: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .card img {
+      width: 100%;
+      border-radius: 6px;
+      object-fit: cover;
+      aspect-ratio: 1 / 1;
+      background: #eee;
+    }
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .card-desc {
+      font-size: 11px;
+      color: #555;
+      min-height: 2.4em;
+    }
+    .card-price {
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .card-stock {
+      font-size: 11px;
+      color: #666;
+    }
+    .qty-row {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 4px;
+      margin-top: 4px;
+    }
+    .qty-row button {
+      border-radius: 999px;
+      border: 1px solid #ccc;
+      background: #fff;
+      width: 28px;
+      height: 28px;
+      font-size: 18px;
+      line-height: 1;
+      padding: 0;
+    }
+    .qty-row span {
+      min-width: 24px;
+      text-align: center;
+      font-size: 14px;
+    }
+
+    #cartSummary {
+      background: #fff;
+      border-radius: 8px;
+      padding: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      font-size: 13px;
+      margin-bottom: 10px;
+      white-space: pre-line;
+    }
+
+    .btn-row {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 10px;
+      border-radius: 999px;
+      border: none;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .btn-primary {
+      background: #00b900;
+      color: #fff;
+    }
+    .btn-primary:disabled {
+      opacity: 0.5;
+    }
+    .btn-secondary {
+      background: #fff;
+      border: 1px solid #ccc;
+      color: #333;
+    }
+    #statusMsg {
+      margin-top: 6px;
+      font-size: 11px;
+      color: #d00;
+      white-space: pre-line;
+    }
   </style>
 </head>
 <body>
-  <h2>オンライン注文</h2>
-  <div id="statusMsg">読み込み中…</div>
+  <header>
+    <h1>オンライン注文（商品一覧）</h1>
+    <p>
+商品を選んで「クレジット決済」または
+「代引き」で注文内容の確認へ進みます。
+    </p>
+  </header>
 
-  <div id="productGrid"></div>
+  <main>
+    <div id="productGrid">
+      <!-- JS で商品カードを挿入 -->
+    </div>
 
-  <button id="toConfirmBtn">注文内容を確認する</button>
+    <div id="cartSummary">
+      カートに商品は入っていません。
+    </div>
 
-  <script src="/public/products.js"></script>
+    <div class="btn-row">
+      <!-- クレジット決済（イプシロン） -->
+      <button id="toConfirmCardBtn" class="btn btn-primary">
+        クレジット決済で注文内容を確認
+      </button>
+      <!-- 代引き用ボタン（★今回追加） -->
+      <button id="toConfirmCodBtn" class="btn btn-secondary">
+        代引きで注文内容を確認
+      </button>
+    </div>
+
+    <div id="statusMsg"></div>
+  </main>
+
+  <!-- LIFF SDK（confirm.html などで使う場合に備えて） -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <!-- 商品一覧ロジック -->
+  <script src="./products.js"></script>
 </body>
 </html>

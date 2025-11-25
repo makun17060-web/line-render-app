@@ -3,55 +3,91 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>住所入力（直接注文）</title>
+  <title>抽選ルーレット</title>
+
+  <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
   <style>
-    body { font-family: sans-serif; padding: 16px; }
-    label { display:block; margin-top:10px; font-size:14px; }
-    input { width:100%; padding:8px; font-size:16px; margin-top:4px; }
-    button { width:100%; padding:12px; font-size:16px; margin-top:14px; }
-    #statusMsg { margin-top:10px; font-size:14px; white-space:pre-line; }
-    .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    body {
+      font-family: sans-serif;
+      text-align: center;
+      padding: 20px;
+      background: #fafafa;
+    }
+    h2 { margin-bottom: 6px; }
+    #statusMsg {
+      margin: 10px 0;
+      font-size: 14px;
+      color: #333;
+      white-space: pre-line;
+    }
+    #wheelWrap {
+      margin: 16px auto;
+      width: 260px;
+      height: 260px;
+      border-radius: 50%;
+      border: 10px solid #ddd;
+      display: grid;
+      place-items: center;
+      background: white;
+      position: relative;
+      box-shadow: 0 4px 10px rgba(0,0,0,.08);
+    }
+    #pointer {
+      position: absolute;
+      top: -8px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 0; height: 0;
+      border-left: 12px solid transparent;
+      border-right: 12px solid transparent;
+      border-bottom: 22px solid #e53935;
+    }
+    #wheelText {
+      font-size: 18px;
+      font-weight: bold;
+      padding: 0 12px;
+    }
+    button {
+      width: 240px;
+      padding: 12px;
+      margin-top: 10px;
+      font-size: 17px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    #spinBtn { background:#06c755; color:white; }
+    #addrBtn { background:#1976d2; color:white; }
+    #closeBtn { background:#eee; color:#333; }
+    #resultArea {
+      margin-top: 14px;
+      font-size: 18px;
+      font-weight: bold;
+      white-space: pre-line;
+    }
+    .small { font-size: 12px; color:#666; margin-top:6px; }
   </style>
 </head>
+
 <body>
+  <h2>磯屋 抽選ルーレット</h2>
+  <div class="small">※ 1人1回まで。結果は保存されます。</div>
 
-  <h2>お届け先 住所入力</h2>
-  <p style="font-size:13px; color:#555;">
-    直接注文（トーク）で宅配を選んだ方はこちらで住所を登録してください。
-  </p>
+  <div id="statusMsg">初期化中…</div>
 
-  <label>郵便番号</label>
-  <input id="postal" placeholder="例：123-4567" />
-
-  <label>都道府県</label>
-  <input id="prefecture" placeholder="例：愛知県" />
-
-  <label>市区町村</label>
-  <input id="city" placeholder="例：名古屋市〇〇区" />
-
-  <label>住所1（番地など）</label>
-  <input id="address1" placeholder="例：〇〇町1-2-3" />
-
-  <label>住所2（建物名など）</label>
-  <input id="address2" placeholder="例：〇〇マンション101" />
-
-  <div class="row">
-    <div>
-      <label>氏名</label>
-      <input id="name" placeholder="例：磯屋 太郎" />
-    </div>
-    <div>
-      <label>電話番号</label>
-      <input id="phone" placeholder="例：09012345678" />
-    </div>
+  <div id="wheelWrap">
+    <div id="pointer"></div>
+    <div id="wheelText">準備中</div>
   </div>
 
-  <button id="saveBtn">この住所を保存</button>
-  <button id="backBtn" style="background:#eee;">戻る</button>
+  <button id="spinBtn">ルーレットを回す</button>
+  <button id="addrBtn">住所入力（配送の方）</button>
+  <button id="closeBtn">トークへ戻る</button>
 
-  <div id="statusMsg"></div>
+  <div id="resultArea"></div>
 
-  <script src="/public/liff-address-direct.js"></script>
+  <script src="/public/roulette.js"></script>
 </body>
 </html>

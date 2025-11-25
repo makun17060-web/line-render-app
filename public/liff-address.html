@@ -6,7 +6,7 @@
   <title>住所入力（オンライン注文）</title>
   <style>
     body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
       margin: 0;
       padding: 12px;
       background: #f7f7f7;
@@ -15,27 +15,34 @@
       font-size: 18px;
       margin: 0 0 8px;
     }
-    p {
-      font-size: 12px;
-      margin: 0 0 12px;
-      color: #555;
-      white-space: pre-line;
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      padding: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      margin-bottom: 8px;
     }
     .field {
       margin-bottom: 8px;
     }
-    .field label {
-      display: block;
+    .label {
       font-size: 12px;
       margin-bottom: 2px;
     }
-    .field input {
+    input {
       width: 100%;
       box-sizing: border-box;
       padding: 8px;
       font-size: 14px;
       border-radius: 6px;
       border: 1px solid #ccc;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+    }
+    .row .field {
+      flex: 1;
     }
     .btn-row {
       display: flex;
@@ -67,51 +74,52 @@
       white-space: pre-line;
     }
   </style>
+  <!-- LIFF SDK -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
 <body>
-  <h1>お届け先住所の入力</h1>
-  <p>
-LINEの情報からお名前を取得します。
-お届け先住所を入力して「住所を保存」を押してください。
-  </p>
+  <h1>お届け先の入力</h1>
 
-  <div class="field">
-    <label for="postal">郵便番号</label>
-    <input id="postal" type="text" inputmode="numeric" placeholder="例）123-4567" />
-  </div>
-  <div class="field">
-    <label for="prefecture">都道府県</label>
-    <input id="prefecture" type="text" placeholder="例）愛知県" />
-  </div>
-  <div class="field">
-    <label for="city">市区町村</label>
-    <input id="city" type="text" placeholder="例）名古屋市中村区" />
-  </div>
-  <div class="field">
-    <label for="address1">丁目・番地</label>
-    <input id="address1" type="text" placeholder="例）1-2-3" />
-  </div>
-  <div class="field">
-    <label for="address2">建物名・部屋番号（任意）</label>
-    <input id="address2" type="text" placeholder="例）磯屋マンション101" />
-  </div>
-  <div class="field">
-    <label for="name">お名前</label>
-    <input id="name" type="text" placeholder="例）磯屋 太郎" />
-  </div>
-  <div class="field">
-    <label for="phone">電話番号</label>
-    <input id="phone" type="tel" inputmode="tel" placeholder="例）09012345678" />
+  <div class="card">
+    <div class="field">
+      <div class="label">郵便番号</div>
+      <input id="postal" type="text" inputmode="numeric" placeholder="例）470-0000" />
+    </div>
+    <div class="field">
+      <div class="label">都道府県</div>
+      <input id="prefecture" type="text" placeholder="例）愛知県" />
+    </div>
+    <div class="field">
+      <div class="label">市区町村</div>
+      <input id="city" type="text" placeholder="例）知多郡武豊町" />
+    </div>
+    <div class="field">
+      <div class="label">番地・建物名</div>
+      <input id="address1" type="text" placeholder="例）字○○1-2-3" />
+    </div>
+    <div class="field">
+      <div class="label">建物名・部屋番号など（任意）</div>
+      <input id="address2" type="text" placeholder="任意" />
+    </div>
+    <div class="row">
+      <div class="field">
+        <div class="label">お名前</div>
+        <input id="name" type="text" placeholder="例）磯屋 太郎" />
+      </div>
+      <div class="field">
+        <div class="label">電話番号</div>
+        <input id="phone" type="tel" placeholder="例）090-1234-5678" />
+      </div>
+    </div>
   </div>
 
   <div class="btn-row">
     <button id="saveBtn" class="btn btn-primary">住所を保存して確認画面へ</button>
-    <button id="backBtn" class="btn btn-secondary">戻る</button>
+    <button id="backBtn" class="btn btn-secondary">確認画面に戻る</button>
   </div>
 
   <div id="statusMsg"></div>
 
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script src="./liff-address.js"></script>
 </body>
 </html>

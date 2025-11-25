@@ -1,173 +1,118 @@
-// public/products.js
-// ① 商品選択画面（②住所入力へ進む版）
-// - /api/products を読み込み
-// - 数量カートを管理
-// - sessionStorage.currentOrder に items[] 形式で保存
-// - 「② お届け先入力へ進む」→ /public/liff-address.html へ
+// /public/products.js
+// ONLINE LIFF入口。商品を選んで confirm.html へ。
 
-(async function () {
-  const $ = (id) => document.getElementById(id);
+(async function(){
+  const grid = document.getElementById("productGrid");
+  const toConfirmBtn = document.getElementById("toConfirmBtn");
+  const statusMsg = document.getElementById("statusMsg");
 
-  const grid = $("productGrid");
-  const toConfirmBtn = $("toConfirmBtn");
-  const clearCartBtn = $("clearCartBtn");
-  const cartTotalEl = $("cartTotal");
+  let lineUserId = "";
+  let lineUserName = "";
 
-  // -----------------------------
-  // 0) ユーティリティ
-  // -----------------------------
-  const yen = (n) => `${Number(n || 0).toLocaleString("ja-JP")}円`;
-  const escapeHtml = (s) =>
-    String(s || "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
+  async function initLiff(){
+    try{
+      const confRes = await fetch("/api/liff/config?kind=online", { cache:"no-store" });
+      const conf = await confRes.json();
+      const liffId = (conf?.liffId || "").trim();
+      if(!liffId) throw new Error("no liffId online");
 
-  // -----------------------------
-  // 1) 商品取得
-  // -----------------------------
-  async function fetchProducts() {
-    try {
-      const res = await fetch("/api/products", { cache: "no-store" });
+      await liff.init({ liffId });
+      if(!liff.isLoggedIn()){ liff.login(); return false; }
+
+      const prof = await liff.getProfile();
+      lineUserId = prof.userId;
+      lineUserName = prof.displayName;
+      return true;
+    }catch(e){
+      console.log(e);
+      statusMsg.textContent = "LIFF初期化に失敗。LINEアプリから開いてください。";
+      return false;
+    }
+  }
+
+  const ok = await initLiff();
+  if(!ok) return;
+
+  async function fetchProducts(){
+    try{
+      const res = await fetch("/api/products", { cache:"no-store" });
       const data = await res.json();
-      if (!data || !data.ok || !Array.isArray(data.products)) return [];
-      return data.products;
-    } catch (e) {
-      console.error("products fetch error:", e);
+      return Array.isArray(data?.products) ? data.products : [];
+    }catch(e){
       return [];
     }
   }
 
   const products = await fetchProducts();
+  statusMsg.textContent = products.length ? "" : "商品がありません。";
 
-  if (!products.length) {
-    grid.innerHTML = `<div class="empty">商品が見つかりませんでした。</div>`;
-    return;
-  }
+  const cart = [];
 
-  // -----------------------------
-  // 2) カート（数量）管理
-  // -----------------------------
-  const cart = new Map(); // id -> { id,name,price,qty,image }
+  function render(){
+    grid.innerHTML = "";
+    products.forEach((p)=>{
+      const card = document.createElement("div");
+      card.className = "card";
 
-  function calcTotal() {
-    let total = 0;
-    for (const it of cart.values()) {
-      total += (it.price || 0) * (it.qty || 0);
-    }
-    return total;
-  }
+      const img = document.createElement("img");
+      img.className = "img";
+      img.src = p.image || "";
+      img.alt = p.name;
 
-  function updateFooter() {
-    const total = calcTotal();
-    cartTotalEl.textContent = yen(total);
-    toConfirmBtn.disabled = total <= 0;
-    clearCartBtn.disabled = total <= 0;
-  }
+      const name = document.createElement("div");
+      name.className = "name";
+      name.textContent = p.name;
 
-  function setQty(p, qty) {
-    const q = Math.max(0, Math.min(99, Number(qty) || 0));
-    if (q <= 0) {
-      cart.delete(p.id);
-    } else {
-      cart.set(p.id, {
-        id: p.id,
-        name: p.name,
-        price: Number(p.price || 0),
-        qty: q,
-        image: p.image || ""
-      });
-    }
-    updateFooter();
-    render(); // 数量表示更新
-  }
+      const price = document.createElement("div");
+      price.className = "price";
+      price.textContent = `価格：${p.price}円`;
 
-  // -----------------------------
-  // 3) 描画
-  // -----------------------------
-  function render() {
-    grid.innerHTML = products.map(p => {
-      const inCart = cart.get(p.id);
-      const qty = inCart?.qty || 0;
+      const qtyRow = document.createElement("div");
+      qtyRow.className = "qtyRow";
+      const minus = document.createElement("button");
+      minus.textContent = "-";
+      const plus = document.createElement("button");
+      plus.textContent = "+";
+      const qtyInput = document.createElement("input");
+      qtyInput.type = "number";
+      qtyInput.min = "1";
+      qtyInput.max = "99";
+      qtyInput.value = "1";
 
-      return `
-        <div class="card" data-id="${escapeHtml(p.id)}">
-          <div class="img">
-            ${p.image
-              ? `<img src="${escapeHtml(p.image)}" alt="${escapeHtml(p.name)}">`
-              : `画像なし`}
-          </div>
-          <div class="body">
-            <div class="name">${escapeHtml(p.name)}</div>
-            <div class="desc">${escapeHtml(p.desc || "")}</div>
-            <div class="price">${yen(p.price)}</div>
-            <div class="stock">在庫：${Number(p.stock ?? 0)}個</div>
+      minus.onclick = ()=> qtyInput.value = String(Math.max(1, Number(qtyInput.value||1)-1));
+      plus.onclick  = ()=> qtyInput.value = String(Math.min(99, Number(qtyInput.value||1)+1));
 
-            <div class="qty-row">
-              <button class="qty-btn minus">-</button>
-              <div class="qty">${qty}</div>
-              <button class="qty-btn plus">+</button>
-            </div>
-          </div>
-        </div>
-      `;
-    }).join("");
+      qtyRow.append(minus, qtyInput, plus);
 
-    // ボタンイベント
-    grid.querySelectorAll(".card").forEach(card => {
-      const id = card.getAttribute("data-id");
-      const p = products.find(x => x.id === id);
-      if (!p) return;
+      const addBtn = document.createElement("button");
+      addBtn.className = "addBtn";
+      addBtn.textContent = "カートに入れる";
+      addBtn.onclick = ()=>{
+        const q = Math.max(1, Math.min(99, Number(qtyInput.value||1)));
+        const exist = cart.find(x=>x.id===p.id);
+        if(exist) exist.qty += q;
+        else cart.push({ id:p.id, name:p.name, price:p.price, qty:q, image:p.image||"" });
+        statusMsg.textContent = `カートに追加：${p.name} x ${q}`;
+      };
 
-      card.querySelector(".minus").addEventListener("click", () => {
-        const now = cart.get(id)?.qty || 0;
-        setQty(p, now - 1);
-      });
-      card.querySelector(".plus").addEventListener("click", () => {
-        const now = cart.get(id)?.qty || 0;
-        const stock = Number(p.stock ?? 0);
-        if (stock > 0 && now + 1 > stock) return;
-        setQty(p, now + 1);
-      });
+      card.append(img, name, price, qtyRow, addBtn);
+      grid.appendChild(card);
     });
   }
-
   render();
-  updateFooter();
 
-  // -----------------------------
-  // 4) ②住所入力へ：保存して遷移
-  // -----------------------------
-  toConfirmBtn.addEventListener("click", () => {
-    const items = Array.from(cart.values());
-
+  toConfirmBtn.onclick = ()=>{
+    if(cart.length===0){
+      statusMsg.textContent="先に商品をカートに入れてください。";
+      return;
+    }
     const order = {
-      items,               // ★必須（confirm.js / pay.js が拾う）
-      method: "delivery",
-      address: null,
-      itemsTotal: calcTotal(),
-      shipping: 0,
-      finalTotal: calcTotal()
+      items: cart,
+      lineUserId,
+      lineUserName,
+      from: "online"
     };
-
     sessionStorage.setItem("currentOrder", JSON.stringify(order));
-    sessionStorage.setItem("cart", JSON.stringify(order)); // 互換キー
-
-    // ★ここが変更点：confirmじゃなく住所入力へ
-    location.href = "/public/liff-address.html";
-  });
-
-  // -----------------------------
-  // 5) カートを空にする
-  // -----------------------------
-  clearCartBtn.addEventListener("click", () => {
-    cart.clear();
-    updateFooter();
-    render();
-    sessionStorage.removeItem("currentOrder");
-    sessionStorage.removeItem("cart");
-  });
-
+    location.href = "/public/confirm.html";
+  };
 })();

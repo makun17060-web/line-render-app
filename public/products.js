@@ -1,13 +1,11 @@
 // public/products.js
 // /api/products から商品一覧を取得して表示し、
-// カート → confirm.html へ。
-// payment: "card" or "cod" を currentOrder に入れておく。
+// カート → liff-address.html → confirm.html の流れ。
 
 (async function () {
   const grid = document.getElementById("productGrid");
   const cartSummary = document.getElementById("cartSummary");
-  const btnCard = document.getElementById("toConfirmCardBtn");
-  const btnCod  = document.getElementById("toConfirmCodBtn");
+  const btnAddress = document.getElementById("toAddressBtn");
   const statusMsg = document.getElementById("statusMsg");
 
   // ====== 商品一覧取得 ======
@@ -42,8 +40,6 @@
     const items = Object.values(cart);
     if (items.length === 0) {
       cartSummary.textContent = "カートに商品は入っていません。";
-      btnCard.disabled = false;
-      btnCod.disabled  = false;
       return;
     }
     let totalQty = 0;
@@ -146,17 +142,15 @@
 
   updateCartSummary();
 
-  function goConfirm(paymentType) {
+  // ====== 住所入力へ進む ======
+  btnAddress.onclick = () => {
     const items = Object.values(cart);
     if (items.length === 0) {
       alert("商品が選択されていません。");
       return;
     }
 
-    const order = {
-      items,
-      payment: paymentType, // "card" or "cod"
-    };
+    const order = { items };
 
     try {
       sessionStorage.setItem("currentOrder", JSON.stringify(order));
@@ -164,17 +158,8 @@
       console.error("sessionStorage 保存エラー:", e);
     }
 
-    location.href = "/public/confirm.html";
-  }
-
-  // クレジット決済で確認
-  btnCard.onclick = () => {
-    goConfirm("card");  // or "epsilon"
-  };
-
-  // 代引きで確認（★今回追加）
-  btnCod.onclick = () => {
-    goConfirm("cod");
+    // LIFF住所入力へ
+    location.href = "/public/liff-address.html";
   };
 
 })();

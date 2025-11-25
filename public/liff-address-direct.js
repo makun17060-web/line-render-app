@@ -1,8 +1,8 @@
 // /public/liff-address-direct.js
 // 直接注文（トーク）用の住所入力LIFF
 // - LIFFでuserId取得
-// - /api/liff/address に保存（★フラット形式でPOST）
-// - 保存後は LIFFを閉じてトークへ戻る
+// - /api/liff/address にフラット形式で保存
+// - 保存後 LIFFを閉じてトークへ戻る
 
 (async function () {
   const $ = (id) => document.getElementById(id);
@@ -22,15 +22,12 @@
   let lineUserId = "";
   let lineUserName = "";
 
-  // -----------------------------
-  // 1) LIFF 初期化 & プロフィール取得
-  // -----------------------------
   async function initLiff() {
     try {
-      const confRes = await fetch("/api/liff/config", { cache:"no-store" });
+      const confRes = await fetch("/api/liff/config?kind=direct", { cache:"no-store" });
       const conf = await confRes.json();
       const liffId = (conf?.liffId || "").trim();
-      if (!liffId) throw new Error("no liffId");
+      if (!liffId) throw new Error("no liffId direct");
 
       await liff.init({ liffId });
 
@@ -53,14 +50,9 @@
   const ok = await initLiff();
   if (!ok || !lineUserId) return;
 
-  // -----------------------------
-  // 2) 既存住所読み込み（あれば自動入力）
-  // -----------------------------
   async function loadAddress() {
     try {
-      const res = await fetch(`/api/liff/address/me?userId=${encodeURIComponent(lineUserId)}`, {
-        cache:"no-store"
-      });
+      const res = await fetch(`/api/liff/address/me?userId=${encodeURIComponent(lineUserId)}`, { cache:"no-store" });
       const data = await res.json();
       return data?.address || null;
     } catch {
@@ -81,11 +73,9 @@
     name.value = lineUserName || "";
   }
 
-  // -----------------------------
-  // 3) 保存
-  // -----------------------------
   saveBtn.addEventListener("click", async () => {
     const addr = {
+      userId: lineUserId,
       postal: postal.value.trim(),
       prefecture: prefecture.value.trim(),
       city: city.value.trim(),
@@ -105,16 +95,11 @@
     statusMsg.textContent = "保存中…";
 
     try {
-      // ★ A案ポイント：addressで包まずフラットに送る
       const res = await fetch("/api/liff/address", {
         method: "POST",
         headers: { "Content-Type":"application/json" },
-        body: JSON.stringify({
-          userId: lineUserId,
-          ...addr
-        })
+        body: JSON.stringify(addr)
       });
-
       const data = await res.json();
       if (!data?.ok) throw new Error("save failed");
 
@@ -133,12 +118,8 @@
     }
   });
 
-  // -----------------------------
-  // 4) 戻る
-  // -----------------------------
   backBtn.addEventListener("click", () => {
     try { liff.closeWindow(); }
     catch { history.back(); }
   });
-
 })();

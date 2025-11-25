@@ -2,175 +2,30 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>最終確認 | 手造りえびせんべい 磯屋</title>
-
-  <style>
-    body{
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
-      background:#fafafa;
-      margin:0;
-      padding:12px;
-      color:#222;
-    }
-    header{
-      background:#b22222;
-      color:#fff;
-      padding:14px 16px;
-      font-size:18px;
-      text-align:center;
-      margin:-12px -12px 12px;
-      position:sticky;
-      top:0;
-      z-index:10;
-    }
-    h1{
-      font-size:20px;
-      margin:8px 0 12px;
-      text-align:center;
-    }
-    .section{
-      background:#fff;
-      border-radius:10px;
-      box-shadow:0 2px 6px rgba(0,0,0,0.08);
-      padding:12px;
-      margin-bottom:12px;
-    }
-    .section-title{
-      font-weight:bold;
-      margin-bottom:8px;
-      font-size:15px;
-      border-left:4px solid #b22222;
-      padding-left:8px;
-    }
-
-    .row{
-      display:flex;
-      gap:8px;
-      align-items:center;
-      border-bottom:1px dashed #eee;
-      padding:8px 0;
-      font-size:14px;
-    }
-    .row:last-child{ border-bottom:none; }
-    .name{ flex:1; }
-    .qty{ width:60px; text-align:right; color:#555; }
-    .price{ width:90px; text-align:right; font-weight:bold; }
-
-    .sum-line{
-      display:flex;
-      justify-content:space-between;
-      font-size:15px;
-      padding:6px 0;
-      border-bottom:1px dashed #eee;
-    }
-    .sum-line:last-child{ border-bottom:none; }
-    .sum-label{ color:#555; }
-    .sum-value{ font-weight:bold; }
-
-    .grand{
-      font-size:18px;
-      font-weight:bold;
-      color:#b22222;
-    }
-
-    .footer{
-      position:sticky;
-      bottom:0;
-      background:#fafafa;
-      padding:10px 0 6px;
-      border-top:1px solid #eee;
-      display:flex;
-      gap:8px;
-    }
-    .btn{
-      flex:1;
-      padding:12px;
-      border-radius:6px;
-      border:none;
-      font-size:15px;
-      font-weight:bold;
-      cursor:pointer;
-    }
-    .btn-main{
-      background:#b22222;
-      color:#fff;
-    }
-    .btn-sub{
-      background:#fff;
-      color:#b22222;
-      border:1px solid #b22222;
-    }
-    .btn:disabled{
-      opacity:.5;
-      cursor:default;
-    }
-
-    .empty{
-      font-size:13px;
-      color:#666;
-      text-align:center;
-      padding:12px 0;
-    }
-    .notice{
-      font-size:12px;
-      color:#666;
-      text-align:center;
-      margin:6px 0 0;
-      line-height:1.5;
-    }
-  </style>
-
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>注文内容確認</title>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body { font-family:sans-serif; padding:12px; background:#fafafa; }
+    h3 { margin:8px 0; }
+    .box { background:#fff; padding:10px; border-radius:10px; margin-bottom:10px; }
+    .row { display:flex; justify-content:space-between; margin:4px 0; }
+    button { width:100%; padding:12px; margin-top:8px; font-size:16px; }
+    #statusMsg { font-size:13px; color:#555; white-space:pre-line; }
+  </style>
 </head>
-
 <body>
-  <header>
-    手造りえびせんべい 磯屋<br>宅配付きご注文ミニアプリ
-  </header>
+  <h3>注文内容の確認（オンライン）</h3>
 
-  <h1>最終確認（③ 注文内容確認）</h1>
+  <div id="itemsBox" class="box"></div>
+  <div id="addressBox" class="box"></div>
+  <div id="totalsBox" class="box"></div>
 
-  <div class="section">
-    <div class="section-title">ご注文商品</div>
-    <div id="itemsArea">読み込み中...</div>
-  </div>
+  <button id="addrBtn">住所を入力/変更する</button>
+  <button id="payBtn">この内容で決済へ進む</button>
+  <button id="backBtn" style="background:#eee;">商品選択へ戻る</button>
 
-  <div class="section">
-    <div class="section-title">お届け先</div>
-    <div id="addressArea">読み込み中...</div>
-    <div class="notice">※住所が違う場合は「②へ戻る」で修正してください</div>
-  </div>
-
-  <div class="section">
-    <div class="section-title">お支払い合計</div>
-
-    <div class="sum-line">
-      <div class="sum-label">商品合計</div>
-      <div id="itemsTotalPrice" class="sum-value">計算中…</div>
-    </div>
-
-    <div class="sum-line">
-      <div class="sum-label">送料</div>
-      <div id="shippingPrice" class="sum-value">計算中…</div>
-    </div>
-
-    <div class="sum-line">
-      <div class="sum-label">合計</div>
-      <div id="finalTotalPrice" class="sum-value grand">計算中…</div>
-    </div>
-
-    <div class="notice">※送料はお届け先地域により自動計算されます</div>
-  </div>
-
-  <div class="footer">
-    <button id="backToAddressBtn" class="btn btn-sub">
-      ② お届け先入力へ戻る
-    </button>
-    <button id="toPayBtn" class="btn btn-main">
-      ④ クレジット支払いへ進む
-    </button>
-  </div>
+  <div id="statusMsg"></div>
 
   <script src="/public/confirm.js"></script>
 </body>

@@ -3,30 +3,96 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>注文内容確認</title>
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <title>注文内容の確認</title>
   <style>
-    body { font-family:sans-serif; padding:12px; background:#fafafa; }
-    h3 { margin:8px 0; }
-    .box { background:#fff; padding:10px; border-radius:10px; margin-bottom:10px; }
-    .row { display:flex; justify-content:space-between; margin:4px 0; }
-    button { width:100%; padding:12px; margin-top:8px; font-size:16px; }
-    #statusMsg { font-size:13px; color:#555; white-space:pre-line; }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 12px;
+      background: #f7f7f7;
+    }
+    h1 {
+      font-size: 18px;
+      margin: 0 0 8px;
+    }
+    section {
+      background: #fff;
+      border-radius: 8px;
+      padding: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      margin-bottom: 10px;
+    }
+    section h2 {
+      font-size: 14px;
+      margin: 0 0 4px;
+    }
+    pre {
+      margin: 0;
+      font-size: 12px;
+      white-space: pre-line;
+    }
+    .btn-row {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .btn {
+      padding: 10px;
+      border-radius: 999px;
+      border: none;
+      font-size: 14px;
+      font-weight: 600;
+      width: 100%;
+    }
+    .btn-primary {
+      background: #00b900;
+      color: #fff;
+    }
+    .btn-secondary {
+      background: #fff;
+      border: 1px solid #ccc;
+      color: #333;
+    }
+    #statusMsg {
+      margin-top: 8px;
+      font-size: 11px;
+      color: #d00;
+      white-space: pre-line;
+    }
   </style>
 </head>
 <body>
-  <h3>注文内容の確認（オンライン）</h3>
+  <h1>注文内容の確認</h1>
 
-  <div id="itemsBox" class="box"></div>
-  <div id="addressBox" class="box"></div>
-  <div id="totalsBox" class="box"></div>
+  <section>
+    <h2>商品</h2>
+    <pre id="orderItems">読み込み中…</pre>
+  </section>
 
-  <button id="addrBtn">住所を入力/変更する</button>
-  <button id="payBtn">この内容で決済へ進む</button>
-  <button id="backBtn" style="background:#eee;">商品選択へ戻る</button>
+  <section>
+    <h2>お届け先</h2>
+    <pre id="orderAddress">読み込み中…</pre>
+  </section>
+
+  <section>
+    <h2>金額</h2>
+    <pre id="orderSummary">読み込み中…</pre>
+  </section>
+
+  <div class="btn-row">
+    <!-- クレジット決済ボタン -->
+    <button id="payByCard" class="btn btn-primary">
+      クレジット決済（イプシロン）へ進む
+    </button>
+
+    <!-- 代引きボタン -->
+    <button id="payByCod" class="btn btn-secondary">
+      代引きで注文を確定
+    </button>
+  </div>
 
   <div id="statusMsg"></div>
 
-  <script src="/public/confirm.js"></script>
+  <script src="./confirm.js"></script>
 </body>
 </html>

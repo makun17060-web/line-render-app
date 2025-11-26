@@ -99,13 +99,14 @@
       card.appendChild(desc);
     }
 
-    // ★ 内容量（content）
-    if (p.content) {
-      const content = document.createElement("div");
-      content.className = "card-content";
-      content.textContent = `内容量：${p.content}`;
-      card.appendChild(content);
-    }
+    // ★ 内容量（volume）
+    if (p.volume) {
+  const volume = document.createElement("div");
+  volume.className = "card-volume";
+  volume.textContent = `内容量：${p.volume}`;
+  card.appendChild(volume);
+}
+
 
     // 価格
     const price = document.createElement("div");

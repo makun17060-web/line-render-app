@@ -604,25 +604,19 @@ function qtyFlex(id, qty = 1) {
               },
             })),
           },
-
-          // ★ ここを「受取方法へ」ではなく、
-          // ★ 店頭受取・現金固定で最終確認へ飛ばす
+          // ★ 店頭受取用：先に名前を聞くステップへ
           {
             type: "button",
             style: "primary",
             action: {
               type: "postback",
-              label: "注文内容を確認する",
-              data: `order_confirm_view?${qstr({
+              label: "店頭での受取名前を入力",
+              data: `order_pickup_name?${qstr({
                 id,
                 qty: q,
-                method: "pickup",   // 店頭受取固定
-                region: "",         // 地域なし（送料0円）
-                payment: "cash",    // 現金のみ
               })}`,
             },
           },
-
           {
             type: "button",
             style: "secondary",
@@ -883,8 +877,10 @@ function paymentFlex(id, qty, method, region) {
     },
   };
 }
+function confirmFlex(product, qty, method, region, payment, liffIdForBtn, options = {}) {
+  // options.pickupName を追加で受け取る
+  const pickupName = (options.pickupName || "").trim();
 
-function confirmFlex(product, qty, method, region, payment, liffIdForBtn) {
   if (typeof product?.id === "string" && product.id.startsWith("other:")) {
     const parts = product.id.split(":");
     const encName = parts[1] || "";
@@ -924,6 +920,11 @@ function confirmFlex(product, qty, method, region, payment, liffIdForBtn) {
     `合計：${yen(total)}`,
   ];
 
+  // ★ 店頭受取の場合、入力されたお名前も表示
+  if (method === "pickup" && pickupName) {
+    lines.push(`お名前：${pickupName}`);
+  }
+
   const bodyContents = [
     { type: "text", text: "最終確認", weight: "bold", size: "lg" },
     ...lines.map((t) => ({ type: "text", text: t, wrap: true })),
@@ -954,12 +955,14 @@ function confirmFlex(product, qty, method, region, payment, liffIdForBtn) {
       action: {
         type: "postback",
         label: "この内容で確定",
+        // ★ 名前も postback に載せる
         data: `order_confirm?${qstr({
           id: product.id,
           qty,
           method,
           region,
           payment,
+          pickupName,
         })}`,
       },
     },
@@ -2405,6 +2408,54 @@ async function handleEvent(ev) {
         });
         return;
       }
+if (sess?.await === "pickupName") {
+  const nameText = (text || "").trim();
+  if (!nameText) {
+    await client.replyMessage(ev.replyToken, {
+      type: "text",
+      text: "お名前が空です。店頭でお呼びするお名前（または名字）を入力してください。",
+    });
+    return;
+  }
+
+  const temp = sess.temp || {};
+  const id = temp.id;
+  const qty = Math.max(1, Math.min(99, Number(temp.qty) || 1));
+
+  // セッションはここで終了
+  delete sessions[uid];
+  writeSessions(sessions);
+
+  // 商品取得
+  let product;
+  if (String(id).startsWith("other:")) {
+    const parts = String(id).split(":");
+    const encName = parts[1] || "";
+    const priceStr = parts[2] || "0";
+    product = {
+      id,
+      name: decodeURIComponent(encName || "その他"),
+      price: Number(priceStr || 0),
+    };
+  } else {
+    const products = readProducts();
+    product = products.find((p) => p.id === id);
+  }
+
+  if (!product) {
+    await client.replyMessage(ev.replyToken, {
+      type: "text",
+      text: "商品が見つかりませんでした。もう一度最初からお試しください。",
+    });
+    return;
+  }
+
+  // ★ 店頭受取・現金のみで最終確認画面を表示（お名前付き）
+  await client.replyMessage(ev.replyToken,
+    confirmFlex(product, qty, "pickup", "", "cash", LIFF_ID, { pickupName: nameText })
+  );
+  return;
+}
 
       if (sess?.await === "otherQty") {
         const n = (text || "").trim();
@@ -2833,6 +2884,22 @@ async function handleEvent(ev) {
         );
         return;
       }
+if (d.startsWith("order_pickup_name?")) {
+  const { id, qty } = parse(d.replace("order_pickup_name?", ""));
+  const sessions = readSessions();
+  const uid = ev.source?.userId || "";
+  sessions[uid] = {
+    await: "pickupName",
+    temp: { id, qty },
+  };
+  writeSessions(sessions);
+
+  await client.replyMessage(ev.replyToken, {
+    type: "text",
+    text: "店頭でお呼びするお名前（または名字）を入力してください。\n例：磯屋 太郎",
+  });
+  return;
+}
 
       if (d.startsWith("order_method?")) {
         const { id, qty } = parse(
@@ -2941,212 +3008,182 @@ async function handleEvent(ev) {
       }
 
       if (d.startsWith("order_confirm?")) {
-        const { id, qty, method, region, payment } = parse(
-          d.replace("order_confirm?", "")
-        );
-        const need = Math.max(1, Number(qty) || 1);
+  const parsed = parse(d.replace("order_confirm?", ""));
+  const id = parsed.id;
+  const qty = parsed.qty;
+  let method = parsed.method;
+  let region = parsed.region;
+  const payment = parsed.payment;
+  const pickupName = (parsed.pickupName || "").trim();   // ★ 追加
 
-        let product = null;
-        let products = readProducts();
-        let idx = products.findIndex((p) => p.id === id);
+  const need = Math.max(1, Number(qty) || 1);
 
-        if (String(id).startsWith("other:")) {
-          const parts = String(id).split(":");
-          const encName = parts[1] || "";
-          const priceStr = parts[2] || "0";
-          product = {
-            id,
-            name: decodeURIComponent(encName || "その他"),
-            price: Number(priceStr || 0),
-            stock: Infinity,
-          };
-          idx = -1;
-        } else {
-          if (idx === -1) {
-            await client.replyMessage(ev.replyToken, {
-              type: "text",
-              text: "商品が見つかりませんでした。",
-            });
-            return;
-          }
-          product = products[idx];
-          if (!product.stock || product.stock < need) {
-            await client.replyMessage(
-              ev.replyToken,
-              reserveOffer(
-                product,
-                need,
-                product.stock || 0
-              )
-            );
-            return;
-          }
-          products[idx].stock =
-            Number(product.stock) - need;
-          writeProducts(products);
-          await maybeLowStockAlert(
-            product.id,
-            product.name,
-            products[idx].stock
-          );
-        }
+  let product = null;
+  let products = readProducts();
+  let idx = products.findIndex((p) => p.id === id);
 
-        const regionFee =
-          method === "delivery"
-            ? SHIPPING_BY_REGION[region] || 0
-            : 0;
-        const codFee = payment === "cod" ? COD_FEE : 0;
-        const subtotal = Number(product.price) * need;
-        const total = subtotal + regionFee + codFee;
+  if (String(id).startsWith("other:")) {
+    const parts = String(id).split(":");
+    const encName = parts[1] || "";
+    const priceStr = parts[2] || "0";
+    product = {
+      id,
+      name: decodeURIComponent(encName || "その他"),
+      price: Number(priceStr || 0),
+      stock: Infinity,
+    };
+    idx = -1;
+  } else {
+    if (idx === -1) {
+      await client.replyMessage(ev.replyToken, {
+        type: "text",
+        text: "商品が見つかりませんでした。",
+      });
+      return;
+    }
+    product = products[idx];
+    if (!product.stock || product.stock < need) {
+      await client.replyMessage(
+        ev.replyToken,
+        reserveOffer(product, need, product.stock || 0)
+      );
+      return;
+    }
+    products[idx].stock = Number(product.stock) - need;
+    writeProducts(products);
+    await maybeLowStockAlert(
+      product.id,
+      product.name,
+      products[idx].stock
+    );
+  }
 
-        const addrBook = readAddresses();
-        const addr =
-          addrBook[ev.source?.userId || ""] || null;
+  const regionFee =
+    method === "delivery" ? SHIPPING_BY_REGION[region] || 0 : 0;
+  const codFee = payment === "cod" ? COD_FEE : 0;
+  const subtotal = Number(product.price) * need;
+  const total = subtotal + regionFee + codFee;
 
-        const order = {
-          ts: new Date().toISOString(),
-          userId: ev.source?.userId || "",
-          productId: product.id,
-          productName: product.name,
-          qty: need,
-          price: Number(product.price),
-          subtotal,
-          region,
-          shipping: regionFee,
-          payment,
-          codFee,
-          total,
-          method,
-          address: addr,
-          image: product.image || "",
-        };
-        fs.appendFileSync(
-          ORDERS_LOG,
-          JSON.stringify(order) + "\n",
-          "utf8"
-        );
+  const addrBook = readAddresses();
+  const addr = addrBook[ev.source?.userId || ""] || null;
 
-        const payText =
-          payment === "cod"
-            ? `代金引換（+${yen(COD_FEE)})`
-            : payment === "bank"
-            ? "銀行振込"
-            : "現金（店頭）";
+  const order = {
+    ts: new Date().toISOString(),
+    userId: ev.source?.userId || "",
+    productId: product.id,
+    productName: product.name,
+    qty: need,
+    price: Number(product.price),
+    subtotal,
+    region,
+    shipping: regionFee,
+    payment,
+    codFee,
+    total,
+    method,
+    address: addr,
+    image: product.image || "",
+    pickupName,                  // ★ ここでログにも残す
+  };
+  fs.appendFileSync(ORDERS_LOG, JSON.stringify(order) + "\n", "utf8");
 
-        const userLines = [
-          "ご注文ありがとうございます！",
-          `受取方法：${
-            method === "pickup"
-              ? "店頭受取（送料0円）"
-              : `宅配（${region}）`
-          }`,
-          `支払い：${payText}`,
-          `商品：${product.name}`,
-          `数量：${need}個`,
-          `小計：${yen(subtotal)}`,
-          `送料：${yen(regionFee)}`,
-          `代引き手数料：${yen(codFee)}`,
-          `合計：${yen(total)}`,
-        ];
+  const payText =
+    payment === "cod"
+      ? `代金引換（+${yen(COD_FEE)})`
+      : payment === "bank"
+      ? "銀行振込"
+      : "現金（店頭）";
 
-        if (method === "delivery") {
-          userLines.push("");
-          userLines.push(
-            addr
-              ? `お届け先：${addr.postal || ""} ${
-                  addr.prefecture || ""
-                }${addr.city || ""}${addr.address1 || ""}${
-                  addr.address2
-                    ? " " + addr.address2
-                    : ""
-                }\n氏名：${addr.name || ""}\n電話：${
-                  addr.phone || ""
-                }`
-              : "住所未登録です。メニューの「住所を入力（LIFF）」から登録してください。"
-          );
-        } else {
-          userLines.push(
-            "",
-            "店頭でのお受け取りをお待ちしています。"
-          );
-        }
+  const userLines = [
+    "ご注文ありがとうございます！",
+    `受取方法：${
+      method === "pickup"
+        ? "店頭受取（送料0円）"
+        : `宅配（${region}）`
+    }`,
+    `支払い：${payText}`,
+    `商品：${product.name}`,
+    `数量：${need}個`,
+    `小計：${yen(subtotal)}`,
+    `送料：${yen(regionFee)}`,
+    `代引き手数料：${yen(codFee)}`,
+    `合計：${yen(total)}`,
+  ];
 
-        await client.replyMessage(ev.replyToken, {
-          type: "text",
-          text: userLines.join("\n"),
-        });
+  // ★ ユーザー向けメッセージにも名前を表示
+  if (method === "pickup" && pickupName) {
+    userLines.push(``, `お名前：${pickupName}`);
+  }
 
-        if (method === "delivery" && payment === "bank") {
-          const lines = [];
-          lines.push("▼ 振込先");
-          if (BANK_INFO) lines.push(BANK_INFO);
-          else
-            lines.push(
-              "（銀行口座情報が未設定です。管理者に連絡してください。）"
-            );
-          if (BANK_NOTE) {
-            lines.push("", BANK_NOTE);
-          }
-          lines.push("", "※ご入金確認後の発送となります。");
-          try {
-            await client.pushMessage(ev.source.userId, {
-              type: "text",
-              text: lines.join("\n"),
-            });
-          } catch (e) {
-            console.error(
-              "bank info send error:",
-              e?.response?.data || e
-            );
-          }
-        }
+  if (method === "delivery") {
+    userLines.push("");
+    userLines.push(
+      addr
+        ? `お届け先：${addr.postal || ""} ${
+            addr.prefecture || ""
+          }${addr.city || ""}${addr.address1 || ""}${
+            addr.address2 ? " " + addr.address2 : ""
+          }\n氏名：${addr.name || ""}\n電話：${
+            addr.phone || ""
+          }`
+        : "住所未登録です。メニューの「住所を入力（LIFF）」から登録してください。"
+    );
+  } else {
+    userLines.push(
+      "",
+      "店頭でのお受け取りをお待ちしています。"
+    );
+  }
 
-        const adminMsg = [
-          "🧾 新規注文",
-          `ユーザーID：${ev.source?.userId || ""}`,
-          `商品：${product.name}`,
-          `数量：${need}個`,
-          `小計：${yen(subtotal)} / 送料：${yen(
-            regionFee
-          )} / 代引：${yen(
-            codFee
-          )} / 合計：${yen(total)}`,
-          `受取：${method}${
-            method === "delivery"
-              ? `（${region}）`
-              : ""
-          } / 支払：${payment}`,
-          addr
-            ? `住所：${addr.postal || ""} ${
-                addr.prefecture || ""
-              }${addr.city || ""}${addr.address1 || ""}${
-                addr.address2
-                  ? " " + addr.address2
-                  : ""
-              }\n氏名：${addr.name || ""} / TEL：${
-                addr.phone || ""
-              }`
-            : "住所：未登録",
-          product.image ? `画像：${product.image}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n");
+  await client.replyMessage(ev.replyToken, {
+    type: "text",
+    text: userLines.join("\n"),
+  });
 
-        try {
-          if (ADMIN_USER_ID)
-            await client.pushMessage(ADMIN_USER_ID, {
-              type: "text",
-              text: adminMsg,
-            });
-          if (MULTICAST_USER_IDS.length > 0)
-            await client.multicast(
-              MULTICAST_USER_IDS,
-              { type: "text", text: adminMsg }
-            );
-        } catch {}
+  // ★ 管理者向けメッセージにも名前を追加
+  const adminMsg = [
+    "🧾 新規注文",
+    `ユーザーID：${ev.source?.userId || ""}`,
+    `商品：${product.name}`,
+    `数量：${need}個`,
+    `小計：${yen(subtotal)} / 送料：${yen(
+      regionFee
+    )} / 代引：${yen(codFee)} / 合計：${yen(total)}`,
+    `受取：${method}${
+      method === "delivery" ? `（${region}）` : ""
+    } / 支払：${payment}`,
+    pickupName ? `店頭お呼び出し名：${pickupName}` : "",
+    addr
+      ? `住所：${addr.postal || ""} ${
+          addr.prefecture || ""
+        }${addr.city || ""}${addr.address1 || ""}${
+          addr.address2 ? " " + addr.address2 : ""
+        }\n氏名：${addr.name || ""} / TEL：${
+          addr.phone || ""
+        }`
+      : method === "delivery"
+      ? "住所：未登録"
+      : "",
+    product.image ? `画像：${product.image}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 
-        return;
-      }
+  try {
+    if (ADMIN_USER_ID)
+      await client.pushMessage(ADMIN_USER_ID, {
+        type: "text",
+        text: adminMsg,
+      });
+    if (MULTICAST_USER_IDS.length > 0)
+      await client.multicast(MULTICAST_USER_IDS, {
+        type: "text",
+        text: adminMsg,
+      });
+  } catch {}
+
+  return;
+}
 
       if (d.startsWith("order_reserve?")) {
         const { id, qty } = parse(

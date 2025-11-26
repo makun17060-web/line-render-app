@@ -2896,7 +2896,7 @@ if (d.startsWith("order_pickup_name?")) {
 
   await client.replyMessage(ev.replyToken, {
     type: "text",
-    text: "店頭でお呼びするお名前（または名字）を入力してください。\n例：磯屋 太郎",
+    text: "注文者の氏名を入力してください。\n例：磯屋 太郎",
   });
   return;
 }

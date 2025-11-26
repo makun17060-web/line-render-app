@@ -1718,10 +1718,10 @@ app.get("/api/products", (req, res) => {
         price: p.price,
         stock: p.stock ?? 0,
         desc: p.desc || "",
-        volume: p.volume || ""
-
-        image: toPublicImageUrl(p.image || ""),
+        volume: p.volume || "",                     // ★ 内容量（volume）
+        image: toPublicImageUrl(p.image || ""),     // ★ 画像URL
       }));
+
     res.json({ ok: true, products: items });
   } catch (e) {
     console.error("/api/products error:", e);

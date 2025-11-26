@@ -604,15 +604,25 @@ function qtyFlex(id, qty = 1) {
               },
             })),
           },
+
+          // ★ ここを「受取方法へ」ではなく、
+          // ★ 店頭受取・現金固定で最終確認へ飛ばす
           {
             type: "button",
             style: "primary",
             action: {
               type: "postback",
-              label: "受取方法へ",
-              data: `order_method?${qstr({ id, qty: q })}`,
+              label: "注文内容を確認する",
+              data: `order_confirm_view?${qstr({
+                id,
+                qty: q,
+                method: "pickup",   // 店頭受取固定
+                region: "",         // 地域なし（送料0円）
+                payment: "cash",    // 現金のみ
+              })}`,
             },
           },
+
           {
             type: "button",
             style: "secondary",

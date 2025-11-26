@@ -2413,7 +2413,7 @@ if (sess?.await === "pickupName") {
   if (!nameText) {
     await client.replyMessage(ev.replyToken, {
       type: "text",
-      text: "お名前が空です。店頭でお呼びするお名前（または名字）を入力してください。",
+      text: "お名前が空です。注文者のお名前を入力してください。",
     });
     return;
   }

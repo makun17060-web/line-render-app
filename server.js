@@ -408,28 +408,46 @@ function productsFlex(allProducts) {
           }
         : undefined,
       body: {
-        type: "box",
-        layout: "vertical",
-        spacing: "sm",
-        contents: [
-          {
-            type: "text",
-            text: p.name,
-            weight: "bold",
-            size: "md",
-            wrap: true,
-          },
-          {
-            type: "text",
-            text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`,
-            size: "sm",
-            wrap: true,
-          },
-          p.desc
-            ? { type: "text", text: p.desc, size: "sm", wrap: true }
-            : { type: "box", layout: "vertical", contents: [] },
-        ].filter(Boolean),
-      },
+  type: "box",
+  layout: "vertical",
+  spacing: "sm",
+  contents: [
+    {
+      type: "text",
+      text: p.name,
+      weight: "bold",
+      size: "md",
+      wrap: true,
+    },
+    {
+      type: "text",
+      text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`,
+      size: "sm",
+      wrap: true,
+    },
+
+    // ★ 内容量（volume）があれば表示
+    p.volume
+      ? {
+          type: "text",
+          text: `内容量：${p.volume}`,
+          size: "sm",
+          wrap: true,
+        }
+      : null,
+
+    // 説明文
+    p.desc
+      ? {
+          type: "text",
+          text: p.desc,
+          size: "sm",
+          wrap: true,
+        }
+      : null,
+  ].filter(Boolean),
+},
+
       footer: {
         type: "box",
         layout: "horizontal",

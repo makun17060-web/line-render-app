@@ -77,6 +77,7 @@
     const card = document.createElement("div");
     card.className = "card";
 
+    // 画像
     if (p.image) {
       const img = document.createElement("img");
       img.src = p.image;
@@ -84,11 +85,13 @@
       card.appendChild(img);
     }
 
+    // 商品名
     const title = document.createElement("div");
     title.className = "card-title";
     title.textContent = p.name;
     card.appendChild(title);
 
+    // 説明文
     if (p.desc) {
       const desc = document.createElement("div");
       desc.className = "card-desc";
@@ -96,16 +99,27 @@
       card.appendChild(desc);
     }
 
+    // ★ 内容量（content）
+    if (p.content) {
+      const content = document.createElement("div");
+      content.className = "card-content";
+      content.textContent = `内容量：${p.content}`;
+      card.appendChild(content);
+    }
+
+    // 価格
     const price = document.createElement("div");
     price.className = "card-price";
     price.textContent = `価格：${formatYen(p.price)}`;
     card.appendChild(price);
 
+    // 在庫
     const stock = document.createElement("div");
     stock.className = "card-stock";
     stock.textContent = `在庫：${p.stock ?? 0}個`;
     card.appendChild(stock);
 
+    // 数量 +- ボタン
     const qtyRow = document.createElement("div");
     qtyRow.className = "qty-row";
 

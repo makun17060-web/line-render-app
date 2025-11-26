@@ -1718,7 +1718,8 @@ app.get("/api/products", (req, res) => {
         price: p.price,
         stock: p.stock ?? 0,
         desc: p.desc || "",
-        content: p.content || "",
+        volume: p.volume || ""
+
         image: toPublicImageUrl(p.image || ""),
       }));
     res.json({ ok: true, products: items });

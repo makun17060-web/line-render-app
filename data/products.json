@@ -4,7 +4,7 @@
     "name": "久助（えびせん）",
     "price": 250,
     "stock": 30,
-    "content": 
+    "content": "約○○g",
     "desc": "お得な割れせん。"
   },
   {
@@ -12,7 +12,7 @@
     "name": "のりあかしゃ",
     "price": 340,
     "stock": 20,
-    "content": "80,
+    "content": "約○○g",
     "desc": "海苔の風味豊かなえびせんべい"
   },
   {

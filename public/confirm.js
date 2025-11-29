@@ -1,166 +1,182 @@
-// public/confirm.js
-// sessionStorage.currentOrder から items/address を読み込み、
-// /api/shipping で送料計算 → /api/pay（クレジット） or /api/order/complete（代引き）
+// /public/confirm.js  — Stripe Checkout 版
+// - products.js などで保存した「注文内容」を表示
+// - 「注文を確定する」ボタンで /api/pay を呼び出し、Stripe Checkout にリダイレクト
 
-(async function () {
-  const $ = (id) => document.getElementById(id);
+(function () {
+  "use strict";
 
-  const itemsEl   = $("orderItems");
-  const addrEl    = $("orderAddress");
-  const summaryEl = $("orderSummary");
-  const btnCard   = $("payByCard");
-  const btnCod    = $("payByCod");
-  const statusMsg = $("statusMsg");
+  // ==============================
+  //  DOM 取得
+  // ==============================
+  const orderListEl   = document.getElementById("orderList");    // 注文内容を表示する <div> or <ul>
+  const totalEl       = document.getElementById("totalAmount");  // 合計金額表示用
+  const confirmBtn    = document.getElementById("confirmBtn");   // 「注文を確定する」ボタン
+  const backBtn       = document.getElementById("backBtn");      // 「戻る」ボタン（あれば）
+  const statusMsgEl   = document.getElementById("statusMsg");    // 状態メッセージ表示（任意）
 
-  const COD_FEE = 330; // server.js の COD_FEE と合わせる
+  // ==============================
+  //  注文データの読み込み
+  // ==============================
+  // ★★ 重要 ★★
+  // products.js 側で保存しているキー名に合わせてここを変更してください。
+  // 例：
+  //   sessionStorage.setItem("orderData", JSON.stringify({ items, totalAmount }));
+  //
+  // のように保存している場合、STORAGE_KEY = "orderData" にする。
+  const STORAGE_KEY = "orderData";
 
-  function yen(n) {
-    return (Number(n) || 0).toLocaleString("ja-JP") + "円";
-  }
-
-  // ====== currentOrder 読み込み ======
-  let order;
-  try {
-    order = JSON.parse(sessionStorage.getItem("currentOrder") || "{}");
-  } catch (e) {
-    order = {};
-  }
-
-  if (!order.items || !Array.isArray(order.items) || order.items.length === 0) {
-    itemsEl.textContent = "カート情報がありません。最初からやり直してください。";
-    btnCard.disabled = true;
-    btnCod.disabled  = true;
-    return;
-  }
-
-  if (!order.address) {
-    alert("先に住所を入力してください。");
-    location.href = "/public/liff-address.html";
-    return;
-  }
-
-  // ====== 送料計算 (/api/shipping) ======
-  let shippingInfo;
-  try {
-    const body = {
-      items: order.items.map(it => ({
-        id: it.id,
-        price: it.price,
-        qty: it.qty,
-      })),
-      address: order.address,
-    };
-
-    const res = await fetch("/api/shipping", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    shippingInfo = await res.json();
-    if (!shippingInfo || !shippingInfo.ok) {
-      throw new Error(shippingInfo?.error || "shipping_error");
-    }
-  } catch (e) {
-    console.error("/api/shipping error:", e);
-    statusMsg.textContent = "送料の計算に失敗しました。時間をおいてお試しください。";
-    btnCard.disabled = true;
-    btnCod.disabled  = true;
-    return;
-  }
-
-  const itemsTotal = Number(shippingInfo.itemsTotal || 0);
-  const shipping   = Number(shippingInfo.shipping   || 0);
-  const region     = shippingInfo.region || "";
-  const totalCard  = itemsTotal + shipping;
-  const totalCod   = itemsTotal + shipping + COD_FEE;
-
-  // ====== 表示（商品） ======
-  itemsEl.textContent = order.items.map(it => {
-    const sub = (Number(it.price) || 0) * (Number(it.qty) || 0);
-    return `・${it.name} × ${it.qty}個 = ${yen(sub)}`;
-  }).join("\n");
-
-  // ====== 表示（住所） ======
-  const addr = order.address;
-  addrEl.textContent =
-    `${addr.postal || ""} ${addr.prefecture || ""}${addr.city || ""}${addr.address1 || ""} ${addr.address2 || ""}\n` +
-    `氏名：${addr.name || ""}\n` +
-    `TEL：${addr.phone || ""}`;
-
-  // ====== 表示（金額） ======
-  summaryEl.textContent =
-    `商品合計：${yen(itemsTotal)}\n` +
-    `送料（${region || "未判定"}）：${yen(shipping)}\n\n` +
-    `クレジット決済：${yen(totalCard)}\n` +
-    `代引き：${yen(totalCod)}（代引き手数料 ${yen(COD_FEE)} 含む）`;
-
-  // ====== クレジット決済（イプシロン） ======
-  btnCard.onclick = async () => {
-    statusMsg.textContent = "決済画面へ遷移します…";
-
-    const payBody = {
-      items: order.items,
-      total: totalCard, // 代引き手数料なし
-      lineUserId:   order.lineUserId   || "",
-      lineUserName: order.lineUserName || "",
-    };
-
+  /**
+   * 保存されている注文データを取得
+   * 期待する形式:
+   * {
+   *   items: [
+   *     { id, name, unitPrice, quantity },
+   *     ...
+   *   ],
+   *   totalAmount: 1234
+   * }
+   */
+  function loadOrderData() {
     try {
-      const res = await fetch("/api/pay", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payBody),
-      });
-      const data = await res.json();
-      if (!data.ok || !data.redirectUrl) {
-        throw new Error(data.error || "pay_failed");
-      }
-      // イプシロンの決済画面へ
-      location.href = data.redirectUrl;
+      const raw =
+        sessionStorage.getItem(STORAGE_KEY) ||
+        localStorage.getItem(STORAGE_KEY);
+
+      if (!raw) return null;
+
+      const data = JSON.parse(raw);
+      if (!data || !Array.isArray(data.items)) return null;
+
+      return {
+        items: data.items,
+        totalAmount: Number(data.totalAmount || 0),
+      };
     } catch (e) {
-      console.error("/api/pay error:", e);
-      statusMsg.textContent = "決済の開始に失敗しました。時間をおいてお試しください。";
+      console.error("注文データの読込に失敗:", e);
+      return null;
     }
-  };
+  }
 
-  // ====== 代引きで注文確定（/api/order/complete） ======
-  btnCod.onclick = async () => {
-    if (!confirm("代引きで注文を確定します。よろしいですか？")) return;
+  let order = loadOrderData();
 
-    const finalTotal = totalCod;
+  // ==============================
+  //  注文内容の描画
+  // ==============================
+  function renderOrder() {
+    if (!order || !order.items.length) {
+      if (orderListEl) {
+        orderListEl.innerHTML =
+          "<p>注文内容が見つかりません。商品一覧に戻ってやり直してください。</p>";
+      }
+      if (confirmBtn) confirmBtn.disabled = true;
+      return;
+    }
+
+    if (orderListEl) {
+      orderListEl.innerHTML = "";
+
+      order.items.forEach((item) => {
+        const row = document.createElement("div");
+        row.className = "order-row";
+        row.textContent = `${item.name || "商品"} × ${item.quantity}個  （${item.unitPrice}円／個）`;
+        orderListEl.appendChild(row);
+      });
+    }
+
+    if (totalEl) {
+      totalEl.textContent = `${order.totalAmount}円（税込）`;
+    }
+  }
+
+  // ==============================
+  //  ステータス表示ユーティリティ
+  // ==============================
+  function setStatus(msg) {
+    if (!statusMsgEl) return;
+    statusMsgEl.textContent = msg || "";
+  }
+
+  // ==============================
+  //  Stripe 決済開始 (/api/pay)
+  // ==============================
+  async function startStripeCheckout() {
+    if (!order || !order.items.length) {
+      alert("注文内容がありません。商品一覧からやり直してください。");
+      return;
+    }
+
+    // /api/pay が期待する形式に変換
     const payload = {
-      items: order.items,
-      itemsTotal,
-      shipping,
-      codFee: COD_FEE,
-      finalTotal,
-      address: order.address,
-      lineUserId:   order.lineUserId   || "",
-      lineUserName: order.lineUserName || "",
-      payment: "cod",        // 支払い方法
-      method:  "delivery",   // 受取方法（配送）
-      region,
-      orderNumber: String(Date.now()),
+      items: order.items.map((it) => ({
+        name: it.name || "商品",
+        unitPrice: Number(it.unitPrice || it.price || 0), // products.js のプロパティ名に合わせてください
+        quantity: Number(it.quantity || 1),
+      })),
+      totalAmount: Number(order.totalAmount || 0),
     };
 
-    try {
-      statusMsg.textContent = "注文を送信しています…";
+    if (!payload.items.length || !payload.totalAmount) {
+      alert("注文データに不備があります。商品一覧からやり直してください。");
+      return;
+    }
 
-      const res = await fetch("/api/order/complete", {
+    try {
+      setStatus("決済を開始しています…");
+      if (confirmBtn) confirmBtn.disabled = true;
+
+      const res = await fetch("/api/pay", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+
+      if (!res.ok) {
+        console.error("決済APIエラー HTTP:", res.status);
+        alert("決済の開始に失敗しました。時間をおいてもう一度お試しください。");
+        setStatus("");
+        if (confirmBtn) confirmBtn.disabled = false;
+        return;
+      }
+
       const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "order_failed");
+      console.log("Stripe /api/pay レスポンス:", data);
 
-      alert("代引きでのご注文を受け付けました。明細はLINEトーク画面をご確認ください。");
-      sessionStorage.removeItem("currentOrder");
-      location.href = "/public/products.html";
+      if (!data || !data.ok || !data.url) {
+        alert("決済の開始に失敗しました。時間をおいてもう一度お試しください。");
+        setStatus("");
+        if (confirmBtn) confirmBtn.disabled = false;
+        return;
+      }
+
+      // Stripe Checkout 画面へ遷移
+      location.href = data.url;
     } catch (e) {
-      console.error("/api/order/complete COD error:", e);
-      statusMsg.textContent = "注文の送信に失敗しました。時間をおいてお試しください。";
+      console.error("決済開始時の例外:", e);
+      alert("通信エラーが発生しました。時間をおいてもう一度お試しください。");
+      setStatus("");
+      if (confirmBtn) confirmBtn.disabled = false;
     }
-  };
+  }
 
+  // ==============================
+  //  イベント設定
+  // ==============================
+  if (confirmBtn) {
+    confirmBtn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      startStripeCheckout();
+    });
+  }
+
+  if (backBtn) {
+    backBtn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      history.back();
+    });
+  }
+
+  // ==============================
+  //  初期処理
+  // ==============================
+  renderOrder();
 })();

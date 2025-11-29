@@ -157,7 +157,6 @@ const STOCK_LOG = path.join(DATA_DIR, "stock.log");
 const EPSILON_NOTIFY_LOG = path.join(DATA_DIR, "epsilon_notify.log");
 
 // 公開静的/アップロード
-const PUBLIC_DIR = path.join(__dirname, "public");
 const UPLOAD_DIR = path.join(PUBLIC_DIR, "uploads");
 
 // ====== ディレクトリ自動作成 ======

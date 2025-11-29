@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>支払い方法の選択</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #f7f7f7;
+      color: #333;
+      text-align: center;
+    }
+    h1 {
+      font-size: 18px;
+      margin-bottom: 16px;
+    }
+    p {
+      font-size: 14px;
+      margin-bottom: 20px;
+      color: #555;
+      line-height: 1.6;
+    }
+    .btn {
+      display: block;
+      width: 100%;
+      max-width: 360px;
+      margin: 8px auto;
+      padding: 14px;
+      border-radius: 999px;
+      border: none;
+      font-size: 15px;
+      cursor: pointer;
+    }
+    #cardBtn {
+      background: #06c755;
+      color: #fff;
+    }
+    #codBtn {
+      background: #ff9500;
+      color: #fff;
+    }
+    #backBtn {
+      background: #ccc;
+      color: #333;
+      margin-top: 16px;
+    }
+    #statusMsg {
+      margin-top: 12px;
+      font-size: 13px;
+      color: #666;
+      white-space: pre-line;
+    }
+  </style>
+</head>
+<body>
+  <h1>支払い方法を選択してください</h1>
+  <p>
+    ご希望のお支払い方法をお選びください。<br>
+    このあと「注文内容の確認」画面へ進みます。
+  </p>
+
+  <button id="cardBtn" class="btn">クレジットカード決済（Stripe）</button>
+  <button id="codBtn" class="btn">代金引換</button>
+
+  <button id="backBtn" class="btn">戻る</button>
+
+  <div id="statusMsg"></div>
+
+  <script src="./payment-select.js"></script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>カード決済の確認</title>
+<style>
+  body { font-family: system-ui; padding: 20px; background: #f7f7f7; }
+  h1 { text-align: center; font-size: 20px; margin-bottom: 12px; }
+  #orderList { background: #fff; padding: 12px; border-radius: 8px; margin-bottom: 16px; }
+  button {
+    width: 100%; margin-top: 12px; padding: 14px; border-radius: 8px;
+    border: none; font-size: 16px; cursor: pointer;
+  }
+  #confirmCard { background: #06c755; color: white; }
+</style>
+</head>
+<body>
+
+<h1>カード決済の確認</h1>
+
+<div id="orderList"></div>
+<div><b>お支払い金額：</b><span id="cardTotal">0円</span></div>
+
+<button id="confirmCard">クレジットカードで支払う</button>
+
+<script src="./confirm-card.js"></script>
+
+</body>
+</html>

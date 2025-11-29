@@ -1,4 +1,4 @@
-// /public/confirm.js  — Stripe Checkout 版
+// /public/confirm.js — Stripe Checkout 版（複数形式の注文データに対応）
 
 (function () {
   "use strict";
@@ -9,38 +9,149 @@
   const backBtn     = document.getElementById("backBtn");
   const statusMsgEl = document.getElementById("statusMsg");
 
-  const STORAGE_KEY = "orderData";  // products.js 側と合わせること
+  const STORAGE_KEYS = [
+    "orderData",      // 私が前に提案したキー
+    "miniappOrder",   // 以前のミニアプリ用によく使うキー名
+    "currentOrder",
+    "liffOrder"
+  ];
 
-  function loadOrderData() {
-    try {
-      const raw =
-        sessionStorage.getItem(STORAGE_KEY) ||
-        localStorage.getItem(STORAGE_KEY);
-
-      if (!raw) return null;
-
-      const data = JSON.parse(raw);
-      if (!data || !Array.isArray(data.items)) return null;
-
-      return {
-        items: data.items,
-        totalAmount: Number(data.totalAmount || 0),
-      };
-    } catch (e) {
-      console.error("注文データの読込に失敗:", e);
-      return null;
-    }
+  function setStatus(msg) {
+    if (!statusMsgEl) return;
+    statusMsgEl.textContent = msg || "";
   }
 
-  let order = loadOrderData();
+  // ---- 注文データを sessionStorage / localStorage から読む ----
+  function loadRawData() {
+    for (const key of STORAGE_KEYS) {
+      try {
+        const raw =
+          sessionStorage.getItem(key) ||
+          localStorage.getItem(key);
+        if (!raw) continue;
 
-  function renderOrder() {
-    if (!order || !order.items.length) {
-      if (orderListEl) {
-        orderListEl.innerHTML =
-          "<p>注文内容が見つかりません。商品一覧に戻ってやり直してください。</p>";
+        const data = JSON.parse(raw);
+        if (!data) continue;
+
+        console.log("confirm.js: 読み込んだ注文データキー:", key, data);
+        return { key, data };
+      } catch (e) {
+        console.warn("confirm.js: JSON parse 失敗", e);
       }
-      if (confirmBtn) confirmBtn.disabled = true;
+    }
+    return null;
+  }
+
+  // ---- いろんな形のデータを正規化する ----
+  function normalizeOrder(raw) {
+    if (!raw || !raw.data) return null;
+    const src = raw.data;
+
+    let items = [];
+    let totalAmount = 0;
+
+    // パターン1: { items: [...], totalAmount }
+    if (Array.isArray(src.items)) {
+      items = src.items.slice();
+      totalAmount =
+        Number(src.totalAmount || src.itemsTotal || src.total || 0) || 0;
+    }
+
+    // パターン2: { cart: [...], itemsTotal }
+    if (!items.length && Array.isArray(src.cart)) {
+      items = src.cart.slice();
+      totalAmount =
+        Number(src.itemsTotal || src.totalAmount || src.total || 0) || 0;
+    }
+
+    if (!items.length) return null;
+
+    // アイテムを { id, name, unitPrice, quantity } に揃える
+    const normItems = [];
+    let calcTotal = 0;
+
+    for (const it of items) {
+      if (!it) continue;
+
+      const id =
+        it.id ||
+        it.productId ||
+        it.code ||
+        "";
+
+      const name =
+        it.name ||
+        it.productName ||
+        "商品";
+
+      const unitPrice =
+        Number(
+          it.unitPrice ||
+          it.price ||
+          it.unit_price ||
+          it.unit ||
+          0
+        ) || 0;
+
+      const quantity =
+        Number(
+          it.quantity ||
+          it.qty ||
+          it.count ||
+          it.num ||
+          0
+        ) || 0;
+
+      if (quantity <= 0 || unitPrice < 0) continue;
+
+      normItems.push({ id, name, unitPrice, quantity });
+      calcTotal += unitPrice * quantity;
+    }
+
+    if (!normItems.length) return null;
+
+    if (!totalAmount || totalAmount <= 0) {
+      totalAmount = calcTotal;
+    }
+
+    return {
+      items: normItems,
+      totalAmount
+    };
+  }
+
+  let order = null;
+
+  function initOrder() {
+    const raw = loadRawData();
+    if (!raw) {
+      showNoOrder();
+      return;
+    }
+
+    const normalized = normalizeOrder(raw);
+    if (!normalized || !normalized.items.length) {
+      showNoOrder();
+      return;
+    }
+
+    order = normalized;
+    renderOrder();
+  }
+
+  function showNoOrder() {
+    if (orderListEl) {
+      orderListEl.innerHTML =
+        "<p>商品内容が確認できません。<br>商品一覧に戻って、もう一度やり直してください。</p>";
+    }
+    if (confirmBtn) confirmBtn.disabled = true;
+    if (totalEl) totalEl.textContent = "0";
+  }
+
+  // ---- 画面に注文内容を表示 ----
+  function renderOrder() {
+    if (!order || !order.items || !order.items.length) {
+      showNoOrder();
       return;
     }
 
@@ -49,32 +160,33 @@
       order.items.forEach((item) => {
         const row = document.createElement("div");
         row.className = "order-row";
+        const unit = Number(item.unitPrice || 0);
+        const qty  = Number(item.quantity || 0);
+        const lineTotal = unit * qty;
+
         row.textContent =
-          `${item.name || "商品"} × ${item.quantity}個 （${item.unitPrice || item.price}円／個）`;
+          `${item.name || "商品"} × ${qty}個 （${unit}円／個 = ${lineTotal}円）`;
         orderListEl.appendChild(row);
       });
     }
 
     if (totalEl) {
-      totalEl.textContent = `${order.totalAmount}円（税込）`;
+      totalEl.textContent = String(order.totalAmount || 0);
     }
   }
 
-  function setStatus(msg) {
-    if (!statusMsgEl) return;
-    statusMsgEl.textContent = msg || "";
-  }
-
+  // ---- Stripe Checkout を開始 ----
   async function startStripeCheckout() {
-    if (!order || !order.items.length) {
+    if (!order || !order.items || !order.items.length) {
       alert("注文内容がありません。商品一覧からやり直してください。");
       return;
     }
 
     const payload = {
       items: order.items.map((it) => ({
+        id: it.id,
         name: it.name || "商品",
-        unitPrice: Number(it.unitPrice || it.price || 0),
+        unitPrice: Number(it.unitPrice || 0),
         quantity: Number(it.quantity || 1),
       })),
       totalAmount: Number(order.totalAmount || 0),
@@ -123,20 +235,21 @@
     }
   }
 
+  // ---- イベントハンドラ ----
   if (confirmBtn) {
-    confirmBtn.addEventListener("click", (ev) => {
+    confirmBtn.addEventListener("click", function (ev) {
       ev.preventDefault();
       startStripeCheckout();
     });
   }
 
   if (backBtn) {
-    backBtn.addEventListener("click", (ev) => {
+    backBtn.addEventListener("click", function (ev) {
       ev.preventDefault();
       history.back();
     });
   }
 
-  renderOrder();
+  // 初期化
+  initOrder();
 })();
-

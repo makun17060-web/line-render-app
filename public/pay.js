@@ -1,131 +1,140 @@
-// /public/pay.js
+// public/pay.js — Stripe専用・送料込み計算版
+
 (async function () {
   const $ = (id) => document.getElementById(id);
 
-  const itemsArea    = $("payItemsArea");
-  const elItemsTotal = $("payItemsTotal");
-  const elShipping   = $("payShipping");
-  const elFinalTotal = $("payFinalTotal");
-  const statusMsg    = $("payStatusMsg");
-  const payBtn       = $("payBtn");
-  const backBtn      = $("backToConfirmBtn");
+  const itemsBox = $("itemsBox");
+  const itemsTotalText = $("itemsTotalText");
+  const shippingText = $("shippingText");
+  const finalTotalText = $("finalTotalText");
+  const payBtn = $("payBtn");
 
-  payBtn.disabled = true;
+  let orderData = null;
+  let lineUserId = "";
+  let lineUserName = "";
 
-  function yen(n){ return `${Number(n||0).toLocaleString("ja-JP")}円`; }
-  function escapeHtml(s){
-    return String(s||"")
-      .replaceAll("&","&amp;").replaceAll("<","&lt;")
-      .replaceAll(">","&gt;").replaceAll('"',"&quot;")
-      .replaceAll("'","&#039;");
+  function yen(n) {
+    return `${Number(n || 0).toLocaleString("ja-JP")}円`;
   }
 
-  function readOrder() {
-    try { return JSON.parse(sessionStorage.getItem("currentOrder") || "{}"); }
-    catch { return {}; }
+  // ======================
+  // 1) LIFF 初期化
+  // ======================
+  async function initLiff() {
+    const conf = await fetch("/api/liff/config").then((r) => r.json());
+    if (!conf?.liffId) throw new Error("LIFF ID が取得できません");
+
+    await liff.init({ liffId: conf.liffId });
+    if (!liff.isLoggedIn()) liff.login();
+
+    const prof = await liff.getProfile();
+    lineUserId = prof.userId;
+    lineUserName = prof.displayName;
   }
 
-  const order = readOrder();
-  const items = Array.isArray(order.items) ? order.items : [];
-
-  if (!items.length) {
-    itemsArea.innerHTML = `<div class="empty">注文データが見つかりません。③からやり直してください。</div>`;
-    statusMsg.textContent = "注文データなし";
-    return;
-  }
-
-  // render items
-  itemsArea.innerHTML = items.map(it=>{
-    const lineTotal = (it.price||0)*(it.qty||0);
-    return `
-      <div class="row">
-        <div class="name">${escapeHtml(it.name)}</div>
-        <div class="qty">×${it.qty}</div>
-        <div class="price">${yen(lineTotal)}</div>
-      </div>
-    `;
-  }).join("");
-
-  const itemsTotal = Number(order.itemsTotal || items.reduce((s,it)=>s+(it.price||0)*(it.qty||0),0));
-  const shipping   = Number(order.shipping || 0);
-  const finalTotal = Number(order.finalTotal || (itemsTotal + shipping));
-
-  elItemsTotal.textContent = yen(itemsTotal);
-  elShipping.textContent   = order.region ? `${yen(shipping)}（${order.region}）` : yen(shipping);
-  elFinalTotal.textContent = yen(finalTotal);
-
-  // LIFF profile
-  let lineUserId = order.lineUserId || "";
-  let lineUserName = order.lineUserName || "";
-
-  async function initLiffProfile() {
+  // ======================
+  // 2) カート取得（sessionStorage）
+  // ======================
+  function loadCart() {
     try {
-      const confRes = await fetch("/api/liff/config", { cache:"no-store" });
-      const conf = await confRes.json();
-      const liffId = (conf?.liffId || "").trim();
-      if (!liffId) return;
-
-      await liff.init({ liffId });
-
-      if (!liff.isLoggedIn()) {
-        liff.login();
-        return;
-      }
-
-      const prof = await liff.getProfile();
-      lineUserId = prof.userId || "";
-      lineUserName = prof.displayName || "";
-    } catch {}
-  }
-
-  await initLiffProfile();
-
-  if (!lineUserId) {
-    statusMsg.textContent = "LINEアプリ内で開いてください。";
-    payBtn.disabled = true;
-    return;
-  }
-
-  payBtn.disabled = false;
-
-  async function startPay() {
-    payBtn.disabled = true;
-    statusMsg.textContent = "決済ページを準備しています…";
-
-    const payload = {
-      ...order,
-      items,
-      itemsTotal,
-      shipping,
-      total: finalTotal,
-      finalTotal,
-      lineUserId,
-      lineUserName
-    };
-
-    try {
-      const res = await fetch("/api/pay", {
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (!data?.ok || !data.redirectUrl) throw new Error(data?.error || "pay_failed");
-
-      sessionStorage.setItem("currentOrder", JSON.stringify(payload));
-
-      statusMsg.textContent = "イプシロン決済へ移動します…";
-      location.href = data.redirectUrl;
-
-    } catch (e) {
-      console.log(e);
-      statusMsg.textContent =
-        "決済の開始に失敗しました。\n通信状況をご確認ください。\n" +
-        (e?.message ? `詳細: ${e.message}` : "");
-      payBtn.disabled = false;
+      const raw = sessionStorage.getItem("IS_CART");
+      const arr = JSON.parse(raw || "[]");
+      return Array.isArray(arr) ? arr : [];
+    } catch {
+      return [];
     }
   }
 
-  payBtn.addEventListener("click", startPay);
-  backBtn.addEventListener("click", ()=>history.back());
+  // ======================
+  // 3) 商品表示
+  // ======================
+  function renderItems(items) {
+    itemsBox.innerHTML = items
+      .map(
+        (it) => `
+        <div class="row">
+          <span>${it.name} × ${it.qty}</span>
+          <span>${yen(it.price * it.qty)}</span>
+        </div>`
+      )
+      .join("");
+  }
+
+  // ======================
+  // 4) 住所 + 送料計算 取得
+  // ======================
+  async function loadAddressAndShipping(items) {
+    const url = `/api/liff/address/me?userId=${encodeURIComponent(lineUserId)}`;
+    const addr = await fetch(url).then((r) => r.json());
+
+    const shippingRes = await fetch("/api/shipping", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        items,
+        address: addr?.address || {},
+      }),
+    });
+
+    const ship = await shippingRes.json();
+    if (!ship.ok) throw new Error("送料計算に失敗しました");
+
+    const itemsTotal = Number(ship.itemsTotal || 0);
+    const shipping = Number(ship.shipping || 0);
+    const codFee = 0;
+    const finalTotal = itemsTotal + shipping + codFee;
+
+    // ---- 表示 ----
+    itemsTotalText.textContent = yen(itemsTotal);
+    shippingText.textContent = yen(shipping);
+    finalTotalText.textContent = `${yen(finalTotal)}（商品合計 + 送料）`;
+
+    orderData = {
+      items,
+      itemsTotal,
+      shipping,
+      codFee,
+      finalTotal,
+      address: addr?.address || null,
+      lineUserId,
+      lineUserName,
+      payment: "stripe_card",
+      method: "delivery",
+    };
+  }
+
+  // ======================
+  // 5) Stripe Checkout 開始
+  // ======================
+  async function startStripeCheckout() {
+    if (!orderData) return alert("注文情報がありません");
+
+    const res = await fetch("/api/pay-stripe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(orderData),
+    });
+
+    const data = await res.json();
+    if (!data.ok) {
+      alert("Stripe決済の準備に失敗しました");
+      console.error(data);
+      return;
+    }
+
+    // Stripe チェックアウトへ遷移
+    location.href = data.checkoutUrl;
+  }
+
+  // ======================
+  // MAIN
+  // ======================
+  await initLiff();
+
+  const items = loadCart();
+  renderItems(items);
+
+  await loadAddressAndShipping(items);
+
+  payBtn.addEventListener("click", startStripeCheckout);
 })();

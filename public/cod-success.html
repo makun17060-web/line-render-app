@@ -2,80 +2,52 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>代引き注文が完了しました</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ご注文が完了しました</title>
   <style>
     body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       margin: 0;
-      padding: 24px;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       background: #f7f7f7;
-      color: #333;
-      text-align: center;
+      color: #222;
     }
-    .card {
+    .wrap {
       max-width: 480px;
-      margin: 40px auto;
-      background: #fff;
-      border-radius: 12px;
-      padding: 24px 16px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+      margin: 0 auto;
+      padding: 24px 16px 40px;
+      text-align: center;
     }
     h1 {
       font-size: 20px;
-      margin-bottom: 8px;
+      margin-bottom: 12px;
     }
     p {
       font-size: 14px;
       line-height: 1.6;
-      margin: 8px 0;
+      margin: 6px 0;
     }
-    #status {
-      margin-top: 12px;
-      font-size: 14px;
-      color: #444;
-      white-space: pre-line;
+    .thanks {
       font-weight: bold;
+      margin-top: 12px;
+      margin-bottom: 16px;
     }
-    button {
-      margin-top: 16px;
-      padding: 10px 18px;
-      font-size: 14px;
-      border-radius: 999px;
-      border: none;
-      cursor: pointer;
-    }
-    #closeBtn {
-      background: #06c755;
-      color: #fff;
+    .note {
+      font-size: 12px;
+      color: #666;
+      margin-top: 12px;
     }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>代引き注文を受け付けました</h1>
-    <p>ご注文ありがとうございます。</p>
-    <p>LINEトーク画面に明細が届きます。</p>
-
-    <div id="status">この画面を閉じてください。</div>
-
-    <button id="closeBtn">画面を閉じる</button>
+  <div class="wrap">
+    <h1>ご注文が完了しました</h1>
+    <p class="thanks">代金引換でのご注文を承りました。</p>
+    <p>LINEのトーク画面に戻って、ご注文内容のメッセージをご確認ください。</p>
+    <p class="note">
+      ※この画面を閉じていただいて大丈夫です。<br>
+      （画面右上の「×」ボタンや戻るボタンで閉じてください）
+    </p>
   </div>
-
-  <script>
-    document.getElementById("closeBtn").addEventListener("click", () => {
-      // LIFF 内なら閉じる
-      if (window.liff && typeof liff.closeWindow === "function") {
-        try {
-          liff.closeWindow();
-          return;
-        } catch (e) {
-          console.warn("liff.closeWindow error:", e);
-        }
-      }
-      // 通常ブラウザなら戻る
-      history.back();
-    });
-  </script>
 </body>
 </html>

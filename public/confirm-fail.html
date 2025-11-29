@@ -2,107 +2,48 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>決済に失敗しました | 手造りえびせんべい 磯屋</title>
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>決済に失敗しました</title>
   <style>
     body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
       margin: 0;
       padding: 0;
-      background: #fafafa;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f7f7f7;
+      color: #222;
     }
-    header {
-      background: #b22222;
-      color: #fff;
-      padding: 14px 16px;
-      text-align: center;
-      font-size: 18px;
-    }
-    .container {
-      padding: 16px;
-      max-width: 600px;
+    .wrap {
+      max-width: 480px;
       margin: 0 auto;
+      padding: 24px 16px 40px;
       text-align: center;
     }
     h1 {
       font-size: 20px;
-      margin: 16px 0 8px;
-      color: #333;
+      margin-bottom: 12px;
+      color: #b00020;
     }
     p {
       font-size: 14px;
-      color: #555;
       line-height: 1.6;
+      margin: 6px 0;
     }
-    .btn-main {
-      display: inline-block;
-      padding: 12px 24px;
-      margin-top: 20px;
-      border-radius: 6px;
-      border: none;
-      font-size: 15px;
-      font-weight: bold;
-      background: #b22222;
-      color: #fff;
-      text-decoration: none;
-    }
-    footer {
-      margin-top: 24px;
-      font-size: 11px;
-      color: #777;
-      text-align: center;
+    .note {
+      font-size: 12px;
+      color: #666;
+      margin-top: 12px;
     }
   </style>
 </head>
 <body>
-<header>
-  手造りえびせんべい 磯屋
-</header>
-
-<div class="container">
-  <h1>決済に失敗しました</h1>
-  <p>
-    クレジットカード決済が正常に完了しませんでした。<br>
-    お手数ですが、再度お試しいただくか、別のカードをご利用ください。
-  </p>
-  <p>
-    何度も失敗する場合は、<br>
-    LINE の「お問い合わせ」またはお電話にてご連絡ください。
-  </p>
-
-  <button class="btn-main" id="closeBtn">LINEに戻る</button>
-
-  <footer>
-    © 手造りえびせんべい 磯屋
-  </footer>
-</div>
-
-<script>
-  const LIFF_ID = "YOUR_LIFF_ID_HERE";
-
-  async function initLiff() {
-    try {
-      await liff.init({ liffId: LIFF_ID });
-    } catch (e) {
-      console.log("LIFF init error", e);
-    }
-  }
-
-  initLiff();
-
-  document.getElementById("closeBtn").addEventListener("click", () => {
-    try {
-      if (window.liff && liff.isInClient()) {
-        liff.closeWindow();
-      } else {
-        history.back();
-      }
-    } catch (e) {
-      console.log(e);
-      history.back();
-    }
-  });
-</script>
+  <div class="wrap">
+    <h1>決済に失敗しました</h1>
+    <p>クレジットカード決済がキャンセルされたか、エラーが発生しました。</p>
+    <p>お手数ですが、LINEのトーク画面に戻り、もう一度お試しください。</p>
+    <p class="note">
+      ※画面右上の「×」ボタンや戻るボタンで<br>
+      この画面を閉じてください。
+    </p>
+  </div>
 </body>
 </html>

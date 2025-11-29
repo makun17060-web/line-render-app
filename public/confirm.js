@@ -1,4 +1,6 @@
-// /public/confirm.js — Stripe Checkout 版（/api/pay-stripe + /api/order/complete 連携）
+// /public/confirm.js — Stripe Checkout 版
+// - /api/pay-stripe に合わせたペイロードを作成
+// - lastStripeOrder を localStorage に保存（confirm-success.html から /api/order/complete で使用）
 
 (function () {
   "use strict";
@@ -9,9 +11,10 @@
   const backBtn     = document.getElementById("backBtn");
   const statusMsgEl = document.getElementById("statusMsg");
 
+  // どのキーに注文データが保存されているか分からないので、よく使いそうなキーを総当り
   const STORAGE_KEYS = [
-    "orderData",      // 私が前に提案したキー
-    "miniappOrder",   // 以前のミニアプリ用によく使うキー名
+    "orderData",
+    "miniappOrder",
     "currentOrder",
     "liffOrder"
   ];
@@ -120,10 +123,10 @@
     const finalTotal =
       Number(src.finalTotal || 0) || (totalAmount + shipping + codFee);
 
-    // アドレスやユーザー情報らしきものも拾っておく（あれば）
+    // アドレスやユーザー情報らしきものも拾っておく（元データにあれば）
     const address = src.address || null;
-    const lineUserId   = src.lineUserId   || "";
-    const lineUserName = src.lineUserName || "";
+    const lineUserId   = src.lineUserId   || src.userId   || "";
+    const lineUserName = src.lineUserName || src.userName || "";
 
     return {
       items: normItems,
@@ -188,7 +191,7 @@
     }
 
     if (totalEl) {
-      // 送料込みの最終合計を表示したい場合は finalTotal にしてもOK
+      // 送料込みの最終合計を表示したい場合は finalTotal を優先
       totalEl.textContent = String(order.finalTotal || order.totalAmount || 0);
     }
   }
@@ -200,11 +203,11 @@
       return;
     }
 
-    // サーバーの /api/pay-stripe 用のペイロードに変換
+    // サーバーの /api/pay-stripe 用の items に変換
     const itemsForApi = order.items.map((it) => ({
       id:   it.id,
       name: it.name || "商品",
-      price: Number(it.unitPrice || 0),
+      price: Number(it.unitPrice || 0),   // server.js では price × qty を使用
       qty:   Number(it.quantity || 1),
     }));
 
@@ -213,8 +216,9 @@
     const codFee     = Number(order.codFee     || 0);
     const finalTotal = Number(order.finalTotal || itemsTotal + shipping + codFee);
 
+    // server.js の /api/pay-stripe が想定している形
     const payload = {
-      lineUserId:   order.lineUserId   || "",     // 空でもOK（空だと注文者への通知は飛ばない）
+      lineUserId:   order.lineUserId   || "",     // 空だと注文者へのLINE通知は飛びません
       lineUserName: order.lineUserName || "",
       items:       itemsForApi,
       itemsTotal,
@@ -233,7 +237,7 @@
       setStatus("決済を開始しています…");
       if (confirmBtn) confirmBtn.disabled = true;
 
-      // ★ 成功画面から /api/order/complete を呼ぶために保存
+      // ★ 決済成功後、confirm-success.html から /api/order/complete を呼ぶために保存
       localStorage.setItem("lastStripeOrder", JSON.stringify(payload));
 
       // ★ エンドポイントは /api/pay-stripe
@@ -254,7 +258,7 @@
       const data = await res.json();
       console.log("Stripe /api/pay-stripe レスポンス:", data);
 
-      // サーバー側は { ok: true, checkoutUrl: session.url } を返す仕様
+      // server.js は { ok: true, checkoutUrl: session.url } を返す
       if (!data || !data.ok || !data.checkoutUrl) {
         alert("決済の開始に失敗しました。時間をおいてもう一度お試しください。");
         setStatus("");

@@ -118,7 +118,8 @@
 
       statusMsg.textContent = "住所を保存しました。確認画面に戻ります…";
       setTimeout(() => {
-        location.href = "/public/confirm.html";
+        location.href = "./payment-select.html";
+
       }, 800);
     } catch (e) {
       console.error("/api/liff/address save error:", e);

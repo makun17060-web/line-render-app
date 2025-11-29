@@ -1181,12 +1181,13 @@ app.get("/api/liff/config", (_req, res) =>
   res.json({ liffId: LIFF_ID_DIRECT_ADDRESS })
 );
 
-// ====== 決済：/api/pay（イプシロン専用） ======
-app.post("/api/pay", async (req, res) => {
-  return payWithEpsilon(req, res);
-});
+// ====== 決済：/api/pay（イプシロン専用・今は未使用） ======
+// ※ Stripe 版 /api/pay を使うため、ここはコメントアウト
+// app.post("/api/pay", async (req, res) => {
+//   return payWithEpsilon(req, res);
+// });
 
-// （互換）以前のURLも残すならこれ
+// （互換）イプシロンを使いたいときだけ /api/pay-epsilon を叩く
 app.post("/api/pay-epsilon", (req, res) => payWithEpsilon(req, res));
 
 // ====== イプシロン決済（開始処理） ======

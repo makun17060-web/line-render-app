@@ -3,250 +3,125 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>決済完了</title>
+  <title>ご注文が完了しました</title>
   <style>
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       margin: 0;
-      padding: 24px;
+      padding: 24px 16px;
       background: #f7f7f7;
       color: #333;
       text-align: center;
     }
     .card {
       max-width: 480px;
-      margin: 40px auto;
+      margin: 0 auto;
       background: #fff;
       border-radius: 12px;
       padding: 24px 16px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
     }
     h1 {
       font-size: 20px;
-      margin-bottom: 8px;
+      margin: 0 0 8px;
     }
     p {
       font-size: 14px;
       line-height: 1.6;
-      margin: 8px 0;
-    }
-    #status {
-      margin-top: 12px;
-      font-size: 13px;
-      color: #666;
+      margin: 4px 0;
       white-space: pre-line;
     }
-    button {
-      margin-top: 16px;
-      padding: 10px 18px;
-      font-size: 14px;
+    #backBtn {
+      margin-top: 20px;
+      width: 100%;
+      max-width: 320px;
+      padding: 12px;
       border-radius: 999px;
       border: none;
+      font-size: 16px;
+      font-weight: 600;
+      background: #06c755; /* LINEっぽい緑 */
+      color: #fff;
       cursor: pointer;
     }
-    #backLineBtn {
-      background: #06c755;
-      color: #fff;
+    #backBtn:active {
+      opacity: 0.85;
+    }
+    #note {
+      margin-top: 12px;
+      font-size: 12px;
+      color: #666;
     }
   </style>
 </head>
 <body>
+
   <div class="card">
-    <h1>決済が完了しました</h1>
-    <p>ありがとうございました。ご注文内容をお店に送信しています。</p>
-    <p>しばらくしても LINE に明細が届かない場合は、お店までお問い合わせください。</p>
-    <div id="status">注文情報を送信中です…</div>
-    <button id="backLineBtn">LINEトーク画面に戻る</button>
+    <h1>ご注文ありがとうございました</h1>
+    <p>
+ご注文を受け付けました。
+LINEトークに明細が届いているかご確認ください。
+    </p>
+
+    <button id="backBtn">LINE に戻る</button>
+
+    <p id="note">
+ボタンで戻れない場合は、この画面を閉じて
+LINEアプリに戻ってください。
+    </p>
   </div>
 
+  <!-- LIFF SDK（LINEアプリ内で開いたとき用） -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script>
-    // confirm.js と同じ候補キー
-    const STORAGE_KEYS = [
-      "lastStripeOrder", // 優先
-      "orderData",
-      "miniappOrder",
-      "currentOrder",
-      "liffOrder",
-    ];
+    (function () {
+      "use strict";
 
-    function tryParse(json) {
-      try {
-        return JSON.parse(json);
-      } catch (e) {
-        console.warn("JSON parse error:", e);
-        return null;
-      }
-    }
+      const backBtn = document.getElementById("backBtn");
 
-    // いろんな型の注文データを /api/order/complete 用に正規化
-    function normalizeOrder(raw) {
-      if (!raw) return null;
+      // ★ ここは実際に使っている LIFF ID に合わせて変更してOK
+      //   特に指定がなければ 2008406620-G5j1gjzM のままで動きます。
+      const LIFF_ID = "2008406620-G5j1gjzM";
 
-      // raw.data や raw.order に入っている場合も想定
-      const src = raw.data || raw.order || raw;
+      let inLiff = false;
 
-      let itemsSrc =
-        Array.isArray(src.items) ? src.items :
-        Array.isArray(src.cart)  ? src.cart  :
-        null;
-
-      if (!itemsSrc || !itemsSrc.length) {
-        return null;
-      }
-
-      const items = [];
-      let calcItemsTotal = 0;
-
-      for (const it of itemsSrc) {
-        if (!it) continue;
-
-        const id =
-          it.id ||
-          it.productId ||
-          it.code ||
-          "";
-
-        const name =
-          it.name ||
-          it.productName ||
-          "商品";
-
-        const price =
-          Number(
-            it.price ||
-            it.unitPrice ||
-            it.unit_price ||
-            it.unit ||
-            0
-          ) || 0;
-
-        const qty =
-          Number(
-            it.qty ||
-            it.quantity ||
-            it.count ||
-            it.num ||
-            0
-          ) || 0;
-
-        if (!qty || price < 0) continue;
-
-        items.push({ id, name, price, qty });
-        calcItemsTotal += price * qty;
-      }
-
-      if (!items.length) return null;
-
-      const itemsTotal =
-        Number(src.itemsTotal || src.totalAmount || src.total || 0) || calcItemsTotal;
-
-      const shipping = Number(src.shipping || 0) || 0;
-      const codFee   = Number(src.codFee   || 0) || 0;
-      const finalTotal =
-        Number(src.finalTotal || 0) || (itemsTotal + shipping + codFee);
-
-      const address = src.address || null;
-      const lineUserId   = src.lineUserId   || src.userId   || "";
-      const lineUserName = src.lineUserName || src.userName || "";
-
-      return {
-        items,
-        itemsTotal,
-        shipping,
-        codFee,
-        finalTotal,
-        address,
-        lineUserId,
-        lineUserName,
-      };
-    }
-
-    // localStorage / sessionStorage を総当りして注文データを探す
-    function loadOrderFromStorage() {
-      // 1) lastStripeOrder を最優先
-      const directRaw =
-        localStorage.getItem("lastStripeOrder") ||
-        sessionStorage.getItem("lastStripeOrder");
-      if (directRaw) {
-        const parsed = tryParse(directRaw);
-        if (parsed) {
-          console.log("confirm-success: lastStripeOrder 使用", parsed);
-          // lastStripeOrder はすでに /api/order/complete 用形式の想定なのでほぼそのまま
-          return normalizeOrder({ data: parsed });
-        }
-      }
-
-      // 2) それ以外の候補キーを順に見る
-      for (const key of STORAGE_KEYS) {
-        if (key === "lastStripeOrder") continue;
-        const raw =
-          sessionStorage.getItem(key) ||
-          localStorage.getItem(key);
-        if (!raw) continue;
-
-        const parsed = tryParse(raw);
-        if (!parsed) continue;
-
-        const normalized = normalizeOrder(parsed);
-        if (normalized) {
-          console.log("confirm-success: キー", key, "から注文データを復元:", normalized);
-          return normalized;
-        }
-      }
-
-      return null;
-    }
-
-    async function sendOrderComplete() {
-      const statusEl = document.getElementById("status");
-
-      const order = loadOrderFromStorage();
-      if (!order) {
-        statusEl.textContent =
-          "注文情報が見つかりませんでした。\n" +
-          "LINEのトーク画面に戻って、注文内容をスクリーンショットしてお店にお知らせください。";
-        return;
-      }
-
-      try {
-        const res = await fetch("/api/order/complete", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(order),
-        });
-
-        let data = null;
+      async function initLiff() {
+        if (!window.liff) return;
         try {
-          data = await res.json();
-        } catch (_) {}
-
-        if (res.ok && data && data.ok) {
-          statusEl.textContent =
-            "ご注文内容をお店に送信しました。\nLINEのトーク画面に明細が届きます。";
-        } else {
-          statusEl.textContent =
-            "ご注文内容の送信に失敗しました。\n通信状況をご確認のうえ、必要であればお店までご連絡ください。";
-          console.error("order/complete error:", data);
+          await liff.init({ liffId: LIFF_ID });
+          inLiff = liff.isInClient();
+          console.log("[confirm-success] inLiff:", inLiff);
+        } catch (e) {
+          console.log("[confirm-success] liff.init error:", e);
         }
-      } catch (e) {
-        console.error("order/complete exception:", e);
-        statusEl.textContent =
-          "ご注文内容の送信中にエラーが発生しました。\n必要であればお店までご連絡ください。";
       }
-    }
 
-    window.addEventListener("DOMContentLoaded", () => {
-      sendOrderComplete();
-
-      document.getElementById("backLineBtn").addEventListener("click", () => {
-        // LIFF 内で開いていれば closeWindow、それ以外なら戻る
-        if (window.liff && typeof liff.closeWindow === "function") {
-          liff.closeWindow();
-        } else {
-          history.back();
+      async function backToLine() {
+        try {
+          if (window.liff && inLiff) {
+            // ★ ミニアプリ内ならトーク画面に戻る
+            await liff.closeWindow();
+            return;
+          }
+        } catch (e) {
+          console.log("[confirm-success] closeWindow error:", e);
         }
-      });
-    });
+
+        // ★ LINE外のブラウザで開いている場合のフォールバック
+        //   完全に同じトークには戻れませんが、LINEアプリトップには戻れます。
+        location.href = "https://line.me/R/nv/chat";
+      }
+
+      if (backBtn) {
+        backBtn.addEventListener("click", function (ev) {
+          ev.preventDefault();
+          backToLine();
+        });
+      }
+
+      // 起動時に LIFF が使える環境なら初期化しておく
+      initLiff();
+    })();
   </script>
 </body>
 </html>

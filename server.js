@@ -1127,54 +1127,95 @@ app.get("/api/liff/config", (_req, res) =>
   res.json({ liffId: LIFF_ID_DIRECT_ADDRESS })
 );
 
-// ====== Stripe 決済：/api/pay-stripe ======
+// ====== Stripe 決済（Checkout Session） ======
 app.post("/api/pay-stripe", async (req, res) => {
   try {
-    // 上の方で定義した stripe を利用（STRIPE_SECRET_KEYベース）
+    // 先頭で初期化した stripe を使う想定
     if (!stripe) {
-      return res.status(500).json({
-        ok: false,
-        error: "stripe_not_configured",
-      });
+      console.error("STRIPE_SECRET_KEY が設定されていません");
+      return res
+        .status(500)
+        .json({ ok: false, error: "stripe_not_configured" });
     }
 
     const order = req.body || {};
     const items = Array.isArray(order.items) ? order.items : [];
 
-    const itemsTotal = Number(order.itemsTotal || 0);
-    const shipping   = Number(order.shipping   || 0);
-    const codFee     = Number(order.codFee     || 0);
-    const finalTotal =
-      Number(order.finalTotal || 0) || itemsTotal + shipping + codFee;
-
-    const lineUserId   = order.lineUserId   || "";
-    const lineUserName = order.lineUserName || "";
-    const address      = order.address      || null;
-
     if (!items.length) {
       return res.status(400).json({ ok: false, error: "no_items" });
     }
-    if (!finalTotal || finalTotal <= 0) {
-      return res.status(400).json({ ok: false, error: "invalid_total" });
-    }
+
+    // フロントから送られてきた合計（confirm.js/pay.js 側）
+    const itemsTotal = Number(order.itemsTotal || 0);
+    const shipping   = Number(order.shipping   || 0);
+    const codFee     = Number(order.codFee     || 0); // 今は 0 想定
+    const finalTotal = Number(
+      order.finalTotal || (itemsTotal + shipping + codFee)
+    );
 
     console.log("[pay-stripe] items:", items);
     console.log(
       "[pay-stripe] itemsTotal:", itemsTotal,
-      "shipping:",            shipping,
-      "codFee:",              codFee,
-      "finalTotal:",          finalTotal
+      "shipping:", shipping,
+      "codFee:", codFee,
+      "finalTotal:", finalTotal
     );
 
-    // 1件目の商品名 + 「他」
-    const first = items[0];
-    let itemName = String(first.name || "商品");
-    if (items.length > 1) itemName += " 他";
+    // ===== Stripe に渡す line_items を作成 =====
+    const line_items = [];
 
-    // ベースURL
+    // 商品行
+    for (const it of items) {
+      const unit = Number(it.price) || 0;
+      const qty  = Number(it.qty)   || 0;
+      if (!qty || unit < 0) continue;
+
+      line_items.push({
+        price_data: {
+          currency: "jpy",
+          product_data: {
+            name: String(it.name || it.id || "商品"),
+          },
+          unit_amount: unit, // 例: 300 → 300円
+        },
+        quantity: qty,
+      });
+    }
+
+    // 送料行（あれば）
+    if (shipping > 0) {
+      line_items.push({
+        price_data: {
+          currency: "jpy",
+          product_data: { name: "送料" },
+          unit_amount: shipping,
+        },
+        quantity: 1,
+      });
+    }
+
+    // 代引き手数料行（将来使う場合）
+    if (codFee > 0) {
+      line_items.push({
+        price_data: {
+          currency: "jpy",
+          product_data: { name: "代引き手数料" },
+          unit_amount: codFee,
+        },
+        quantity: 1,
+      });
+    }
+
+    if (!line_items.length) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "no_valid_line_items" });
+    }
+
+    // ベースURL (PUBLIC_BASE_URL優先)
     const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
     const host  = req.headers.host;
-    const base  =
+    const base =
       (process.env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "") ||
       `${proto}://${host}`;
 
@@ -1184,146 +1225,26 @@ app.post("/api/pay-stripe", async (req, res) => {
     console.log("[pay-stripe] success_url:", successUrl);
     console.log("[pay-stripe] cancel_url :", cancelUrl);
 
-    // ★ Stripe Checkout セッション作成（Apple Pay / Google Pay 有効）
+    // ⬇⬇ ここがポイント：automatic_payment_methods は一切渡さない ⬇⬇
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
-      line_items: [
-        {
-          price_data: {
-            currency: "jpy",
-            product_data: { name: itemName },
-            unit_amount: finalTotal, // 商品合計 + 送料 + 手数料
-          },
-          quantity: 1,
-        },
-      ],
+      payment_method_types: ["card"],
+      line_items,
       success_url: successUrl,
-      cancel_url:  cancelUrl,
-      automatic_payment_methods: { enabled: true },
+      cancel_url: cancelUrl,
       metadata: {
-        lineUserId,
-        lineUserName,
+        lineUserId:   order.lineUserId   || "",
+        lineUserName: order.lineUserName || "",
       },
     });
 
     console.log("[pay-stripe] session.id:", session.id);
-
-    // ========= ログ & 明細メッセージ作成 =========
-    const log = {
-      ts: new Date().toISOString(),
-      source: "miniapp-stripe",
-      payment: "card-stripe",
-      items,
-      itemsTotal,
-      shipping,
-      codFee,
-      finalTotal,
-      lineUserId,
-      lineUserName,
-      address,
-      stripeSessionId: session.id,
-    };
-
-    try {
-      fs.appendFileSync(ORDERS_LOG, JSON.stringify(log) + "\n", "utf8");
-    } catch (e) {
-      console.error("ORDERS_LOG write error:", e);
-    }
-
-    const itemsText = items
-      .map(
-        (it) =>
-          `・${it.name} × ${it.qty} = ${yen(
-            (Number(it.price) || 0) * (Number(it.qty) || 0)
-          )}`
-      )
-      .join("\n");
-
-    const addrText = address
-      ? [
-          `住所：${address.postal || address.zip || ""} ${
-            address.prefecture || address.pref || ""
-          }${address.city || ""}${address.address1 || address.addr1 || ""}${
-            address.address2 || address.addr2
-              ? " " + (address.address2 || address.addr2)
-              : ""
-          }`,
-          `氏名：${
-            address.name ||
-            (address.lastName || "") + (address.firstName || "")
-          }`,
-          `TEL：${address.phone || address.tel || ""}`,
-        ].join("\n")
-      : "住所：未登録";
-
-    // 管理者向け
-    const adminMsg =
-      `🧾【Stripe決済 新規注文】\n` +
-      (lineUserId   ? `ユーザーID：${lineUserId}\n`   : "") +
-      (lineUserName ? `お名前：${lineUserName}\n`     : "") +
-      `\n【内容】\n${itemsText}\n` +
-      `\n商品合計：${yen(itemsTotal)}\n` +
-      `送料：${yen(shipping)}\n` +
-      (codFee ? `手数料：${yen(codFee)}\n` : "") +
-      `合計：${yen(finalTotal)}\n` +
-      `\n${addrText}\n` +
-      `\nStripe Session ID：${session.id}`;
-
-    // ユーザー向け
-    const userMsg =
-      "ご注文ありがとうございます。\n" +
-      "このあと表示される Stripe の決済画面でお支払いを完了してください。\n\n" +
-      "【ご注文内容】\n" +
-      itemsText +
-      "\n\n" +
-      `商品合計：${yen(itemsTotal)}\n` +
-      `送料：${yen(shipping)}\n` +
-      (codFee ? `手数料：${yen(codFee)}\n` : "") +
-      `合計：${yen(finalTotal)}\n\n` +
-      addrText;
-
-    // 管理者へ通知
-    try {
-      if (ADMIN_USER_ID) {
-        await client.pushMessage(ADMIN_USER_ID, {
-          type: "text",
-          text: adminMsg,
-        });
-      }
-      if (MULTICAST_USER_IDS.length > 0) {
-        await client.multicast(MULTICAST_USER_IDS, {
-          type: "text",
-          text: adminMsg,
-        });
-      }
-    } catch (e) {
-      console.error("admin push error (stripe):", e?.response?.data || e);
-    }
-
-    // ★ 注文者本人にも明細送信
-    try {
-      if (lineUserId) {
-        await client.pushMessage(lineUserId, {
-          type: "text",
-          text: userMsg,
-        });
-        console.log("user receipt (stripe) push OK:", lineUserId);
-      }
-    } catch (e) {
-      console.error("user receipt (stripe) push error:", e?.response?.data || e);
-    }
-
-    return res.json({
-      ok: true,
-      checkoutUrl: session.url,
-    });
+    return res.json({ ok: true, checkoutUrl: session.url });
   } catch (e) {
     console.error("[pay-stripe] error:", e?.raw || e);
-    return res.status(500).json({
-      ok: false,
-      error: "stripe_error",
-      detail: e?.raw?.message || e.message || String(e),
-    });
+    return res
+      .status(500)
+      .json({ ok: false, error: "stripe_error" });
   }
 });
 

@@ -8,118 +8,123 @@
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       margin: 0;
-      padding: 12px;
+      padding: 16px;
       background: #f7f7f7;
-      color: #222;
+    }
+    .container {
+      max-width: 480px;
+      margin: 0 auto;
+      background: #fff;
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
     h1 {
       font-size: 18px;
-      margin: 0 0 10px;
+      margin: 0 0 8px;
     }
-    .card {
-      background: #fff;
-      border-radius: 8px;
-      padding: 10px;
-      margin-bottom: 10px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    p {
+      margin: 0 0 6px;
+      font-size: 13px;
+      color: #555;
     }
-    .row {
+    .section-title {
+      margin-top: 12px;
+      margin-bottom: 4px;
+      font-weight: 600;
+      font-size: 14px;
+    }
+    #itemsBox {
+      margin-bottom: 8px;
+      border: 1px solid #eee;
+      border-radius: 6px;
+      padding: 8px;
+      background: #fafafa;
+    }
+    .summary-row {
       display: flex;
       justify-content: space-between;
       font-size: 14px;
-      margin-bottom: 4px;
-    }
-    .row strong {
-      font-weight: 600;
-    }
-    #itemsBox > div {
-      display: flex;
-      justify-content: space-between;
-      font-size: 13px;
-      margin-bottom: 4px;
-    }
-    #itemsBox span.name {
-      flex: 1 1 auto;
-      margin-right: 4px;
-      word-break: break-all;
-    }
-    #itemsBox span.qty {
-      flex: 0 0 auto;
-      margin-left: 4px;
-      white-space: nowrap;
-    }
-    #totalBox .label {
-      font-weight: 600;
-    }
-    #status {
-      font-size: 12px;
-      color: #d00;
       margin-top: 4px;
-      min-height: 1.2em;
+    }
+    .summary-row.total {
+      font-weight: 700;
+      margin-top: 8px;
+      border-top: 1px dashed #ccc;
+      padding-top: 6px;
+    }
+    .status {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #666;
       white-space: pre-line;
     }
     .btn-area {
-      margin-top: 14px;
       display: flex;
+      flex-direction: column;
       gap: 8px;
+      margin-top: 16px;
     }
-    button {
-      flex: 1 1 auto;
-      padding: 10px;
+    .btn-area button {
+      display: block;
+      width: 100%;
+      padding: 12px;
       border-radius: 6px;
       border: none;
-      font-size: 14px;
+      font-size: 15px;
+      font-weight: 600;
       cursor: pointer;
     }
     #payButton {
       background: #06C755;
       color: #fff;
-      font-weight: 600;
     }
-    #payButton:disabled {
-      opacity: 0.6;
-      cursor: default;
+    #codButton {
+      background: #ff9900;
+      color: #fff;
     }
     #cancelButton {
-      background: #e0e0e0;
+      background: #eee;
       color: #333;
     }
   </style>
 </head>
 <body>
-  <h1>ご注文内容の確認</h1>
+  <div class="container">
+    <h1>ご注文内容の確認</h1>
+    <p>内容をご確認のうえ、支払い方法を選択してください。</p>
 
-  <!-- 商品一覧 -->
-  <div class="card">
-    <h2 style="font-size:15px;margin:0 0 4px;">商品一覧</h2>
-    <div id="itemsBox"></div>
-  </div>
+    <div class="section-title">商品一覧</div>
+    <div id="itemsBox">
+      <!-- JS（pay.js）で商品行を埋め込み -->
+    </div>
 
-  <!-- 合計金額 -->
-  <div class="card" id="totalBox">
-    <h2 style="font-size:15px;margin:0 0 4px;">合計金額</h2>
-    <div class="row">
+    <div class="section-title">金額</div>
+    <div class="summary-row">
       <span>商品合計</span>
-      <span id="itemsTotalText"><strong>-</strong></span>
+      <span id="itemsTotalText">-</span>
     </div>
-    <div class="row">
+    <div class="summary-row">
       <span>送料</span>
-      <span id="shippingText"><strong>-</strong></span>
+      <span id="shippingText">-</span>
     </div>
-    <div class="row">
-      <span class="label">お支払い金額（商品合計 + 送料）</span>
-      <span id="finalTotalText"><strong>-</strong></span>
+    <div class="summary-row total">
+      <span>お支払い合計</span>
+      <span id="finalTotalText">-</span>
     </div>
-    <div id="status"></div>
+
+    <div id="status" class="status"></div>
+
+    <div class="btn-area">
+      <button id="payButton" type="button">Stripeで支払う（クレジットカード）</button>
+      <button id="codButton" type="button">代引きで支払う（現金）</button>
+      <button id="cancelButton" type="button">キャンセル</button>
+    </div>
   </div>
 
-  <div class="btn-area">
-    <button id="payButton" type="button">Stripeで支払う</button>
-    <button id="cancelButton" type="button">キャンセル</button>
-  </div>
-
-  <!-- LIFF SDK と支払いスクリプト -->
+  <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <!-- 決済ロジック -->
   <script src="/public/pay.js"></script>
 </body>
 </html>

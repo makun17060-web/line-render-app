@@ -60,17 +60,155 @@
   </div>
 
   <script>
+    // confirm.js と同じ候補キー
+    const STORAGE_KEYS = [
+      "lastStripeOrder", // 優先
+      "orderData",
+      "miniappOrder",
+      "currentOrder",
+      "liffOrder",
+    ];
+
+    function tryParse(json) {
+      try {
+        return JSON.parse(json);
+      } catch (e) {
+        console.warn("JSON parse error:", e);
+        return null;
+      }
+    }
+
+    // いろんな型の注文データを /api/order/complete 用に正規化
+    function normalizeOrder(raw) {
+      if (!raw) return null;
+
+      // raw.data や raw.order に入っている場合も想定
+      const src = raw.data || raw.order || raw;
+
+      let itemsSrc =
+        Array.isArray(src.items) ? src.items :
+        Array.isArray(src.cart)  ? src.cart  :
+        null;
+
+      if (!itemsSrc || !itemsSrc.length) {
+        return null;
+      }
+
+      const items = [];
+      let calcItemsTotal = 0;
+
+      for (const it of itemsSrc) {
+        if (!it) continue;
+
+        const id =
+          it.id ||
+          it.productId ||
+          it.code ||
+          "";
+
+        const name =
+          it.name ||
+          it.productName ||
+          "商品";
+
+        const price =
+          Number(
+            it.price ||
+            it.unitPrice ||
+            it.unit_price ||
+            it.unit ||
+            0
+          ) || 0;
+
+        const qty =
+          Number(
+            it.qty ||
+            it.quantity ||
+            it.count ||
+            it.num ||
+            0
+          ) || 0;
+
+        if (!qty || price < 0) continue;
+
+        items.push({ id, name, price, qty });
+        calcItemsTotal += price * qty;
+      }
+
+      if (!items.length) return null;
+
+      const itemsTotal =
+        Number(src.itemsTotal || src.totalAmount || src.total || 0) || calcItemsTotal;
+
+      const shipping = Number(src.shipping || 0) || 0;
+      const codFee   = Number(src.codFee   || 0) || 0;
+      const finalTotal =
+        Number(src.finalTotal || 0) || (itemsTotal + shipping + codFee);
+
+      const address = src.address || null;
+      const lineUserId   = src.lineUserId   || src.userId   || "";
+      const lineUserName = src.lineUserName || src.userName || "";
+
+      return {
+        items,
+        itemsTotal,
+        shipping,
+        codFee,
+        finalTotal,
+        address,
+        lineUserId,
+        lineUserName,
+      };
+    }
+
+    // localStorage / sessionStorage を総当りして注文データを探す
+    function loadOrderFromStorage() {
+      // 1) lastStripeOrder を最優先
+      const directRaw =
+        localStorage.getItem("lastStripeOrder") ||
+        sessionStorage.getItem("lastStripeOrder");
+      if (directRaw) {
+        const parsed = tryParse(directRaw);
+        if (parsed) {
+          console.log("confirm-success: lastStripeOrder 使用", parsed);
+          // lastStripeOrder はすでに /api/order/complete 用形式の想定なのでほぼそのまま
+          return normalizeOrder({ data: parsed });
+        }
+      }
+
+      // 2) それ以外の候補キーを順に見る
+      for (const key of STORAGE_KEYS) {
+        if (key === "lastStripeOrder") continue;
+        const raw =
+          sessionStorage.getItem(key) ||
+          localStorage.getItem(key);
+        if (!raw) continue;
+
+        const parsed = tryParse(raw);
+        if (!parsed) continue;
+
+        const normalized = normalizeOrder(parsed);
+        if (normalized) {
+          console.log("confirm-success: キー", key, "から注文データを復元:", normalized);
+          return normalized;
+        }
+      }
+
+      return null;
+    }
+
     async function sendOrderComplete() {
       const statusEl = document.getElementById("status");
+
+      const order = loadOrderFromStorage();
+      if (!order) {
+        statusEl.textContent =
+          "注文情報が見つかりませんでした。\n" +
+          "LINEのトーク画面に戻って、注文内容をスクリーンショットしてお店にお知らせください。";
+        return;
+      }
+
       try {
-        const raw = localStorage.getItem("lastStripeOrder");
-        if (!raw) {
-          statusEl.textContent = "注文情報が見つかりませんでした。LINEトーク画面から再度ご確認ください。";
-          return;
-        }
-
-        const order = JSON.parse(raw);
-
         const res = await fetch("/api/order/complete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -83,7 +221,8 @@
         } catch (_) {}
 
         if (res.ok && data && data.ok) {
-          statusEl.textContent = "ご注文内容をお店に送信しました。\nLINEのトーク画面に明細が届きます。";
+          statusEl.textContent =
+            "ご注文内容をお店に送信しました。\nLINEのトーク画面に明細が届きます。";
         } else {
           statusEl.textContent =
             "ご注文内容の送信に失敗しました。\n通信状況をご確認のうえ、必要であればお店までご連絡ください。";
@@ -100,6 +239,7 @@
       sendOrderComplete();
 
       document.getElementById("backLineBtn").addEventListener("click", () => {
+        // LIFF 内で開いていれば closeWindow、それ以外なら戻る
         if (window.liff && typeof liff.closeWindow === "function") {
           liff.closeWindow();
         } else {

@@ -1,41 +1,16 @@
 // /public/confirm.js  — Stripe Checkout 版
-// - products.js などで保存した「注文内容」を表示
-// - 「注文を確定する」ボタンで /api/pay を呼び出し、Stripe Checkout にリダイレクト
 
 (function () {
   "use strict";
 
-  // ==============================
-  //  DOM 取得
-  // ==============================
-  const orderListEl   = document.getElementById("orderList");    // 注文内容を表示する <div> or <ul>
-  const totalEl       = document.getElementById("totalAmount");  // 合計金額表示用
-  const confirmBtn    = document.getElementById("confirmBtn");   // 「注文を確定する」ボタン
-  const backBtn       = document.getElementById("backBtn");      // 「戻る」ボタン（あれば）
-  const statusMsgEl   = document.getElementById("statusMsg");    // 状態メッセージ表示（任意）
+  const orderListEl = document.getElementById("orderList");
+  const totalEl     = document.getElementById("totalAmount");
+  const confirmBtn  = document.getElementById("confirmBtn");
+  const backBtn     = document.getElementById("backBtn");
+  const statusMsgEl = document.getElementById("statusMsg");
 
-  // ==============================
-  //  注文データの読み込み
-  // ==============================
-  // ★★ 重要 ★★
-  // products.js 側で保存しているキー名に合わせてここを変更してください。
-  // 例：
-  //   sessionStorage.setItem("orderData", JSON.stringify({ items, totalAmount }));
-  //
-  // のように保存している場合、STORAGE_KEY = "orderData" にする。
-  const STORAGE_KEY = "orderData";
+  const STORAGE_KEY = "orderData";  // products.js 側と合わせること
 
-  /**
-   * 保存されている注文データを取得
-   * 期待する形式:
-   * {
-   *   items: [
-   *     { id, name, unitPrice, quantity },
-   *     ...
-   *   ],
-   *   totalAmount: 1234
-   * }
-   */
   function loadOrderData() {
     try {
       const raw =
@@ -59,9 +34,6 @@
 
   let order = loadOrderData();
 
-  // ==============================
-  //  注文内容の描画
-  // ==============================
   function renderOrder() {
     if (!order || !order.items.length) {
       if (orderListEl) {
@@ -74,11 +46,11 @@
 
     if (orderListEl) {
       orderListEl.innerHTML = "";
-
       order.items.forEach((item) => {
         const row = document.createElement("div");
         row.className = "order-row";
-        row.textContent = `${item.name || "商品"} × ${item.quantity}個  （${item.unitPrice}円／個）`;
+        row.textContent =
+          `${item.name || "商品"} × ${item.quantity}個 （${item.unitPrice || item.price}円／個）`;
         orderListEl.appendChild(row);
       });
     }
@@ -88,28 +60,21 @@
     }
   }
 
-  // ==============================
-  //  ステータス表示ユーティリティ
-  // ==============================
   function setStatus(msg) {
     if (!statusMsgEl) return;
     statusMsgEl.textContent = msg || "";
   }
 
-  // ==============================
-  //  Stripe 決済開始 (/api/pay)
-  // ==============================
   async function startStripeCheckout() {
     if (!order || !order.items.length) {
       alert("注文内容がありません。商品一覧からやり直してください。");
       return;
     }
 
-    // /api/pay が期待する形式に変換
     const payload = {
       items: order.items.map((it) => ({
         name: it.name || "商品",
-        unitPrice: Number(it.unitPrice || it.price || 0), // products.js のプロパティ名に合わせてください
+        unitPrice: Number(it.unitPrice || it.price || 0),
         quantity: Number(it.quantity || 1),
       })),
       totalAmount: Number(order.totalAmount || 0),
@@ -148,7 +113,7 @@
         return;
       }
 
-      // Stripe Checkout 画面へ遷移
+      // Stripe Checkout へ遷移
       location.href = data.url;
     } catch (e) {
       console.error("決済開始時の例外:", e);
@@ -158,9 +123,6 @@
     }
   }
 
-  // ==============================
-  //  イベント設定
-  // ==============================
   if (confirmBtn) {
     confirmBtn.addEventListener("click", (ev) => {
       ev.preventDefault();
@@ -175,8 +137,6 @@
     });
   }
 
-  // ==============================
-  //  初期処理
-  // ==============================
   renderOrder();
 })();
+

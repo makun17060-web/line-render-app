@@ -1,4 +1,4 @@
-// public/pay.js — currentOrder 対応版（confirm に商品合計を確実に表示）
+// public/pay.js — Stripe（カード）＋ 送料 ＋ 代引きボタン対応版
 
 (async function () {
   const $ = (id) => document.getElementById(id);
@@ -8,8 +8,9 @@
   const shippingText   = $("shippingText");
   const finalTotalText = $("finalTotalText");
   const payButton      = $("payButton");
+  const codButton      = $("codButton");
   const cancelButton   = $("cancelButton");
-  const statusEl       = $("status"); // なければ null でもOK
+  const statusEl       = $("status");
 
   let orderData    = null;
   let lineUserId   = "";
@@ -37,7 +38,7 @@
 
     if (!liff.isLoggedIn()) {
       liff.login();
-      return; // ログイン後に再読み込みされる想定
+      return; // ログイン後に再読み込みされる
     }
 
     const prof = await liff.getProfile();
@@ -45,7 +46,7 @@
     lineUserName = prof.displayName || "LINEユーザー";
   }
 
-  // ========== 2) currentOrder から注文取得 ==========
+  // ========== 2) currentOrder から注文読み込み ==========
   function loadCurrentOrder() {
     try {
       const raw = sessionStorage.getItem("currentOrder");
@@ -68,11 +69,11 @@
     }
   }
 
-  // ========== 3) 商品一覧を confirm に表示 ==========
+  // ========== 3) 商品一覧を描画 ==========
   function renderItems(items) {
     if (!items || items.length === 0) {
       itemsBox.innerHTML =
-        '<div class="row"><span>商品がありません</span><span></span></div>';
+        '<div style="font-size:13px;color:#666;">商品がありません。</div>';
       return;
     }
 
@@ -98,11 +99,13 @@
     });
   }
 
-  // ========== 4) 住所 & 送料計算 & 合計表示 ==========
+  // ========== 4) 住所 & 送料 & 合計計算 ==========
   async function loadAddressAndShipping(items) {
-    // ① フロント側で商品合計を必ず計算
+    // ① 商品合計（フロントで必ず計算）
     const itemsTotal = items.reduce(
-      (sum, it) => sum + (Number(it.price) || 0) * (Number(it.qty) || 0),
+      (sum, it) =>
+        sum +
+        (Number(it.price) || 0) * (Number(it.qty) || 0),
       0
     );
 
@@ -145,15 +148,15 @@
       console.warn("shipping api error:", e);
     }
 
-    const codFee     = 0; // Stripe カード決済なので 0
+    const codFee     = 0; // Stripe用デフォルトでは 0
     const finalTotal = itemsTotal + shipping + codFee;
 
-    // ④ confirm 画面に反映（★ここが一番大事★）
+    // ④ 確認画面へ反映
     itemsTotalText.textContent = yen(itemsTotal);
     shippingText.textContent   = yen(shipping);
     finalTotalText.textContent = `${yen(finalTotal)}（商品合計 + 送料）`;
 
-    // ⑤ Stripe に送る注文データ
+    // ⑤ サーバに送る注文データ
     orderData = {
       items,
       itemsTotal,
@@ -163,12 +166,12 @@
       address,
       lineUserId,
       lineUserName,
-      payment: "stripe_card",
-      method:  "delivery", // 店頭受取も使うならここを条件で変える
+      payment: "stripe_card", // デフォルトはカード想定
+      method:  "delivery",    // 必要あれば「店頭受取」等に変更可能
     };
   }
 
-  // ========== 5) Stripe Checkout 開始 (/api/pay-stripe) ==========
+  // ========== 5) Stripe Checkout 開始 ==========
   async function startStripeCheckout() {
     try {
       if (!orderData) {
@@ -178,6 +181,7 @@
 
       setStatus("Stripe決済ページへ遷移します...", false);
       if (payButton) payButton.disabled = true;
+      if (codButton) codButton.disabled = true;
 
       const res = await fetch("/api/pay-stripe", {
         method: "POST",
@@ -190,6 +194,7 @@
         console.error("pay-stripe error:", data);
         setStatus("決済の準備に失敗しました。時間をおいて再度お試しください。", true);
         if (payButton) payButton.disabled = false;
+        if (codButton) codButton.disabled = false;
         return;
       }
 
@@ -199,6 +204,7 @@
       console.error("startStripeCheckout error:", e);
       setStatus("決済処理中にエラーが発生しました。時間をおいて再度お試しください。", true);
       if (payButton) payButton.disabled = false;
+      if (codButton) codButton.disabled = false;
     }
   }
 
@@ -219,6 +225,7 @@
         finalTotalText.textContent = yen(0);
         setStatus("カートが空です。ミニアプリから商品を選び直してください。", true);
         if (payButton) payButton.disabled = true;
+        if (codButton) codButton.disabled = true;
         return;
       }
 
@@ -233,12 +240,50 @@
         true
       );
       if (payButton) payButton.disabled = true;
+      if (codButton) codButton.disabled = true;
     }
   }
 
-  // ========== ボタンイベント ==========
+  // ========== 7) ボタンイベント ==========
   if (payButton) {
     payButton.addEventListener("click", startStripeCheckout);
+  }
+
+  // 代引き（現金）ボタン
+  if (codButton) {
+    codButton.addEventListener("click", async () => {
+      try {
+        if (!orderData) {
+          alert("注文情報がありません。");
+          return;
+        }
+
+        // 代引き用に payment 種別だけ変更してサーバへ送信
+        const payload = {
+          ...orderData,
+          payment: "cod",
+        };
+
+        const res = await fetch("/api/order/complete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await res.json();
+        if (!data || !data.ok) {
+          console.error("/api/order/complete (cod) error:", data);
+          alert("注文確定に失敗しました。時間をおいて再度お試しください。");
+          return;
+        }
+
+        // 代引き専用の完了画面へ遷移
+        location.href = "/public/cod-success.html";
+      } catch (e) {
+        console.error("cod error:", e);
+        alert("エラーが発生しました。時間をおいてお試しください。");
+      }
+    });
   }
 
   if (cancelButton) {
@@ -249,8 +294,12 @@
         try {
           if (window.liff && typeof liff.closeWindow === "function") {
             liff.closeWindow();
+          } else {
+            window.close();
           }
-        } catch (e) {}
+        } catch (e) {
+          window.close();
+        }
       }
     });
   }

@@ -27,13 +27,6 @@ const multer = require("multer");
 
 require("dotenv").config();
 
-// ① require() を全部読み込む
-const fs = require("fs");
-const path = require("path");
-const express = require("express");
-const line = require("@line/bot-sdk");
-const axios = require("axios");
-const multer = require("multer");    // ← これも require
 
 // ② ★ Stripe 初期化 ← ここ！！
 const stripeSecretKey = (process.env.STRIPE_SECRET_KEY || "").trim();

@@ -3,94 +3,159 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>注文内容の確認</title>
+  <title>ご注文内容の確認（Stripe決済）</title>
   <style>
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       margin: 0;
-      padding: 16px;
+      padding: 12px;
       background: #f7f7f7;
+      color: #222;
     }
     h1 {
-      margin: 0 0 12px;
-      font-size: 20px;
+      font-size: 18px;
+      margin: 0 0 8px;
     }
-    #orderList {
+    h2 {
+      font-size: 15px;
+      margin: 16px 0 4px;
+    }
+    .card {
       background: #fff;
-      padding: 12px;
       border-radius: 8px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.05);
-      margin-bottom: 12px;
+      padding: 10px;
+      margin-bottom: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
-    .order-row {
-      padding: 8px 4px;
-      border-bottom: 1px solid #eee;
+    .row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+    .row strong {
+      font-weight: 600;
+    }
+    #itemsList > div {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+    #itemsList span.name {
+      flex: 1 1 auto;
+      margin-right: 4px;
+      word-break: break-all;
+    }
+    #itemsList span.qty {
+      flex: 0 0 auto;
+      margin-left: 4px;
+      white-space: nowrap;
+    }
+    #totalBox {
       font-size: 14px;
     }
-    .order-row:last-child {
-      border-bottom: none;
+    #totalBox .label {
+      font-weight: 600;
     }
-
-    .total-box {
-      background: #fff;
-      padding: 16px;
-      border-radius: 8px;
-      text-align: right;
-      font-size: 18px;
-      font-weight: bold;
-      margin-bottom: 20px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    #status {
+      font-size: 12px;
+      color: #d00;
+      margin-top: 4px;
+      min-height: 1.2em;
+      white-space: pre-line;
     }
-
-    #confirmBtn {
-      width: 100%;
-      padding: 14px;
-      font-size: 16px;
+    #paymentElement {
+      margin-top: 8px;
+    }
+    .btn-area {
+      margin-top: 14px;
+      display: flex;
+      gap: 8px;
+    }
+    button {
+      flex: 1 1 auto;
+      padding: 10px;
+      border-radius: 6px;
       border: none;
-      border-radius: 8px;
-      background: #2196f3;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    #payButton {
+      background: #0070f3;
       color: #fff;
-      cursor: pointer;
-      margin-bottom: 12px;
+      font-weight: 600;
     }
-
-    #backBtn {
-      width: 100%;
-      padding: 12px;
-      font-size: 15px;
-      border: none;
-      border-radius: 8px;
-      background: #ddd;
+    #payButton:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+    #cancelButton {
+      background: #e0e0e0;
       color: #333;
-      cursor: pointer;
     }
-
-    #statusMsg {
-      margin-top: 12px;
-      text-align: center;
-      font-size: 13px;
+    small.note {
+      display: block;
+      margin-top: 4px;
+      font-size: 11px;
       color: #555;
+      white-space: pre-line;
     }
   </style>
 </head>
-
 <body>
-  <h1>注文内容の確認</h1>
+  <h1>ご注文内容の確認</h1>
 
-  <div id="orderList">
-    <!-- 商品リストが JS で入る -->
+  <!-- 注文内容 -->
+  <div class="card">
+    <h2>商品一覧</h2>
+    <div id="itemsList"></div>
   </div>
 
-  <div class="total-box">
-    合計：<span id="totalAmount">0</span> 円
+  <!-- 合計 -->
+  <div class="card" id="totalBox">
+    <h2>合計金額</h2>
+    <div class="row">
+      <span>商品合計</span>
+      <span id="itemsTotalText">-</span>
+    </div>
+    <div class="row">
+      <span>送料</span>
+      <span id="shippingText">-</span>
+    </div>
+    <div class="row">
+      <span class="label">お支払い金額</span>
+      <span id="finalTotalText">-</span>
+    </div>
   </div>
 
-  <button id="confirmBtn">注文を確定する</button>
-  <button id="backBtn">戻る</button>
+  <!-- お届け先 -->
+  <div class="card">
+    <h2>お届け先</h2>
+    <div id="addressBox" style="font-size:13px;white-space:pre-line;">読み込み中...</div>
+    <small class="note">
+      住所を変更したい場合は、LINEメニューの「住所を入力（LIFF）」から修正して、もう一度ご注文ください。
+    </small>
+  </div>
 
-  <div id="statusMsg"></div>
+  <!-- Stripe 支払いエリア -->
+  <div class="card">
+    <h2>クレジットカード・ウォレット決済</h2>
+    <div id="paymentElement"></div>
+    <small class="note">
+      Stripe を利用して安全に決済します。\n
+      ご利用の端末・ブラウザによって Apple Pay / Google Pay が表示される場合があります。
+    </small>
+    <div id="status"></div>
+    <div class="btn-area">
+      <button id="payButton" type="button">支払う</button>
+      <button id="cancelButton" type="button">キャンセル</button>
+    </div>
+  </div>
 
-  <!-- Stripe対応 confirm.js -->
-  <script src="./confirm.js"></script>
+  <!-- LIFF SDK & Stripe.js & 支払いスクリプト -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="https://js.stripe.com/v3/"></script>
+  <script src="/public/pay.js"></script>
 </body>
 </html>

@@ -1142,31 +1142,74 @@ app.post("/api/pay-stripe", async (req, res) => {
         .json({ ok: false, error: "no_items" });
     }
 
-    // 合計計算（デバッグしやすいようにログも出す）
-    const itemsTotal = items.reduce(
-      (sum, it) =>
-        sum +
-        (Number(it.price) || 0) * (Number(it.qty) || 0),
-      0
-    );
-    console.log("[pay-stripe] items:", items);
-    console.log("[pay-stripe] itemsTotal:", itemsTotal);
+    // フロントから送られてきた合計系
+    const itemsTotal = Number(order.itemsTotal || 0);
+    const shipping   = Number(order.shipping   || 0);
+    const codFee     = Number(order.codFee     || 0); // 今は 0 想定
+    const finalTotal = Number(order.finalTotal || (itemsTotal + shipping + codFee));
 
-    // 金額は整数の「円」であること（小数を渡すと Stripe がエラー）
-    const line_items = items.map((it) => {
+    console.log("[pay-stripe] items:", items);
+    console.log("[pay-stripe] itemsTotal:", itemsTotal,
+                "shipping:", shipping,
+                "codFee:", codFee,
+                "finalTotal:", finalTotal);
+
+    // ===== Stripe に渡す line_items を作成 =====
+    const line_items = [];
+
+    // 商品行
+    for (const it of items) {
       const unit = Number(it.price) || 0;
-      const qty  = Number(it.qty) || 0;
-      return {
+      const qty  = Number(it.qty)   || 0;
+      if (!qty || unit < 0) continue;
+
+      line_items.push({
         price_data: {
           currency: "jpy",
-          product_data: { name: String(it.name || it.id || "商品") },
+          product_data: {
+            name: String(it.name || it.id || "商品"),
+          },
           unit_amount: unit, // 例: 300 → 300円
         },
         quantity: qty,
-      };
-    });
+      });
+    }
 
-    // ベースURL (PUBLIC_BASE_URL があればそれ優先、なければヘッダから組み立て)
+    // 送料行（あれば）
+    if (shipping > 0) {
+      line_items.push({
+        price_data: {
+          currency: "jpy",
+          product_data: {
+            name: "送料",
+          },
+          unit_amount: shipping,
+        },
+        quantity: 1,
+      });
+    }
+
+    // 代引き手数料行（将来使う場合）
+    if (codFee > 0) {
+      line_items.push({
+        price_data: {
+          currency: "jpy",
+          product_data: {
+            name: "代引き手数料",
+          },
+          unit_amount: codFee,
+        },
+        quantity: 1,
+      });
+    }
+
+    if (!line_items.length) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "no_valid_line_items" });
+    }
+
+    // ベースURL (PUBLIC_BASE_URL優先)
     const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
     const host  = req.headers.host;
     const base  =
@@ -1185,6 +1228,11 @@ app.post("/api/pay-stripe", async (req, res) => {
       line_items,
       success_url: successUrl,
       cancel_url: cancelUrl,
+      // 必要ならメモも付けられます（Stripe管理画面で見える）
+      metadata: {
+        lineUserId:   order.lineUserId   || "",
+        lineUserName: order.lineUserName || "",
+      },
     });
 
     console.log("[pay-stripe] session.id:", session.id);
@@ -1196,6 +1244,7 @@ app.post("/api/pay-stripe", async (req, res) => {
       .json({ ok: false, error: "stripe_error" });
   }
 });
+
 
 
 // ====== 決済完了通知（ミニアプリ→サーバー→管理者LINE） ======

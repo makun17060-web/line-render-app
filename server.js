@@ -1247,7 +1247,7 @@ app.post("/api/pay-stripe", async (req, res) => {
       .json({ ok: false, error: "stripe_error" });
   }
 });
-});
+
 app.post("/api/order/complete", async (req, res) => {
   try {
     const order = req.body || {};

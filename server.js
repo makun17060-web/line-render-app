@@ -1120,51 +1120,83 @@ app.get("/api/liff/config", (_req, res) =>
   res.json({ liffId: LIFF_ID_DIRECT_ADDRESS })
 );
 
-// ====== 決済：/api/pay（Stripe PaymentIntent 作成） ======
-app.post("/api/pay", async (req, res) => {
+// ====== Stripe 決済（Checkout Session） ======
+app.post("/api/pay-stripe", async (req, res) => {
   try {
-    if (!stripe) {
+    const stripeSecret = (process.env.STRIPE_SECRET || "").trim();
+    if (!stripeSecret) {
+      console.error("STRIPE_SECRET が設定されていません");
       return res
         .status(500)
-        .json({ ok: false, error: "STRIPE_SECRET_KEY is not set" });
+        .json({ ok: false, error: "STRIPE_SECRET_not_set" });
     }
 
-    const { items, total, lineUserId, lineUserName } = req.body || {};
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ ok: false, error: "no_items" });
+    const stripe = require("stripe")(stripeSecret);
+
+    const order = req.body || {};
+    const items = Array.isArray(order.items) ? order.items : [];
+
+    if (!items.length) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "no_items" });
     }
 
-    const totalPrice = Math.max(0, Number(total || 0));
-    if (!Number.isFinite(totalPrice) || totalPrice <= 0) {
-      return res.status(400).json({ ok: false, error: "invalid_total" });
-    }
+    // 合計計算（デバッグしやすいようにログも出す）
+    const itemsTotal = items.reduce(
+      (sum, it) =>
+        sum +
+        (Number(it.price) || 0) * (Number(it.qty) || 0),
+      0
+    );
+    console.log("[pay-stripe] items:", items);
+    console.log("[pay-stripe] itemsTotal:", itemsTotal);
 
-    const description = items
-      .map((it) => `${it.name || it.id || "商品"} x ${it.qty || 1}`)
-      .join(", ")
-      .slice(0, 250);
-
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: totalPrice,
-      currency: "jpy",
-      automatic_payment_methods: { enabled: true }, // Apple Pay / Google Pay 対応
-      description,
-      metadata: {
-        lineUserId: lineUserId || "",
-        lineUserName: lineUserName || "",
-        items: JSON.stringify(items || []),
-      },
+    // 金額は整数の「円」であること（小数を渡すと Stripe がエラー）
+    const line_items = items.map((it) => {
+      const unit = Number(it.price) || 0;
+      const qty  = Number(it.qty) || 0;
+      return {
+        price_data: {
+          currency: "jpy",
+          product_data: { name: String(it.name || it.id || "商品") },
+          unit_amount: unit, // 例: 300 → 300円
+        },
+        quantity: qty,
+      };
     });
 
-    return res.json({
-      ok: true,
-      clientSecret: paymentIntent.client_secret,
+    // ベースURL (PUBLIC_BASE_URL があればそれ優先、なければヘッダから組み立て)
+    const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
+    const host  = req.headers.host;
+    const base  =
+      (process.env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "") ||
+      `${proto}://${host}`;
+
+    const successUrl = `${base}/public/confirm-success.html`;
+    const cancelUrl  = `${base}/public/confirm-fail.html`;
+
+    console.log("[pay-stripe] success_url:", successUrl);
+    console.log("[pay-stripe] cancel_url :", cancelUrl);
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      mode: "payment",
+      line_items,
+      success_url: successUrl,
+      cancel_url: cancelUrl,
     });
+
+    console.log("[pay-stripe] session.id:", session.id);
+    return res.json({ ok: true, checkoutUrl: session.url });
   } catch (e) {
-    console.error("/api/pay (stripe) error:", e);
-    return res.status(500).json({ ok: false, error: "stripe_error" });
+    console.error("[pay-stripe] error:", e?.raw || e);
+    return res
+      .status(500)
+      .json({ ok: false, error: "stripe_error" });
   }
 });
+
 
 // ====== 決済完了通知（ミニアプリ→サーバー→管理者LINE） ======
 // confirm-success.html から fetch("/api/order/complete") で呼ぶ想定

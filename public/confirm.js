@@ -1,4 +1,4 @@
-// /public/confirm.js — Stripe Checkout 版（複数形式の注文データに対応）
+// /public/confirm.js — Stripe Checkout 版（/api/pay-stripe + /api/order/complete 連携）
 
 (function () {
   "use strict";
@@ -114,9 +114,26 @@
       totalAmount = calcTotal;
     }
 
+    // もし元データに送料などが入っていれば拾う
+    const shipping = Number(src.shipping || 0) || 0;
+    const codFee   = Number(src.codFee   || 0) || 0;
+    const finalTotal =
+      Number(src.finalTotal || 0) || (totalAmount + shipping + codFee);
+
+    // アドレスやユーザー情報らしきものも拾っておく（あれば）
+    const address = src.address || null;
+    const lineUserId   = src.lineUserId   || "";
+    const lineUserName = src.lineUserName || "";
+
     return {
       items: normItems,
-      totalAmount
+      totalAmount,
+      shipping,
+      codFee,
+      finalTotal,
+      address,
+      lineUserId,
+      lineUserName,
     };
   }
 
@@ -171,7 +188,8 @@
     }
 
     if (totalEl) {
-      totalEl.textContent = String(order.totalAmount || 0);
+      // 送料込みの最終合計を表示したい場合は finalTotal にしてもOK
+      totalEl.textContent = String(order.finalTotal || order.totalAmount || 0);
     }
   }
 
@@ -182,17 +200,31 @@
       return;
     }
 
+    // サーバーの /api/pay-stripe 用のペイロードに変換
+    const itemsForApi = order.items.map((it) => ({
+      id:   it.id,
+      name: it.name || "商品",
+      price: Number(it.unitPrice || 0),
+      qty:   Number(it.quantity || 1),
+    }));
+
+    const itemsTotal = Number(order.totalAmount || 0);
+    const shipping   = Number(order.shipping   || 0);
+    const codFee     = Number(order.codFee     || 0);
+    const finalTotal = Number(order.finalTotal || itemsTotal + shipping + codFee);
+
     const payload = {
-      items: order.items.map((it) => ({
-        id: it.id,
-        name: it.name || "商品",
-        unitPrice: Number(it.unitPrice || 0),
-        quantity: Number(it.quantity || 1),
-      })),
-      totalAmount: Number(order.totalAmount || 0),
+      lineUserId:   order.lineUserId   || "",     // 空でもOK（空だと注文者への通知は飛ばない）
+      lineUserName: order.lineUserName || "",
+      items:       itemsForApi,
+      itemsTotal,
+      shipping,
+      codFee,
+      finalTotal,
+      address: order.address || null,
     };
 
-    if (!payload.items.length || !payload.totalAmount) {
+    if (!payload.items.length || !payload.itemsTotal) {
       alert("注文データに不備があります。商品一覧からやり直してください。");
       return;
     }
@@ -201,7 +233,11 @@
       setStatus("決済を開始しています…");
       if (confirmBtn) confirmBtn.disabled = true;
 
-      const res = await fetch("/api/pay", {
+      // ★ 成功画面から /api/order/complete を呼ぶために保存
+      localStorage.setItem("lastStripeOrder", JSON.stringify(payload));
+
+      // ★ エンドポイントは /api/pay-stripe
+      const res = await fetch("/api/pay-stripe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -216,9 +252,10 @@
       }
 
       const data = await res.json();
-      console.log("Stripe /api/pay レスポンス:", data);
+      console.log("Stripe /api/pay-stripe レスポンス:", data);
 
-      if (!data || !data.ok || !data.url) {
+      // サーバー側は { ok: true, checkoutUrl: session.url } を返す仕様
+      if (!data || !data.ok || !data.checkoutUrl) {
         alert("決済の開始に失敗しました。時間をおいてもう一度お試しください。");
         setStatus("");
         if (confirmBtn) confirmBtn.disabled = false;
@@ -226,7 +263,7 @@
       }
 
       // Stripe Checkout へ遷移
-      location.href = data.url;
+      location.href = data.checkoutUrl;
     } catch (e) {
       console.error("決済開始時の例外:", e);
       alert("通信エラーが発生しました。時間をおいてもう一度お試しください。");

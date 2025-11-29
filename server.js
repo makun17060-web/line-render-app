@@ -23,14 +23,21 @@ const line = require("@line/bot-sdk");
 const multer = require("multer");
 const stripeLib = require("stripe");
 
-const stripeSecretKey = (process.env.STRIPE_SECRET_KEY || "").trim();
+// ★ STRIPE_SECRET_KEY があれば優先、なければ STRIPE_SECRET を使う
+const stripeSecretKey = (
+  process.env.STRIPE_SECRET_KEY ||
+  process.env.STRIPE_SECRET ||
+  ""
+).trim();
+
 const stripe = stripeSecretKey ? stripeLib(stripeSecretKey) : null;
 
 if (!stripe) {
   console.warn(
-    "⚠️ STRIPE_SECRET_KEY が設定されていません。/api/pay はエラーになります。"
+    "⚠️ STRIPE_SECRET_KEY / STRIPE_SECRET が設定されていません。/api/pay-stripe はエラーになります。"
   );
 }
+
 
 const app = express();
 

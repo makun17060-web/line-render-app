@@ -1121,28 +1121,28 @@ app.get("/api/liff/config", (_req, res) =>
 );
 
 // ====== Stripe 決済：/api/pay-stripe ======
-const stripe = require("stripe")((process.env.STRIPE_SECRET || "").trim());
-
 app.post("/api/pay-stripe", async (req, res) => {
   try {
-    if (!process.env.STRIPE_SECRET) {
+    // 上の方で定義した stripe を利用（STRIPE_SECRET_KEYベース）
+    if (!stripe) {
       return res.status(500).json({
         ok: false,
-        error: "STRIPE_SECRET is not set",
+        error: "stripe_not_configured",
       });
     }
 
     const order = req.body || {};
     const items = Array.isArray(order.items) ? order.items : [];
+
     const itemsTotal = Number(order.itemsTotal || 0);
-    const shipping = Number(order.shipping || 0);
-    const codFee = Number(order.codFee || 0);
+    const shipping   = Number(order.shipping   || 0);
+    const codFee     = Number(order.codFee     || 0);
     const finalTotal =
       Number(order.finalTotal || 0) || itemsTotal + shipping + codFee;
 
-    const lineUserId = order.lineUserId || "";
+    const lineUserId   = order.lineUserId   || "";
     const lineUserName = order.lineUserName || "";
-    const address = order.address || null;
+    const address      = order.address      || null;
 
     if (!items.length) {
       return res.status(400).json({ ok: false, error: "no_items" });
@@ -1153,33 +1153,31 @@ app.post("/api/pay-stripe", async (req, res) => {
 
     console.log("[pay-stripe] items:", items);
     console.log(
-      "[pay-stripe] itemsTotal:",
-      itemsTotal,
-      "shipping:",
-      shipping,
-      "codFee:",
-      codFee,
-      "finalTotal:",
-      finalTotal
+      "[pay-stripe] itemsTotal:", itemsTotal,
+      "shipping:",            shipping,
+      "codFee:",              codFee,
+      "finalTotal:",          finalTotal
     );
 
+    // 1件目の商品名 + 「他」
     const first = items[0];
     let itemName = String(first.name || "商品");
     if (items.length > 1) itemName += " 他";
 
+    // ベースURL
     const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
-    const host = req.headers.host;
-    const base =
+    const host  = req.headers.host;
+    const base  =
       (process.env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "") ||
       `${proto}://${host}`;
 
     const successUrl = `${base}/public/confirm-success.html`;
-    const cancelUrl = `${base}/public/confirm-fail.html`;
+    const cancelUrl  = `${base}/public/confirm-fail.html`;
 
     console.log("[pay-stripe] success_url:", successUrl);
     console.log("[pay-stripe] cancel_url :", cancelUrl);
 
-    // ★ Stripe Checkout セッション作成（Apple Pay / Google Pay 対応）
+    // ★ Stripe Checkout セッション作成（Apple Pay / Google Pay 有効）
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       line_items: [
@@ -1187,14 +1185,14 @@ app.post("/api/pay-stripe", async (req, res) => {
           price_data: {
             currency: "jpy",
             product_data: { name: itemName },
-            unit_amount: finalTotal, // ★ 商品合計 + 送料 + 手数料
+            unit_amount: finalTotal, // 商品合計 + 送料 + 手数料
           },
           quantity: 1,
         },
       ],
       success_url: successUrl,
-      cancel_url: cancelUrl,
-      automatic_payment_methods: { enabled: true }, // ここで Apple Pay / Google Pay 有効
+      cancel_url:  cancelUrl,
+      automatic_payment_methods: { enabled: true },
       metadata: {
         lineUserId,
         lineUserName,
@@ -1203,31 +1201,29 @@ app.post("/api/pay-stripe", async (req, res) => {
 
     console.log("[pay-stripe] session.id:", session.id);
 
-    // ========= ここから「注文明細ログ + 管理者通知」 =========
+    // ========= ログ & 明細メッセージ作成 =========
+    const log = {
+      ts: new Date().toISOString(),
+      source: "miniapp-stripe",
+      payment: "card-stripe",
+      items,
+      itemsTotal,
+      shipping,
+      codFee,
+      finalTotal,
+      lineUserId,
+      lineUserName,
+      address,
+      stripeSessionId: session.id,
+    };
 
-    // 注文ログ（ORDERS_LOG に追記）
     try {
-      const log = {
-        ts: new Date().toISOString(),
-        source: "miniapp-stripe",
-        payment: "card-stripe",
-        items,
-        itemsTotal,
-        shipping,
-        codFee,
-        finalTotal,
-        lineUserId,
-        lineUserName,
-        address,
-        stripeSessionId: session.id,
-      };
       fs.appendFileSync(ORDERS_LOG, JSON.stringify(log) + "\n", "utf8");
     } catch (e) {
       console.error("ORDERS_LOG write error:", e);
     }
 
-    // 管理者向けメッセージ整形
-    let itemsText = items
+    const itemsText = items
       .map(
         (it) =>
           `・${it.name} × ${it.qty} = ${yen(
@@ -1253,10 +1249,11 @@ app.post("/api/pay-stripe", async (req, res) => {
         ].join("\n")
       : "住所：未登録";
 
+    // 管理者向け
     const adminMsg =
       `🧾【Stripe決済 新規注文】\n` +
-      (lineUserId ? `ユーザーID：${lineUserId}\n` : "") +
-      (lineUserName ? `お名前：${lineUserName}\n` : "") +
+      (lineUserId   ? `ユーザーID：${lineUserId}\n`   : "") +
+      (lineUserName ? `お名前：${lineUserName}\n`     : "") +
       `\n【内容】\n${itemsText}\n` +
       `\n商品合計：${yen(itemsTotal)}\n` +
       `送料：${yen(shipping)}\n` +
@@ -1265,6 +1262,20 @@ app.post("/api/pay-stripe", async (req, res) => {
       `\n${addrText}\n` +
       `\nStripe Session ID：${session.id}`;
 
+    // ユーザー向け
+    const userMsg =
+      "ご注文ありがとうございます。\n" +
+      "このあと表示される Stripe の決済画面でお支払いを完了してください。\n\n" +
+      "【ご注文内容】\n" +
+      itemsText +
+      "\n\n" +
+      `商品合計：${yen(itemsTotal)}\n` +
+      `送料：${yen(shipping)}\n` +
+      (codFee ? `手数料：${yen(codFee)}\n` : "") +
+      `合計：${yen(finalTotal)}\n\n` +
+      addrText;
+
+    // 管理者へ通知
     try {
       if (ADMIN_USER_ID) {
         await client.pushMessage(ADMIN_USER_ID, {
@@ -1282,7 +1293,18 @@ app.post("/api/pay-stripe", async (req, res) => {
       console.error("admin push error (stripe):", e?.response?.data || e);
     }
 
-    // ========= ここまで通知 =========
+    // ★ 注文者本人にも明細送信
+    try {
+      if (lineUserId) {
+        await client.pushMessage(lineUserId, {
+          type: "text",
+          text: userMsg,
+        });
+        console.log("user receipt (stripe) push OK:", lineUserId);
+      }
+    } catch (e) {
+      console.error("user receipt (stripe) push error:", e?.response?.data || e);
+    }
 
     return res.json({
       ok: true,

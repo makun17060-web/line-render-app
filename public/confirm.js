@@ -1,5 +1,6 @@
-// /public/confirm.js — 代引き専用版
+// /public/confirm.js — 代引き専用版（送料自動計算付き）
 // - 決済会社は使わず、/api/order/complete に直接送信
+// - shipping が未設定のときは /api/shipping で自動計算
 // - 商品合計 + 送料 + 代引き手数料 を画面表示
 
 (function () {
@@ -131,7 +132,7 @@
     const address = src.address || null;
     const lineUserId   = src.lineUserId   || src.userId   || "";
     const lineUserName = src.lineUserName || src.userName || "";
-    const method  = src.method  || "delivery"; // 店頭受け取りなら "pickup" などを入れてもOK
+    const method  = src.method  || "delivery"; // 店頭受け取りなら "pickup" など
     const payment = "cod";
 
     return {
@@ -150,18 +151,72 @@
 
   let order = null;
 
-  function initOrder() {
+  // ---- shipping 未設定なら /api/shipping で送料を計算 ----
+  async function applyShippingIfNeeded(nd) {
+    // 店頭受け取りのときは送料 0 のままで良い
+    if (!nd || nd.method === "pickup") return nd;
+
+    if ((nd.shipping && nd.shipping > 0) || !nd.address) {
+      // 既に送料が入っている or 住所が無い → 触らない
+      return nd;
+    }
+
+    try {
+      const res = await fetch("/api/shipping", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: nd.items.map(it => ({
+            id: it.id,
+            price: it.price,
+            qty: it.qty,
+          })),
+          address: nd.address,
+        }),
+      });
+
+      if (!res.ok) {
+        console.warn("api/shipping HTTP error:", res.status);
+        return nd;
+      }
+
+      const data = await res.json();
+      console.log("api/shipping result:", data);
+
+      if (!data || !data.ok) return nd;
+
+      const itemsTotal = Number(data.itemsTotal || nd.itemsTotal || 0);
+      const shipping   = Number(data.shipping   || 0);
+      const finalTotal =
+        Number(data.finalTotal || 0) || (itemsTotal + shipping + nd.codFee);
+
+      return {
+        ...nd,
+        itemsTotal,
+        shipping,
+        finalTotal,
+      };
+    } catch (e) {
+      console.error("applyShippingIfNeeded error:", e);
+      return nd;
+    }
+  }
+
+  async function initOrder() {
     const raw = loadRawData();
     if (!raw) {
       showNoOrder();
       return;
     }
 
-    const normalized = normalizeOrder(raw);
+    let normalized = normalizeOrder(raw);
     if (!normalized || !normalized.items.length) {
       showNoOrder();
       return;
     }
+
+    // ★ 送料が入っていなければ /api/shipping で自動計算
+    normalized = await applyShippingIfNeeded(normalized);
 
     order = normalized;
     renderOrder();
@@ -192,7 +247,7 @@
         const row = document.createElement("div");
         row.className = "order-row";
         const unit = Number(item.price || 0);
-        const qty  = Number(item.qty   || 0);
+        const qty  = Number(item.qty   || item.quantity || 0);
         const lineTotal = unit * qty;
 
         row.textContent =
@@ -222,7 +277,9 @@
       return;
     }
 
-    // server.js の /api/order/complete に合わせた形
+    // 念のため送信前にも送料が無ければ計算
+    order = await applyShippingIfNeeded(order);
+
     const payload = {
       lineUserId:   order.lineUserId   || "",
       lineUserName: order.lineUserName || "",
@@ -270,6 +327,9 @@
       setStatus("通信エラーが発生しました。");
       if (confirmBtn) confirmBtn.disabled = false;
     }
+
+    // 画面にも最新の合計を反映
+    renderOrder();
   }
 
   // ---- イベントハンドラ ----
@@ -287,6 +347,8 @@
     });
   }
 
-  // 初期化
-  initOrder();
+  // 初期化（async）
+  (async () => {
+    await initOrder();
+  })();
 })();

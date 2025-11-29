@@ -2,126 +2,52 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>ご注文が完了しました</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>決済が完了しました</title>
   <style>
     body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       margin: 0;
-      padding: 24px 16px;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       background: #f7f7f7;
-      color: #333;
-      text-align: center;
+      color: #222;
     }
-    .card {
+    .wrap {
       max-width: 480px;
       margin: 0 auto;
-      background: #fff;
-      border-radius: 12px;
-      padding: 24px 16px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+      padding: 24px 16px 40px;
+      text-align: center;
     }
     h1 {
       font-size: 20px;
-      margin: 0 0 8px;
+      margin-bottom: 12px;
     }
     p {
       font-size: 14px;
       line-height: 1.6;
-      margin: 4px 0;
-      white-space: pre-line;
+      margin: 6px 0;
     }
-    #backBtn {
-      margin-top: 20px;
-      width: 100%;
-      max-width: 320px;
-      padding: 12px;
-      border-radius: 999px;
-      border: none;
-      font-size: 16px;
-      font-weight: 600;
-      background: #06c755; /* LINEっぽい緑 */
-      color: #fff;
-      cursor: pointer;
-    }
-    #backBtn:active {
-      opacity: 0.85;
-    }
-    #note {
+    .thanks {
+      font-weight: bold;
       margin-top: 12px;
+      margin-bottom: 16px;
+    }
+    .note {
       font-size: 12px;
       color: #666;
+      margin-top: 12px;
     }
   </style>
 </head>
 <body>
-
-  <div class="card">
-    <h1>ご注文ありがとうございました</h1>
-    <p>
-ご注文を受け付けました。
-LINEトークに明細が届いているかご確認ください。
-    </p>
-
-    <button id="backBtn">LINE に戻る</button>
-
-    <p id="note">
-ボタンで戻れない場合は、この画面を閉じて
-LINEアプリに戻ってください。
+  <div class="wrap">
+    <h1>クレジット決済が完了しました</h1>
+    <p class="thanks">ご注文ありがとうございます。</p>
+    <p>LINEのトーク画面に戻って、ご注文内容のメッセージをご確認ください。</p>
+    <p class="note">
+      ※画面右上の「×」ボタンや戻るボタンで<br>
+      この画面を閉じてください。
     </p>
   </div>
-
-  <!-- LIFF SDK（LINEアプリ内で開いたとき用） -->
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <script>
-    (function () {
-      "use strict";
-
-      const backBtn = document.getElementById("backBtn");
-
-      // ★ ここは実際に使っている LIFF ID に合わせて変更してOK
-      //   特に指定がなければ 2008406620-G5j1gjzM のままで動きます。
-      const LIFF_ID = "2008406620-G5j1gjzM";
-
-      let inLiff = false;
-
-      async function initLiff() {
-        if (!window.liff) return;
-        try {
-          await liff.init({ liffId: LIFF_ID });
-          inLiff = liff.isInClient();
-          console.log("[confirm-success] inLiff:", inLiff);
-        } catch (e) {
-          console.log("[confirm-success] liff.init error:", e);
-        }
-      }
-
-      async function backToLine() {
-        try {
-          if (window.liff && inLiff) {
-            // ★ ミニアプリ内ならトーク画面に戻る
-            await liff.closeWindow();
-            return;
-          }
-        } catch (e) {
-          console.log("[confirm-success] closeWindow error:", e);
-        }
-
-        // ★ LINE外のブラウザで開いている場合のフォールバック
-        //   完全に同じトークには戻れませんが、LINEアプリトップには戻れます。
-        location.href = "https://line.me/R/nv/chat";
-      }
-
-      if (backBtn) {
-        backBtn.addEventListener("click", function (ev) {
-          ev.preventDefault();
-          backToLine();
-        });
-      }
-
-      // 起動時に LIFF が使える環境なら初期化しておく
-      initLiff();
-    })();
-  </script>
 </body>
 </html>

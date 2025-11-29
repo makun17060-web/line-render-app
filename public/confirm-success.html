@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>決済完了</title>
   <style>
     body {
@@ -11,49 +11,102 @@
       padding: 24px;
       background: #f7f7f7;
       color: #333;
-    }
-    .container {
-      max-width: 480px;
-      margin: 0 auto;
-      background: #fff;
-      border-radius: 8px;
-      padding: 24px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.06);
       text-align: center;
+    }
+    .card {
+      max-width: 480px;
+      margin: 40px auto;
+      background: #fff;
+      border-radius: 12px;
+      padding: 24px 16px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.06);
     }
     h1 {
       font-size: 20px;
-      margin-bottom: 12px;
+      margin-bottom: 8px;
     }
     p {
       font-size: 14px;
       line-height: 1.6;
       margin: 8px 0;
     }
-    .ok {
-      font-size: 40px;
-      margin-bottom: 8px;
-    }
-    .note {
-      margin-top: 16px;
+    #status {
+      margin-top: 12px;
       font-size: 13px;
-      color: #555;
+      color: #666;
+      white-space: pre-line;
+    }
+    button {
+      margin-top: 16px;
+      padding: 10px 18px;
+      font-size: 14px;
+      border-radius: 999px;
+      border: none;
+      cursor: pointer;
+    }
+    #backLineBtn {
+      background: #06c755;
+      color: #fff;
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="ok">✅</div>
-    <h1>お支払いが完了しました</h1>
-    <p>ご利用ありがとうございます。</p>
-
-    <p class="note">
-      この画面を閉じて、<br>
-      LINE に戻ってください。
-    </p>
-    <p class="note">
-      ※決済の明細は LINE のトーク画面にも送信されます。
-    </p>
+  <div class="card">
+    <h1>決済が完了しました</h1>
+    <p>ありがとうございました。ご注文内容をお店に送信しています。</p>
+    <p>しばらくしても LINE に明細が届かない場合は、お店までお問い合わせください。</p>
+    <div id="status">注文情報を送信中です…</div>
+    <button id="backLineBtn">LINEトーク画面に戻る</button>
   </div>
+
+  <script>
+    async function sendOrderComplete() {
+      const statusEl = document.getElementById("status");
+      try {
+        const raw = localStorage.getItem("lastStripeOrder");
+        if (!raw) {
+          statusEl.textContent = "注文情報が見つかりませんでした。LINEトーク画面から再度ご確認ください。";
+          return;
+        }
+
+        const order = JSON.parse(raw);
+
+        const res = await fetch("/api/order/complete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(order),
+        });
+
+        let data = null;
+        try {
+          data = await res.json();
+        } catch (_) {}
+
+        if (res.ok && data && data.ok) {
+          statusEl.textContent = "ご注文内容をお店に送信しました。\nLINEのトーク画面に明細が届きます。";
+        } else {
+          statusEl.textContent =
+            "ご注文内容の送信に失敗しました。\n通信状況をご確認のうえ、必要であればお店までご連絡ください。";
+          console.error("order/complete error:", data);
+        }
+      } catch (e) {
+        console.error("order/complete exception:", e);
+        statusEl.textContent =
+          "ご注文内容の送信中にエラーが発生しました。\n必要であればお店までご連絡ください。";
+      }
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      sendOrderComplete();
+
+      document.getElementById("backLineBtn").addEventListener("click", () => {
+        if (window.liff && typeof liff.closeWindow === "function") {
+          liff.closeWindow();
+        } else {
+          history.back();
+        }
+      });
+    });
+  </script>
 </body>
 </html>

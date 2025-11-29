@@ -1,4 +1,4 @@
-// server.js — フル機能版（イプシロン + ミニアプリ + 画像管理）
+// server.js — フル機能版（Stripe + ミニアプリ + 画像管理）
 // + Flex配信
 // + 「その他＝価格入力なし」
 // + 久助専用テキスト購入フロー
@@ -9,94 +9,30 @@
 // + ミニアプリ用 /api/products（久助除外）
 // + ミニアプリ用 /api/shipping（住所から地域判定して送料）
 // + LIFF 住所保存/取得 API（/api/liff/address, /api/liff/address/me, /api/liff/config）
-// + イプシロン決済 /api/pay + 旧URL /api/pay-epsilon
-// + イプシロン入金通知 /api/epsilon/notify
-// + 汎用 Health チェック, /my-ip
+// + Stripe決済 /api/pay（PaymentIntent client_secret 返却）
+// + 汎用 Health チェック
 
 "use strict";
 
 require("dotenv").config();
 
-// ===== モジュール読み込み（1回だけ） =====
 const fs = require("fs");
 const path = require("path");
 const express = require("express");
 const line = require("@line/bot-sdk");
-const axios = require("axios");
 const multer = require("multer");
+const stripeLib = require("stripe");
 
-// ===== Stripe 初期化 =====
 const stripeSecretKey = (process.env.STRIPE_SECRET_KEY || "").trim();
-const stripe = stripeSecretKey ? require("stripe")(stripeSecretKey) : null;
+const stripe = stripeSecretKey ? stripeLib(stripeSecretKey) : null;
 
-// ★ 公開URL（成功/キャンセル時の遷移先に使う）
-// ここを1か所だけの定義にします
-const PUBLIC_BASE_URL =
-  (process.env.PUBLIC_BASE_URL || "https://line-render-app-1.onrender.com")
-    .trim()
-    .replace(/\/+$/, "");
+if (!stripe) {
+  console.warn(
+    "⚠️ STRIPE_SECRET_KEY が設定されていません。/api/pay はエラーになります。"
+  );
+}
 
-// ===== express アプリ準備 =====
 const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// 静的ファイル
-const PUBLIC_DIR = path.join(__dirname, "public");
-app.use("/public", express.static(PUBLIC_DIR));
-
-// ==========================
-// クレジット決済 (Stripe Checkout)
-// ==========================
-app.post("/api/pay", async (req, res) => {
-  if (!stripe) {
-    console.error("Stripe is not configured");
-    return res.status(500).json({ ok: false, error: "Stripe is not configured" });
-  }
-
-  try {
-    const body = req.body || {};
-
-    // フロントから送られてくる注文データ
-    const items       = Array.isArray(body.items) ? body.items : [];
-    const totalAmount = Number(body.totalAmount || 0);
-
-    if (!items.length || !totalAmount) {
-      return res.status(400).json({ ok: false, error: "Invalid order data" });
-    }
-
-    // Stripe Checkout の line_items を作成
-    const lineItems = items.map((p) => ({
-      price_data: {
-        currency: "jpy",
-        product_data: { name: p.name || "商品" },
-        unit_amount: Number(p.unitPrice || 0), // 単価（円）
-      },
-      quantity: Number(p.quantity || 1),
-    }));
-
-    // Checkout セッション（決済画面）の作成
-    const session = await stripe.checkout.sessions.create({
-      mode: "payment",
-      payment_method_types: ["card"], // ← Apple Pay / Google Pay 自動対応
-      line_items: lineItems,
-
-      // 支払い成功時
-      success_url: `${PUBLIC_BASE_URL}/public/confirm-success.html?session_id={CHECKOUT_SESSION_ID}`,
-
-      // キャンセル時
-      cancel_url: `${PUBLIC_BASE_URL}/public/confirm.html?canceled=1`,
-    });
-
-    // フロントへStripeの決済URLを返す
-    return res.json({ ok: true, url: session.url });
-
-  } catch (err) {
-    console.error("Stripe error:", err);
-    return res.status(500).json({ ok: false, error: "Stripe payment failed" });
-  }
-});
-
 
 // ====== 環境変数 ======
 const PORT = process.env.PORT || 3000;
@@ -117,6 +53,10 @@ const ADMIN_CODE_ENV = (process.env.ADMIN_CODE || "").trim(); // 互換（クエ
 const BANK_INFO = (process.env.BANK_INFO || "").trim();
 const BANK_NOTE = (process.env.BANK_NOTE || "").trim();
 
+// ★ 公開URL（Renderのhttpsドメインを .env で指定推奨）
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "")
+  .trim()
+  .replace(/\/+$/, "");
 
 // LINE config
 const config = {
@@ -153,10 +93,9 @@ const MESSAGES_LOG = path.join(DATA_DIR, "messages.log");
 const SESSIONS_PATH = path.join(DATA_DIR, "sessions.json");
 const NOTIFY_STATE_PATH = path.join(DATA_DIR, "notify_state.json");
 const STOCK_LOG = path.join(DATA_DIR, "stock.log");
-// イプシロン入金通知ログ
-const EPSILON_NOTIFY_LOG = path.join(DATA_DIR, "epsilon_notify.log");
 
 // 公開静的/アップロード
+const PUBLIC_DIR = path.join(__dirname, "public");
 const UPLOAD_DIR = path.join(PUBLIC_DIR, "uploads");
 
 // ====== ディレクトリ自動作成 ======
@@ -475,45 +414,45 @@ function productsFlex(allProducts) {
           }
         : undefined,
       body: {
-  type: "box",
-  layout: "vertical",
-  spacing: "sm",
-  contents: [
-    {
-      type: "text",
-      text: p.name,
-      weight: "bold",
-      size: "md",
-      wrap: true,
-    },
-    {
-      type: "text",
-      text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`,
-      size: "sm",
-      wrap: true,
-    },
+        type: "box",
+        layout: "vertical",
+        spacing: "sm",
+        contents: [
+          {
+            type: "text",
+            text: p.name,
+            weight: "bold",
+            size: "md",
+            wrap: true,
+          },
+          {
+            type: "text",
+            text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`,
+            size: "sm",
+            wrap: true,
+          },
 
-    // ★ 内容量（volume）があれば表示
-    p.volume
-      ? {
-          type: "text",
-          text: `内容量：${p.volume}`,
-          size: "sm",
-          wrap: true,
-        }
-      : null,
+          // ★ 内容量（volume）があれば表示
+          p.volume
+            ? {
+                type: "text",
+                text: `内容量：${p.volume}`,
+                size: "sm",
+                wrap: true,
+              }
+            : null,
 
-    // 説明文
-    p.desc
-      ? {
-          type: "text",
-          text: p.desc,
-          size: "sm",
-          wrap: true,
-        }
-      : null,
-  ].filter(Boolean),
-},
+          // 説明文
+          p.desc
+            ? {
+                type: "text",
+                text: p.desc,
+                size: "sm",
+                wrap: true,
+              }
+            : null,
+        ].filter(Boolean),
+      },
 
       footer: {
         type: "box",
@@ -1181,32 +1120,13 @@ app.get("/api/liff/config", (_req, res) =>
   res.json({ liffId: LIFF_ID_DIRECT_ADDRESS })
 );
 
-// ====== 決済：/api/pay（イプシロン専用・今は未使用） ======
-// ※ Stripe 版 /api/pay を使うため、ここはコメントアウト
-// app.post("/api/pay", async (req, res) => {
-//   return payWithEpsilon(req, res);
-// });
-
-// （互換）イプシロンを使いたいときだけ /api/pay-epsilon を叩く
-app.post("/api/pay-epsilon", (req, res) => payWithEpsilon(req, res));
-
-// ====== イプシロン決済（開始処理） ======
-async function payWithEpsilon(req, res) {
+// ====== 決済：/api/pay（Stripe PaymentIntent 作成） ======
+app.post("/api/pay", async (req, res) => {
   try {
-    const contractCode = (process.env.EPSILON_CONTRACT_CODE || "").trim();
-    const stCode = (process.env.EPSILON_ST_CODE || "10000-0000-00000").trim();
-    const orderUrl = (
-      process.env.EPSILON_ORDER_URL ||
-      "https://secure.epsilon.jp/cgi-bin/order/receive_order3.cgi"
-    ).trim();
-    const defaultMail = (process.env.EPSILON_DEFAULT_MAIL || "").trim();
-    const successUrlEnv = (process.env.EPSILON_SUCCESS_URL || "").trim();
-    const failureUrlEnv = (process.env.EPSILON_FAILURE_URL || "").trim();
-
-    if (!contractCode) {
+    if (!stripe) {
       return res
         .status(500)
-        .json({ ok: false, error: "EPSILON_CONTRACT_CODE is not set" });
+        .json({ ok: false, error: "STRIPE_SECRET_KEY is not set" });
     }
 
     const { items, total, lineUserId, lineUserName } = req.body || {};
@@ -1219,81 +1139,32 @@ async function payWithEpsilon(req, res) {
       return res.status(400).json({ ok: false, error: "invalid_total" });
     }
 
-    const first = items[0] || {};
-    const itemCode = String(first.id || "ISOYA-ONLINE");
-    let itemName = String(first.name || "商品");
-    if (items.length > 1) itemName += " 他";
-    itemName = itemName.slice(0, 50);
+    const description = items
+      .map((it) => `${it.name || it.id || "商品"} x ${it.qty || 1}`)
+      .join(", ")
+      .slice(0, 250);
 
-    const orderNumber = String(Date.now())
-      .replace(/[^0-9]/g, "")
-      .slice(0, 32);
-
-    const userId = (lineUserId || "guest").slice(0, 32);
-    const userName = (lineUserName || "LINEユーザー").slice(0, 50);
-    const userMail = defaultMail || "no-reply@example.com";
-
-    const proto =
-      req.headers["x-forwarded-proto"] || req.protocol || "https";
-    const host = req.headers.host;
-    const base = `${proto}://${host}`;
-    const successUrl = successUrlEnv || `${base}/public/confirm-success.html`;
-    const failureUrl = failureUrlEnv || `${base}/public/confirm-fail.html`;
-
-    const params = new URLSearchParams({
-      version: "2",
-      contract_code: contractCode,
-      user_id: userId,
-      user_name: userName,
-      user_mail_add: userMail,
-      item_code: itemCode,
-      item_name: itemName,
-      order_number: orderNumber,
-      st_code: stCode,
-      mission_code: "1",
-      item_price: String(totalPrice),
-      process_code: "1",
-      memo1: lineUserId || "",
-      memo2: "",
-      success_url: successUrl,
-      failure_url: failureUrl,
-      xml: "1",
-      character_code: "UTF8",
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: totalPrice,
+      currency: "jpy",
+      automatic_payment_methods: { enabled: true }, // Apple Pay / Google Pay 対応
+      description,
+      metadata: {
+        lineUserId: lineUserId || "",
+        lineUserName: lineUserName || "",
+        items: JSON.stringify(items || []),
+      },
     });
 
-    console.log("[pay-epsilon] request to Epsilon:", orderUrl, params.toString());
-
-    const epsilonRes = await axios.post(orderUrl, params.toString(), {
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      timeout: 15000,
+    return res.json({
+      ok: true,
+      clientSecret: paymentIntent.client_secret,
     });
-
-    const body = String(epsilonRes.data || "");
-    console.log("[pay-epsilon] response from Epsilon:", body);
-
-    const getAttr = (name) => {
-      const re = new RegExp(name + '="([^"]*)"', "i");
-      const m = body.match(re);
-      return m ? decodeURIComponent(m[1]) : "";
-    };
-
-    const result = getAttr("result");
-    const redirect = getAttr("redirect");
-    const errCode = getAttr("err_code");
-    const errDet = getAttr("err_detail");
-
-    if (result === "1" && redirect) {
-      return res.json({ ok: true, redirectUrl: redirect });
-    }
-
-    const msg = `Epsilon error result=${result} code=${errCode} detail=${errDet}`;
-    console.error("[pay-epsilon] error:", msg);
-    return res.status(400).json({ ok: false, error: msg });
   } catch (e) {
-    console.error("[pay-epsilon] exception:", e?.response?.data || e);
-    return res.status(500).json({ ok: false, error: "server_error" });
+    console.error("/api/pay (stripe) error:", e);
+    return res.status(500).json({ ok: false, error: "stripe_error" });
   }
-}
+});
 
 // ====== 決済完了通知（ミニアプリ→サーバー→管理者LINE） ======
 // confirm-success.html から fetch("/api/order/complete") で呼ぶ想定
@@ -1341,7 +1212,7 @@ app.post("/api/order/complete", async (req, res) => {
       const log = {
         ts: new Date().toISOString(),
         ...order,
-        source: "liff-epsilon",
+        source: "liff-stripe",
       };
       fs.appendFileSync(ORDERS_LOG, JSON.stringify(log) + "\n", "utf8");
     } catch (e) {
@@ -1349,7 +1220,7 @@ app.post("/api/order/complete", async (req, res) => {
     }
 
     const adminMsg =
-      `🧾【Epsilon決済 新規注文】\n` +
+      `🧾【Stripe決済 新規注文】\n` +
       (order.lineUserId ? `ユーザーID：${order.lineUserId}\n` : "") +
       (order.orderNumber ? `注文番号：${order.orderNumber}\n` : "") +
       `\n【内容】\n${itemsText}\n` +
@@ -1403,63 +1274,6 @@ app.post("/api/order/complete", async (req, res) => {
   } catch (e) {
     console.error("/api/order/complete error:", e);
     return res.status(500).json({ ok: false, error: "server_error" });
-  }
-});
-
-// ====== イプシロン コンビニ・ペイジー入金通知 API ======
-app.post("/api/epsilon/notify", async (req, res) => {
-  // イプシロンへ即OK返す（重要）
-  res.send("OK");
-
-  try {
-    const data = req.body || {};
-
-    try {
-      const lineLog =
-        `[${new Date().toISOString()}] ${JSON.stringify(data)}\n`;
-      fs.appendFileSync(EPSILON_NOTIFY_LOG, lineLog, "utf8");
-    } catch (e) {
-      console.error("EPSILON_NOTIFY_LOG 書き込みエラー:", e);
-    }
-
-    const orderNumber = data.order_number || data.order_no || "";
-    const payMethod = data.pay_method || "";
-    const state = data.state || data.pay_status || "";
-    const userId = data.memo1 || data.user_id || "";
-
-    console.log("=== Epsilon 入金通知受信 ===");
-    console.log("orderNumber:", orderNumber);
-    console.log("payMethod  :", payMethod);
-    console.log("state      :", state);
-    console.log("userId     :", userId);
-
-    const isPaid = state === "2" || state === "paid" || state === "1";
-
-    if (isPaid && userId) {
-      const message = {
-        type: "text",
-        text:
-          "コンビニ・ペイジーでのご入金を確認しました。\n" +
-          (orderNumber ? `ご注文番号：${orderNumber}\n` : "") +
-          "\n商品の発送準備に入らせていただきます。\n今しばらくお待ちください。",
-      };
-
-      try {
-        await client.pushMessage(userId, message);
-        console.log("入金確認メッセージ送信OK →", userId);
-      } catch (e) {
-        console.error(
-          "入金確認メッセージ送信エラー:",
-          e?.response?.data || e
-        );
-      }
-    } else {
-      console.log(
-        "入金完了状態ではないか、userId 不明のため LINE送信スキップ"
-      );
-    }
-  } catch (err) {
-    console.error("Epsilon notify ハンドラでエラー:", err);
   }
 });
 
@@ -2476,54 +2290,58 @@ async function handleEvent(ev) {
         });
         return;
       }
-if (sess?.await === "pickupName") {
-  const nameText = (text || "").trim();
-  if (!nameText) {
-    await client.replyMessage(ev.replyToken, {
-      type: "text",
-      text: "お名前が空です。注文者のお名前を入力してください。",
-    });
-    return;
-  }
 
-  const temp = sess.temp || {};
-  const id = temp.id;
-  const qty = Math.max(1, Math.min(99, Number(temp.qty) || 1));
+      if (sess?.await === "pickupName") {
+        const nameText = (text || "").trim();
+        if (!nameText) {
+          await client.replyMessage(ev.replyToken, {
+            type: "text",
+            text: "お名前が空です。注文者のお名前を入力してください。",
+          });
+          return;
+        }
 
-  // セッションはここで終了
-  delete sessions[uid];
-  writeSessions(sessions);
+        const temp = sess.temp || {};
+        const id = temp.id;
+        const qty = Math.max(1, Math.min(99, Number(temp.qty) || 1));
 
-  // 商品取得
-  let product;
-  if (String(id).startsWith("other:")) {
-    const parts = String(id).split(":");
-    const encName = parts[1] || "";
-    const priceStr = parts[2] || "0";
-    product = {
-      id,
-      name: decodeURIComponent(encName || "その他"),
-      price: Number(priceStr || 0),
-    };
-  } else {
-    const products = readProducts();
-    product = products.find((p) => p.id === id);
-  }
+        // セッションはここで終了
+        delete sessions[uid];
+        writeSessions(sessions);
 
-  if (!product) {
-    await client.replyMessage(ev.replyToken, {
-      type: "text",
-      text: "商品が見つかりませんでした。もう一度最初からお試しください。",
-    });
-    return;
-  }
+        // 商品取得
+        let product;
+        if (String(id).startsWith("other:")) {
+          const parts = String(id).split(":");
+          const encName = parts[1] || "";
+          const priceStr = parts[2] || "0";
+          product = {
+            id,
+            name: decodeURIComponent(encName || "その他"),
+            price: Number(priceStr || 0),
+          };
+        } else {
+          const products = readProducts();
+          product = products.find((p) => p.id === id);
+        }
 
-  // ★ 店頭受取・現金のみで最終確認画面を表示（お名前付き）
-  await client.replyMessage(ev.replyToken,
-    confirmFlex(product, qty, "pickup", "", "cash", LIFF_ID, { pickupName: nameText })
-  );
-  return;
-}
+        if (!product) {
+          await client.replyMessage(ev.replyToken, {
+            type: "text",
+            text: "商品が見つかりませんでした。もう一度最初からお試しください。",
+          });
+          return;
+        }
+
+        // ★ 店頭受取・現金のみで最終確認画面を表示（お名前付き）
+        await client.replyMessage(
+          ev.replyToken,
+          confirmFlex(product, qty, "pickup", "", "cash", LIFF_ID, {
+            pickupName: nameText,
+          })
+        );
+        return;
+      }
 
       if (sess?.await === "otherQty") {
         const n = (text || "").trim();
@@ -2952,22 +2770,23 @@ if (sess?.await === "pickupName") {
         );
         return;
       }
-if (d.startsWith("order_pickup_name?")) {
-  const { id, qty } = parse(d.replace("order_pickup_name?", ""));
-  const sessions = readSessions();
-  const uid = ev.source?.userId || "";
-  sessions[uid] = {
-    await: "pickupName",
-    temp: { id, qty },
-  };
-  writeSessions(sessions);
 
-  await client.replyMessage(ev.replyToken, {
-    type: "text",
-    text: "注文者の氏名を入力してください。\n例：磯屋 太郎",
-  });
-  return;
-}
+      if (d.startsWith("order_pickup_name?")) {
+        const { id, qty } = parse(d.replace("order_pickup_name?", ""));
+        const sessions = readSessions();
+        const uid = ev.source?.userId || "";
+        sessions[uid] = {
+          await: "pickupName",
+          temp: { id, qty },
+        };
+        writeSessions(sessions);
+
+        await client.replyMessage(ev.replyToken, {
+          type: "text",
+          text: "注文者の氏名を入力してください。\n例：磯屋 太郎",
+        });
+        return;
+      }
 
       if (d.startsWith("order_method?")) {
         const { id, qty } = parse(
@@ -3061,8 +2880,16 @@ if (d.startsWith("order_pickup_name?")) {
         }
 
         // ★ 直接注文の住所入力は LIFF_ID_DIRECT_ADDRESS を使用
-        await client.replyMessage(ev.replyToken, 
-          confirmFlex(product, qty, method, region, payment, LIFF_ID_DIRECT_ADDRESS)
+        await client.replyMessage(
+          ev.replyToken,
+          confirmFlex(
+            product,
+            qty,
+            method,
+            region,
+            payment,
+            LIFF_ID_DIRECT_ADDRESS
+          )
         );
         return;
       }
@@ -3076,182 +2903,182 @@ if (d.startsWith("order_pickup_name?")) {
       }
 
       if (d.startsWith("order_confirm?")) {
-  const parsed = parse(d.replace("order_confirm?", ""));
-  const id = parsed.id;
-  const qty = parsed.qty;
-  let method = parsed.method;
-  let region = parsed.region;
-  const payment = parsed.payment;
-  const pickupName = (parsed.pickupName || "").trim();   // ★ 追加
+        const parsed = parse(d.replace("order_confirm?", ""));
+        const id = parsed.id;
+        const qty = parsed.qty;
+        let method = parsed.method;
+        let region = parsed.region;
+        const payment = parsed.payment;
+        const pickupName = (parsed.pickupName || "").trim(); // ★ 追加
 
-  const need = Math.max(1, Number(qty) || 1);
+        const need = Math.max(1, Number(qty) || 1);
 
-  let product = null;
-  let products = readProducts();
-  let idx = products.findIndex((p) => p.id === id);
+        let product = null;
+        let products = readProducts();
+        let idx = products.findIndex((p) => p.id === id);
 
-  if (String(id).startsWith("other:")) {
-    const parts = String(id).split(":");
-    const encName = parts[1] || "";
-    const priceStr = parts[2] || "0";
-    product = {
-      id,
-      name: decodeURIComponent(encName || "その他"),
-      price: Number(priceStr || 0),
-      stock: Infinity,
-    };
-    idx = -1;
-  } else {
-    if (idx === -1) {
-      await client.replyMessage(ev.replyToken, {
-        type: "text",
-        text: "商品が見つかりませんでした。",
-      });
-      return;
-    }
-    product = products[idx];
-    if (!product.stock || product.stock < need) {
-      await client.replyMessage(
-        ev.replyToken,
-        reserveOffer(product, need, product.stock || 0)
-      );
-      return;
-    }
-    products[idx].stock = Number(product.stock) - need;
-    writeProducts(products);
-    await maybeLowStockAlert(
-      product.id,
-      product.name,
-      products[idx].stock
-    );
-  }
+        if (String(id).startsWith("other:")) {
+          const parts = String(id).split(":");
+          const encName = parts[1] || "";
+          const priceStr = parts[2] || "0";
+          product = {
+            id,
+            name: decodeURIComponent(encName || "その他"),
+            price: Number(priceStr || 0),
+            stock: Infinity,
+          };
+          idx = -1;
+        } else {
+          if (idx === -1) {
+            await client.replyMessage(ev.replyToken, {
+              type: "text",
+              text: "商品が見つかりませんでした。",
+            });
+            return;
+          }
+          product = products[idx];
+          if (!product.stock || product.stock < need) {
+            await client.replyMessage(
+              ev.replyToken,
+              reserveOffer(product, need, product.stock || 0)
+            );
+            return;
+          }
+          products[idx].stock = Number(product.stock) - need;
+          writeProducts(products);
+          await maybeLowStockAlert(
+            product.id,
+            product.name,
+            products[idx].stock
+          );
+        }
 
-  const regionFee =
-    method === "delivery" ? SHIPPING_BY_REGION[region] || 0 : 0;
-  const codFee = payment === "cod" ? COD_FEE : 0;
-  const subtotal = Number(product.price) * need;
-  const total = subtotal + regionFee + codFee;
+        const regionFee =
+          method === "delivery" ? SHIPPING_BY_REGION[region] || 0 : 0;
+        const codFee = payment === "cod" ? COD_FEE : 0;
+        const subtotal = Number(product.price) * need;
+        const total = subtotal + regionFee + codFee;
 
-  const addrBook = readAddresses();
-  const addr = addrBook[ev.source?.userId || ""] || null;
+        const addrBook = readAddresses();
+        const addr = addrBook[ev.source?.userId || ""] || null;
 
-  const order = {
-    ts: new Date().toISOString(),
-    userId: ev.source?.userId || "",
-    productId: product.id,
-    productName: product.name,
-    qty: need,
-    price: Number(product.price),
-    subtotal,
-    region,
-    shipping: regionFee,
-    payment,
-    codFee,
-    total,
-    method,
-    address: addr,
-    image: product.image || "",
-    pickupName,                  // ★ ここでログにも残す
-  };
-  fs.appendFileSync(ORDERS_LOG, JSON.stringify(order) + "\n", "utf8");
+        const order = {
+          ts: new Date().toISOString(),
+          userId: ev.source?.userId || "",
+          productId: product.id,
+          productName: product.name,
+          qty: need,
+          price: Number(product.price),
+          subtotal,
+          region,
+          shipping: regionFee,
+          payment,
+          codFee,
+          total,
+          method,
+          address: addr,
+          image: product.image || "",
+          pickupName, // ★ ログにも残す
+        };
+        fs.appendFileSync(ORDERS_LOG, JSON.stringify(order) + "\n", "utf8");
 
-  const payText =
-    payment === "cod"
-      ? `代金引換（+${yen(COD_FEE)})`
-      : payment === "bank"
-      ? "銀行振込"
-      : "現金（店頭）";
+        const payText =
+          payment === "cod"
+            ? `代金引換（+${yen(COD_FEE)})`
+            : payment === "bank"
+            ? "銀行振込"
+            : "現金（店頭）";
 
-  const userLines = [
-    "ご注文ありがとうございます！",
-    `受取方法：${
-      method === "pickup"
-        ? "店頭受取（送料0円）"
-        : `宅配（${region}）`
-    }`,
-    `支払い：${payText}`,
-    `商品：${product.name}`,
-    `数量：${need}個`,
-    `小計：${yen(subtotal)}`,
-    `送料：${yen(regionFee)}`,
-    `代引き手数料：${yen(codFee)}`,
-    `合計：${yen(total)}`,
-  ];
+        const userLines = [
+          "ご注文ありがとうございます！",
+          `受取方法：${
+            method === "pickup"
+              ? "店頭受取（送料0円）"
+              : `宅配（${region}）`
+          }`,
+          `支払い：${payText}`,
+          `商品：${product.name}`,
+          `数量：${need}個`,
+          `小計：${yen(subtotal)}`,
+          `送料：${yen(regionFee)}`,
+          `代引き手数料：${yen(codFee)}`,
+          `合計：${yen(total)}`,
+        ];
 
-  // ★ ユーザー向けメッセージにも名前を表示
-  if (method === "pickup" && pickupName) {
-    userLines.push(``, `お名前：${pickupName}`);
-  }
+        // ★ ユーザー向けメッセージにも名前を表示
+        if (method === "pickup" && pickupName) {
+          userLines.push("", `お名前：${pickupName}`);
+        }
 
-  if (method === "delivery") {
-    userLines.push("");
-    userLines.push(
-      addr
-        ? `お届け先：${addr.postal || ""} ${
-            addr.prefecture || ""
-          }${addr.city || ""}${addr.address1 || ""}${
-            addr.address2 ? " " + addr.address2 : ""
-          }\n氏名：${addr.name || ""}\n電話：${
-            addr.phone || ""
-          }`
-        : "住所未登録です。メニューの「住所を入力（LIFF）」から登録してください。"
-    );
-  } else {
-    userLines.push(
-      "",
-      "店頭でのお受け取りをお待ちしています。"
-    );
-  }
+        if (method === "delivery") {
+          userLines.push("");
+          userLines.push(
+            addr
+              ? `お届け先：${addr.postal || ""} ${
+                  addr.prefecture || ""
+                }${addr.city || ""}${addr.address1 || ""}${
+                  addr.address2 ? " " + addr.address2 : ""
+                }\n氏名：${addr.name || ""}\n電話：${
+                  addr.phone || ""
+                }`
+              : "住所未登録です。メニューの「住所を入力（LIFF）」から登録してください。"
+          );
+        } else {
+          userLines.push(
+            "",
+            "店頭でのお受け取りをお待ちしています。"
+          );
+        }
 
-  await client.replyMessage(ev.replyToken, {
-    type: "text",
-    text: userLines.join("\n"),
-  });
+        await client.replyMessage(ev.replyToken, {
+          type: "text",
+          text: userLines.join("\n"),
+        });
 
-  // ★ 管理者向けメッセージにも名前を追加
-  const adminMsg = [
-    "🧾 新規注文",
-    `ユーザーID：${ev.source?.userId || ""}`,
-    `商品：${product.name}`,
-    `数量：${need}個`,
-    `小計：${yen(subtotal)} / 送料：${yen(
-      regionFee
-    )} / 代引：${yen(codFee)} / 合計：${yen(total)}`,
-    `受取：${method}${
-      method === "delivery" ? `（${region}）` : ""
-    } / 支払：${payment}`,
-    pickupName ? `店頭お呼び出し名：${pickupName}` : "",
-    addr
-      ? `住所：${addr.postal || ""} ${
-          addr.prefecture || ""
-        }${addr.city || ""}${addr.address1 || ""}${
-          addr.address2 ? " " + addr.address2 : ""
-        }\n氏名：${addr.name || ""} / TEL：${
-          addr.phone || ""
-        }`
-      : method === "delivery"
-      ? "住所：未登録"
-      : "",
-    product.image ? `画像：${product.image}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+        // ★ 管理者向けメッセージにも名前を追加
+        const adminMsg = [
+          "🧾 新規注文",
+          `ユーザーID：${ev.source?.userId || ""}`,
+          `商品：${product.name}`,
+          `数量：${need}個`,
+          `小計：${yen(subtotal)} / 送料：${yen(
+            regionFee
+          )} / 代引：${yen(codFee)} / 合計：${yen(total)}`,
+          `受取：${method}${
+            method === "delivery" ? `（${region}）` : ""
+          } / 支払：${payment}`,
+          pickupName ? `店頭お呼び出し名：${pickupName}` : "",
+          addr
+            ? `住所：${addr.postal || ""} ${
+                addr.prefecture || ""
+              }${addr.city || ""}${addr.address1 || ""}${
+                addr.address2 ? " " + addr.address2 : ""
+              }\n氏名：${addr.name || ""} / TEL：${
+                addr.phone || ""
+              }`
+            : method === "delivery"
+            ? "住所：未登録"
+            : "",
+          product.image ? `画像：${product.image}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n");
 
-  try {
-    if (ADMIN_USER_ID)
-      await client.pushMessage(ADMIN_USER_ID, {
-        type: "text",
-        text: adminMsg,
-      });
-    if (MULTICAST_USER_IDS.length > 0)
-      await client.multicast(MULTICAST_USER_IDS, {
-        type: "text",
-        text: adminMsg,
-      });
-  } catch {}
+        try {
+          if (ADMIN_USER_ID)
+            await client.pushMessage(ADMIN_USER_ID, {
+              type: "text",
+              text: adminMsg,
+            });
+          if (MULTICAST_USER_IDS.length > 0)
+            await client.multicast(MULTICAST_USER_IDS, {
+              type: "text",
+              text: adminMsg,
+            });
+        } catch {}
 
-  return;
-}
+        return;
+      }
 
       if (d.startsWith("order_reserve?")) {
         const { id, qty } = parse(
@@ -3328,29 +3155,6 @@ if (d.startsWith("order_pickup_name?")) {
   }
 }
 
-// ====== Outbound IP チェック（イプシロン908対応用） ======
-app.get("/my-ip", async (_req, res) => {
-  try {
-    const r = await axios.get(
-      "https://api.ipify.org?format=json",
-      { timeout: 5000 }
-    );
-    const ip = r.data && r.data.ip ? r.data.ip : null;
-
-    res.json({
-      ok: true,
-      outbound_ip: ip,
-      note:
-        "この outbound_ip をイプシロンの「注文情報発信元IP」に登録してください",
-    });
-  } catch (e) {
-    console.error("GET /my-ip error:", e?.message || e);
-    res
-      .status(500)
-      .json({ ok: false, error: String(e?.message || e) });
-  }
-});
-
 // ====== Health checks ======
 app.get("/health", (_req, res) =>
   res.status(200).type("text/plain").send("OK")
@@ -3376,9 +3180,8 @@ app.get("/api/health", (_req, res) => {
       BANK_INFO: !!BANK_INFO,
       BANK_NOTE: !!BANK_NOTE,
       PUBLIC_BASE_URL: !!PUBLIC_BASE_URL,
-      EPSILON_CONTRACT_CODE:
-        !!process.env.EPSILON_CONTRACT_CODE,
-      EPSILON_ST_CODE: !!process.env.EPSILON_ST_CODE,
+      STRIPE_SECRET_KEY: !!process.env.STRIPE_SECRET_KEY,
+      STRIPE_PUBLISHABLE_KEY: !!process.env.STRIPE_PUBLISHABLE_KEY,
     },
   });
 });

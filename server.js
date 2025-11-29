@@ -94,9 +94,7 @@ app.post("/api/pay", async (req, res) => {
   }
 });
 
-// ⑤ API ルート（/api/pay など）ここから下に続く
 
-const app = express();
 
 // ====== 環境変数 ======
 const PORT = process.env.PORT || 3000;

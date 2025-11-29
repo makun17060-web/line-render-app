@@ -17,31 +17,34 @@
 
 require("dotenv").config();
 
+// ===== モジュール読み込み（1回だけ） =====
 const fs = require("fs");
 const path = require("path");
 const express = require("express");
 const line = require("@line/bot-sdk");
 const axios = require("axios");
 const multer = require("multer");
-"use strict";
 
-require("dotenv").config();
-
-
-// ② ★ Stripe 初期化 ← ここ！！
+// ===== Stripe 初期化 =====
 const stripeSecretKey = (process.env.STRIPE_SECRET_KEY || "").trim();
 const stripe = stripeSecretKey ? require("stripe")(stripeSecretKey) : null;
 
+// ★ 公開URL（成功/キャンセル時の遷移先に使う）
+// ここを1か所だけの定義にします
 const PUBLIC_BASE_URL =
-  (process.env.PUBLIC_BASE_URL || "https://line-render-app-1.onrender.com").replace(/\/+$/, "");
+  (process.env.PUBLIC_BASE_URL || "https://line-render-app-1.onrender.com")
+    .trim()
+    .replace(/\/+$/, "");
 
-// ③ express を準備（Stripe より下）
+// ===== express アプリ準備 =====
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ④ 静的ファイル設定
-app.use("/public", express.static(path.join(__dirname, "public")));
+// 静的ファイル
+const PUBLIC_DIR = path.join(__dirname, "public");
+app.use("/public", express.static(PUBLIC_DIR));
+
 // ==========================
 // クレジット決済 (Stripe Checkout)
 // ==========================
@@ -95,7 +98,6 @@ app.post("/api/pay", async (req, res) => {
 });
 
 
-
 // ====== 環境変数 ======
 const PORT = process.env.PORT || 3000;
 const LIFF_ID = (process.env.LIFF_ID || "2008406620-G5j1gjzM").trim();
@@ -115,10 +117,6 @@ const ADMIN_CODE_ENV = (process.env.ADMIN_CODE || "").trim(); // 互換（クエ
 const BANK_INFO = (process.env.BANK_INFO || "").trim();
 const BANK_NOTE = (process.env.BANK_NOTE || "").trim();
 
-// ★ 公開URL（Renderのhttpsドメインを .env で指定推奨）
-const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "")
-  .trim()
-  .replace(/\/+$/, "");
 
 // LINE config
 const config = {

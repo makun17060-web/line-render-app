@@ -1,127 +1,63 @@
-<!-- /public/confirm-success.html -->
 <!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>決済完了 | 手造りえびせんべい 磯屋</title>
-
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>決済が完了しました</title>
   <style>
-    body{
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
-      background:#fafafa; margin:0; padding:16px; color:#222; text-align:center;
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 24px;
+      text-align: center;
+      background: #f7f7f7;
     }
-    header{
-      background:#b22222; color:#fff; padding:14px 16px; font-size:18px;
-      margin:-16px -16px 16px;
+    .card {
+      max-width: 480px;
+      margin: 40px auto;
+      background: #fff;
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
     }
-    .card{
-      background:#fff; border-radius:10px; box-shadow:0 2px 6px rgba(0,0,0,.08);
-      padding:16px; margin:0 auto; max-width:520px;
+    h1 {
+      font-size: 20px;
+      margin-bottom: 12px;
     }
-    h1{ font-size:20px; margin:8px 0 12px; }
-    .msg{ font-size:14px; color:#555; line-height:1.7; }
-    .btn{
-      margin-top:14px; width:100%; padding:12px; border-radius:6px; border:none;
-      font-size:16px; font-weight:bold; cursor:pointer; background:#b22222; color:#fff;
+    p {
+      font-size: 14px;
+      color: #555;
+      line-height: 1.6;
     }
-    #status{ margin-top:10px; font-size:13px; color:#333; white-space:pre-line; min-height:18px; }
+    button {
+      margin-top: 20px;
+      padding: 10px 18px;
+      border-radius: 999px;
+      border: none;
+      font-size: 14px;
+      cursor: pointer;
+    }
   </style>
-
-  <!-- ★ LIFF SDK 読み込み（これがないと closeWindow できません） -->
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
-
 <body>
-  <header>
-    手造りえびせんべい 磯屋<br>宅配付きご注文ミニアプリ
-  </header>
-
   <div class="card">
     <h1>決済が完了しました</h1>
-    <div class="msg">
+    <p>
       ご注文ありがとうございます。<br>
-      明細をLINEにお送りしました。<br>
-      商品の発送準備ができ次第、改めてご連絡します。
-    </div>
-
-    <button id="backBtn" class="btn">LINEに戻る</button>
-    <div id="status"></div>
+      詳細は LINE のトーク画面でもご確認いただけます。
+    </p>
+    <button onclick="closeOrBack()">LINEに戻る</button>
   </div>
 
-<script>
-(async function(){
-  const status = document.getElementById("status");
-  const backBtn = document.getElementById("backBtn");
-
-  function readOrder(){
-    try{
-      const v = sessionStorage.getItem("currentOrder") || localStorage.getItem("currentOrder");
-      return v ? JSON.parse(v) : null;
-    }catch{
-      return null;
-    }
-  }
-
-  // -----------------------------
-  // 1) 注文データ読み込み → /api/order/complete へ確定通知
-  // -----------------------------
-  const order = readOrder();
-  if (!order || !Array.isArray(order.items) || order.items.length === 0) {
-    status.textContent = "注文データが見つかりませんでした。";
-  } else {
-    try {
-      status.textContent = "注文処理を確定しています…";
-      const res = await fetch("/api/order/complete", {
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify(order)
-      });
-      const data = await res.json();
-      if (data?.ok) {
-        status.textContent = "完了しました。";
-        // 再送防止（消してOK）
-        sessionStorage.removeItem("currentOrder");
-        sessionStorage.removeItem("cart");
-        localStorage.removeItem("currentOrder");
-        localStorage.removeItem("cart");
+  <script>
+    function closeOrBack() {
+      // LIFF内なら window.close() で閉じられる場合も
+      if (window.history.length > 1) {
+        history.back();
       } else {
-        status.textContent = "確定処理に失敗しました。\nもう一度お試しください。";
+        window.location.href = "https://line.me/R/"; // LINEアプリTOPなど
       }
-    } catch(e){
-      status.textContent = "通信に失敗しました。\n電波状況をご確認ください。";
     }
-  }
-
-  // -----------------------------
-  // 2) LIFF 初期化（/api/liff/config から LIFF ID を取得）
-  // -----------------------------
-  let liffReadyInClient = false;
-  try {
-    const conf = await fetch("/api/liff/config", { cache:"no-store" }).then(r => r.json());
-    const liffId = conf?.liffId;
-
-    if (liffId && window.liff) {
-      await liff.init({ liffId });
-      liffReadyInClient = liff.isInClient();
-    }
-  } catch (e) {
-    console.log("LIFF init failed:", e);
-  }
-
-  // -----------------------------
-  // 3) 「LINEに戻る」ボタン
-  //    LINE内なら closeWindow / 外なら商品一覧へ戻す
-  // -----------------------------
-  backBtn.addEventListener("click", () => {
-    if (liffReadyInClient) {
-      liff.closeWindow();
-    } else {
-      // 外部ブラウザで開かれた場合の戻り先
-      location.href = "/public/products.html";
-    }
-  });
-})();
-</script>
+  </script>
 </body>
 </html>

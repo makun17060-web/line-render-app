@@ -23,6 +23,85 @@ const express = require("express");
 const line = require("@line/bot-sdk");
 const axios = require("axios");
 const multer = require("multer");
+"use strict";
+
+require("dotenv").config();
+
+// ① require() を全部読み込む
+const fs = require("fs");
+const path = require("path");
+const express = require("express");
+const line = require("@line/bot-sdk");
+const axios = require("axios");
+const multer = require("multer");    // ← これも require
+
+// ② ★ Stripe 初期化 ← ここ！！
+const stripeSecretKey = (process.env.STRIPE_SECRET_KEY || "").trim();
+const stripe = stripeSecretKey ? require("stripe")(stripeSecretKey) : null;
+
+const PUBLIC_BASE_URL =
+  (process.env.PUBLIC_BASE_URL || "https://line-render-app-1.onrender.com").replace(/\/+$/, "");
+
+// ③ express を準備（Stripe より下）
+const app = express();
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// ④ 静的ファイル設定
+app.use("/public", express.static(path.join(__dirname, "public")));
+// ==========================
+// クレジット決済 (Stripe Checkout)
+// ==========================
+app.post("/api/pay", async (req, res) => {
+  if (!stripe) {
+    console.error("Stripe is not configured");
+    return res.status(500).json({ ok: false, error: "Stripe is not configured" });
+  }
+
+  try {
+    const body = req.body || {};
+
+    // フロントから送られてくる注文データ
+    const items       = Array.isArray(body.items) ? body.items : [];
+    const totalAmount = Number(body.totalAmount || 0);
+
+    if (!items.length || !totalAmount) {
+      return res.status(400).json({ ok: false, error: "Invalid order data" });
+    }
+
+    // Stripe Checkout の line_items を作成
+    const lineItems = items.map((p) => ({
+      price_data: {
+        currency: "jpy",
+        product_data: { name: p.name || "商品" },
+        unit_amount: Number(p.unitPrice || 0), // 単価（円）
+      },
+      quantity: Number(p.quantity || 1),
+    }));
+
+    // Checkout セッション（決済画面）の作成
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      payment_method_types: ["card"], // ← Apple Pay / Google Pay 自動対応
+      line_items: lineItems,
+
+      // 支払い成功時
+      success_url: `${PUBLIC_BASE_URL}/public/confirm-success.html?session_id={CHECKOUT_SESSION_ID}`,
+
+      // キャンセル時
+      cancel_url: `${PUBLIC_BASE_URL}/public/confirm.html?canceled=1`,
+    });
+
+    // フロントへStripeの決済URLを返す
+    return res.json({ ok: true, url: session.url });
+
+  } catch (err) {
+    console.error("Stripe error:", err);
+    return res.status(500).json({ ok: false, error: "Stripe payment failed" });
+  }
+});
+
+// ⑤ API ルート（/api/pay など）ここから下に続く
 
 const app = express();
 

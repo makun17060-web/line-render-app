@@ -1247,26 +1247,30 @@ app.post("/api/pay-stripe", async (req, res) => {
       .json({ ok: false, error: "stripe_error" });
   }
 });
-
-// ====== 決済完了通知（ミニアプリ→サーバー→管理者・注文者 LINE） ======
+});
 app.post("/api/order/complete", async (req, res) => {
   try {
     const order = req.body || {};
-    console.log("[order-complete] body:", JSON.stringify(order, null, 2));
 
     const items = Array.isArray(order.items) ? order.items : [];
     if (items.length === 0) {
-      console.warn("[order-complete] no_items");
-      return res.status(400).json({ ok: false, error: "no_items" });
+      // 二度目以降など、注文データが無いときはエラーにせずスキップ
+      console.log("[order-complete] no_items – skip notify");
+      return res.json({ ok: false, error: "no_items" });
     }
 
     const itemsText = items
-      .map((it) => `・${it.name} x ${it.qty} = ${yen((it.price || 0) * (it.qty || 0))}`)
+      .map(
+        (it) =>
+          `・${it.name} x ${it.qty} = ${yen(
+            (it.price || 0) * (it.qty || 0)
+          )}`
+      )
       .join("\n");
 
     const itemsTotal = Number(order.itemsTotal ?? order.total ?? 0);
-    const shipping   = Number(order.shipping   ?? 0);
-    const codFee     = Number(order.codFee     ?? 0);
+    const shipping = Number(order.shipping ?? 0);
+    const codFee = Number(order.codFee ?? 0);
     const finalTotal = Number(order.finalTotal ?? order.total ?? 0);
 
     let addrText = "住所：未登録";
@@ -1274,13 +1278,18 @@ app.post("/api/order/complete", async (req, res) => {
       const a = order.address;
       addrText =
         `住所：${a.zip || a.postal || ""} ` +
-        `${a.prefecture || a.pref || ""}${a.city || ""}${a.addr1 || a.address1 || ""}` +
-        `${a.addr2 || a.address2 ? " " + (a.addr2 || a.address2) : ""}\n` +
-        `氏名：${(a.lastName || "")}${(a.firstName || "") || a.name || ""}\n` +
+        `${a.prefecture || a.pref || ""}${a.city || ""}${
+          a.addr1 || a.address1 || ""
+        }` +
+        `${
+          a.addr2 || a.address2 ? " " + (a.addr2 || a.address2) : ""
+        }\n` +
+        `氏名：${(a.lastName || "")}${
+          (a.firstName || "") || a.name || ""
+        }\n` +
         `TEL：${a.tel || a.phone || ""}`;
     }
 
-    // ログ保存
     try {
       const log = {
         ts: new Date().toISOString(),
@@ -1293,10 +1302,13 @@ app.post("/api/order/complete", async (req, res) => {
       console.error("orders.log write error:", e);
     }
 
+    console.log("[order-complete] ADMIN_USER_ID:", ADMIN_USER_ID);
+    console.log("[order-complete] MULTICAST_USER_IDS:", MULTICAST_USER_IDS);
+
     const adminMsg =
       `🧾【Stripe決済 新規注文】\n` +
-      (order.lineUserId   ? `ユーザーID：${order.lineUserId}\n`     : "") +
-      (order.orderNumber  ? `注文番号：${order.orderNumber}\n`       : "") +
+      (order.lineUserId ? `ユーザーID：${order.lineUserId}\n` : "") +
+      (order.orderNumber ? `注文番号：${order.orderNumber}\n` : "") +
       `\n【内容】\n${itemsText}\n` +
       `\n商品合計：${yen(itemsTotal)}\n` +
       `送料：${yen(shipping)}\n` +
@@ -1304,33 +1316,24 @@ app.post("/api/order/complete", async (req, res) => {
       `合計：${yen(finalTotal)}\n` +
       `\n${addrText}`;
 
-    // ★ 管理者通知
     try {
-      console.log("[order-complete] ADMIN_USER_ID:", ADMIN_USER_ID);
-      console.log("[order-complete] MULTICAST_USER_IDS:", MULTICAST_USER_IDS);
-
       if (ADMIN_USER_ID) {
         await client.pushMessage(ADMIN_USER_ID, {
           type: "text",
           text: adminMsg,
         });
         console.log("[order-complete] admin push OK");
-      } else {
-        console.warn("[order-complete] ADMIN_USER_ID not set");
       }
-
       if (MULTICAST_USER_IDS.length > 0) {
         await client.multicast(MULTICAST_USER_IDS, {
           type: "text",
           text: adminMsg,
         });
-        console.log("[order-complete] admin multicast OK");
       }
     } catch (e) {
       console.error("admin push error:", e?.response?.data || e);
     }
 
-    // ★ 注文者通知
     try {
       if (order.lineUserId) {
         const userMsg =
@@ -1349,8 +1352,6 @@ app.post("/api/order/complete", async (req, res) => {
           text: userMsg,
         });
         console.log("user receipt push OK:", order.lineUserId);
-      } else {
-        console.warn("[order-complete] lineUserId missing → 注文者に push できません");
       }
     } catch (e) {
       console.error("user receipt push error:", e?.response?.data || e);

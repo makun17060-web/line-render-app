@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>代引き受付完了</title>
+  <title>代引き注文が完了しました</title>
   <style>
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -32,9 +32,10 @@
     }
     #status {
       margin-top: 12px;
-      font-size: 13px;
-      color: #666;
+      font-size: 14px;
+      color: #444;
       white-space: pre-line;
+      font-weight: bold;
     }
     button {
       margin-top: 16px;
@@ -44,7 +45,7 @@
       border: none;
       cursor: pointer;
     }
-    #backLineBtn {
+    #closeBtn {
       background: #06c755;
       color: #fff;
     }
@@ -52,28 +53,28 @@
 </head>
 <body>
   <div class="card">
-    <h1>代引きのご住所登録が完了しました</h1>
-    <p>ありがとうございました。</p>
-    <p>LINEのトーク画面に戻って、注文内容の確認やご連絡をお待ちください。</p>
-    <div id="status">この画面は閉じていただいて大丈夫です。</div>
-    <button id="backLineBtn">LINEトーク画面に戻る</button>
+    <h1>代引き注文を受け付けました</h1>
+    <p>ご注文ありがとうございます。</p>
+    <p>LINEトーク画面に明細が届きます。</p>
+
+    <div id="status">この画面を閉じてください。</div>
+
+    <button id="closeBtn">画面を閉じる</button>
   </div>
 
   <script>
-    window.addEventListener("DOMContentLoaded", () => {
-      document.getElementById("backLineBtn").addEventListener("click", () => {
-        // LIFF 内から開いている場合
-        if (window.liff && typeof liff.closeWindow === "function") {
-          try {
-            liff.closeWindow();
-            return;
-          } catch (e) {
-            console.warn("liff.closeWindow error:", e);
-          }
+    document.getElementById("closeBtn").addEventListener("click", () => {
+      // LIFF 内なら閉じる
+      if (window.liff && typeof liff.closeWindow === "function") {
+        try {
+          liff.closeWindow();
+          return;
+        } catch (e) {
+          console.warn("liff.closeWindow error:", e);
         }
-        // 通常ブラウザで開いている場合
-        history.back();
-      });
+      }
+      // 通常ブラウザなら戻る
+      history.back();
     });
   </script>
 </body>

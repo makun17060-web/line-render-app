@@ -10,7 +10,7 @@
   {
     "id": "nori-akasha-340",
     "name": "のりあかしゃ",
-    "price": 340,
+    "price": 350,
     "stock": 20,
     "volume": "80g",
     "desc": "海苔の風味豊かなえびせんべい"
@@ -18,7 +18,7 @@
   {
     "id": "uzu-akasha-340",
     "name": "うずあかしゃ",
-    "price": 340,
+    "price": 350,
     "stock": 10,
     "volume": "80g",
     "desc": "渦を巻いたえびせんべい"
@@ -26,7 +26,7 @@
   {
     "id": "shio-akasha-340",
     "name": "潮あかしゃ",
-    "price": 340,
+    "price": 350,
     "stock": 5,
     "volume": "80g",
     "desc": "えびせんべいにあおさをトッピング"
@@ -34,7 +34,7 @@
   {
     "id": "matsu-akasha-340",
     "name": "松あかしゃ",
-    "price": 340,
+    "price": 350,
     "stock": 30,
     "volume": "80g",
     "desc": "海老をたっぷり使用した高級えびせんべい"
@@ -42,7 +42,7 @@
   {
     "id": "iso-akasha-340",
     "name": "磯あかしゃ",
-    "price": 340,
+    "price": 350,
     "stock": 30,
     "volume": "80g",
     "desc": "海老せんべいに高級海苔をトッピング"
@@ -50,7 +50,7 @@
   {
     "id": "goma-akasha-340",
     "name": "ごまあかしゃ",
-    "price": 340,
+    "price": 350,
     "stock": 30,
     "volume": "80g",
     "desc": "海老せんべいに風味豊かなごまをトッピング"
@@ -58,7 +58,7 @@
   {
     "id": "original-set-2000",
     "name": "磯屋オリジナルセット",
-    "price": 2000,
+    "price": 2100,
     "stock": 30,
     "volume": "",
     "desc": "6袋をセットにしたオリジナル"

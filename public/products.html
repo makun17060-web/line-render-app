@@ -25,153 +25,332 @@
       white-space: pre-line;
     }
 
-    /* ===== 商品グリッド ===== */
+    /* ===== 商品カードレイアウト ===== */
     #productGrid {
       display: grid;
-      grid-template-columns: 1fr;            /* ★ 基本は1列で大きく表示 */
-      gap: 10px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
       margin-bottom: 12px;
     }
-    /* 画面が十分広いときだけ2列にする */
-    @media (min-width: 480px) {
-      #productGrid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-    }
-
     .card {
-      background: #fff;
-      border-radius: 10px;
-      padding: 10px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-    .card img {
-      width: 100%;
-      border-radius: 8px;
-      object-fit: cover;
-      aspect-ratio: 4 / 3;        /* ★ 少し横長で「お皿の写真」っぽく */
-      background: #eee;
-      display: block;
-    }
-
-    .card-title {
-      font-size: 15px;            /* ★ ちょっと大きく */
-      font-weight: 700;
-    }
-    .card-desc {
-      font-size: 11px;
-      color: #555;
-      min-height: 2.4em;
-    }
-    /* 内容量やグラム数など */
-    .card-content,
-    .card-volume {
-      font-size: 12px;
-      color: #000;
-    }
-    .card-price {
-      font-size: 14px;            /* ★ 価格も少し大きく */
-      font-weight: 700;
-      color: #c00;                /* ★ 赤で目立たせる（お好みで） */
-    }
-    .card-stock {
-      font-size: 11px;
-      color: #666;
-    }
-
-    .qty-row {
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 6px;
-      margin-top: 6px;
-    }
-    .qty-row button {
-      border-radius: 999px;
-      border: 1px solid #ccc;
-      background: #fff;
-      width: 30px;
-      height: 30px;
-      font-size: 18px;
-      line-height: 1;
-      padding: 0;
-    }
-    .qty-row span {
-      min-width: 26px;
-      text-align: center;
-      font-size: 14px;
-    }
-
-    #cartSummary {
       background: #fff;
       border-radius: 8px;
       padding: 8px;
       box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-      font-size: 13px;
-      margin-bottom: 10px;
-      white-space: pre-line;
-    }
-
-    .btn-row {
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 6px;
     }
-    .btn {
-      display: block;
+
+    /* ▼ ここが画像エリア。上下が切れないように修正 ▼ */
+    .card-img-wrap {
       width: 100%;
-      padding: 10px;
-      border-radius: 999px;
-      border: none;
+      aspect-ratio: 1 / 1;         /* 正方形エリア */
+      border-radius: 6px;
+      background: #f3f3f3;
+      overflow: hidden;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .card-img-wrap img {
+      max-width: 100%;
+      max-height: 100%;
+      display: block;
+      object-fit: contain;         /* 全体が見えるように収める（トリミングしない） */
+    }
+    /* ▲ ここまで画像調整 ▲ */
+
+    .card-title {
       font-size: 14px;
       font-weight: 600;
     }
-    .btn-primary {
-      background: #00b900;
+    .card-desc {
+      font-size: 12px;
+      color: #555;
+      min-height: 2.4em;
+    }
+    .card-volume {
+      font-size: 11px;
+      color: #777;
+    }
+    .card-price-stock {
+      font-size: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .card-price {
+      font-weight: 700;
+      color: #d12;
+    }
+    .card-stock {
+      font-size: 11px;
+      color: #555;
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      margin-top: 4px;
+    }
+    .qty-btn {
+      flex: 0 0 auto;
+      border: none;
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 13px;
+      background: #eee;
+    }
+    .qty-display {
+      font-size: 13px;
+      min-width: 32px;
+      text-align: center;
+    }
+
+    #toConfirmBtn {
+      width: 100%;
+      border: none;
+      border-radius: 999px;
+      padding: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      background: #06c755;
       color: #fff;
     }
-    .btn-primary:disabled {
-      opacity: 0.5;
-    }
     #statusMsg {
-      margin-top: 6px;
-      font-size: 11px;
-      color: #d00;
-      font-weight: 600;
-      white-space: pre-line;
+      font-size: 12px;
+      color: #d12;
+      margin-top: 4px;
+      min-height: 1.2em;
     }
   </style>
 </head>
 <body>
   <header>
-    <h1>オンライン注文（商品一覧）</h1>
-    <p>
-商品を選んで「住所入力へ進む」ボタンを押してください。
-その後、確認画面で「クレジット決済」または「代引き」を選べます。
-    </p>
+    <h1>オンライン注文</h1>
+    <p>商品を選んで数量を指定し、「注文内容を確認」を押してください。</p>
   </header>
 
-  <main>
-    <div id="productGrid">
-      <!-- JSで商品カードを挿入 -->
-    </div>
+  <div id="productGrid"></div>
 
-    <div id="cartSummary">
-      カートに商品は入っていません。
-    </div>
+  <button id="toConfirmBtn" disabled>注文内容を確認</button>
+  <div id="statusMsg"></div>
 
-    <div class="btn-row">
-      <button id="toAddressBtn" class="btn btn-primary">
-        住所入力へ進む
-      </button>
-    </div>
+  <script>
+    (function () {
+      "use strict";
 
-    <div id="statusMsg"></div>
-  </main>
+      const grid = document.getElementById("productGrid");
+      const toConfirmBtn = document.getElementById("toConfirmBtn");
+      const statusMsg = document.getElementById("statusMsg");
 
-  <script src="./products.js"></script>
+      function setStatus(msg) {
+        if (!statusMsg) return;
+        statusMsg.textContent = msg || "";
+      }
+
+      function yen(n) {
+        return Number(n || 0).toLocaleString("ja-JP") + "円";
+      }
+
+      // カート情報
+      const cart = new Map(); // key: product.id, value: { product, qty }
+
+      function updateConfirmButton() {
+        let totalQty = 0;
+        for (const v of cart.values()) {
+          totalQty += v.qty;
+        }
+        toConfirmBtn.disabled = totalQty === 0;
+      }
+
+      function saveOrderToStorage() {
+        const items = [];
+        let itemsTotal = 0;
+        for (const { product, qty } of cart.values()) {
+          const line = {
+            id:   product.id,
+            name: product.name,
+            price: Number(product.price || 0),
+            qty:   Number(qty || 0),
+          };
+          items.push(line);
+          itemsTotal += line.price * line.qty;
+        }
+
+        const orderData = {
+          items,
+          itemsTotal,
+          shipping: 0,
+          codFee: 0,
+          finalTotal: itemsTotal,
+          method: "delivery",
+        };
+
+        // confirm-card / confirm-cod どちらからでも使えるようにしておく
+        try {
+          sessionStorage.setItem("orderData", JSON.stringify({ data: orderData }));
+        } catch (e) {
+          console.warn("sessionStorage set error:", e);
+        }
+      }
+
+      // 商品カード 1枚描画
+      function createProductCard(p) {
+        const card = document.createElement("div");
+        card.className = "card";
+
+        // 画像
+        const imgWrap = document.createElement("div");
+        imgWrap.className = "card-img-wrap";
+
+        if (p.image) {
+          const img = document.createElement("img");
+          img.src = p.image;
+          img.alt = p.name || "";
+          img.loading = "lazy";
+          imgWrap.appendChild(img);
+        } else {
+          const span = document.createElement("span");
+          span.style.fontSize = "11px";
+          span.style.color = "#999";
+          span.textContent = "画像なし";
+          imgWrap.appendChild(span);
+        }
+
+        const title = document.createElement("div");
+        title.className = "card-title";
+        title.textContent = p.name;
+
+        const desc = document.createElement("div");
+        desc.className = "card-desc";
+        desc.textContent = p.desc || "";
+
+        const vol = document.createElement("div");
+        vol.className = "card-volume";
+        vol.textContent = p.volume ? `内容量：${p.volume}` : "";
+
+        const priceStock = document.createElement("div");
+        priceStock.className = "card-price-stock";
+
+        const priceEl = document.createElement("div");
+        priceEl.className = "card-price";
+        priceEl.textContent = yen(p.price);
+
+        const stockEl = document.createElement("div");
+        stockEl.className = "card-stock";
+        stockEl.textContent = `在庫：${p.stock ?? 0}個`;
+
+        priceStock.appendChild(priceEl);
+        priceStock.appendChild(stockEl);
+
+        const actions = document.createElement("div");
+        actions.className = "card-actions";
+
+        const minusBtn = document.createElement("button");
+        minusBtn.className = "qty-btn";
+        minusBtn.textContent = "−";
+
+        const qtyDisplay = document.createElement("div");
+        qtyDisplay.className = "qty-display";
+        qtyDisplay.textContent = "0";
+
+        const plusBtn = document.createElement("button");
+        plusBtn.className = "qty-btn";
+        plusBtn.textContent = "+";
+
+        actions.appendChild(minusBtn);
+        actions.appendChild(qtyDisplay);
+        actions.appendChild(plusBtn);
+
+        let currentQty = 0;
+
+        function syncQty() {
+          qtyDisplay.textContent = String(currentQty);
+          if (currentQty > 0) {
+            cart.set(p.id, { product: p, qty: currentQty });
+          } else {
+            cart.delete(p.id);
+          }
+          updateConfirmButton();
+          saveOrderToStorage();
+        }
+
+        minusBtn.addEventListener("click", function (ev) {
+          ev.preventDefault();
+          if (currentQty > 0) {
+            currentQty--;
+            syncQty();
+          }
+        });
+
+        plusBtn.addEventListener("click", function (ev) {
+          ev.preventDefault();
+          const maxStock = Number(p.stock ?? 0);
+          if (maxStock > 0 && currentQty >= maxStock) {
+            setStatus("在庫数を超える数量は指定できません。");
+            return;
+          }
+          currentQty++;
+          syncQty();
+        });
+
+        card.appendChild(imgWrap);
+        card.appendChild(title);
+        if (p.desc) card.appendChild(desc);
+        if (p.volume) card.appendChild(vol);
+        card.appendChild(priceStock);
+        card.appendChild(actions);
+
+        return card;
+      }
+
+      async function fetchProducts() {
+        try {
+          const res = await fetch("/api/products", { cache: "no-store" });
+          const data = await res.json();
+          if (!data || !data.ok || !Array.isArray(data.products)) {
+            console.error("想定外のレスポンス形式:", data);
+            setStatus("商品一覧の取得に失敗しました。時間をおいて再度お試しください。");
+            return [];
+          }
+          return data.products;
+        } catch (e) {
+          console.error("商品一覧の取得に失敗:", e);
+          setStatus("商品一覧の取得に失敗しました。通信環境をご確認ください。");
+          return [];
+        }
+      }
+
+      async function init() {
+        setStatus("");
+        const products = await fetchProducts();
+        if (!products.length) {
+          grid.innerHTML = "<p>現在、商品がありません。</p>";
+          return;
+        }
+
+        grid.innerHTML = "";
+        products.forEach(p => {
+          const card = createProductCard(p);
+          grid.appendChild(card);
+        });
+      }
+
+      if (toConfirmBtn) {
+        toConfirmBtn.addEventListener("click", function (ev) {
+          ev.preventDefault();
+          // この先は confirm-card.html へ
+          location.href = "./confirm-card.html";
+        });
+      }
+
+      init();
+    })();
+  </script>
 </body>
 </html>

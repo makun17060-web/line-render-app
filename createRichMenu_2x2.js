@@ -15,7 +15,7 @@ const path = require("path");
 const {
   LINE_CHANNEL_ACCESS_TOKEN,
   LINE_CHANNEL_SECRET,
-  LIFF_ID_MINIAPP,
+  LIFF_ID,
   SURVEY_URL,
   MEMBER_URL,
   RICHMENU_IMAGE,

@@ -13,7 +13,7 @@
     }
     .card {
       max-width: 480px;
-      margin: 40px auto;
+      margin: 32px auto;
       background: #fff;
       border-radius: 8px;
       padding: 20px 16px 24px;
@@ -22,40 +22,33 @@
     }
     h1 {
       font-size: 18px;
-      margin: 0 0 12px;
+      margin: 0 0 8px;
     }
     p {
       font-size: 14px;
-      margin: 4px 0;
+      margin: 6px 0;
       line-height: 1.6;
     }
-    #statusMsg {
-      margin-top: 12px;
+    #status {
       font-size: 13px;
-      color: #555;
+      color: #666;
+      margin-top: 8px;
       white-space: pre-line;
     }
-    #errorMsg {
-      margin-top: 12px;
-      font-size: 13px;
-      color: #d00;
-      white-space: pre-line;
-    }
-    .btn {
-      display: inline-block;
-      margin-top: 20px;
-      padding: 10px 16px;
-      font-size: 14px;
+    button {
+      margin-top: 16px;
       border-radius: 6px;
       border: none;
+      padding: 10px 18px;
+      font-size: 14px;
       cursor: pointer;
-    }
-    .btn-primary {
       background: #06c755;
       color: #fff;
+      min-width: 180px;
     }
-    .small {
-      margin-top: 10px;
+    small {
+      display: block;
+      margin-top: 12px;
       font-size: 12px;
       color: #777;
     }
@@ -64,268 +57,96 @@
 <body>
   <div class="card">
     <h1>クレジット決済が完了しました</h1>
-    <p>ご注文ありがとうございます。</p>
-    <p>LINEにご注文内容の明細を送信しています。</p>
+    <p>ご利用ありがとうございます。</p>
+    <p>LINEトークに明細が届きますのでご確認ください。</p>
 
-    <p id="statusMsg">処理中です… 画面はこのままでお待ちください。</p>
-    <p id="errorMsg"></p>
+    <p id="status">この画面を閉じて、LINEトークに戻ってください。</p>
 
-    <button id="closeBtn" class="btn btn-primary">この画面を閉じる</button>
-    <p class="small">※閉じても決済とご注文は完了しています。</p>
+    <button id="btnClose">この画面を閉じる</button>
+
+    <small>
+      ※ボタンで閉じられない場合は、右上の「×」や<br />
+      ブラウザの戻るボタンで画面を閉じてください。
+    </small>
   </div>
 
+  <!-- LIFF SDK（LINEアプリ内で開いている場合に使う） -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script>
     (function () {
       "use strict";
 
-      const statusEl = document.getElementById("statusMsg");
-      const errorEl  = document.getElementById("errorMsg");
-      const closeBtn = document.getElementById("closeBtn");
+      const btnClose = document.getElementById("btnClose");
+      const statusEl = document.getElementById("status");
 
       function setStatus(msg) {
-        if (statusEl) statusEl.textContent = msg || "";
-      }
-      function setError(msg) {
-        if (errorEl) errorEl.textContent = msg || "";
+        if (!statusEl) return;
+        statusEl.textContent = msg || "";
       }
 
-      // -------- ストレージから注文データを探す --------
-      function loadRawData() {
-        const keys = [
-          "orderData",
-          "miniappOrder",
-          "currentOrder",
-          "liffOrder",
-          "cardOrder",
-          "codOrder"
-        ];
-        for (const key of keys) {
+      // LIFF初期化（/api/liff/config から LIFF ID を取得して使う）
+      async function initLiffIfPossible() {
+        if (!window.liff) {
+          console.log("LIFF SDK not found");
+          return false;
+        }
+        try {
+          // すでに初期化されている場合もあるので try/catch で軽くチェック
+          if (liff.isApiAvailable && typeof liff.getOS === "function") {
+            // 既に初期化済みのケースもあるので、そのまま使う
+            return true;
+          }
+        } catch (_) {}
+
+        try {
+          const res = await fetch("/api/liff/config");
+          const conf = await res.json().catch(() => null);
+          if (!conf || !conf.liffId) {
+            console.log("liffId が取得できませんでした", conf);
+            return false;
+          }
+          await liff.init({ liffId: conf.liffId });
+          return true;
+        } catch (e) {
+          console.error("LIFF init error:", e);
+          return false;
+        }
+      }
+
+      async function tryCloseWindow() {
+        setStatus("画面を閉じています…");
+
+        let closed = false;
+
+        // 1) LIFF で開いている場合 → liff.closeWindow()
+        try {
+          const ok = await initLiffIfPossible();
+          if (ok && window.liff && typeof liff.closeWindow === "function") {
+            liff.closeWindow();
+            closed = true;
+            return;
+          }
+        } catch (e) {
+          console.error("liff.closeWindow error:", e);
+        }
+
+        // 2) 通常ブラウザタブの場合 → window.close()（※スクリプトで開いたタブのみ有効）
+        if (!closed) {
           try {
-            const raw =
-              sessionStorage.getItem(key) ||
-              localStorage.getItem(key);
-            if (!raw) continue;
-            const data = JSON.parse(raw);
-            console.log("confirm-card-success: 読み込んだキー:", key, data);
-            return data;
+            window.close();
           } catch (e) {
-            console.warn("confirm-card-success: JSON parse 失敗", e);
+            console.error("window.close error:", e);
           }
         }
-        return null;
+
+        // 3) どちらも効かなかった場合はメッセージだけ表示
+        setStatus("画面が自動で閉じられないようです。\n右上の「×」や戻るボタンで閉じてください。");
       }
 
-      // -------- いろんな形式の注文データを正規化 --------
-      function normalizeOrder(raw) {
-        if (!raw) return null;
-
-        // { data: {...} } / { order: {...} } / それ以外 のどれでも対応
-        const src = raw.data || raw.order || raw;
-
-        // items / cart どちらにも対応
-        let itemsSrc =
-          Array.isArray(src.items) ? src.items :
-          Array.isArray(src.cart)  ? src.cart  :
-          null;
-
-        if (!itemsSrc || !itemsSrc.length) return null;
-
-        const items = [];
-        let calcItemsTotal = 0;
-
-        for (const it of itemsSrc) {
-          if (!it) continue;
-
-          const id =
-            it.id ||
-            it.productId ||
-            it.code ||
-            "";
-
-          const name =
-            it.name ||
-            it.productName ||
-            "商品";
-
-          const unitPrice =
-            Number(
-              it.price ||
-              it.unitPrice ||
-              it.unit_price ||
-              it.unit ||
-              0
-            ) || 0;
-
-          const qty =
-            Number(
-              it.qty ||
-              it.quantity ||
-              it.count ||
-              it.num ||
-              0
-            ) || 0;
-
-          if (!qty || unitPrice < 0) continue;
-
-          items.push({ id, name, price: unitPrice, qty });
-          calcItemsTotal += unitPrice * qty;
-        }
-
-        if (!items.length) return null;
-
-        const itemsTotal =
-          Number(src.itemsTotal || src.totalAmount || src.total || 0) || calcItemsTotal;
-
-        // 送料が入っていれば使う（なければ 0。必要なら /api/shipping で補完も可能）
-        const shipping = Number(src.shipping || 0) || 0;
-
-        const address      = src.address || null;
-        const lineUserId   = src.lineUserId   || src.userId   || "";
-        const lineUserName = src.lineUserName || src.userName || "";
-        const method       = src.method       || "delivery";
-
-        const finalTotal = itemsTotal + shipping; // クレジットは codFee=0
-
-        return {
-          items,
-          itemsTotal,
-          shipping,
-          codFee: 0,
-          finalTotal,
-          address,
-          lineUserId,
-          lineUserName,
-          method,
-        };
-      }
-
-      // 必要なら /api/shipping で送料を計算（住所あり・shipping=0 の時）
-      async function applyShippingIfNeeded(order) {
-        if (!order) return order;
-        if (order.method === "pickup") return order; // 店頭受取は送料 0 前提
-
-        if ((order.shipping && order.shipping > 0) || !order.address) {
-          return order;
-        }
-
-        try {
-          const res = await fetch("/api/shipping", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              items: order.items.map(it => ({
-                id: it.id,
-                price: it.price,
-                qty: it.qty,
-              })),
-              address: order.address,
-            }),
-          });
-          if (!res.ok) {
-            console.warn("api/shipping HTTP error:", res.status);
-            return order;
-          }
-          const data = await res.json();
-          console.log("api/shipping result (card):", data);
-
-          if (!data || !data.ok) return order;
-
-          const itemsTotal = Number(data.itemsTotal || order.itemsTotal || 0);
-          const shipping   = Number(data.shipping   || 0);
-          const finalTotal = itemsTotal + shipping;
-
-          return {
-            ...order,
-            itemsTotal,
-            shipping,
-            finalTotal,
-          };
-        } catch (e) {
-          console.error("applyShippingIfNeeded(card) error:", e);
-          return order;
-        }
-      }
-
-      // -------- サーバーへ「注文完了」を知らせる --------
-      async function notifyOrderComplete() {
-        try {
-          setStatus("ご注文内容を確認しています…");
-
-          const raw = loadRawData();
-          if (!raw) {
-            setError("注文情報が見つかりませんでした。LINE通知は送信できませんでした。");
-            setStatus("お手数ですが店舗までお問い合わせください。");
-            return;
-          }
-
-          let order = normalizeOrder(raw);
-          if (!order || !order.items || !order.items.length) {
-            setError("注文情報が不完全なため、明細通知を送信できませんでした。");
-            setStatus("お手数ですが店舗までお問い合わせください。");
-            return;
-          }
-
-          // 送料がなければサーバーで計算
-          order = await applyShippingIfNeeded(order);
-
-          const itemsTotal = Number(order.itemsTotal || 0);
-          const shipping   = Number(order.shipping   || 0);
-          const codFee     = 0;
-          const finalTotal = Number(order.finalTotal || (itemsTotal + shipping));
-
-          const payload = {
-            lineUserId:   order.lineUserId   || "",
-            lineUserName: order.lineUserName || "",
-            items: order.items.map(it => ({
-              id:   it.id,
-              name: it.name || "商品",
-              price: Number(it.price || 0),
-              qty:   Number(it.qty   || 0),
-            })),
-            itemsTotal,
-            shipping,
-            codFee,
-            finalTotal,
-            address: order.address || null,
-            payment: "card",
-            method:  order.method || "delivery",
-          };
-
-          console.log("confirm-card-success: /api/order/complete payload:", payload);
-          setStatus("LINE に明細を送信しています…");
-
-          const res = await fetch("/api/order/complete", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          });
-
-          let data = null;
-          try { data = await res.json(); } catch (_) {}
-
-          if (res.ok && data && data.ok) {
-            setStatus("ご注文内容を LINE に送信しました。画面を閉じていただいて大丈夫です。");
-          } else {
-            console.error("order/complete(card) error:", data);
-            setError("明細の送信に失敗しましたが、決済は完了しています。");
-            setStatus("お手数ですが店舗までお問い合わせください。");
-          }
-        } catch (e) {
-          console.error("notifyOrderComplete(card) exception:", e);
-          setError("通信エラーのため、明細の送信に失敗しました。");
-          setStatus("お手数ですが店舗までお問い合わせください。");
-        }
-      }
-
-      // -------- 画面読み込み時に自動実行 --------
-      (async () => {
-        await notifyOrderComplete();
-      })();
-
-      if (closeBtn) {
-        closeBtn.addEventListener("click", function () {
-          // ブラウザによっては無視される場合があります
-          window.close();
+      if (btnClose) {
+        btnClose.addEventListener("click", function (ev) {
+          ev.preventDefault();
+          tryCloseWindow();
         });
       }
     })();

@@ -118,8 +118,8 @@ app.use("/api", express.json(), express.urlencoded({ extended: true }));
 app.use("/public", express.static(PUBLIC_DIR));
 
 // 決済完了/失敗ページ
-app.all("/public/confirm-success.html", (req, res) => {
-  return res.sendFile(path.join(PUBLIC_DIR, "confirm-success.html"));
+app.all("/public/confirm-card-success.html", (req, res) => {
+  return res.sendFile(path.join(PUBLIC_DIR, "confirm-card-success.html"));
 });
 app.all("/public/confirm-fail.html", (req, res) => {
   return res.sendFile(path.join(PUBLIC_DIR, "confirm-fail.html"));
@@ -1219,7 +1219,7 @@ app.post("/api/pay-stripe", async (req, res) => {
       (process.env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "") ||
       `${proto}://${host}`;
 
-    const successUrl = `${base}/public/confirm-success.html`;
+    const successUrl = `${base}/public/confirm-card-success.html`;
     const cancelUrl  = `${base}/public/confirm-fail.html`;
 
     console.log("[pay-stripe] success_url:", successUrl);

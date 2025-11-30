@@ -292,7 +292,7 @@
       if (res.ok && data && data.ok) {
         setStatus("ご注文を受け付けました。LINEのトークに明細が届きます。");
         // 既存の成功ページを使う
-        location.href = "./confirm-success.html";
+        location.href = "./confirm-cod-success.html";
       } else {
         console.error("order/complete error:", data);
         alert("ご注文の送信に失敗しました。時間をおいてもう一度お試しください。");

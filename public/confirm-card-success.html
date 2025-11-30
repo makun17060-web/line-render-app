@@ -3,58 +3,332 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>クレジット決済が完了しました</title>
+  <title>クレジット決済 完了</title>
   <style>
     body {
-      margin: 0;
-      padding: 0;
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #f7f7f7;
-      color: #222;
+      background: #f5f5f5;
+      margin: 0;
+      padding: 16px;
+    }
+    .card {
+      max-width: 480px;
+      margin: 40px auto;
+      background: #fff;
+      border-radius: 8px;
+      padding: 20px 16px 24px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
       text-align: center;
     }
-    .wrap {
-      max-width: 480px;
-      margin: 50px auto;
-      padding: 24px 16px;
-      background: #fff;
-      border-radius: 10px;
-      box-shadow: 0 3px 10px rgba(0,0,0,0.08);
-    }
     h1 {
-      font-size: 20px;
-      margin-bottom: 12px;
+      font-size: 18px;
+      margin: 0 0 12px;
     }
     p {
       font-size: 14px;
-      margin: 6px 0;
+      margin: 4px 0;
       line-height: 1.6;
     }
-    .note {
-      font-size: 12px;
-      color: #666;
-      margin-top: 14px;
+    #statusMsg {
+      margin-top: 12px;
+      font-size: 13px;
+      color: #555;
+      white-space: pre-line;
     }
-    button {
+    #errorMsg {
+      margin-top: 12px;
+      font-size: 13px;
+      color: #d00;
+      white-space: pre-line;
+    }
+    .btn {
+      display: inline-block;
       margin-top: 20px;
-      padding: 10px 24px;
-      border-radius: 999px;
-      border: none;
+      padding: 10px 16px;
       font-size: 14px;
+      border-radius: 6px;
+      border: none;
       cursor: pointer;
-      background: #00c300;
+    }
+    .btn-primary {
+      background: #06c755;
       color: #fff;
+    }
+    .small {
+      margin-top: 10px;
+      font-size: 12px;
+      color: #777;
     }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <h1>クレジットカード決済が完了しました</h1>
+  <div class="card">
+    <h1>クレジット決済が完了しました</h1>
     <p>ご注文ありがとうございます。</p>
-    <p>注文内容の明細は LINE に送信されています。</p>
-    <p class="note">この画面を閉じて LINE にお戻りください。</p>
+    <p>LINEにご注文内容の明細を送信しています。</p>
 
-    <button onclick="window.close()">この画面を閉じる</button>
+    <p id="statusMsg">処理中です… 画面はこのままでお待ちください。</p>
+    <p id="errorMsg"></p>
+
+    <button id="closeBtn" class="btn btn-primary">この画面を閉じる</button>
+    <p class="small">※閉じても決済とご注文は完了しています。</p>
   </div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      const statusEl = document.getElementById("statusMsg");
+      const errorEl  = document.getElementById("errorMsg");
+      const closeBtn = document.getElementById("closeBtn");
+
+      function setStatus(msg) {
+        if (statusEl) statusEl.textContent = msg || "";
+      }
+      function setError(msg) {
+        if (errorEl) errorEl.textContent = msg || "";
+      }
+
+      // -------- ストレージから注文データを探す --------
+      function loadRawData() {
+        const keys = [
+          "orderData",
+          "miniappOrder",
+          "currentOrder",
+          "liffOrder",
+          "cardOrder",
+          "codOrder"
+        ];
+        for (const key of keys) {
+          try {
+            const raw =
+              sessionStorage.getItem(key) ||
+              localStorage.getItem(key);
+            if (!raw) continue;
+            const data = JSON.parse(raw);
+            console.log("confirm-card-success: 読み込んだキー:", key, data);
+            return data;
+          } catch (e) {
+            console.warn("confirm-card-success: JSON parse 失敗", e);
+          }
+        }
+        return null;
+      }
+
+      // -------- いろんな形式の注文データを正規化 --------
+      function normalizeOrder(raw) {
+        if (!raw) return null;
+
+        // { data: {...} } / { order: {...} } / それ以外 のどれでも対応
+        const src = raw.data || raw.order || raw;
+
+        // items / cart どちらにも対応
+        let itemsSrc =
+          Array.isArray(src.items) ? src.items :
+          Array.isArray(src.cart)  ? src.cart  :
+          null;
+
+        if (!itemsSrc || !itemsSrc.length) return null;
+
+        const items = [];
+        let calcItemsTotal = 0;
+
+        for (const it of itemsSrc) {
+          if (!it) continue;
+
+          const id =
+            it.id ||
+            it.productId ||
+            it.code ||
+            "";
+
+          const name =
+            it.name ||
+            it.productName ||
+            "商品";
+
+          const unitPrice =
+            Number(
+              it.price ||
+              it.unitPrice ||
+              it.unit_price ||
+              it.unit ||
+              0
+            ) || 0;
+
+          const qty =
+            Number(
+              it.qty ||
+              it.quantity ||
+              it.count ||
+              it.num ||
+              0
+            ) || 0;
+
+          if (!qty || unitPrice < 0) continue;
+
+          items.push({ id, name, price: unitPrice, qty });
+          calcItemsTotal += unitPrice * qty;
+        }
+
+        if (!items.length) return null;
+
+        const itemsTotal =
+          Number(src.itemsTotal || src.totalAmount || src.total || 0) || calcItemsTotal;
+
+        // 送料が入っていれば使う（なければ 0。必要なら /api/shipping で補完も可能）
+        const shipping = Number(src.shipping || 0) || 0;
+
+        const address      = src.address || null;
+        const lineUserId   = src.lineUserId   || src.userId   || "";
+        const lineUserName = src.lineUserName || src.userName || "";
+        const method       = src.method       || "delivery";
+
+        const finalTotal = itemsTotal + shipping; // クレジットは codFee=0
+
+        return {
+          items,
+          itemsTotal,
+          shipping,
+          codFee: 0,
+          finalTotal,
+          address,
+          lineUserId,
+          lineUserName,
+          method,
+        };
+      }
+
+      // 必要なら /api/shipping で送料を計算（住所あり・shipping=0 の時）
+      async function applyShippingIfNeeded(order) {
+        if (!order) return order;
+        if (order.method === "pickup") return order; // 店頭受取は送料 0 前提
+
+        if ((order.shipping && order.shipping > 0) || !order.address) {
+          return order;
+        }
+
+        try {
+          const res = await fetch("/api/shipping", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              items: order.items.map(it => ({
+                id: it.id,
+                price: it.price,
+                qty: it.qty,
+              })),
+              address: order.address,
+            }),
+          });
+          if (!res.ok) {
+            console.warn("api/shipping HTTP error:", res.status);
+            return order;
+          }
+          const data = await res.json();
+          console.log("api/shipping result (card):", data);
+
+          if (!data || !data.ok) return order;
+
+          const itemsTotal = Number(data.itemsTotal || order.itemsTotal || 0);
+          const shipping   = Number(data.shipping   || 0);
+          const finalTotal = itemsTotal + shipping;
+
+          return {
+            ...order,
+            itemsTotal,
+            shipping,
+            finalTotal,
+          };
+        } catch (e) {
+          console.error("applyShippingIfNeeded(card) error:", e);
+          return order;
+        }
+      }
+
+      // -------- サーバーへ「注文完了」を知らせる --------
+      async function notifyOrderComplete() {
+        try {
+          setStatus("ご注文内容を確認しています…");
+
+          const raw = loadRawData();
+          if (!raw) {
+            setError("注文情報が見つかりませんでした。LINE通知は送信できませんでした。");
+            setStatus("お手数ですが店舗までお問い合わせください。");
+            return;
+          }
+
+          let order = normalizeOrder(raw);
+          if (!order || !order.items || !order.items.length) {
+            setError("注文情報が不完全なため、明細通知を送信できませんでした。");
+            setStatus("お手数ですが店舗までお問い合わせください。");
+            return;
+          }
+
+          // 送料がなければサーバーで計算
+          order = await applyShippingIfNeeded(order);
+
+          const itemsTotal = Number(order.itemsTotal || 0);
+          const shipping   = Number(order.shipping   || 0);
+          const codFee     = 0;
+          const finalTotal = Number(order.finalTotal || (itemsTotal + shipping));
+
+          const payload = {
+            lineUserId:   order.lineUserId   || "",
+            lineUserName: order.lineUserName || "",
+            items: order.items.map(it => ({
+              id:   it.id,
+              name: it.name || "商品",
+              price: Number(it.price || 0),
+              qty:   Number(it.qty   || 0),
+            })),
+            itemsTotal,
+            shipping,
+            codFee,
+            finalTotal,
+            address: order.address || null,
+            payment: "card",
+            method:  order.method || "delivery",
+          };
+
+          console.log("confirm-card-success: /api/order/complete payload:", payload);
+          setStatus("LINE に明細を送信しています…");
+
+          const res = await fetch("/api/order/complete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+
+          let data = null;
+          try { data = await res.json(); } catch (_) {}
+
+          if (res.ok && data && data.ok) {
+            setStatus("ご注文内容を LINE に送信しました。画面を閉じていただいて大丈夫です。");
+          } else {
+            console.error("order/complete(card) error:", data);
+            setError("明細の送信に失敗しましたが、決済は完了しています。");
+            setStatus("お手数ですが店舗までお問い合わせください。");
+          }
+        } catch (e) {
+          console.error("notifyOrderComplete(card) exception:", e);
+          setError("通信エラーのため、明細の送信に失敗しました。");
+          setStatus("お手数ですが店舗までお問い合わせください。");
+        }
+      }
+
+      // -------- 画面読み込み時に自動実行 --------
+      (async () => {
+        await notifyOrderComplete();
+      })();
+
+      if (closeBtn) {
+        closeBtn.addEventListener("click", function () {
+          // ブラウザによっては無視される場合があります
+          window.close();
+        });
+      }
+    })();
+  </script>
 </body>
 </html>

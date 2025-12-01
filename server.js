@@ -2276,7 +2276,7 @@ app.post(
 // ★★★ ここから Twilio 着信用エンドポイントを追加 ★★★
 
 // Twilio の音声応答用クラス
-const { VoiceResponse } = twilio.twiml;
+
 
 // 着信があったときに実行される処理
 app.post(

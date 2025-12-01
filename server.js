@@ -2255,36 +2255,23 @@ app.post("/api/admin/products/set-image", (req, res) => {
   
 });
 
-// ★★★ ここから Twilio 着信用エンドポイントを追加 ★★★
-
-// Twilio の音声応答用クラス
-const { VoiceResponse } = twilio.twiml;
-
-// 着信があったときに実行される処理
-app.post(
+// ====== Twilio Voice (電話自動応答：ライブラリなし版) ======
+app.all(
   "/twilio/voice",
-  express.urlencoded({ extended: false }), // Twilio からの form データを読むため
+  express.urlencoded({ extended: false }), // Twilio やブラウザからのリクエストを受ける
   (req, res) => {
-    const twiml = new VoiceResponse();
+    const twiml =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<Response>' +
+      '<Say language="ja-JP" voice="alice">' +
+      'お電話ありがとうございます。磯屋です。ただいまテスト中です。' +
+      '</Say>' +
+      '</Response>';
 
-    twiml.say(
-      { language: "ja-JP", voice: "alice" },
-      "お電話ありがとうございます。磯屋です。ただいまテスト中です。"
-    );
-
-    // Twilio に XML で返す
-    res.type("text/xml").send(twiml.toString());
+    res.type("text/xml").send(twiml);
   }
 );
 
-// ====== Webhook ======
-app.post(
-  "/webhook",
-  line.middleware(config),
-  async (req, res) => {
-    
-  }
-);
 
 // ====== Webhook ======
 app.post(

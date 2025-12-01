@@ -16,7 +16,7 @@
 "use strict";
 
 require("dotenv").config();
-
+const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const fs = require("fs");
 const path = require("path");
 const express = require("express");

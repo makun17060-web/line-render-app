@@ -2257,36 +2257,28 @@ app.all(
   "/twilio/voice",
   express.urlencoded({ extended: false }), // Twilio やブラウザからのリクエストを受ける
   (req, res) => {
-    const twiml =
-  '<?xml version="1.0" encoding="UTF-8"?>' +
-  '<Response>' +
-  '<Say language="ja-JP" voice="alice">' 
-'お電話ありがとうございます。' +
-'<break time="600ms"/>' +
-'手造りえびせんべい、磯屋です。' +
-'<break time="800ms"/>' +
-'ただいま、製造作業中のため、電話受付を休止しております。' +
-'<break time="900ms"/>' +
-'お問い合わせやご注文は、より確実にご案内できるよう、' +
-'ラインアプリ公式アカウントに一本化しております。' +
-'<break time="800ms"/>' +
-'お手数ですが、スマートフォンのラインアプリで、' +
-'「磯屋 えびせん」と検索いただくか、' +
-'<break time="400ms"/>' +
-'チラシやホームページのQRコードから、友だち追加をお願いいたします。' +
-'<break time="900ms"/>' +
-'ラインアプリのトークでメッセージを送っていただければ、' +
-'順番に確認し、スタッフが必ずご返信いたします。' +
-'<break time="900ms"/>' +
-'ご理解とご協力をお願い申し上げます。' +
-'<break time="700ms"/>' +
-'それでは、失礼いたします。' +
-  '</Say>' 
-  '</Response>';
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    お電話ありがとうございます。<break time="600ms"/>
+    手造りえびせんべい、磯屋です。<break time="800ms"/>
+    ただいま、製造作業中のため、電話受付を休止しております。<break time="900ms"/>
+    お問い合わせやご注文は、より確実にご案内できるよう、
+    ラインアプリ公式アカウントに一本化しております。<break time="800ms"/>
+    お手数ですが、スマートフォンのラインアプリで
+    「磯屋 えびせん」と検索いただくか、<break time="400ms"/>
+    チラシやホームページのQRコードから友だち追加をお願いいたします。<break time="900ms"/>
+    ラインのトークでメッセージを送っていただければ、
+    順番に確認し、スタッフが必ずご返信いたします。<break time="900ms"/>
+    ご理解とご協力をお願い申し上げます。<break time="700ms"/>
+    それでは、失礼いたします。
+  </Say>
+</Response>`;
 
     res.type("text/xml").send(twiml);
   }
 );
+
 
 
 // ====== Webhook ======

@@ -2276,7 +2276,7 @@ app.post("/api/admin/products/set-image", (req, res) => {
   }
 });
 
-});
+
 
 // ★★★ ここから Twilio 着信用エンドポイントを追加 ★★★
 

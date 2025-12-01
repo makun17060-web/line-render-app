@@ -37,8 +37,7 @@ async function askOpenAIForPhone(callSid, userText) {
     PHONE_CONVERSATIONS[callSid] = [
       {
         role: "system",
-        content:
-          あなたは「手造りえびせんべい磯屋」の電話自動応答AIです。
+        content:          あなたは「手造りえびせんべい磯屋」の電話自動応答AIです。
 
 【基本方針】
 ・電話はすべて「丁寧な敬語」で話します。

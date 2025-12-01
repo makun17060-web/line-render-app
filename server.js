@@ -2258,12 +2258,17 @@ app.all(
   express.urlencoded({ extended: false }), // Twilio やブラウザからのリクエストを受ける
   (req, res) => {
     const twiml =
-      '<?xml version="1.0" encoding="UTF-8"?>' +
-      '<Response>' +
-      '<Say language="ja-JP" voice="alice">' +
-      'お電話ありがとうございます。磯屋です。ただいまテスト中です。' +
-      '</Say>' +
-      '</Response>';
+  '<?xml version="1.0" encoding="UTF-8"?>' +
+  '<Response>' +
+  '<Say language="ja-JP" voice="alice">' +
+  'お電話ありがとうございます。手造りえびせんべい磯屋です。' +
+  'ただいま、電話でのお問い合わせやご注文は受け付けておりません。' +
+  'お手数ですが、LINE公式アカウントからご連絡をお願いいたします。' +
+  'LINEで「磯屋 えびせん」と検索していただくか、ホームページやチラシのQRコードから友だち追加をお願いします。' +
+  'ご不明な点やご注文は、LINEのトーク画面からメッセージをお送りください。順番に確認してご返信いたします。' +
+  'それでは、このまま通話を終了させていただきます。ありがとうございました。' +
+  '</Say>' +
+  '</Response>';
 
     res.type("text/xml").send(twiml);
   }

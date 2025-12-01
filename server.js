@@ -23,6 +23,7 @@ const express = require("express");
 const line = require("@line/bot-sdk");
 const multer = require("multer");
 const stripeLib = require("stripe");
+const twilio = require("twilio"); // ★ Twilio を追加
 
 // ★ STRIPE_SECRET_KEY があれば優先、なければ STRIPE_SECRET を使う
 const stripeSecretKey = (
@@ -2249,6 +2250,41 @@ app.post("/api/admin/products/set-image", (req, res) => {
       .json({ ok: false, error: "save_error" });
   }
 });
+// 商品に画像URLを紐付け
+app.post("/api/admin/products/set-image", (req, res) => {
+  ...
+});
+
+// ★★★ ここから Twilio 着信用エンドポイントを追加 ★★★
+
+// Twilio の音声応答用クラス
+const { VoiceResponse } = twilio.twiml;
+
+// 着信があったときに実行される処理
+app.post(
+  "/twilio/voice",
+  express.urlencoded({ extended: false }), // Twilio からの form データを読むため
+  (req, res) => {
+    const twiml = new VoiceResponse();
+
+    twiml.say(
+      { language: "ja-JP", voice: "alice" },
+      "お電話ありがとうございます。磯屋です。ただいまテスト中です。"
+    );
+
+    // Twilio に XML で返す
+    res.type("text/xml").send(twiml.toString());
+  }
+);
+
+// ====== Webhook ======
+app.post(
+  "/webhook",
+  line.middleware(config),
+  async (req, res) => {
+    ...
+  }
+);
 
 // ====== Webhook ======
 app.post(

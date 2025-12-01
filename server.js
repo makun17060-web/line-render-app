@@ -2261,7 +2261,7 @@ app.all(
   '<?xml version="1.0" encoding="UTF-8"?>' +
   '<Response>' +
   '<Say language="ja-JP" voice="alice">' +
-  ''お電話ありがとうございます。' +
+  'お電話ありがとうございます。' +
     '<break time="600ms"/>' +
     '手造りえびせんべい、磯屋です。' +
     '<break time="700ms"/>' +

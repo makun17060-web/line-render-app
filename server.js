@@ -2250,10 +2250,7 @@ app.post("/api/admin/products/set-image", (req, res) => {
       .json({ ok: false, error: "save_error" });
   }
 });
-// 商品に画像URLを紐付け
-app.post("/api/admin/products/set-image", (req, res) => {
-  
-});
+
 
 // ====== Twilio Voice (電話自動応答：ライブラリなし版) ======
 app.all(

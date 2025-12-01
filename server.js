@@ -2250,33 +2250,15 @@ app.post("/api/admin/products/set-image", (req, res) => {
       .json({ ok: false, error: "save_error" });
   }
 });
-
-// ====== Twilio Voice (電話自動応答) ======
-const { VoiceResponse } = twilio.twiml;
-
-app.post(
-  "/twilio/voice",
-  express.urlencoded({ extended: false }), // Twilio からの form データを読む
-  (req, res) => {
-    const twiml = new VoiceResponse();
-
-    // ★ ひとまずテスト用のメッセージ
-    twiml.say(
-      { language: "ja-JP", voice: "alice" },
-      "お電話ありがとうございます。磯屋です。ただいまテスト中です。"
-    );
-
-    res.type("text/xml").send(twiml.toString());
-  }
-);
-
-
-
+// 商品に画像URLを紐付け
+app.post("/api/admin/products/set-image", (req, res) => {
+  
+});
 
 // ★★★ ここから Twilio 着信用エンドポイントを追加 ★★★
 
 // Twilio の音声応答用クラス
-
+const { VoiceResponse } = twilio.twiml;
 
 // 着信があったときに実行される処理
 app.post(

@@ -2250,9 +2250,32 @@ app.post("/api/admin/products/set-image", (req, res) => {
       .json({ ok: false, error: "save_error" });
   }
 });
+
 // 商品に画像URLを紐付け
 app.post("/api/admin/products/set-image", (req, res) => {
-  ...
+  if (!requireAdmin(req, res)) return;
+  try {
+    const pid = String(req.body?.productId || "").trim();
+    const imageUrl = String(req.body?.imageUrl || "").trim();
+    if (!pid)
+      return res
+        .status(400)
+        .json({ ok: false, error: "productId required" });
+    const { products, idx } = findProductById(pid);
+    if (idx < 0)
+      return res
+        .status(404)
+        .json({ ok: false, error: "product_not_found" });
+    products[idx].image = imageUrl;
+    writeProducts(products);
+    res.json({ ok: true, product: products[idx] });
+  } catch (e) {
+    res
+      .status(500)
+      .json({ ok: false, error: "save_error" });
+  }
+});
+
 });
 
 // ★★★ ここから Twilio 着信用エンドポイントを追加 ★★★

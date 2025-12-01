@@ -17,6 +17,69 @@
 
 require("dotenv").config();
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
+// ★ 電話会話用の簡易メモリ（CallSidごとに会話履歴を保持）
+const PHONE_CONVERSATIONS = {};
+
+/**
+ * 電話用に OpenAI へ問い合わせて、丁寧な日本語で返答してもらう
+ * @param {string} callSid TwilioのCallSid
+ * @param {string} userText ユーザーが話した内容（TwilioのSpeechResult）
+ * @returns {Promise<string>} 電話で読み上げる日本語テキスト
+ */
+async function askOpenAIForPhone(callSid, userText) {
+  if (!OPENAI_API_KEY) {
+    console.warn("⚠ OPENAI_API_KEY が設定されていません。");
+    return "申し訳ありません。現在AIによる自動応答が利用できません。LINEやメッセージからお問い合わせください。";
+  }
+
+  // 会話履歴がなければ初期化
+  if (!PHONE_CONVERSATIONS[callSid]) {
+    PHONE_CONVERSATIONS[callSid] = [
+      {
+        role: "system",
+        content:
+          "あなたは「手造りえびせんべい磯屋」の電話自動応答AIです。" +
+          "必ず丁寧な敬語で、日本語で、簡潔に答えてください。" +
+          "営業時間・場所・商品・久助・オンライン注文・LINE 公式アカウントなどの質問に答えます。" +
+          "わからないことは、無理に作らず「LINE のトークからお問い合わせください」と案内してください。" +
+          "電話は音声のみなので、1 回の返答は 2〜3 文以内に短くしてください。"
+      }
+    ];
+  }
+
+  const history = PHONE_CONVERSATIONS[callSid];
+  history.push({ role: "user", content: userText });
+
+  try {
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini", // 安くて速いモデル
+        messages: history,
+        max_tokens: 200,
+        temperature: 0.7
+      })
+    });
+
+    const data = await resp.json();
+    const aiText =
+      data?.choices?.[0]?.message?.content ||
+      "すみません。うまくお答えできませんでした。";
+
+    history.push({ role: "assistant", content: aiText });
+
+    // Twilio の TTS が読みやすいように、改行をスペースに
+    return aiText.replace(/\s+/g, " ");
+  } catch (e) {
+    console.error("OpenAI phone error:", e);
+    return "申し訳ありません。システムエラーのため、今はAI応答ができません。LINEのトークからお問い合わせください。";
+  }
+}
+
 const fs = require("fs");
 const path = require("path");
 const express = require("express");
@@ -2252,26 +2315,36 @@ app.post("/api/admin/products/set-image", (req, res) => {
 });
 
 
-// ====== Twilio Voice (電話自動応答：ライブラリなし版) ======
+// ====== Twilio Voice (AI会話モード) ======
+
+// 1回目の着信：挨拶＋「ご用件をどうぞ」と聞く
 app.all(
   "/twilio/voice",
-  express.urlencoded({ extended: false }), // Twilio やブラウザからのリクエストを受ける
-  (req, res) => {
+  express.urlencoded({ extended: false }),
+  async (req, res) => {
+    const callSid = req.body.CallSid || "";
+    // 新しい通話なので履歴を初期化
+    delete PHONE_CONVERSATIONS[callSid];
+
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="ja-JP" voice="alice">
-    お電話ありがとうございます。<break time="600ms"/>
-    手造りえびせんべい、磯屋です。<break time="800ms"/>
-    ただいま、製造作業中のため、電話受付を休止しております。<break time="900ms"/>
-    お問い合わせやご注文は、より確実にご案内できるよう、
-    ラインアプリ公式アカウントに一本化しております。<break time="800ms"/>
-    お手数ですが、スマートフォンのラインアプリで
-    「磯屋 えびせん」と検索いただくか、<break time="400ms"/>
-    チラシやホームページのQRコードから友だち追加をお願いいたします。<break time="900ms"/>
-    ラインのトークでメッセージを送っていただければ、
-    順番に確認し、スタッフが必ずご返信いたします。<break time="900ms"/>
-    ご理解とご協力をお願い申し上げます。<break time="700ms"/>
-    それでは、失礼いたします。
+    お電話ありがとうございます。 手造りえびせんべい、磯屋です。
+  </Say>
+  <Say language="ja-JP" voice="alice">
+    こちらは、AIによる自動応答です。 営業時間、場所、商品、久助のことなど、 ご質問をゆっくりお話しください。
+  </Say>
+  <Gather input="speech"
+          language="ja-JP"
+          speechTimeout="auto"
+          action="/twilio/voice/handle"
+          method="POST">
+    <Say language="ja-JP" voice="alice">
+      それでは、ご用件をどうぞ。 話し終わったら、そのままお待ちください。
+    </Say>
+  </Gather>
+  <Say language="ja-JP" voice="alice">
+    音声が確認できなかったため、通話を終了いたします。 ありがとうございました。
   </Say>
 </Response>`;
 
@@ -2279,6 +2352,70 @@ app.all(
   }
 );
 
+// 2回目以降：お客さんの音声を AI に投げて、その回答を読み上げる
+app.post(
+  "/twilio/voice/handle",
+  express.urlencoded({ extended: false }),
+  async (req, res) => {
+    const callSid = req.body.CallSid || "";
+    const speechText = (req.body.SpeechResult || "").trim();
+    console.log("【Twilio SpeechResult】", speechText);
+
+    let aiReply;
+
+    if (!speechText) {
+      aiReply =
+        "すみません、音声がうまく聞き取れませんでした。 もう一度、ゆっくりお話しいただけますか。";
+    } else {
+      aiReply = await askOpenAIForPhone(callSid, speechText);
+    }
+
+    // 「もう大丈夫」「ありがとう」「失礼します」などを含んだら終了とみなす
+    const endKeywords = ["大丈夫", "ありがとう", "結構です", "失礼します", "切ります"];
+    const shouldEnd =
+      !speechText ||
+      endKeywords.some((kw) => speechText.includes(kw));
+
+    let twiml;
+
+    if (shouldEnd) {
+      // 最後の一言だけ言って終了
+      twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    ${aiReply}
+  </Say>
+  <Say language="ja-JP" voice="alice">
+    ご利用ありがとうございました。 それでは、失礼いたします。
+  </Say>
+</Response>`;
+      // 会話履歴を掃除
+      delete PHONE_CONVERSATIONS[callSid];
+    } else {
+      // 返答を読み上げて、さらに続けて質問を受け付ける
+      twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    ${aiReply}
+  </Say>
+  <Gather input="speech"
+          language="ja-JP"
+          speechTimeout="auto"
+          action="/twilio/voice/handle"
+          method="POST">
+    <Say language="ja-JP" voice="alice">
+      ほかにもご質問があれば、そのままお話しください。 終了する場合は、「もう大丈夫です」などとおっしゃってください。
+    </Say>
+  </Gather>
+  <Say language="ja-JP" voice="alice">
+    音声が確認できなかったため、通話を終了いたします。 ありがとうございました。
+  </Say>
+</Response>`;
+    }
+
+    res.type("text/xml").send(twiml);
+  }
+);
 
 
 // ====== Webhook ======

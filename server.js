@@ -34,10 +34,14 @@ async function askOpenAIForPhone(callSid, userText) {
 
   // 会話履歴がなければ初期化
   if (!PHONE_CONVERSATIONS[callSid]) {
-    PHONE_CONVERSATIONS[callSid] = [
-      {
-        role: "system",
-        content:   あなたは「手造りえびせんべい磯屋」の電話自動応答AIです。
+     const history = PHONE_CONVERSATIONS[callSid];
+  history.push({ role: "user", content: userText });
+PHONE_CONVERSATIONS[callSid] = [
+  {
+    role: "system",
+    content: `
+あなたは「手造りえびせんべい磯屋」の電話自動応答AIです。
+
 【基本方針】
 ・電話はすべて「丁寧な敬語」で話します。
 ・返答は長くなりすぎないよう「2〜3文以内」にします。
@@ -107,10 +111,9 @@ async function askOpenAIForPhone(callSid, userText) {
 
 以上のルールに基づき、
 電話に出たオペレーターとして、丁寧で簡潔に日本語で返答してください。
- }
+`
+  }
 ];
-  const history = PHONE_CONVERSATIONS[callSid];
-  history.push({ role: "user", content: userText });
 
   try {
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {

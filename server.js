@@ -2251,30 +2251,25 @@ app.post("/api/admin/products/set-image", (req, res) => {
   }
 });
 
-// 商品に画像URLを紐付け
-app.post("/api/admin/products/set-image", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    const pid = String(req.body?.productId || "").trim();
-    const imageUrl = String(req.body?.imageUrl || "").trim();
-    if (!pid)
-      return res
-        .status(400)
-        .json({ ok: false, error: "productId required" });
-    const { products, idx } = findProductById(pid);
-    if (idx < 0)
-      return res
-        .status(404)
-        .json({ ok: false, error: "product_not_found" });
-    products[idx].image = imageUrl;
-    writeProducts(products);
-    res.json({ ok: true, product: products[idx] });
-  } catch (e) {
-    res
-      .status(500)
-      .json({ ok: false, error: "save_error" });
+// ====== Twilio Voice (電話自動応答) ======
+const { VoiceResponse } = twilio.twiml;
+
+app.post(
+  "/twilio/voice",
+  express.urlencoded({ extended: false }), // Twilio からの form データを読む
+  (req, res) => {
+    const twiml = new VoiceResponse();
+
+    // ★ ひとまずテスト用のメッセージ
+    twiml.say(
+      { language: "ja-JP", voice: "alice" },
+      "お電話ありがとうございます。磯屋です。ただいまテスト中です。"
+    );
+
+    res.type("text/xml").send(twiml.toString());
   }
-});
+);
+
 
 
 

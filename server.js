@@ -2199,6 +2199,248 @@ app.get("/api/admin/connection-test", (req, res) => {
   });
 });
 
+// アップロード
+app.post("/api/admin/upload-image", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  upload.single("image")(req, res, (err) => {
+    if (err) {
+      const msg =
+        err?.message === "File too large"
+          ? "file_too_large"
+          : err?.message || "upload_error";
+      return res
+        .status(400)
+        .json({ ok: false, error: msg });
+    }
+    if (!req.file)
+      return res
+        .status(400)
+        .json({ ok: false, error: "no_file" });
+
+    const filename = req.file.filename;
+    const relPath = `/public/uploads/${filename}`;
+
+    let base = PUBLIC_BASE_URL;
+    if (!base) {
+      const proto = req.headers["x-forwarded-proto"] || "https";
+      const host = req.headers.host;
+      base = `${proto}://${host}`;
+    }
+    const url = `${base}${relPath}`;
+
+    res.json({
+      ok: true,
+      file: filename,
+      url,
+      path: relPath,
+      size: req.file.size,
+      mimetype: req.file.mimetype,
+    });
+  });
+});
+
+// 一覧
+app.get("/api/admin/images", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const files = fs
+      .readdirSync(UPLOAD_DIR)
+      .filter((f) => /\.(png|jpe?g|gif|webp)$/i.test(f))
+      .map((name) => {
+        const p = path.join(UPLOAD_DIR, name);
+        const st = fs.statSync(p);
+        return {
+          name,
+          url: `/public/uploads/${name}`,
+          path: `/public/uploads/${name}`,
+          bytes: st.size,
+          mtime: st.mtimeMs,
+        };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+
+    res.json({ ok: true, items: files });
+  } catch (e) {
+    console.error("images list error:", e);
+    res
+      .status(500)
+      .json({ ok: false, error: "list_error" });
+  }
+});
+
+// 削除
+app.delete("/api/admin/images/:name", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const base = (req.params?.name || "")
+    .replace(/\.\./g, "")
+    .replace(/[\/\\]/g, "");
+  const p = path.join(UPLOAD_DIR, base);
+  try {
+    if (!fs.existsSync(p))
+      return res
+        .status(404)
+        .json({ ok: false, error: "not_found" });
+    fs.unlinkSync(p);
+    res.json({ ok: true, deleted: base });
+  } catch (e) {
+    res
+      .status(500)
+      .json({ ok: false, error: "delete_error" });
+  }
+});
+
+// 商品に画像URLを紐付け
+app.post("/api/admin/products/set-image", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const pid = String(req.body?.productId || "").trim();
+    const imageUrl = String(req.body?.imageUrl || "").trim();
+    if (!pid)
+      return res
+        .status(400)
+        .json({ ok: false, error: "productId required" });
+    const { products, idx } = findProductById(pid);
+    if (idx < 0)
+      return res
+        .status(404)
+        .json({ ok: false, error: "product_not_found" });
+    products[idx].image = imageUrl;
+    writeProducts(products);
+    res.json({ ok: true, product: products[idx] });
+  } catch (e) {
+    res
+      .status(500)
+      .json({ ok: false, error: "save_error" });
+  }
+});
+
+
+// ====== Twilio Voice (AI会話モード) ======
+
+// 1回目の着信：挨拶＋「ご用件をどうぞ」と聞く
+app.all(
+  "/twilio/voice",
+  express.urlencoded({ extended: false }),
+  async (req, res) => {
+    const callSid = req.body.CallSid || "";
+    // 新しい通話なので履歴を初期化
+    delete PHONE_CONVERSATIONS[callSid];
+
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    お電話ありがとうございます。 手造りえびせんべい、磯屋です。
+  </Say>
+  <Say language="ja-JP" voice="alice">
+    こちらは、AIによる自動応答です。 営業時間、場所、商品、久助のことなど、 ご質問をゆっくりお話しください。
+  </Say>
+  <Gather input="speech"
+          language="ja-JP"
+          speechTimeout="auto"
+          action="/twilio/voice/handle"
+          method="POST">
+    <Say language="ja-JP" voice="alice">
+      それでは、ご用件をどうぞ。 話し終わったら、そのままお待ちください。
+    </Say>
+  </Gather>
+  <Say language="ja-JP" voice="alice">
+    音声が確認できなかったため、通話を終了いたします。 ありがとうございました。
+  </Say>
+</Response>`;
+
+    res.type("text/xml").send(twiml);
+  }
+);
+
+// 2回目以降：お客さんの音声を AI に投げて、その回答を読み上げる
+app.post(
+  "/twilio/voice/handle",
+  express.urlencoded({ extended: false }),
+  async (req, res) => {
+    const callSid = req.body.CallSid || "";
+    const speechText = (req.body.SpeechResult || "").trim();
+    console.log("【Twilio SpeechResult】", speechText);
+
+    let aiReply;
+
+    if (!speechText) {
+      aiReply =
+        "すみません、音声がうまく聞き取れませんでした。 もう一度、ゆっくりお話しいただけますか。";
+    } else {
+      aiReply = await askOpenAIForPhone(callSid, speechText);
+    }
+
+    // 「もう大丈夫」「ありがとう」「失礼します」などを含んだら終了とみなす
+    const endKeywords = ["大丈夫", "ありがとう", "結構です", "失礼します", "切ります"];
+    const shouldEnd =
+      !speechText ||
+      endKeywords.some((kw) => speechText.includes(kw));
+
+    let twiml;
+
+    if (shouldEnd) {
+      // 最後の一言だけ言って終了
+      twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    ${aiReply}
+  </Say>
+  <Say language="ja-JP" voice="alice">
+    ご利用ありがとうございました。 それでは、失礼いたします。
+  </Say>
+</Response>`;
+      // 会話履歴を掃除
+      delete PHONE_CONVERSATIONS[callSid];
+    } else {
+      // 返答を読み上げて、さらに続けて質問を受け付ける
+      twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    ${aiReply}
+  </Say>
+  <Gather input="speech"
+          language="ja-JP"
+          speechTimeout="auto"
+          action="/twilio/voice/handle"
+          method="POST">
+    <Say language="ja-JP" voice="alice">
+      ほかにもご質問があれば、そのままお話しください。 終了する場合は、「もう大丈夫です」などとおっしゃってください。
+    </Say>
+  </Gather>
+  <Say language="ja-JP" voice="alice">
+    音声が確認できなかったため、通話を終了いたします。 ありがとうございました。
+  </Say>
+</Response>`;
+    }
+
+    res.type("text/xml").send(twiml);
+  }
+);
+
+
+// ====== Webhook ======
+app.post(
+  "/webhook",
+  line.middleware(config),
+  async (req, res) => {
+    try {
+      const events = req.body.events || [];
+      await Promise.all(events.map(handleEvent));
+      res.status(200).end();
+    } catch (err) {
+      const detail =
+        err?.originalError?.response?.data ||
+        err?.response?.data ||
+        err?.stack ||
+        err;
+      console.error(
+        "Webhook Error detail:",
+        JSON.stringify(detail, null, 2)
+      );
+      res.status(500).end();
+    }
+  }
+);
 
 // ====== イベント処理 ======
 async function handleEvent(ev) {
@@ -3198,142 +3440,6 @@ app.get("/api/health", (_req, res) => {
       STRIPE_PUBLISHABLE_KEY: !!process.env.STRIPE_PUBLISHABLE_KEY,
     },
   });
-});
-
-/**
-// ② 商品選択：1〜3 を受け取って、商品を特定 → 個数入力へ
-app.post("/twilio/cod/product", express.urlencoded({ extended: false }), (req, res) => {
-  const digit = (req.body.Digits || "").trim();
-  console.log("【/twilio/cod/product】Digits =", digit);
-
-  let pid = "";
-  let name = "";
-
-  if (digit === "1") {
-    // ★ 久助：店頭受取のみ、住所不要
-    pid = "kusuke-250";
-    name = "久助（えびせん）";
-  } else if (digit === "2") {
-    pid = "nori-square-300";
-    name = "四角のりせん";
-  } else if (digit === "3") {
-    pid = "premium-ebi-400";
-    name = "プレミアムえびせん";
-  } else {
-    // 想定外 → 最初からやり直し
-    const twimlInvalid = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    押された番号が確認できませんでした。 もう一度、商品選択からやり直します。
-  </Say>
-  <Redirect method="POST">/twilio/cod/start</Redirect>
-</Response>`;
-    return res.type("text/xml").send(twimlInvalid);
-  }
-
-  // 商品が特定できたので、個数の入力へ
-  const q = qstr({ pid, name });
-
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    ご希望の商品は、${name} ですね。
-  </Say>
-  <Gather input="dtmf"
-          numDigits="2"
-          timeout="6"
-          action="/twilio/cod/qty?${q}"
-          method="POST">
-    <Say language="ja-JP" voice="alice">
-      個数を、1 から 99 の範囲で入力してください。
-      例えば 2 個なら、 0 2 と押すか、そのまま 2 を押して、しばらくお待ちください。
-    </Say>
-  </Gather>
-  <Say language="ja-JP" voice="alice">
-    入力が確認できませんでした。 お手数ですが、最初からやり直します。
-  </Say>
-  <Redirect method="POST">/twilio/cod/start</Redirect>
-</Response>`;
-
-  res.type("text/xml").send(twiml);
-});
-
-/**
- * 3. 個数入力：1〜99 を受け取って、簡易的に受付完了
- *    （ここではまだ住所までは聞かず、LINEでの確認案内に留める）
- */
-app.post("/twilio/cod/qty", express.urlencoded({ extended: false }), (req, res) => {
-  const pid = (req.query.pid || "").toString();
-  const name = (req.query.name || "").toString() || "ご希望の商品";
-  const raw = (req.body.Digits || "").replace(/\D/g, "");
-  const qty = parseInt(raw, 10);
-
-  console.log("【/twilio/cod/qty】pid =", pid, "name =", name, "Digits =", raw);
-
-  if (!raw || isNaN(qty) || qty < 1 || qty > 99) {
-    const twimlInvalidQty = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    個数の入力がうまく確認できませんでした。 お手数ですが、最初からやり直します。
-  </Say>
-  <Redirect method="POST">/twilio/cod/start</Redirect>
-</Response>`;
-    return res.type("text/xml").send(twimlInvalidQty);
-  }
-
-  // ここでは「仮受付」だけにして、詳細は LINE で案内する運用
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    ${name} を、${qty} 個で承りました。
-    詳しいお支払い方法やお届け先につきましては、
-    LINE のトーク画面から、あらためてご案内いたします。
-  </Say>
-  <Say language="ja-JP" voice="alice">
-    お電話ありがとうございました。 それでは、失礼いたします。
-  </Say>
-</Response>`;
-
-  res.type("text/xml").send(twiml);
-});
-
-/**
- * 3. 個数入力：1〜99 を受け取って、簡易的に受付完了
- *    （ここではまだ住所までは聞かず、LINEでの確認案内に留める）
- */
-app.post("/twilio/cod/qty", twilioUrlencoded, (req, res) => {
-  const pid = (req.query.pid || "").toString();
-  const name = (req.query.name || "").toString() || "ご希望の商品";
-  const raw = (req.body.Digits || "").replace(/\D/g, "");
-  const qty = parseInt(raw, 10);
-
-  console.log("【/twilio/cod/qty】pid =", pid, "name =", name, "Digits =", raw);
-
-  if (!raw || isNaN(qty) || qty < 1 || qty > 99) {
-    const twimlInvalidQty = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    個数の入力がうまく確認できませんでした。 お手数ですが、最初からやり直します。
-  </Say>
-  <Redirect method="POST">/twilio/cod/start</Redirect>
-</Response>`;
-    return res.type("text/xml").send(twimlInvalidQty);
-  }
-
-  // ここでは「仮受付」だけにして、詳細は LINE で案内する運用
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    ${name} を、${qty} 個で承りました。
-    詳しいお支払い方法やお届け先につきましては、
-    LINE のトーク画面から、あらためてご案内いたします。
-  </Say>
-  <Say language="ja-JP" voice="alice">
-    お電話ありがとうございました。 それでは、失礼いたします。
-  </Say>
-</Response>`;
-
-  res.type("text/xml").send(twiml);
 });
 
 // ====== 起動 ======

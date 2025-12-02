@@ -2515,16 +2515,12 @@ ${p.name}ですね。ご希望の個数を、2桁までの数字で押してく�
     res.type("text/xml").send(twiml);
   }
 );
-
-// ③ 個数入力 → 合計金額の確認へ（住所・送料は扱わない）
+// ③ 個数入力 → 合計金額の確認へ（住所・送料は扱わない：1〜99個）
 app.post(
   "/twilio/cod/qty",
   express.urlencoded({ extended: false }),
   (req, res) => {
     const pid = String(req.query.pid || "").trim();
-    const digits = String(req.body.Digits || "").replace(/\D/g, "");
-    const qty = Number(digits || 0);
-
     const { product } = findProductById(pid);
     let twiml;
 
@@ -2539,16 +2535,23 @@ app.post(
       return;
     }
 
-    if (!qty || qty < 1) {
+    // 押されたキー（例: "3", "12", "0*", など）から数字だけ取り出す
+    const digitsRaw = String(req.body.Digits || "");
+    const digits = digitsRaw.replace(/\D/g, ""); // 数字以外を削除
+    const qty = Number(digits || 0);
+
+    // 1〜99 以外 or 入力なし → 再入力をお願いする
+    if (!digits || qty < 1 || qty > 99) {
       twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Gather input="dtmf" timeout="10" action="/twilio/cod/qty?pid=..." method="POST">
-
+  <Gather input="dtmf" timeout="10" action="/twilio/cod/qty?pid=${encodeURIComponent(
     product.id
   )}" method="POST">
     <Say language="ja-JP" voice="alice">
-個数の入力が確認できませんでした。ご希望の個数を、2桁までの数字で押してください。
-    </Say>
+個数の入力が確認できませんでした。
+ご希望の個数を、1から99までの数字で押してください。
+例えば3個なら、3。12個なら、1、2 のように続けて押してください。
+  </Say>
   </Gather>
   <Say language="ja-JP" voice="alice">
 入力が確認できませんでした。お手数ですが、最初からおかけ直しください。
@@ -2558,6 +2561,7 @@ app.post(
       return;
     }
 
+    // ここまで来たら 1〜99 の正しい個数
     const subtotal = Number(product.price) * qty;
     const codFee = COD_FEE; // 既存の 330円
     const total = subtotal + codFee;
@@ -2574,8 +2578,8 @@ app.post(
     twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Gather input="dtmf" numDigits="1" timeout="8" action="/twilio/cod/confirm?pid=${encodeURIComponent(
-    product.id
-  )}&qty=${qty}&subtotal=${subtotal}&total=${total}" method="POST">
+      product.id
+    )}&qty=${qty}&subtotal=${subtotal}&total=${total}" method="POST">
     <Say language="ja-JP" voice="alice">
 ${summaryText}
     </Say>

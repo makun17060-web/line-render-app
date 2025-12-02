@@ -28,13 +28,19 @@ const PHONE_CONVERSATIONS = {};
  * @param {string} userText ユーザーが話した内容（TwilioのSpeechResult）
  * @returns {Promise<string>} 電話で読み上げる日本語テキスト
  */
+/**
+ * 電話用に OpenAI へ問い合わせて、できるだけ速く短く返答してもらう版
+ * - システムプロンプトを短く
+ * - 履歴は直近だけ送る
+ * - max_tokens を小さめに
+ */
 async function askOpenAIForPhone(callSid, userText) {
   if (!OPENAI_API_KEY) {
     console.warn("⚠ OPENAI_API_KEY が設定されていません。");
     return "申し訳ありません。現在AIによる自動応答が利用できません。LINEやメッセージからお問い合わせください。";
   }
 
-  // 会話履歴がなければ初期化
+  // 会話履歴を短く保つ（system ＋ 直近2往復だけ）
   if (!PHONE_CONVERSATIONS[callSid]) {
     PHONE_CONVERSATIONS[callSid] = [
       {
@@ -42,76 +48,13 @@ async function askOpenAIForPhone(callSid, userText) {
         content: `
 あなたは「手造りえびせんべい磯屋」の電話自動応答AIです。
 
-【基本方針】
-・電話はすべて「丁寧な敬語」で話します。
-・返答は長くなりすぎないよう「2〜3文以内」にします。
-・分かりやすく、ゆっくり話すことを意識した文章にします。
-・店舗の正確な情報をもとに案内し、嘘の情報は絶対に作らないでください。
-・不明点がある場合は「LINE公式アカウントからお問い合わせください」と案内します。
-
-【役割】
-・営業時間、店舗場所、駐車場、商品、価格、久助、オンライン注文、送料など、
-  よくある質問にやさしく答えます。
-・在庫の問い合わせ（特に久助）は、日によって変動するため、
-  必ず「在庫はLINEでご案内しています」と誘導します。
-・クレーム、特殊な問い合わせ、大量注文は LINE へ誘導します。
-
-【営業時間】
-・営業時間：　〇〇時〜〇〇時（必要なら更新します）
-・店休日：　　不定休
-・営業状況は変動する可能性があるため、
-  「最新の営業状況は LINE でご案内しています」と添えても構いません。
-
-【店舗場所】
-・愛知県美浜町です。
-・詳しい場所は LINE の地図リンクでご案内しています。
-・必要に応じて「LINE のトークで地図をお送りします」と返答します。
-
-【商品と価格】
-・久助：250円
-・四角のりせん：300円
-・プレミアムえびせん：400円
-・その他の商品について聞かれた場合は、無理に作らず LINE に誘導します。
-
-【在庫について】
-・久助や各商品の在庫は日によって変わります。
-・必ず以下のように案内してください。
-「在庫は日によって変わりますので、LINE のトークからお問い合わせいただくと確実です。」
-
-【送料（ざっくり版）】
-以下の文章をベースに、自然に案内してください。
-「発送の送料は、お届け先の地域によって異なります。
- 関東・中部・近畿は九百六十円、
- 東北と中国が千七十円、
- 四国が千百八十円、
- 九州が千百九十円です。
- 北海道は千五百六十円、沖縄は千八百四十円となっております。
- 正確な金額は、LINE のオンライン注文画面で自動計算されますので、そちらでご確認いただけます。」
-
-【オンライン注文】
-・LINEミニアプリで購入できます。
-・住所を入力すると送料が自動計算されます。
-・代引き手数料は330円です。
-・不明点は LINE へ誘導します。
-
-【店頭受取】
-・店頭受取は送料がかかりません。
-・お支払いは現金のみです。
-
-【終了判定】
-・お客さまが「もう大丈夫です」「ありがとう」「失礼します」などと言ったら、
-  下記のように返して通話を終了してください。
-「ご利用ありがとうございました。それでは失礼いたします。」
-
-【禁止事項】
-・営業時間や住所、商品を勝手に創作しない。
-・在庫や当日の情報を推測で答えない。
-・金額や送料を不正確に言わない。
-・長文になりすぎないようにする。
-
-以上のルールに基づき、
-電話に出たオペレーターとして、丁寧で簡潔に日本語で返答してください。
-`,
+・必ず丁寧な敬語で、2〜3文以内で答えてください。
+・ゆっくり読み上げても聞き取りやすい、シンプルな日本語にしてください。
+・在庫や当日の状況は推測せず、
+  「在庫や詳しい状況はLINE公式アカウントのトークでご案内しています」と案内してください。
+・送料の説明が必要なときだけ、簡単に案内してください（詳しい金額はLINEで確認できると伝える）。
+・分からないことは無理に作らず、「LINE公式アカウントからお問い合わせください」と伝えてください。
+        `.trim(),
       },
     ];
   }
@@ -119,25 +62,37 @@ async function askOpenAIForPhone(callSid, userText) {
   const history = PHONE_CONVERSATIONS[callSid];
   history.push({ role: "user", content: userText });
 
+  // system + 直近4メッセージ（ユーザー/AI）だけ送る
+  const shortHistory = [history[0], ...history.slice(-4)];
+
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 7000); // 7秒でタイムアウト
+
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
+      signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini", // 安くて速いモデル
-        messages: history,
-        max_tokens: 200,
-        temperature: 0.7,
+        model: "gpt-4o-mini",
+        messages: shortHistory,
+        max_tokens: 80,   // ★ 返答を短くして速度アップ
+        temperature: 0.5, // ★ ぶれを少なめに
       }),
+    }).catch((e) => {
+      console.error("OpenAI fetch error:", e);
+      throw e;
     });
+
+    clearTimeout(timeout);
 
     const data = await resp.json();
     const aiText =
       data?.choices?.[0]?.message?.content ||
-      "すみません。うまくお答えできませんでした。";
+      "すみません。うまくお答えできませんでした。LINEのトークからお問い合わせください。";
 
     history.push({ role: "assistant", content: aiText });
 

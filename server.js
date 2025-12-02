@@ -2416,16 +2416,16 @@ app.post(
     res.type("text/xml").send(twiml);
   }
 );
-// ====== Twilio COD（代引き専用・DTMFメニュー 完成版） ======
+// ====== Twilio COD（代引き専用・DTMFメニュー：data/products.json 連動版） ======
 
-// 電話で選べる商品一覧（キー: 押す番号）
+// 電話で選べる商品一覧（キー: 押す番号 → product.id）
 const COD_PRODUCTS = {
-  "1": { id: "kusuke-250",        name: "久助（えびせん）",    price: 250 },
-  "2": { id: "nori-square-300",   name: "四角のりせん",        price: 300 },
-  "3": { id: "premium-ebi-400",   name: "プレミアムえびせん",  price: 400 },
+  "1": { id: "kusuke-250" },
+  "2": { id: "nori-square-300" },
+  "3": { id: "premium-ebi-400" },
 };
 
-// Twilio 用の URL エンコード済みフォームパーサ
+// Twilio 用の URL エンコードパーサ（この COD 用に専用で定義）
 const twilioCodParser = express.urlencoded({ extended: false });
 
 /**
@@ -2468,9 +2468,9 @@ app.post("/twilio/cod/product", twilioCodParser, (req, res) => {
   const digit = (req.body.Digits || "").trim();
   console.log("【/twilio/cod/product】Digits =", digit);
 
-  const product = COD_PRODUCTS[digit];
+  const pdef = COD_PRODUCTS[digit];
 
-  if (!product) {
+  if (!pdef) {
     // 想定外 → 最初からやり直し
     const twimlInvalid = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -2482,11 +2482,19 @@ app.post("/twilio/cod/product", twilioCodParser, (req, res) => {
     return res.type("text/xml").send(twimlInvalid);
   }
 
-  const pid  = product.id;
-  const name = product.name;
+  const pid = pdef.id;
 
-  // 商品が特定できたので、個数の入力へ
-  const q = qstr({ pid, name }); // すでに上で定義済みの qstr を再利用
+  // ★ products.json から名前を取得（存在しなければフォールバック）
+  const products = readProducts();
+  const product =
+    products.find((p) => p.id === pid) ||
+    { name: "ご希望の商品", price: 0, stock: null };
+
+  const name = product.name || "ご希望の商品";
+
+  // 個数入力へ進む。クエリに pid と name を載せる
+  // ★ qstr は既に server.js で定義済みのユーティリティ
+  const q = qstr({ pid, name });
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -2513,15 +2521,15 @@ app.post("/twilio/cod/product", twilioCodParser, (req, res) => {
 });
 
 /**
- * 3. 個数入力：1〜99 を受け取って、簡易的に受付完了
+ * 3. 個数入力：1〜99 を受け取って、data/products.json から価格＆在庫を見て案内
  */
 app.post("/twilio/cod/qty", twilioCodParser, (req, res) => {
   const pid  = (req.query.pid  || "").toString();
-  const name = (req.query.name || "").toString() || "ご希望の商品";
+  const nameFromQuery = (req.query.name || "").toString() || "ご希望の商品";
   const raw  = (req.body.Digits || "").replace(/\D/g, "");
   const qty  = parseInt(raw, 10);
 
-  console.log("【/twilio/cod/qty】pid =", pid, "name =", name, "Digits =", raw);
+  console.log("【/twilio/cod/qty】pid =", pid, "name =", nameFromQuery, "Digits =", raw);
 
   if (!raw || isNaN(qty) || qty < 1 || qty > 99) {
     const twimlInvalidQty = `<?xml version="1.0" encoding="UTF-8"?>
@@ -2534,13 +2542,33 @@ app.post("/twilio/cod/qty", twilioCodParser, (req, res) => {
     return res.type("text/xml").send(twimlInvalidQty);
   }
 
-  // この時点では「仮受付」にとどめ、詳細は LINE で案内する運用
+  // ★ ここで data/products.json を毎回読み込み
+  const products = readProducts();
+  const product =
+    products.find((p) => p.id === pid) ||
+    { name: nameFromQuery, price: 0, stock: null };
+
+  const name  = product.name || nameFromQuery;
+  const unit  = Number(product.price) || 0;
+  const stock = (typeof product.stock === "number") ? product.stock : null;
+  const subtotal = unit * qty;
+
+  // 在庫案内（stock が数値のときだけしゃべる）
+  const stockSentence = (stock !== null)
+    ? ` 現在の在庫は、およそ ${stock} こです。`
+    : "";
+
+  const priceSentence = (unit > 0)
+    ? ` 商品代金の合計は、およそ ${subtotal} えん です。`
+    : " 価格の情報が確認できませんでした。";
+
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="ja-JP" voice="alice">
-    ${name} を、${qty} 個で承りました。
-    詳しいお支払い方法やお届け先につきましては、
-    LINE のトーク画面から、あらためてご案内いたします。
+    ${name} を、${qty}こ で承りました。${priceSentence}${stockSentence}
+    送料と だいびき手数料は、べつ途 かかります。
+    くわしい金額と おとどけ先につきましては、
+    LINE のトーク画面から、あらためて ご案内いたします。
   </Say>
   <Say language="ja-JP" voice="alice">
     お電話ありがとうございました。 それでは、失礼いたします。

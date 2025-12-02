@@ -2401,199 +2401,80 @@ function lookupAddressByZip(zip) {
     town: "",
   };
 }
-
-// ====== Twilio Voice (電話自動応答：郵便番号テスト版) ======
-app.post(
-  "/twilio/voice",
-  express.urlencoded({ extended: false }),
-  (req, res) => {
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Gather input="dtmf" numDigits="7" timeout="10" action="/twilio/voice/postal" method="POST">
-    <Say language="ja-JP" voice="alice">
-お電話ありがとうございます。手造りえびせんべい磯屋です。
-郵便番号によるご案内テスト中です。
-これから、郵便番号7桁を、ハイフンなしで押してください。
-    </Say>
-  </Gather>
-  <Say language="ja-JP" voice="alice">
-入力が確認できませんでした。お手数ですが、もう一度おかけ直しください。
-  </Say>
-</Response>`;
-    res.type("text/xml").send(twiml);
-  }
-);
-
-// ====== Twilio Voice: 郵便番号入力後のハンドラ ======
-app.post(
-  "/twilio/voice/postal",
-  express.urlencoded({ extended: false }),
-  (req, res) => {
-    const digits = (req.body.Digits || "").replace(/\D/g, "");
-    let message = "";
-
-    if (!digits) {
-      message =
-        "入力が確認できませんでした。恐れ入りますが、もう一度おかけ直しください。";
-    } else if (digits.length < 7) {
-      message =
-        "郵便番号は7桁でお願いします。お手数ですが、もう一度おかけ直しください。";
-    } else {
-      const addr = lookupAddressByZip(digits);
-      const jpZip = digits.replace(/(\d{3})(\d{4})/, "$1-$2");
-
-      // ざっくり地域判定（prefecture が入ればそこから判定）
-      let region = "";
-      if (addr) {
-        region = detectRegionFromAddress({
-          prefecture: addr.prefecture || "",
-          address1: addr.city || addr.town || "",
-        });
-      }
-
-      message =
-        `ありがとうございます。郵便番号、${jpZip} 付近ですね。` +
-        (region
-          ? `配送地域の目安としては「${region}」エリアになります。`
-          : "") +
-        "詳しいご住所とお名前は、ラインアプリのトーク画面でお伺いさせていただきます。";
-    }
-
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-${message}
-  </Say>
-</Response>`;
-    res.type("text/xml").send(twiml);
-  }
-);
-
-// ====== Twilio 代引き用：個数入力（1〜99個対応） ======
-app.post(
-  "/twilio/cod/qty",
-  express.urlencoded({ extended: false }),
-  (req, res) => {
-    const pid = String(req.query.pid || "").trim();
-    const { product } = findProductById(pid);
-    let twiml;
-
-    if (!product) {
-      twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-申し訳ありません。商品が特定できませんでした。お手数ですが、最初からおかけ直しください。
-  </Say>
-</Response>`;
-      res.type("text/xml").send(twiml);
-      return;
-    }
-
-    // 押されたキー（例: "3", "12", "0*", など）から数字だけ取り出す
-    const digitsRaw = String(req.body.Digits || "");
-    const digits = digitsRaw.replace(/\D/g, ""); // 数字以外を削除
-    const qty = Number(digits || 0);
-
-    // 1〜99 以外 or 入力なし → 再入力をお願いする
-    if (!digits || qty < 1 || qty > 99) {
-      twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Gather input="dtmf" timeout="10" action="/twilio/cod/qty?pid=${encodeURIComponent(
-    product.id
-  )}" method="POST">
-    <Say language="ja-JP" voice="alice">
-個数の入力が確認できませんでした。
-ご希望の個数を、1から99までの数字で押してください。
-例えば3個なら、3。12個なら、1、2 のように続けて押してください。
-    </Say>
-  </Gather>
-  <Say language="ja-JP" voice="alice">
-入力が確認できませんでした。お手数ですが、最初からおかけ直しください。
-  </Say>
-</Response>`;
-      res.type("text/xml").send(twiml);
-      return;
-    }
-
-    // ここまで来たら 1〜99 の正しい個数
-    const subtotal = Number(product.price) * qty;
-    const codFee = COD_FEE; // 既存の 330円
-    const total = subtotal + codFee;
-
-    const summaryText =
-      `ありがとうございます。${product.name}を、${qty}個ですね。` +
-      `商品代金の小計は、${subtotal}円。` +
-      `代引き手数料は、${codFee}円です。` +
-      `送料とお届け先のご住所は、後ほどスタッフより確認させていただきます。` +
-      `現時点での合計金額は、およそ、${total}円となります。` +
-      `この内容でよろしければ、1 を押してください。` +
-      `訂正する場合は、2 を押してください。`;
-
-    twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Gather input="dtmf" numDigits="1" timeout="8" action="/twilio/cod/confirm?pid=${encodeURIComponent(
-      product.id
-    )}&qty=${qty}&subtotal=${subtotal}&total=${total}" method="POST">
-    <Say language="ja-JP" voice="alice">
-${summaryText}
-    </Say>
-  </Gather>
-  <Say language="ja-JP" voice="alice">
-入力が確認できませんでした。お手数ですが、最初からおかけ直しください。
-  </Say>
-</Response>`;
-
-    res.type("text/xml").send(twiml);
-  }
-);
-// Twilio 共通の URL エンコード（voice で既にあれば省略してOK）
+// ====== Twilio Voice（問い合わせ専用） ======
 const twilioUrlencoded = express.urlencoded({ extended: false });
 
-// ====== 代引きエントリ：/twilio/cod ======
-// 着信時にここが呼ばれて、「商品を決めて個数入力へ進む」入口
-app.post("/twilio/cod", twilioUrlencoded, (req, res) => {
-  console.log("== /twilio/cod HIT ==", {
+// 電話の入り口：お客さまに用件を話してもらう
+app.post("/twilio/voice", twilioUrlencoded, (req, res) => {
+  console.log("== /twilio/voice HIT ==", {
     method: req.method,
-    query: req.query,
     body: req.body,
   });
 
-  // どの商品で代引きを受け付けるか（デフォルトは四角のりせんにしています）
-  // 必要に応じて kusuke-250 / premium-ebi-400 などに変更してください。
-  const pid = (req.query.pid || "nori-square-300").toString().trim();
-
-  const { product } = findProductById(pid);
-  if (!product) {
-    const twimlErr = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-申し訳ありません。商品が特定できませんでした。
-お手数ですが、また時間をおいておかけ直しください。
-  </Say>
-</Response>`;
-    res.type("text/xml").send(twimlErr);
-    return;
-  }
-
-  // 最初の案内：この商品の個数を押してもらう
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Gather input="dtmf" timeout="10" action="/twilio/cod/qty?pid=${encodeURIComponent(
-    product.id
-  )}" method="POST">
+  <Gather input="speech" language="ja-JP" timeout="8"
+          action="/twilio/voice/ai" method="POST">
     <Say language="ja-JP" voice="alice">
 お電話ありがとうございます。手造りえびせんべい磯屋です。
-${product.name}の、代金引換でのご注文を承ります。
-ご希望の個数を、1から99までの数字で押してください。
-例えば3個なら、3。12個なら、1、2 のように続けて押してください。
+ご用件を、八秒以内でゆっくりとお話しください。
+お話が終わりましたら、そのままお待ちください。
     </Say>
   </Gather>
   <Say language="ja-JP" voice="alice">
-入力が確認できませんでした。お手数ですが、最初からおかけ直しください。
+入力が確認できませんでした。お手数ですが、ライン公式アカウントのトークからお問い合わせください。
   </Say>
+  <Hangup/>
 </Response>`;
 
   res.type("text/xml").send(twiml);
+});
+
+// お客さまの話した内容を OpenAI に投げて、返答を読み上げる
+app.post("/twilio/voice/ai", twilioUrlencoded, async (req, res) => {
+  try {
+    const callSid = String(req.body.CallSid || "").trim();
+    const speech  = String(req.body.SpeechResult || "").trim();
+
+    console.log("== /twilio/voice/ai HIT ==", {
+      CallSid: callSid,
+      SpeechResult: speech,
+    });
+
+    let replyText = "";
+
+    if (!speech) {
+      replyText =
+        "申し訳ありません。うまく音声を認識できませんでした。お手数ですが、ライン公式アカウントのトークからお問い合わせください。";
+    } else {
+      // ★ 冒頭で定義した askOpenAIForPhone をそのまま利用
+      replyText = await askOpenAIForPhone(callSid, speech);
+    }
+
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+${replyText}
+  </Say>
+  <Say language="ja-JP" voice="alice">
+ご利用ありがとうございました。それでは失礼いたします。
+  </Say>
+  <Hangup/>
+</Response>`;
+
+    res.type("text/xml").send(twiml);
+  } catch (e) {
+    console.error("/twilio/voice/ai error:", e);
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+申し訳ありません。システムエラーが発生しました。
+お手数ですが、ライン公式アカウントのトークからお問い合わせください。
+  </Say>
+  <Hangup/>
+</Response>`;
+    res.type("text/xml").send(twiml);
+  }
 });
 
 // ====== Webhook ======

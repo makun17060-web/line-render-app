@@ -2199,7 +2199,7 @@ app.get("/api/admin/connection-test", (req, res) => {
   });
 });
 
-/twilio/cod/start
+
 // ====== イベント処理 ======
 async function handleEvent(ev) {
   try {

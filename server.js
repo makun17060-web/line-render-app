@@ -2458,11 +2458,11 @@ app.post(
     res.type("text/xml").send(twiml);
   }
 );
-// ====== Twilio Voice: 郵便番号入力後のハンドラ ======
+// ====== Twilio Voice: 郵便番号入力後のハンドラ（同期版） ======
 app.post(
   "/twilio/voice/postal",
   express.urlencoded({ extended: false }),
-  async (req, res) => {
+  (req, res) => {
     const digits = (req.body.Digits || "").replace(/\D/g, "");
 
     let message = "";
@@ -2474,8 +2474,8 @@ app.post(
       message =
         "郵便番号は7桁でお願いします。お手数ですが、もう一度おかけ直しください。";
     } else {
-      // ★ ここで await が使えるのは、関数を async にしたから
-      const addr = await lookupAddressByZip(digits);
+      // ★ await ではなく、同期関数としてそのまま呼ぶ
+      const addr = lookupAddressByZip(digits);
       const jpZip = digits.replace(/(\d{3})(\d{4})/, "$1-$2");
 
       if (addr) {
@@ -2500,7 +2500,6 @@ app.post(
     res.type("text/xml").send(twiml);
   }
 );
-
 
     // ① 最初の案内：郵便番号7桁を押してもらう
     if (step === "start") {

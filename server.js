@@ -2316,16 +2316,9 @@ app.post("/api/admin/products/set-image", (req, res) => {
 
 // ====== Twilio Voice（メニュー + 問い合わせAI + 代引き）======
 
-// 共通：URLエンコード用
-function qstr(obj) {
-  return Object.entries(obj)
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v ?? "")}`)
-    .join("&");
-}
-
 // 商品IDとメニュー番号の対応表（必要に応じて調整OK）
 const COD_PRODUCTS = {
-  "1": { id: "kusuke-250",        name: "久助（えびせん）",       requireAddress: false }, // 店頭のみ
+  "1": { id: "kusuke-250",        name: "久助（えびせん）",       requireAddress: false }, // 店頭のみ（住所不要）
   "2": { id: "nori-square-300",   name: "四角のりせん",           requireAddress: true  },
   "3": { id: "premium-ebi-400",   name: "プレミアムえびせん",     requireAddress: true  },
 };
@@ -2375,7 +2368,6 @@ app.post(
 </Response>`;
     } else if (digit === "2") {
       // 代引きフローへ
-      // 念のため会話履歴はリセット
       delete PHONE_CONVERSATIONS[callSid];
       twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>

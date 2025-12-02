@@ -2465,6 +2465,7 @@ app.all("/twilio/cod/start", twilioCodParser, (req, res) => {
  * 2. 商品選択：1〜3 を受け取って、商品を特定 → 個数入力へ
  */
 app.post("/twilio/cod/product", twilioCodParser, (req, res) => {
+  console.log("【/twilio/cod/product】raw body =", req.body);
   const digit = (req.body.Digits || "").trim();
   console.log("【/twilio/cod/product】Digits =", digit);
 

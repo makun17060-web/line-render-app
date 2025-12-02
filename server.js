@@ -2546,22 +2546,54 @@ ${summaryText}
     res.type("text/xml").send(twiml);
   }
 );
-// 共通の URL エンコードミドルウェア（なければ追加）
+// Twilio 共通の URL エンコード（voice で既にあれば省略してOK）
 const twilioUrlencoded = express.urlencoded({ extended: false });
 
-// ====== /twilio/cod → 最初の個数入力フローへ転送 ======
-app.all("/twilio/cod", twilioUrlencoded, (req, res) => {
+// ====== 代引きエントリ：/twilio/cod ======
+// 着信時にここが呼ばれて、「商品を決めて個数入力へ進む」入口
+app.post("/twilio/cod", twilioUrlencoded, (req, res) => {
   console.log("== /twilio/cod HIT ==", {
     method: req.method,
     query: req.query,
     body: req.body,
   });
 
-  // pid がクエリにあれば利用、無ければ久助をデフォルトに
-  const pid = (req.query.pid || req.body.pid || "kusuke-250").toString().trim();
+  // どの商品で代引きを受け付けるか（デフォルトは四角のりせんにしています）
+  // 必要に応じて kusuke-250 / premium-ebi-400 などに変更してください。
+  const pid = (req.query.pid || "nori-square-300").toString().trim();
 
-  // 307 で /twilio/cod/qty にそのまま転送（POST も維持）
-  res.redirect(307, `/twilio/cod/qty?pid=${encodeURIComponent(pid)}`);
+  const { product } = findProductById(pid);
+  if (!product) {
+    const twimlErr = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+申し訳ありません。商品が特定できませんでした。
+お手数ですが、また時間をおいておかけ直しください。
+  </Say>
+</Response>`;
+    res.type("text/xml").send(twimlErr);
+    return;
+  }
+
+  // 最初の案内：この商品の個数を押してもらう
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather input="dtmf" timeout="10" action="/twilio/cod/qty?pid=${encodeURIComponent(
+    product.id
+  )}" method="POST">
+    <Say language="ja-JP" voice="alice">
+お電話ありがとうございます。手造りえびせんべい磯屋です。
+${product.name}の、代金引換でのご注文を承ります。
+ご希望の個数を、1から99までの数字で押してください。
+例えば3個なら、3。12個なら、1、2 のように続けて押してください。
+    </Say>
+  </Gather>
+  <Say language="ja-JP" voice="alice">
+入力が確認できませんでした。お手数ですが、最初からおかけ直しください。
+  </Say>
+</Response>`;
+
+  res.type("text/xml").send(twiml);
 });
 
 // ====== Webhook ======

@@ -2463,80 +2463,38 @@ app.post(
   "/twilio/voice/postal",
   express.urlencoded({ extended: false }),
   (req, res) => {
-    const digits = (req.body.Digits || "").replace(/\D/g, "");
+    // 郵便番号で地域をざっくり判定してメッセージに使う例
+const digits = (req.body.Digits || "").replace(/\D/g, "");
 
-    let message = "";
+let message = "";
 
-    if (!digits) {
-      message =
-        "入力が確認できませんでした。恐れ入りますが、もう一度おかけ直しください。";
-    } else if (digits.length < 7) {
-      message =
-        "郵便番号は7桁でお願いします。お手数ですが、もう一度おかけ直しください。";
-    } else {
-      // ★ await ではなく、同期関数としてそのまま呼ぶ
-      const addr = lookupAddressByZip(digits);
-      const jpZip = digits.replace(/(\d{3})(\d{4})/, "$1-$2");
+if (!digits) {
+  message =
+    "入力が確認できませんでした。恐れ入りますが、もう一度おかけ直しください。";
+} else if (digits.length < 7) {
+  message =
+    "郵便番号は7桁でお願いします。お手数ですが、もう一度おかけ直しください。";
+} else {
+  const addr = lookupAddressByZip(digits);  // ★ await なし・同期
 
-      if (addr) {
-        message =
-          `ありがとうございます。郵便番号、${jpZip} 付近ですね。` +
-          "詳しいご住所とお名前は、ラインアプリのトーク画面でお伺いさせていただきます。";
-      } else {
-        message =
-          `ありがとうございます。郵便番号、${jpZip} を承りました。` +
-          "詳しいご住所とお名前は、ラインアプリのトーク画面でお伺いさせていただきます。";
-      }
-    }
-
-    const twiml =
-      '<?xml version="1.0" encoding="UTF-8"?>' +
-      '<Response>' +
-      '<Say language="ja-JP" voice="alice">' +
-      message +
-      '</Say>' +
-      '</Response>';
-
-    res.type("text/xml").send(twiml);
+  // ★ detectRegionFromAddress に渡すための region 判定
+  let region = "";
+  if (addr) {
+    region = detectRegionFromAddress({
+      prefecture: addr.prefecture || "",
+      address1:   addr.address1  || "",  // town ではなく address1 を使う
+    });
   }
-);
 
-    // ① 最初の案内：郵便番号7桁を押してもらう
-    if (step === "start") {
-      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Gather input="dtmf" numDigits="7" action="/twilio/voice?step=zip" method="POST">
-    <Say language="ja-JP" voice="alice">
-      お電話ありがとうございます。手造りえびせんべい、磯屋です。
-      お届け用の送料をご案内いたします。
-      はじめに、お届け先の郵便番号7桁を、ハイフンなしで入力してください。
-      入力が終わりましたら、そのまましばらくお待ちください。
-    </Say>
-  </Gather>
-  <Say language="ja-JP" voice="alice">
-    入力が確認できませんでした。お手数ですが、もう一度おかけ直しください。
-  </Say>
-</Response>`;
-      return sendTwiml(twiml);
-    }
+  const jpZip = digits.replace(/(\d{3})(\d{4})/, "$1-$2");
 
-    // ② 郵便番号を受け取って、住所→地域→送料を算出
-    if (step === "zip") {
-      // 郵便番号のバリデーション
-      if (!/^\d{7}$/.test(digits)) {
-        const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    郵便番号は、7桁の数字で入力してください。
-    例として、四四三、ゼロゼロゼロ一、のように続けて押してください。
-  </Say>
-  <Redirect method="POST">/twilio/voice?step=start</Redirect>
-</Response>`;
-        return sendTwiml(twiml);
-      }
-
-      try {
-        const addr = await lookupAddressByZip(digits);
+  message =
+    `ありがとうございます。郵便番号、${jpZip} 付近ですね。` +
+    (region
+      ? `配送地域の目安としては「${region}」エリアになります。`
+      : "") +
+    "詳しいご住所とお名前は、ラインアプリのトーク画面でお伺いさせていただきます。";
+}
 
         // 既存の detectRegionFromAddress / SHIPPING_BY_REGION を流用
         const region = detectRegionFromAddress({

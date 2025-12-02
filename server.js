@@ -2314,7 +2314,7 @@ app.post("/api/admin/products/set-image", (req, res) => {
   }
 });
 
-// ====== Twilio Voice（メニュー + 問い合わせAI + 代引き）======
+
 
 // ====== Twilio COD (代引き・商品＋数量確認だけの簡易版) ======
 

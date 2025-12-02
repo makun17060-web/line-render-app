@@ -286,18 +286,6 @@ const HIDE_PRODUCT_IDS = new Set(["kusuke-250"]);
 
 function findProductById(pid) {
   const products = readProducts();
-  // -------------------------------
-// 代引き商品一覧（Twilio用）
-// -------------------------------
-const COD_PRODUCTS = {
-  "1": { id: "kusuke",       name: "久助",             price: 250 },
-  "2": { id: "nori-square",  name: "四角のりせん",     price: 300 },
-  "3": { id: "premium-ebi",  name: "プレミアムえびせん", price: 400 }
-};
-
-// Twilio 代引き用の簡易セッション（CallSid ごとに情報を保持）
-const codSessions = {};
-
   const idx = products.findIndex((p) => p.id === pid);
   return { products, idx, product: idx >= 0 ? products[idx] : null };
 }

@@ -2418,12 +2418,7 @@ app.post(
 );
 // ====== Twilio COD（代引き専用・DTMFメニュー：data/products.json 連動版） ======
 
-// 電話で選べる商品一覧（キー: 押す番号 → product.id）
-const COD_PRODUCTS = {
-  "1": { id: "kusuke-250" },
-  "2": { id: "nori-square-300" },
-  "3": { id: "premium-ebi-400" },
-};
+
 
 // Twilio 用の URL エンコードパーサ（この COD 用に専用で定義）
 const twilioCodParser = express.urlencoded({ extended: false });
@@ -2581,6 +2576,19 @@ app.post("/twilio/cod/qty", twilioCodParser, (req, res) => {
 
   res.type("text/xml").send(twiml);
 });
+// ====== Twilio COD（代引き専用・DTMFメニュー：data/products.json 連動版） ======
+
+// ★ COD 用：data/products.json の「並び順」で 1,2,3 を割り当てる
+function getCodProductByDigit(digit) {
+  const products = readProducts(); // いつも最新の data/products.json を見る
+  if (!Array.isArray(products) || products.length === 0) return null;
+
+  // "1" → index 0, "2" → index 1, "3" → index 2
+  const idx = parseInt(digit, 10) - 1;
+  if (Number.isNaN(idx) || idx < 0 || idx >= products.length) return null;
+
+  return products[idx];
+}
 
 // ====== Webhook ======
 app.post(

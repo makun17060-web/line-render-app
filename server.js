@@ -1,4 +1,4 @@
-// server.js — フル機能版（Stripe + ミニアプリ + 画像管理）
+// server.js — フル機能版（Stripe + ミニアプリ + 画像管理)
 // + Flex配信
 // + 「その他＝価格入力なし」
 // + 久助専用テキスト購入フロー
@@ -12,8 +12,6 @@
 // + Stripe決済 /api/pay-stripe（Checkout Session）
 // + 決済完了通知 /api/order/complete（★ 管理者 & 注文者 両方へ通知）
 // + 汎用 Health チェック
-// + Twilio 郵便番号案内テスト
-// + Twilio 代引き個数入力 (/twilio/cod/qty)
 
 "use strict";
 
@@ -28,71 +26,49 @@ const PHONE_CONVERSATIONS = {};
  * @param {string} userText ユーザーが話した内容（TwilioのSpeechResult）
  * @returns {Promise<string>} 電話で読み上げる日本語テキスト
  */
-/**
- * 電話用に OpenAI へ問い合わせて、できるだけ速く短く返答してもらう版
- * - システムプロンプトを短く
- * - 履歴は直近だけ送る
- * - max_tokens を小さめに
- */
 async function askOpenAIForPhone(callSid, userText) {
   if (!OPENAI_API_KEY) {
     console.warn("⚠ OPENAI_API_KEY が設定されていません。");
     return "申し訳ありません。現在AIによる自動応答が利用できません。LINEやメッセージからお問い合わせください。";
   }
 
-  // 会話履歴を短く保つ（system ＋ 直近2往復だけ）
+  // 会話履歴がなければ初期化
   if (!PHONE_CONVERSATIONS[callSid]) {
     PHONE_CONVERSATIONS[callSid] = [
       {
         role: "system",
-        content: `
-あなたは「手造りえびせんべい磯屋」の電話自動応答AIです。
-
-・必ず丁寧な敬語で、2〜3文以内で答えてください。
-・ゆっくり読み上げても聞き取りやすい、シンプルな日本語にしてください。
-・在庫や当日の状況は推測せず、
-  「在庫や詳しい状況はLINE公式アカウントのトークでご案内しています」と案内してください。
-・送料の説明が必要なときだけ、簡単に案内してください（詳しい金額はLINEで確認できると伝える）。
-・分からないことは無理に作らず、「LINE公式アカウントからお問い合わせください」と伝えてください。
-        `.trim(),
-      },
+        content:
+          "あなたは「手造りえびせんべい磯屋」の電話自動応答AIです。" +
+          "必ず丁寧な敬語で、日本語で、簡潔に答えてください。" +
+          "営業時間・場所・商品・久助・オンライン注文・LINE 公式アカウントなどの質問に答えます。" +
+          "わからないことは、無理に作らず「LINE のトークからお問い合わせください」と案内してください。" +
+          "電話は音声のみなので、1 回の返答は 2〜3 文以内に短くしてください。"
+      }
     ];
   }
 
   const history = PHONE_CONVERSATIONS[callSid];
   history.push({ role: "user", content: userText });
 
-  // system + 直近4メッセージ（ユーザー/AI）だけ送る
-  const shortHistory = [history[0], ...history.slice(-4)];
-
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 7000); // 7秒でタイムアウト
-
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
-      signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        Authorization: `Bearer ${OPENAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: shortHistory,
-        max_tokens: 80,   // ★ 返答を短くして速度アップ
-        temperature: 0.5, // ★ ぶれを少なめに
-      }),
-    }).catch((e) => {
-      console.error("OpenAI fetch error:", e);
-      throw e;
+        model: "gpt-4o-mini", // 安くて速いモデル
+        messages: history,
+        max_tokens: 200,
+        temperature: 0.7
+      })
     });
-
-    clearTimeout(timeout);
 
     const data = await resp.json();
     const aiText =
       data?.choices?.[0]?.message?.content ||
-      "すみません。うまくお答えできませんでした。LINEのトークからお問い合わせください。";
+      "すみません。うまくお答えできませんでした。";
 
     history.push({ role: "assistant", content: aiText });
 
@@ -787,7 +763,6 @@ function methodFlex(id, qty) {
                 method: "pickup",
                 region: "-",
               })}`,
-
             },
           },
         ],
@@ -914,7 +889,8 @@ function paymentFlex(id, qty, method, region) {
     };
   }
 
-  const regionText = method === "delivery" ? `（配送地域：${region}）` : "";
+  const regionText =
+    method === "delivery" ? `（配送地域：${region}）` : "";
   return {
     type: "flex",
     altText: "お支払い方法を選択してください",
@@ -1168,13 +1144,13 @@ app.post("/api/liff/address", async (req, res) => {
 
     const book = readAddresses();
     book[userId] = {
-      name: String(addr.name || "").trim(),
-      phone: String(addr.phone || "").trim(),
-      postal: String(addr.postal || "").trim(),
-      prefecture: String(addr.prefecture || "").trim(),
-      city: String(addr.city || "").trim(),
-      address1: String(addr.address1 || "").trim(),
-      address2: String(addr.address2 || "").trim(),
+      name:        String(addr.name || "").trim(),
+      phone:       String(addr.phone || "").trim(),
+      postal:      String(addr.postal || "").trim(),
+      prefecture:  String(addr.prefecture || "").trim(),
+      city:        String(addr.city || "").trim(),
+      address1:    String(addr.address1 || "").trim(),
+      address2:    String(addr.address2 || "").trim(),
       ts: new Date().toISOString(),
     };
 
@@ -1235,22 +1211,18 @@ app.post("/api/pay-stripe", async (req, res) => {
 
     // フロントから送られてきた合計（confirm.js/pay.js 側）
     const itemsTotal = Number(order.itemsTotal || 0);
-    const shipping = Number(order.shipping || 0);
-    const codFee = Number(order.codFee || 0); // 今は 0 想定
+    const shipping   = Number(order.shipping   || 0);
+    const codFee     = Number(order.codFee     || 0); // 今は 0 想定
     const finalTotal = Number(
       order.finalTotal || (itemsTotal + shipping + codFee)
     );
 
     console.log("[pay-stripe] items:", items);
     console.log(
-      "[pay-stripe] itemsTotal:",
-      itemsTotal,
-      "shipping:",
-      shipping,
-      "codFee:",
-      codFee,
-      "finalTotal:",
-      finalTotal
+      "[pay-stripe] itemsTotal:", itemsTotal,
+      "shipping:", shipping,
+      "codFee:", codFee,
+      "finalTotal:", finalTotal
     );
 
     // ===== Stripe に渡す line_items を作成 =====
@@ -1259,7 +1231,7 @@ app.post("/api/pay-stripe", async (req, res) => {
     // 商品行
     for (const it of items) {
       const unit = Number(it.price) || 0;
-      const qty = Number(it.qty) || 0;
+      const qty  = Number(it.qty)   || 0;
       if (!qty || unit < 0) continue;
 
       line_items.push({
@@ -1306,13 +1278,13 @@ app.post("/api/pay-stripe", async (req, res) => {
 
     // ベースURL (PUBLIC_BASE_URL優先)
     const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
-    const host = req.headers.host;
+    const host  = req.headers.host;
     const base =
       (process.env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "") ||
       `${proto}://${host}`;
 
     const successUrl = `${base}/public/confirm-card-success.html`;
-    const cancelUrl = `${base}/public/confirm-fail.html`;
+    const cancelUrl  = `${base}/public/confirm-fail.html`;
 
     console.log("[pay-stripe] success_url:", successUrl);
     console.log("[pay-stripe] cancel_url :", cancelUrl);
@@ -1325,7 +1297,7 @@ app.post("/api/pay-stripe", async (req, res) => {
       success_url: successUrl,
       cancel_url: cancelUrl,
       metadata: {
-        lineUserId: order.lineUserId || "",
+        lineUserId:   order.lineUserId   || "",
         lineUserName: order.lineUserName || "",
       },
     });
@@ -1334,7 +1306,9 @@ app.post("/api/pay-stripe", async (req, res) => {
     return res.json({ ok: true, checkoutUrl: session.url });
   } catch (e) {
     console.error("[pay-stripe] error:", e?.raw || e);
-    return res.status(500).json({ ok: false, error: "stripe_error" });
+    return res
+      .status(500)
+      .json({ ok: false, error: "stripe_error" });
   }
 });
 
@@ -1453,6 +1427,7 @@ app.post("/api/order/complete", async (req, res) => {
     return res.status(500).json({ ok: false, error: "server_error" });
   }
 });
+
 
 // ====== 管理API（要トークン） ======
 app.get("/api/admin/ping", (req, res) => {
@@ -1790,8 +1765,8 @@ app.get("/api/products", (req, res) => {
         price: p.price,
         stock: p.stock ?? 0,
         desc: p.desc || "",
-        volume: p.volume || "", // ★ 内容量（volume）
-        image: toPublicImageUrl(p.image || ""), // ★ 画像URL
+        volume: p.volume || "",                     // ★ 内容量（volume）
+        image: toPublicImageUrl(p.image || ""),     // ★ 画像URL
       }));
 
     res.json({ ok: true, products: items });
@@ -2339,98 +2314,109 @@ app.post("/api/admin/products/set-image", (req, res) => {
   }
 });
 
-// ====== 郵便番号 → 住所（簡易ダミー） ======
-// 必要に応じて ZipCloud や CSV 参照に差し替え可能な場所
-function lookupAddressByZip(zip) {
-  const digits = (zip || "").replace(/\D/g, "");
-  if (!digits || digits.length < 7) {
-    return null;
-  }
 
-  // ここでは郵便番号のフォーマットだけ整えて返す簡易版
-  return {
-    zip: digits,
-    postal: digits.replace(/(\d{3})(\d{4})/, "$1-$2"),
-    prefecture: "",
-    city: "",
-    town: "",
-  };
-}
-// ====== Twilio Voice（問い合わせ専用） ======
-const twilioUrlencoded = express.urlencoded({ extended: false });
+// ====== Twilio Voice (AI会話モード) ======
 
-// 電話の入り口：お客さまに用件を話してもらう
-app.post("/twilio/voice", twilioUrlencoded, (req, res) => {
-  console.log("== /twilio/voice HIT ==", {
-    method: req.method,
-    body: req.body,
-  });
+// 1回目の着信：挨拶＋「ご用件をどうぞ」と聞く
+app.all(
+  "/twilio/voice",
+  express.urlencoded({ extended: false }),
+  async (req, res) => {
+    const callSid = req.body.CallSid || "";
+    // 新しい通話なので履歴を初期化
+    delete PHONE_CONVERSATIONS[callSid];
 
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Gather input="speech" language="ja-JP" timeout="8"
-          action="/twilio/voice/ai" method="POST">
+  <Say language="ja-JP" voice="alice">
+    お電話ありがとうございます。 手造りえびせんべい、磯屋です。
+  </Say>
+  <Say language="ja-JP" voice="alice">
+    こちらは、AIによる自動応答です。 営業時間、場所、商品、久助のことなど、 ご質問をゆっくりお話しください。
+  </Say>
+  <Gather input="speech"
+          language="ja-JP"
+          speechTimeout="auto"
+          action="/twilio/voice/handle"
+          method="POST">
     <Say language="ja-JP" voice="alice">
-お電話ありがとうございます。手造りえびせんべい磯屋です。
-ご用件を、八秒以内でゆっくりとお話しください。
-お話が終わりましたら、そのままお待ちください。
+      それでは、ご用件をどうぞ。 話し終わったら、そのままお待ちください。
     </Say>
   </Gather>
   <Say language="ja-JP" voice="alice">
-入力が確認できませんでした。お手数ですが、ライン公式アカウントのトークからお問い合わせください。
+    音声が確認できなかったため、通話を終了いたします。 ありがとうございました。
   </Say>
-  <Hangup/>
 </Response>`;
 
-  res.type("text/xml").send(twiml);
-});
-
-// お客さまの話した内容を OpenAI に投げて、返答を読み上げる
-app.post("/twilio/voice/ai", twilioUrlencoded, async (req, res) => {
-  try {
-    const callSid = String(req.body.CallSid || "").trim();
-    const speech  = String(req.body.SpeechResult || "").trim();
-
-    console.log("== /twilio/voice/ai HIT ==", {
-      CallSid: callSid,
-      SpeechResult: speech,
-    });
-
-    let replyText = "";
-
-    if (!speech) {
-      replyText =
-        "申し訳ありません。うまく音声を認識できませんでした。お手数ですが、ライン公式アカウントのトークからお問い合わせください。";
-    } else {
-      // ★ 冒頭で定義した askOpenAIForPhone をそのまま利用
-      replyText = await askOpenAIForPhone(callSid, speech);
-    }
-
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-${replyText}
-  </Say>
-  <Say language="ja-JP" voice="alice">
-ご利用ありがとうございました。それでは失礼いたします。
-  </Say>
-  <Hangup/>
-</Response>`;
-
-    res.type("text/xml").send(twiml);
-  } catch (e) {
-    console.error("/twilio/voice/ai error:", e);
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-申し訳ありません。システムエラーが発生しました。
-お手数ですが、ライン公式アカウントのトークからお問い合わせください。
-  </Say>
-  <Hangup/>
-</Response>`;
     res.type("text/xml").send(twiml);
   }
-});
+);
+
+// 2回目以降：お客さんの音声を AI に投げて、その回答を読み上げる
+app.post(
+  "/twilio/voice/handle",
+  express.urlencoded({ extended: false }),
+  async (req, res) => {
+    const callSid = req.body.CallSid || "";
+    const speechText = (req.body.SpeechResult || "").trim();
+    console.log("【Twilio SpeechResult】", speechText);
+
+    let aiReply;
+
+    if (!speechText) {
+      aiReply =
+        "すみません、音声がうまく聞き取れませんでした。 もう一度、ゆっくりお話しいただけますか。";
+    } else {
+      aiReply = await askOpenAIForPhone(callSid, speechText);
+    }
+
+    // 「もう大丈夫」「ありがとう」「失礼します」などを含んだら終了とみなす
+    const endKeywords = ["大丈夫", "ありがとう", "結構です", "失礼します", "切ります"];
+    const shouldEnd =
+      !speechText ||
+      endKeywords.some((kw) => speechText.includes(kw));
+
+    let twiml;
+
+    if (shouldEnd) {
+      // 最後の一言だけ言って終了
+      twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    ${aiReply}
+  </Say>
+  <Say language="ja-JP" voice="alice">
+    ご利用ありがとうございました。 それでは、失礼いたします。
+  </Say>
+</Response>`;
+      // 会話履歴を掃除
+      delete PHONE_CONVERSATIONS[callSid];
+    } else {
+      // 返答を読み上げて、さらに続けて質問を受け付ける
+      twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    ${aiReply}
+  </Say>
+  <Gather input="speech"
+          language="ja-JP"
+          speechTimeout="auto"
+          action="/twilio/voice/handle"
+          method="POST">
+    <Say language="ja-JP" voice="alice">
+      ほかにもご質問があれば、そのままお話しください。 終了する場合は、「もう大丈夫です」などとおっしゃってください。
+    </Say>
+  </Gather>
+  <Say language="ja-JP" voice="alice">
+    音声が確認できなかったため、通話を終了いたします。 ありがとうございました。
+  </Say>
+</Response>`;
+    }
+
+    res.type("text/xml").send(twiml);
+  }
+);
+
 
 // ====== Webhook ======
 app.post(

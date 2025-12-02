@@ -2408,6 +2408,22 @@ async function lookupAddressByZip(zip) {
     town: r.address3 || "",
   };
 }
+// ★ 郵便番号からざっくり住所情報を返すダミー関数
+async function lookupAddressByZip(zip) {
+  const digits = (zip || "").replace(/\D/g, "");
+  if (!digits || digits.length < 7) {
+    return null;
+  }
+
+  // ここで本当はAPIに問い合わせたり、CSVを引いたりする。
+  // いったんは「○○-○○○○付近です」と言うだけの簡易版。
+  return {
+    postal: digits.replace(/(\d{3})(\d{4})/, "$1-$2"),
+    prefecture: "",
+    city: "",
+    address1: "",
+  };
+}
 
 // ====== Twilio Voice (電話自動応答：郵便番号テスト版) ======
 app.post(
@@ -2431,34 +2447,48 @@ app.post(
     res.type("text/xml").send(twiml);
   }
 );
-// 郵便番号入力後の処理
+// ====== Twilio Voice: 郵便番号入力後のハンドラ ======
 app.post(
   "/twilio/voice/postal",
   express.urlencoded({ extended: false }),
-  (req, res) => {
-    // Twilio から送られてくる押した番号
-    const raw = req.body.Digits || "";
-    const digits = raw.replace(/\D/g, "").slice(0, 7); // 数字だけ取り出して最大7桁
+  async (req, res) => {
+    const digits = (req.body.Digits || "").replace(/\D/g, "");
 
-    const 読み上げ用 =
-      digits.length === 7
-        ? digits.split("").join("、")
-        : digits.split("").join("、");
+    let message = "";
 
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-入力された郵便番号は、
-${読み上げ用}
-です。
-現在はテスト中のため、このまま通話を終了させていただきます。
-  </Say>
-</Response>`;
+    if (!digits) {
+      message =
+        "入力が確認できませんでした。恐れ入りますが、もう一度おかけ直しください。";
+    } else if (digits.length < 7) {
+      message =
+        "郵便番号は7桁でお願いします。お手数ですが、もう一度おかけ直しください。";
+    } else {
+      // ★ ここで await が使えるのは、関数を async にしたから
+      const addr = await lookupAddressByZip(digits);
+      const jpZip = digits.replace(/(\d{3})(\d{4})/, "$1-$2");
+
+      if (addr) {
+        message =
+          `ありがとうございます。郵便番号、${jpZip} 付近ですね。` +
+          "詳しいご住所とお名前は、ラインアプリのトーク画面でお伺いさせていただきます。";
+      } else {
+        message =
+          `ありがとうございます。郵便番号、${jpZip} を承りました。` +
+          "詳しいご住所とお名前は、ラインアプリのトーク画面でお伺いさせていただきます。";
+      }
+    }
+
+    const twiml =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<Response>' +
+      '<Say language="ja-JP" voice="alice">' +
+      message +
+      '</Say>' +
+      '</Response>';
 
     res.type("text/xml").send(twiml);
   }
 );
-
 
 
     // ① 最初の案内：郵便番号7桁を押してもらう

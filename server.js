@@ -2382,30 +2382,23 @@ app.post("/api/admin/products/set-image", (req, res) => {
   }
 });
 // ====== 郵便番号 → 住所（ZipCloud API） ======
-// ★ 郵便番号からざっくり住所情報を返すダミー関数（同期版）
-function lookupAddressByZip(zip) {
-  const digits = (zip || "").replace(/\D/g, "");
-  if (!digits || digits.length < 7) {
-    return null;
+async function lookupAddressByZip(zip) {
+  const digits = String(zip || "").replace(/\D/g, "");
+  if (digits.length !== 7) {
+    throw new Error("zip_must_be_7digits");
   }
 
-  // 本番ではここでAPIやCSV参照などに差し替え
-  return {
-    postal: digits.replace(/(\d{3})(\d{4})/, "$1-$2"),
-    prefecture: "",
-    city: "",
-    address1: "",
-  };
-}
-
-
-  const url = `https://zipcloud.ibsnet.co.jp/api/search?zipcode=${z}`;
+  const url = `https://zipcloud.ibsnet.co.jp/api/search?zipcode=${digits}`;
 
   const res = await fetch(url);
-  if (!res.ok) throw new Error("zipcloud_http_error");
+  if (!res.ok) throw new Error(`zipcloud_http_error_${res.status}`);
 
   const data = await res.json();
-  if (data.status !== 200 || !Array.isArray(data.results) || data.results.length === 0) {
+  if (
+    data.status !== 200 ||
+    !Array.isArray(data.results) ||
+    data.results.length === 0
+  ) {
     throw new Error("zip_not_found");
   }
 
@@ -2413,26 +2406,10 @@ function lookupAddressByZip(zip) {
 
   // r.address1: 都道府県, address2: 市区町村, address3: 町域
   return {
-    zip: z,
+    zip: digits,
     prefecture: r.address1 || "",
     city: r.address2 || "",
     town: r.address3 || "",
-  };
-}
-// ★ 郵便番号からざっくり住所情報を返すダミー関数
-async function lookupAddressByZip(zip) {
-  const digits = (zip || "").replace(/\D/g, "");
-  if (!digits || digits.length < 7) {
-    return null;
-  }
-
-  // ここで本当はAPIに問い合わせたり、CSVを引いたりする。
-  // いったんは「○○-○○○○付近です」と言うだけの簡易版。
-  return {
-    postal: digits.replace(/(\d{3})(\d{4})/, "$1-$2"),
-    prefecture: "",
-    city: "",
-    address1: "",
   };
 }
 
@@ -2448,7 +2425,7 @@ app.post(
 お電話ありがとうございます。手造りえびせんべい磯屋です。
 郵便番号によるご案内テスト中です。
 これから、郵便番号7桁を、ハイフンなしで押してください。
-  </Say>
+    </Say>
   </Gather>
   <Say language="ja-JP" voice="alice">
 入力が確認できませんでした。お手数ですが、もう一度おかけ直しください。
@@ -2458,43 +2435,36 @@ app.post(
     res.type("text/xml").send(twiml);
   }
 );
-// ====== Twilio Voice: 郵便番号入力後のハンドラ（同期版） ======
+
+// ====== Twilio Voice: 郵便番号入力後のハンドラ（async版） ======
 app.post(
   "/twilio/voice/postal",
   express.urlencoded({ extended: false }),
-  (req, res) => {
-    // 郵便番号で地域をざっくり判定してメッセージに使う例
-const digits = (req.body.Digits || "").replace(/\D/g, "");
+  async (req, res) => {
+    const digits = String(req.body.Digits || "").replace(/\D/g, "");
 
-let message = "";
+    let twiml;
 
-if (!digits) {
-  message =
-    "入力が確認できませんでした。恐れ入りますが、もう一度おかけ直しください。";
-} else if (digits.length < 7) {
-  message =
-    "郵便番号は7桁でお願いします。お手数ですが、もう一度おかけ直しください。";
-} else {
-  const addr = lookupAddressByZip(digits);  // ★ await なし・同期
-
-  // ★ detectRegionFromAddress に渡すための region 判定
-  let region = "";
-  if (addr) {
-    region = detectRegionFromAddress({
-      prefecture: addr.prefecture || "",
-      address1:   addr.address1  || "",  // town ではなく address1 を使う
-    });
-  }
-
-  const jpZip = digits.replace(/(\d{3})(\d{4})/, "$1-$2");
-
-  message =
-    `ありがとうございます。郵便番号、${jpZip} 付近ですね。` +
-    (region
-      ? `配送地域の目安としては「${region}」エリアになります。`
-      : "") +
-    "詳しいご住所とお名前は、ラインアプリのトーク画面でお伺いさせていただきます。";
-}
+    if (!digits) {
+      // 入力なし
+      twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+入力が確認できませんでした。お手数ですが、もう一度おかけ直しください。
+  </Say>
+</Response>`;
+    } else if (digits.length !== 7) {
+      // 桁数不足
+      twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+郵便番号は7桁でお願いします。お手数ですが、もう一度おかけ直しください。
+  </Say>
+</Response>`;
+    } else {
+      // 7桁 → ZipCloud で住所取得
+      try {
+        const addr = await lookupAddressByZip(digits);
 
         // 既存の detectRegionFromAddress / SHIPPING_BY_REGION を流用
         const region = detectRegionFromAddress({
@@ -2504,110 +2474,34 @@ if (!digits) {
 
         const shipping = region ? (SHIPPING_BY_REGION[region] || 0) : 0;
 
-        // 読み上げ用テキスト
+        const jpZip = digits.replace(/(\d{3})(\d{4})/, "$1-$2");
         const addrText = `${addr.prefecture}、${addr.city}、${addr.town}`;
-        const regionText = region ? region : "地域不明";
+        const regionText = region || "地域不明";
         const shippingText =
           shipping > 0 ? `${shipping}円` : "送料が自動判定できませんでした。";
 
-        // 確認用の Gather（1: OK, 2: 入力やり直し）
-        const q = qstr({
-          step: "confirm",
-          zip: addr.zip,
-          pref: addr.prefecture,
-          city: addr.city,
-          town: addr.town,
-          region: region || "",
-          shipping: shipping,
-        });
-
-        const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+        twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Gather input="dtmf" numDigits="1" action="/twilio/voice?${q}" method="POST">
-    <Say language="ja-JP" voice="alice">
-      郵便番号、${digits} に対応するご住所は、
-      ${addrText} です。
-      お届け先の地域は、${regionText}。
-      送料は、およそ、${shippingText} となります。
-      内容にお間違いがなければ、1 を押してください。
-      修正する場合は、2 を押してください。
-    </Say>
-  </Gather>
   <Say language="ja-JP" voice="alice">
-    入力が確認できませんでした。お手数ですが、もう一度おかけ直しください。
+ありがとうございます。郵便番号、${jpZip} に対応するご住所は、${addrText} です。
+お届け先の地域は、${regionText}。
+送料の目安は、${shippingText} となります。
+詳しいご案内は、ライン公式アカウントのトーク画面からお送りいたします。
   </Say>
 </Response>`;
-        return sendTwiml(twiml);
       } catch (e) {
         console.error("lookupAddressByZip error:", e);
-        const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+        twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="ja-JP" voice="alice">
-    申し訳ありません。郵便番号から住所を取得できませんでした。
-    お手数ですが、時間をおいて、もう一度おかけ直しください。
+申し訳ありません。郵便番号から住所を取得できませんでした。
+お手数ですが、時間をおいて、もう一度おかけ直しください。
   </Say>
 </Response>`;
-        return sendTwiml(twiml);
       }
     }
 
-    // ③ 1:OK / 2:やり直し の結果を受け取る
-    if (step === "confirm") {
-      const key = digits; // 1 or 2 など
-      const zip = String(req.query.zip || "");
-      const pref = String(req.query.pref || "");
-      const city = String(req.query.city || "");
-      const town = String(req.query.town || "");
-      const region = String(req.query.region || "");
-      const shipping = Number(req.query.shipping || 0);
-
-      if (key === "1") {
-        // ここから先で「代引き注文受付」などに繋げてもOK
-        const addrText = `${pref}、${city}、${town}`;
-        const shippingText =
-          shipping > 0 ? `${shipping}円` : "送料が自動判定できませんでした。";
-
-        const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    ありがとうございます。
-    ご住所は、${addrText}。
-    送料は、${shippingText} で承ります。
-    この内容でのご案内は、LINE公式アカウントから、あらためてご連絡いたします。
-    お電話、ありがとうございました。
-  </Say>
-</Response>`;
-        return sendTwiml(twiml);
-      }
-
-      if (key === "2") {
-        const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    郵便番号の入力をやり直します。
-  </Say>
-  <Redirect method="POST">/twilio/voice?step=start</Redirect>
-</Response>`;
-        return sendTwiml(twiml);
-      }
-
-      // 1,2 以外 → やり直し
-      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    入力が確認できませんでした。お手数ですが、もう一度、郵便番号の入力からお願いいたします。
-  </Say>
-  <Redirect method="POST">/twilio/voice?step=start</Redirect>
-</Response>`;
-      return sendTwiml(twiml);
-    }
-
-    // 万が一 step が変な値だったときのフォールバック
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Redirect method="POST">/twilio/voice?step=start</Redirect>
-</Response>`;
-    return sendTwiml(twiml);
+    res.type("text/xml").send(twiml);
   }
 );
 

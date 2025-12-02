@@ -3772,6 +3772,138 @@ app.get("/api/health", (_req, res) => {
     },
   });
 });
+// ====== Twilio Voice（代引き専用・DTMFメニュー） ======
+const twilioUrlencoded = express.urlencoded({ extended: false });
+
+/**
+ * 1. スタート：代引き専用メニュー
+ *    → 1桁入力（1〜3）を /twilio/cod/product に飛ばす
+ */
+app.all("/twilio/cod/start", twilioUrlencoded, (req, res) => {
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    お電話ありがとうございます。 手造りえびせんべい、磯屋です。
+    こちらは、代引きご希望のお客さま専用の自動受付です。
+  </Say>
+  <Gather input="dtmf"
+          numDigits="1"
+          timeout="10"
+          action="/twilio/cod/product"
+          method="POST">
+    <Say language="ja-JP" voice="alice">
+      ご希望の商品をお選びください。
+      久助は 1 を、
+      四角のりせんは 2 を、
+      プレミアムえびせんは 3 を押してください。
+    </Say>
+  </Gather>
+  <Say language="ja-JP" voice="alice">
+    入力が確認できませんでした。 お手数ですが、もう一度おかけ直しください。
+  </Say>
+</Response>`;
+
+  res.type("text/xml").send(twiml);
+});
+
+/**
+ * 2. 商品選択：1〜3 を受け取って、商品を特定 → 個数入力へ
+ *    Twilio の Request Inspector に出ていた URL がここ（/twilio/cod/product）
+ */
+app.post("/twilio/cod/product", twilioUrlencoded, (req, res) => {
+  const digit = (req.body.Digits || "").trim();
+  console.log("【/twilio/cod/product】Digits =", digit);
+
+  let pid = "";
+  let name = "";
+
+  if (digit === "1") {
+    // ★ 久助：店頭受取のみ、住所不要
+    pid = "kusuke-250";
+    name = "久助（えびせん）";
+  } else if (digit === "2") {
+    pid = "nori-square-300";
+    name = "四角のりせん";
+  } else if (digit === "3") {
+    pid = "premium-ebi-400";
+    name = "プレミアムえびせん";
+  } else {
+    // 想定外 → 最初からやり直し
+    const twimlInvalid = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    押された番号が確認できませんでした。 もう一度、商品選択からやり直します。
+  </Say>
+  <Redirect method="POST">/twilio/cod/start</Redirect>
+</Response>`;
+    return res.type("text/xml").send(twimlInvalid);
+  }
+
+  // 商品が特定できたので、個数の入力へ
+  const q = qstr({ pid, name });
+
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    ご希望の商品は、${name} ですね。
+  </Say>
+  <Gather input="dtmf"
+          numDigits="2"
+          timeout="6"
+          action="/twilio/cod/qty?${q}"
+          method="POST">
+    <Say language="ja-JP" voice="alice">
+      個数を、1 から 99 の範囲で入力してください。
+      例えば 2 個なら、 0 2 と押すか、そのまま 2 を押して、しばらくお待ちください。
+    </Say>
+  </Gather>
+  <Say language="ja-JP" voice="alice">
+    入力が確認できませんでした。 お手数ですが、最初からやり直します。
+  </Say>
+  <Redirect method="POST">/twilio/cod/start</Redirect>
+</Response>`;
+
+  res.type("text/xml").send(twiml);
+});
+
+/**
+ * 3. 個数入力：1〜99 を受け取って、簡易的に受付完了
+ *    （ここではまだ住所までは聞かず、LINEでの確認案内に留める）
+ */
+app.post("/twilio/cod/qty", twilioUrlencoded, (req, res) => {
+  const pid = (req.query.pid || "").toString();
+  const name = (req.query.name || "").toString() || "ご希望の商品";
+  const raw = (req.body.Digits || "").replace(/\D/g, "");
+  const qty = parseInt(raw, 10);
+
+  console.log("【/twilio/cod/qty】pid =", pid, "name =", name, "Digits =", raw);
+
+  if (!raw || isNaN(qty) || qty < 1 || qty > 99) {
+    const twimlInvalidQty = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    個数の入力がうまく確認できませんでした。 お手数ですが、最初からやり直します。
+  </Say>
+  <Redirect method="POST">/twilio/cod/start</Redirect>
+</Response>`;
+    return res.type("text/xml").send(twimlInvalidQty);
+  }
+
+  // ここでは「仮受付」だけにして、詳細は LINE で案内する運用
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    ${name} を、${qty} 個で承りました。
+    詳しいお支払い方法やお届け先につきましては、
+    LINE のトーク画面から、あらためてご案内いたします。
+  </Say>
+  <Say language="ja-JP" voice="alice">
+    お電話ありがとうございました。 それでは、失礼いたします。
+  </Say>
+</Response>`;
+
+  res.type("text/xml").send(twiml);
+});
 
 // ====== 起動 ======
 app.listen(PORT, "0.0.0.0", () => {

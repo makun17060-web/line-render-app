@@ -2199,269 +2199,7 @@ app.get("/api/admin/connection-test", (req, res) => {
   });
 });
 
-// アップロード
-app.post("/api/admin/upload-image", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  upload.single("image")(req, res, (err) => {
-    if (err) {
-      const msg =
-        err?.message === "File too large"
-          ? "file_too_large"
-          : err?.message || "upload_error";
-      return res
-        .status(400)
-        .json({ ok: false, error: msg });
-    }
-    if (!req.file)
-      return res
-        .status(400)
-        .json({ ok: false, error: "no_file" });
-
-    const filename = req.file.filename;
-    const relPath = `/public/uploads/${filename}`;
-
-    let base = PUBLIC_BASE_URL;
-    if (!base) {
-      const proto = req.headers["x-forwarded-proto"] || "https";
-      const host = req.headers.host;
-      base = `${proto}://${host}`;
-    }
-    const url = `${base}${relPath}`;
-
-    res.json({
-      ok: true,
-      file: filename,
-      url,
-      path: relPath,
-      size: req.file.size,
-      mimetype: req.file.mimetype,
-    });
-  });
-});
-
-// 一覧
-app.get("/api/admin/images", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    const files = fs
-      .readdirSync(UPLOAD_DIR)
-      .filter((f) => /\.(png|jpe?g|gif|webp)$/i.test(f))
-      .map((name) => {
-        const p = path.join(UPLOAD_DIR, name);
-        const st = fs.statSync(p);
-        return {
-          name,
-          url: `/public/uploads/${name}`,
-          path: `/public/uploads/${name}`,
-          bytes: st.size,
-          mtime: st.mtimeMs,
-        };
-      })
-      .sort((a, b) => b.mtime - a.mtime);
-
-    res.json({ ok: true, items: files });
-  } catch (e) {
-    console.error("images list error:", e);
-    res
-      .status(500)
-      .json({ ok: false, error: "list_error" });
-  }
-});
-
-// 削除
-app.delete("/api/admin/images/:name", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  const base = (req.params?.name || "")
-    .replace(/\.\./g, "")
-    .replace(/[\/\\]/g, "");
-  const p = path.join(UPLOAD_DIR, base);
-  try {
-    if (!fs.existsSync(p))
-      return res
-        .status(404)
-        .json({ ok: false, error: "not_found" });
-    fs.unlinkSync(p);
-    res.json({ ok: true, deleted: base });
-  } catch (e) {
-    res
-      .status(500)
-      .json({ ok: false, error: "delete_error" });
-  }
-});
-
-// 商品に画像URLを紐付け
-app.post("/api/admin/products/set-image", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    const pid = String(req.body?.productId || "").trim();
-    const imageUrl = String(req.body?.imageUrl || "").trim();
-    if (!pid)
-      return res
-        .status(400)
-        .json({ ok: false, error: "productId required" });
-    const { products, idx } = findProductById(pid);
-    if (idx < 0)
-      return res
-        .status(404)
-        .json({ ok: false, error: "product_not_found" });
-    products[idx].image = imageUrl;
-    writeProducts(products);
-    res.json({ ok: true, product: products[idx] });
-  } catch (e) {
-    res
-      .status(500)
-      .json({ ok: false, error: "save_error" });
-  }
-});
-
-
-
-// ====== Twilio COD (代引き・商品＋数量確認だけの簡易版) ======
-
-// 電話で選べる商品一覧（キー: 押す番号）
-const COD_PRODUCTS = {
-  "1": { id: "kusuke-250",        name: "久助（えびせん）",    price: 250 },
-  "2": { id: "nori-square-300",   name: "四角のりせん",        price: 300 },
-  "3": { id: "premium-ebi-400",   name: "プレミアムえびせん",  price: 400 },
-};
-
-// 共通：TwiML を組み立てるヘルパー
-function buildTwiml(inner) {
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<Response>\n${inner}\n</Response>`;
-}
-
-// ① 着信スタート：商品選択メニュー
-app.all(
-  "/twilio/cod/start",
-  express.urlencoded({ extended: false }),
-  (req, res) => {
-    const body = `
-  <Say language="ja-JP" voice="alice">
-    お電話ありがとうございます。手造りえびせんべい、磯屋です。
-    こちらは、代引きご希望のお客さま向け、自動応答です。
-  </Say>
-  <Gather input="dtmf"
-          numDigits="1"
-          timeout="10"
-          action="/twilio/cod/product"
-          method="POST">
-    <Say language="ja-JP" voice="alice">
-      商品を番号でお選びください。
-      久助をご希望の方は、1 を。
-      四角のりせんは 2 を。
-      プレミアムえびせんは 3 を、押してください。
-    </Say>
-  </Gather>
-  <Say language="ja-JP" voice="alice">
-    入力が確認できませんでした。お手数ですが、時間をおいておかけ直しください。
-  </Say>`;
-    res.type("text/xml").send(buildTwiml(body));
-  }
-);
-
-// ② 商品番号を受け取る → 個数入力へ
-app.post(
-  "/twilio/cod/product",
-  express.urlencoded({ extended: false }),
-  (req, res) => {
-    const digit = (req.body.Digits || "").trim();
-    const p = COD_PRODUCTS[digit];
-
-    if (!p) {
-      // 1,2,3 以外 → 最初からやり直し
-      const body = `
-    <Say language="ja-JP" voice="alice">
-      該当する商品が選択されませんでした。最初からやり直します。
-    </Say>
-    <Redirect method="POST">/twilio/cod/start</Redirect>`;
-      return res.type("text/xml").send(buildTwiml(body));
-    }
-
-    const body = `
-  <Gather input="dtmf"
-          numDigits="2"
-          timeout="10"
-          action="/twilio/cod/qty?pid=${encodeURIComponent(p.id)}"
-          method="POST">
-    <Say language="ja-JP" voice="alice">
-      ${p.name} をお選びいただきました。
-      ご希望の個数を、二桁までの数字で押してください。
-      たとえば 3こなら、0 3。 10こなら、1 0 のように押してください。
-    </Say>
-  </Gather>
-  <Say language="ja-JP" voice="alice">
-    入力が確認できませんでした。お手数ですが、時間をおいておかけ直しください。
-  </Say>`;
-    res.type("text/xml").send(buildTwiml(body));
-  }
-);
-
-// ③ 個数を受け取る → 合計金額を案内して終了
-app.post(
-  "/twilio/cod/qty",
-  express.urlencoded({ extended: false }),
-  (req, res) => {
-    const pid = String(req.query.pid || "");
-    const digits = (req.body.Digits || "").replace(/\D/g, "");
-    let qty = Number(digits || "0");
-
-    if (!qty || qty < 1) {
-      const body = `
-    <Say language="ja-JP" voice="alice">
-      個数の入力が正しくありませんでした。最初からやり直します。
-    </Say>
-    <Redirect method="POST">/twilio/cod/start</Redirect>`;
-      return res.type("text/xml").send(buildTwiml(body));
-    }
-
-    if (qty > 99) qty = 99; // 上限 99 個
-
-    // products.json から商品情報を探す（見つからなければ名前だけフォールバック）
-    const products = readProducts();
-    const product =
-      products.find((p) => p.id === pid) ||
-      { name: "ご指定の商品", price: 0 };
-
-    const unit = Number(product.price) || 0;
-    const subtotal = unit * qty;
-
-    const body = `
-  <Say language="ja-JP" voice="alice">
-    ${product.name} を、${qty}こ ご希望ですね。
-    商品代金の合計は、およそ ${subtotal} えん です。
-    送料と代引き手数料は、別途 かかります。
-    詳しい金額とお届け先については、
-    このあと、ライン公式アカウントからご案内いたします。
-    ご利用ありがとうございました。 それでは、失礼いたします。
-  </Say>`;
-    res.type("text/xml").send(buildTwiml(body));
-  }
-);
-
-// ====== Webhook ======
-app.post(
-  "/webhook",
-  line.middleware(config),
-  async (req, res) => {
-    try {
-      const events = req.body.events || [];
-      await Promise.all(events.map(handleEvent));
-      res.status(200).end();
-    } catch (err) {
-      const detail =
-        err?.originalError?.response?.data ||
-        err?.response?.data ||
-        err?.stack ||
-        err;
-      console.error(
-        "Webhook Error detail:",
-        JSON.stringify(detail, null, 2)
-      );
-      res.status(500).end();
-    }
-  }
-);
-
+/twilio/cod/start
 // ====== イベント処理 ======
 async function handleEvent(ev) {
   try {
@@ -3463,10 +3201,8 @@ app.get("/api/health", (_req, res) => {
 });
 
 /**
- * 2. 商品選択：1〜3 を受け取って、商品を特定 → 個数入力へ
- *    Twilio の Request Inspector に出ていた URL がここ（/twilio/cod/product）
- */
-app.post("/twilio/cod/product", twilioUrlencoded, (req, res) => {
+// ② 商品選択：1〜3 を受け取って、商品を特定 → 個数入力へ
+app.post("/twilio/cod/product", express.urlencoded({ extended: false }), (req, res) => {
   const digit = (req.body.Digits || "").trim();
   console.log("【/twilio/cod/product】Digits =", digit);
 
@@ -3517,6 +3253,45 @@ app.post("/twilio/cod/product", twilioUrlencoded, (req, res) => {
     入力が確認できませんでした。 お手数ですが、最初からやり直します。
   </Say>
   <Redirect method="POST">/twilio/cod/start</Redirect>
+</Response>`;
+
+  res.type("text/xml").send(twiml);
+});
+
+/**
+ * 3. 個数入力：1〜99 を受け取って、簡易的に受付完了
+ *    （ここではまだ住所までは聞かず、LINEでの確認案内に留める）
+ */
+app.post("/twilio/cod/qty", express.urlencoded({ extended: false }), (req, res) => {
+  const pid = (req.query.pid || "").toString();
+  const name = (req.query.name || "").toString() || "ご希望の商品";
+  const raw = (req.body.Digits || "").replace(/\D/g, "");
+  const qty = parseInt(raw, 10);
+
+  console.log("【/twilio/cod/qty】pid =", pid, "name =", name, "Digits =", raw);
+
+  if (!raw || isNaN(qty) || qty < 1 || qty > 99) {
+    const twimlInvalidQty = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    個数の入力がうまく確認できませんでした。 お手数ですが、最初からやり直します。
+  </Say>
+  <Redirect method="POST">/twilio/cod/start</Redirect>
+</Response>`;
+    return res.type("text/xml").send(twimlInvalidQty);
+  }
+
+  // ここでは「仮受付」だけにして、詳細は LINE で案内する運用
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    ${name} を、${qty} 個で承りました。
+    詳しいお支払い方法やお届け先につきましては、
+    LINE のトーク画面から、あらためてご案内いたします。
+  </Say>
+  <Say language="ja-JP" voice="alice">
+    お電話ありがとうございました。 それでは、失礼いたします。
+  </Say>
 </Response>`;
 
   res.type("text/xml").send(twiml);

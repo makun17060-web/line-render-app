@@ -2546,6 +2546,23 @@ ${summaryText}
     res.type("text/xml").send(twiml);
   }
 );
+// 共通の URL エンコードミドルウェア（なければ追加）
+const twilioUrlencoded = express.urlencoded({ extended: false });
+
+// ====== /twilio/cod → 最初の個数入力フローへ転送 ======
+app.all("/twilio/cod", twilioUrlencoded, (req, res) => {
+  console.log("== /twilio/cod HIT ==", {
+    method: req.method,
+    query: req.query,
+    body: req.body,
+  });
+
+  // pid がクエリにあれば利用、無ければ久助をデフォルトに
+  const pid = (req.query.pid || req.body.pid || "kusuke-250").toString().trim();
+
+  // 307 で /twilio/cod/qty にそのまま転送（POST も維持）
+  res.redirect(307, `/twilio/cod/qty?pid=${encodeURIComponent(pid)}`);
+});
 
 // ====== Webhook ======
 app.post(

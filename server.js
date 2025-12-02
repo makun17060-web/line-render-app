@@ -2466,6 +2466,7 @@ app.all("/twilio/cod/start", twilioCodParser, (req, res) => {
  */
 app.post("/twilio/cod/product", twilioCodParser, (req, res) => {
   console.log("【/twilio/cod/product】raw body =", req.body);
+  console.log("【/twilio/cod/product】raw body =", req.body);
   const digit = (req.body.Digits || "").trim();
   console.log("【/twilio/cod/product】Digits =", digit);
 

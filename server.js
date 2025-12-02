@@ -3461,39 +3461,6 @@ app.get("/api/health", (_req, res) => {
     },
   });
 });
-// ====== Twilio Voice（代引き専用・DTMFメニュー） ======
-const twilioUrlencoded = express.urlencoded({ extended: false });
-
-/**
- * 1. スタート：代引き専用メニュー
- *    → 1桁入力（1〜3）を /twilio/cod/product に飛ばす
- */
-app.all("/twilio/cod/start", twilioUrlencoded, (req, res) => {
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    お電話ありがとうございます。 手造りえびせんべい、磯屋です。
-    こちらは、代引きご希望のお客さま専用の自動受付です。
-  </Say>
-  <Gather input="dtmf"
-          numDigits="1"
-          timeout="10"
-          action="/twilio/cod/product"
-          method="POST">
-    <Say language="ja-JP" voice="alice">
-      ご希望の商品をお選びください。
-      久助は 1 を、
-      四角のりせんは 2 を、
-      プレミアムえびせんは 3 を押してください。
-    </Say>
-  </Gather>
-  <Say language="ja-JP" voice="alice">
-    入力が確認できませんでした。 お手数ですが、もう一度おかけ直しください。
-  </Say>
-</Response>`;
-
-  res.type("text/xml").send(twiml);
-});
 
 /**
  * 2. 商品選択：1〜3 を受け取って、商品を特定 → 個数入力へ

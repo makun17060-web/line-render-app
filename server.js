@@ -2413,18 +2413,53 @@ async function lookupAddressByZip(zip) {
   };
 }
 
-// ====== Twilio Voice (電話自動応答：郵便番号テスト版) ======
+// ====== Twilio Voice：代引き電話注文（住所なし・全商品対象） ======
+
+// 電話用：全商品（久助も含む）を取得
+function getPhoneCodProductsAll() {
+  return readProducts(); // kusuke-250 も含めて全て
+}
+
+// ① エントリーポイント：商品選択
 app.post(
-  "/twilio/voice",
+  "/twilio/cod",
   express.urlencoded({ extended: false }),
   (req, res) => {
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+    const products = getPhoneCodProductsAll();
+    let twiml;
+
+    if (!products.length) {
+      twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Gather input="dtmf" numDigits="7" timeout="10" action="/twilio/voice/postal" method="POST">
+  <Say language="ja-JP" voice="alice">
+申し訳ありません。現在、電話でご注文いただける商品がございません。
+LINE公式アカウントまたはオンラインショップからご確認ください。
+  </Say>
+</Response>`;
+      res.type("text/xml").send(twiml);
+      return;
+    }
+
+    // 1〜9番まで読み上げ（商品が多すぎる場合は先頭9件）
+    const max = Math.min(9, products.length);
+    const lines = [];
+    for (let i = 0; i < max; i++) {
+      const p = products[i];
+      lines.push(`${i + 1}番、${p.name}、${p.price}円。`);
+    }
+
+    const head =
+      "お電話ありがとうございます。手造りえびせんべい磯屋、代引き注文専用ダイヤルです。" +
+      "久助も含めて、各種商品を電話で代金引換にてご注文いただけます。" +
+      "ご希望の商品番号を、1桁の数字で押してください。";
+
+    const productText = head + lines.join(" ");
+
+    twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather input="dtmf" numDigits="1" timeout="10" action="/twilio/cod/product" method="POST">
     <Say language="ja-JP" voice="alice">
-お電話ありがとうございます。手造りえびせんべい磯屋です。
-郵便番号によるご案内テスト中です。
-これから、郵便番号7桁を、ハイフンなしで押してください。
+${productText}
     </Say>
   </Gather>
   <Say language="ja-JP" voice="alice">
@@ -2436,70 +2471,278 @@ app.post(
   }
 );
 
-// ====== Twilio Voice: 郵便番号入力後のハンドラ（async版） ======
+// ② 商品番号 → 個数入力へ
 app.post(
-  "/twilio/voice/postal",
+  "/twilio/cod/product",
   express.urlencoded({ extended: false }),
-  async (req, res) => {
-    const digits = String(req.body.Digits || "").replace(/\D/g, "");
+  (req, res) => {
+    const products = getPhoneCodProductsAll();
+    const digits = String(req.body.Digits || "").trim();
+    const idx = Number(digits) - 1;
 
     let twiml;
 
-    if (!digits) {
-      // 入力なし
+    if (!digits || Number.isNaN(idx) || idx < 0 || idx >= products.length) {
+      // 不正入力 → 終了
       twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="ja-JP" voice="alice">
-入力が確認できませんでした。お手数ですが、もう一度おかけ直しください。
+正しい商品番号が押されませんでした。お手数ですが、もう一度おかけ直しください。
   </Say>
 </Response>`;
-    } else if (digits.length !== 7) {
-      // 桁数不足
+      res.type("text/xml").send(twiml);
+      return;
+    }
+
+    const p = products[idx];
+
+    twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather input="dtmf" numDigits="2" timeout="10" action="/twilio/cod/qty?pid=${encodeURIComponent(
+    p.id
+  )}" method="POST">
+    <Say language="ja-JP" voice="alice">
+${p.name}ですね。ご希望の個数を、2桁までの数字で押してください。
+例として、3個の場合は、0 3 のように押してください。
+    </Say>
+  </Gather>
+  <Say language="ja-JP" voice="alice">
+入力が確認できませんでした。お手数ですが、最初からおかけ直しください。
+  </Say>
+</Response>`;
+
+    res.type("text/xml").send(twiml);
+  }
+);
+
+// ③ 個数入力 → 合計金額の確認へ（住所・送料は扱わない）
+app.post(
+  "/twilio/cod/qty",
+  express.urlencoded({ extended: false }),
+  (req, res) => {
+    const pid = String(req.query.pid || "").trim();
+    const digits = String(req.body.Digits || "").replace(/\D/g, "");
+    const qty = Number(digits || 0);
+
+    const { product } = findProductById(pid);
+    let twiml;
+
+    if (!product) {
       twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="ja-JP" voice="alice">
-郵便番号は7桁でお願いします。お手数ですが、もう一度おかけ直しください。
+申し訳ありません。商品が特定できませんでした。お手数ですが、最初からおかけ直しください。
+  </Say>
+</Response>`;
+      res.type("text/xml").send(twiml);
+      return;
+    }
+
+    if (!qty || qty < 1) {
+      twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather input="dtmf" numDigits="2" timeout="10" action="/twilio/cod/qty?pid=${encodeURIComponent(
+    product.id
+  )}" method="POST">
+    <Say language="ja-JP" voice="alice">
+個数の入力が確認できませんでした。ご希望の個数を、2桁までの数字で押してください。
+    </Say>
+  </Gather>
+  <Say language="ja-JP" voice="alice">
+入力が確認できませんでした。お手数ですが、最初からおかけ直しください。
+  </Say>
+</Response>`;
+      res.type("text/xml").send(twiml);
+      return;
+    }
+
+    const subtotal = Number(product.price) * qty;
+    const codFee = COD_FEE; // 既存の 330円
+    const total = subtotal + codFee;
+
+    const summaryText =
+      `ありがとうございます。${product.name}を、${qty}個ですね。` +
+      `商品代金の小計は、${subtotal}円。` +
+      `代引き手数料は、${codFee}円です。` +
+      `送料とお届け先のご住所は、後ほどスタッフより確認させていただきます。` +
+      `現時点での合計金額は、およそ、${total}円となります。` +
+      `この内容でよろしければ、1 を押してください。` +
+      `訂正する場合は、2 を押してください。`;
+
+    twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather input="dtmf" numDigits="1" timeout="8" action="/twilio/cod/confirm?pid=${encodeURIComponent(
+    product.id
+  )}&qty=${qty}&subtotal=${subtotal}&total=${total}" method="POST">
+    <Say language="ja-JP" voice="alice">
+${summaryText}
+    </Say>
+  </Gather>
+  <Say language="ja-JP" voice="alice">
+入力が確認できませんでした。お手数ですが、最初からおかけ直しください。
+  </Say>
+</Response>`;
+
+    res.type("text/xml").send(twiml);
+  }
+);
+
+// ④ 内容確認 → OKなら名前の音声入力へ
+app.post(
+  "/twilio/cod/confirm",
+  express.urlencoded({ extended: false }),
+  (req, res) => {
+    const key = String(req.body.Digits || "").trim();
+    const pid = String(req.query.pid || "").trim();
+    const qty = String(req.query.qty || "").trim();
+    const subtotal = String(req.query.subtotal || "").trim();
+    const total = String(req.query.total || "").trim();
+
+    let twiml;
+
+    if (key === "1") {
+      // 名前の音声入力へ
+      twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather input="speech" timeout="6" action="/twilio/cod/name?pid=${encodeURIComponent(
+    pid
+  )}&qty=${encodeURIComponent(qty)}&subtotal=${encodeURIComponent(
+        subtotal
+      )}&total=${encodeURIComponent(total)}" method="POST">
+    <Say language="ja-JP" voice="alice">
+ありがとうございます。最後に、ご注文者様のお名前を、フルネームで、ゆっくりとお話しください。
+  </Say>
+  </Gather>
+  <Say language="ja-JP" voice="alice">
+お名前の入力が確認できませんでした。お手数ですが、最初からおかけ直しください。
+  </Say>
+</Response>`;
+    } else if (key === "2") {
+      // キャンセル
+      twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+内容を訂正するため、今回の受付はキャンセルとさせていただきます。
+お手数ですが、最初からおかけ直しください。
   </Say>
 </Response>`;
     } else {
-      // 7桁 → ZipCloud で住所取得
-      try {
-        const addr = await lookupAddressByZip(digits);
-
-        // 既存の detectRegionFromAddress / SHIPPING_BY_REGION を流用
-        const region = detectRegionFromAddress({
-          prefecture: addr.prefecture,
-          address1: addr.town,
-        });
-
-        const shipping = region ? (SHIPPING_BY_REGION[region] || 0) : 0;
-
-        const jpZip = digits.replace(/(\d{3})(\d{4})/, "$1-$2");
-        const addrText = `${addr.prefecture}、${addr.city}、${addr.town}`;
-        const regionText = region || "地域不明";
-        const shippingText =
-          shipping > 0 ? `${shipping}円` : "送料が自動判定できませんでした。";
-
-        twiml = `<?xml version="1.0" encoding="UTF-8"?>
+      // 誤入力
+      twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="ja-JP" voice="alice">
-ありがとうございます。郵便番号、${jpZip} に対応するご住所は、${addrText} です。
-お届け先の地域は、${regionText}。
-送料の目安は、${shippingText} となります。
-詳しいご案内は、ライン公式アカウントのトーク画面からお送りいたします。
+入力が確認できませんでした。お手数ですが、最初からおかけ直しください。
   </Say>
 </Response>`;
-      } catch (e) {
-        console.error("lookupAddressByZip error:", e);
-        twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-申し訳ありません。郵便番号から住所を取得できませんでした。
-お手数ですが、時間をおいて、もう一度おかけ直しください。
-  </Say>
-</Response>`;
-      }
     }
+
+    res.type("text/xml").send(twiml);
+  }
+);
+
+// ⑤ 名前を音声認識 → 注文をログ＆LINE通知
+app.post(
+  "/twilio/cod/name",
+  express.urlencoded({ extended: false }),
+  (req, res) => {
+    const pid = String(req.query.pid || "").trim();
+    const qty = Math.max(1, Number(req.query.qty || 1));
+    const subtotal = Number(req.query.subtotal || 0);
+    const total = Number(req.query.total || 0);
+
+    const { product } = findProductById(pid);
+    let twiml;
+
+    if (!product) {
+      twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+申し訳ありません。商品が特定できませんでした。お手数ですが、最初からおかけ直しください。
+  </Say>
+</Response>`;
+      res.type("text/xml").send(twiml);
+      return;
+    }
+
+    const speechName = String(req.body.SpeechResult || "").trim() || "お名前不明";
+    const fromNumber = String(req.body.From || "").trim();
+
+    const address = {
+      postal: "",
+      prefecture: "",
+      city: "",
+      address1: "",
+      address2: "",
+      name: speechName,
+      phone: fromNumber,
+    };
+
+    // ORDERS_LOG に書き込み
+    try {
+      const order = {
+        ts: new Date().toISOString(),
+        source: "phone-cod-noaddr",
+        via: "twilio",
+        callSid: req.body.CallSid || "",
+        from: fromNumber,
+        productId: product.id,
+        productName: product.name,
+        qty,
+        price: Number(product.price),
+        subtotal,
+        region: "",
+        shipping: 0,
+        payment: "cod",
+        codFee: COD_FEE,
+        total,
+        method: "delivery",
+        address,
+      };
+      fs.appendFileSync(ORDERS_LOG, JSON.stringify(order) + "\n", "utf8");
+
+      // LINE 管理者へ通知
+      const adminMsg =
+        "🧾【電話・代引き注文（住所なし）】\n" +
+        `商品：${product.name} x ${qty}\n` +
+        `小計：${yen(subtotal)} / 代引：${yen(COD_FEE)} / 合計（送料別）：${yen(
+          total
+        )}\n` +
+        `支払い：代金引換 / 受取：宅配（住所別途確認）\n` +
+        `お名前：${speechName}\n` +
+        `電話：${fromNumber || "不明"}\n` +
+        `※ 送料とご住所は、別途お客様と確認してください。\n` +
+        `経路：Twilio電話`;
+
+      (async () => {
+        try {
+          if (ADMIN_USER_ID) {
+            await client.pushMessage(ADMIN_USER_ID, {
+              type: "text",
+              text: adminMsg,
+            });
+          }
+          if (MULTICAST_USER_IDS.length > 0) {
+            await client.multicast(MULTICAST_USER_IDS, {
+              type: "text",
+              text: adminMsg,
+            });
+          }
+        } catch (e) {
+          console.error("twilio cod admin push error:", e?.response?.data || e);
+        }
+      })();
+    } catch (e) {
+      console.error("twilio cod ORDERS_LOG write error:", e);
+    }
+
+    twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+ありがとうございます。お電話での代引き注文をお受けいたしました。
+送料やお届け先のご住所については、スタッフより、ラインまたはお電話にて確認させていただきます。
+お電話、ありがとうございました。
+  </Say>
+</Response>`;
 
     res.type("text/xml").send(twiml);
   }

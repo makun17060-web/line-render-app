@@ -2381,107 +2381,198 @@ app.post("/api/admin/products/set-image", (req, res) => {
       .json({ ok: false, error: "save_error" });
   }
 });
+// ====== 郵便番号 → 住所（ZipCloud API） ======
+async function lookupAddressByZip(zip) {
+  const z = String(zip || "").trim();
+  if (!/^\d{7}$/.test(z)) {
+    throw new Error("invalid_zip");
+  }
+
+  const url = `https://zipcloud.ibsnet.co.jp/api/search?zipcode=${z}`;
+
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("zipcloud_http_error");
+
+  const data = await res.json();
+  if (data.status !== 200 || !Array.isArray(data.results) || data.results.length === 0) {
+    throw new Error("zip_not_found");
+  }
+
+  const r = data.results[0];
+
+  // r.address1: 都道府県, address2: 市区町村, address3: 町域
+  return {
+    zip: z,
+    prefecture: r.address1 || "",
+    city: r.address2 || "",
+    town: r.address3 || "",
+  };
+}
 
 
-// ====== Twilio Voice (AI会話モード) ======
-
-// 1回目の着信：挨拶＋「ご用件をどうぞ」と聞く
+// ====== Twilio Voice (郵便番号から送料を案内するフロー) ======
 app.all(
   "/twilio/voice",
   express.urlencoded({ extended: false }),
   async (req, res) => {
-    const callSid = req.body.CallSid || "";
-    // 新しい通話なので履歴を初期化
-    delete PHONE_CONVERSATIONS[callSid];
+    // step パラメータで状態を分けます
+    const step = String(req.query.step || "start");
+    const digits = String(req.body.Digits || "").trim();
 
+    // 便利関数：XML を返す
+    const sendTwiml = (xml) => {
+      res.type("text/xml").send(xml);
+    };
+
+    // ① 最初の案内：郵便番号7桁を押してもらう
+    if (step === "start") {
+      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather input="dtmf" numDigits="7" action="/twilio/voice?step=zip" method="POST">
+    <Say language="ja-JP" voice="alice">
+      お電話ありがとうございます。手造りえびせんべい、磯屋です。
+      お届け用の送料をご案内いたします。
+      はじめに、お届け先の郵便番号7桁を、ハイフンなしで入力してください。
+      入力が終わりましたら、そのまましばらくお待ちください。
+    </Say>
+  </Gather>
+  <Say language="ja-JP" voice="alice">
+    入力が確認できませんでした。お手数ですが、もう一度おかけ直しください。
+  </Say>
+</Response>`;
+      return sendTwiml(twiml);
+    }
+
+    // ② 郵便番号を受け取って、住所→地域→送料を算出
+    if (step === "zip") {
+      // 郵便番号のバリデーション
+      if (!/^\d{7}$/.test(digits)) {
+        const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    郵便番号は、7桁の数字で入力してください。
+    例として、四四三、ゼロゼロゼロ一、のように続けて押してください。
+  </Say>
+  <Redirect method="POST">/twilio/voice?step=start</Redirect>
+</Response>`;
+        return sendTwiml(twiml);
+      }
+
+      try {
+        const addr = await lookupAddressByZip(digits);
+
+        // 既存の detectRegionFromAddress / SHIPPING_BY_REGION を流用
+        const region = detectRegionFromAddress({
+          prefecture: addr.prefecture,
+          address1: addr.town,
+        });
+
+        const shipping = region ? (SHIPPING_BY_REGION[region] || 0) : 0;
+
+        // 読み上げ用テキスト
+        const addrText = `${addr.prefecture}、${addr.city}、${addr.town}`;
+        const regionText = region ? region : "地域不明";
+        const shippingText =
+          shipping > 0 ? `${shipping}円` : "送料が自動判定できませんでした。";
+
+        // 確認用の Gather（1: OK, 2: 入力やり直し）
+        const q = qstr({
+          step: "confirm",
+          zip: addr.zip,
+          pref: addr.prefecture,
+          city: addr.city,
+          town: addr.town,
+          region: region || "",
+          shipping: shipping,
+        });
+
+        const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather input="dtmf" numDigits="1" action="/twilio/voice?${q}" method="POST">
+    <Say language="ja-JP" voice="alice">
+      郵便番号、${digits} に対応するご住所は、
+      ${addrText} です。
+      お届け先の地域は、${regionText}。
+      送料は、およそ、${shippingText} となります。
+      内容にお間違いがなければ、1 を押してください。
+      修正する場合は、2 を押してください。
+    </Say>
+  </Gather>
+  <Say language="ja-JP" voice="alice">
+    入力が確認できませんでした。お手数ですが、もう一度おかけ直しください。
+  </Say>
+</Response>`;
+        return sendTwiml(twiml);
+      } catch (e) {
+        console.error("lookupAddressByZip error:", e);
+        const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    申し訳ありません。郵便番号から住所を取得できませんでした。
+    お手数ですが、時間をおいて、もう一度おかけ直しください。
+  </Say>
+</Response>`;
+        return sendTwiml(twiml);
+      }
+    }
+
+    // ③ 1:OK / 2:やり直し の結果を受け取る
+    if (step === "confirm") {
+      const key = digits; // 1 or 2 など
+      const zip = String(req.query.zip || "");
+      const pref = String(req.query.pref || "");
+      const city = String(req.query.city || "");
+      const town = String(req.query.town || "");
+      const region = String(req.query.region || "");
+      const shipping = Number(req.query.shipping || 0);
+
+      if (key === "1") {
+        // ここから先で「代引き注文受付」などに繋げてもOK
+        const addrText = `${pref}、${city}、${town}`;
+        const shippingText =
+          shipping > 0 ? `${shipping}円` : "送料が自動判定できませんでした。";
+
+        const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    ありがとうございます。
+    ご住所は、${addrText}。
+    送料は、${shippingText} で承ります。
+    この内容でのご案内は、LINE公式アカウントから、あらためてご連絡いたします。
+    お電話、ありがとうございました。
+  </Say>
+</Response>`;
+        return sendTwiml(twiml);
+      }
+
+      if (key === "2") {
+        const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    郵便番号の入力をやり直します。
+  </Say>
+  <Redirect method="POST">/twilio/voice?step=start</Redirect>
+</Response>`;
+        return sendTwiml(twiml);
+      }
+
+      // 1,2 以外 → やり直し
+      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    入力が確認できませんでした。お手数ですが、もう一度、郵便番号の入力からお願いいたします。
+  </Say>
+  <Redirect method="POST">/twilio/voice?step=start</Redirect>
+</Response>`;
+      return sendTwiml(twiml);
+    }
+
+    // 万が一 step が変な値だったときのフォールバック
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say language="ja-JP" voice="alice">
-    お電話ありがとうございます。 手造りえびせんべい、磯屋です。
-  </Say>
-  <Say language="ja-JP" voice="alice">
-    こちらは、AIによる自動応答です。 営業時間、場所、商品、久助のことなど、 ご質問をゆっくりお話しください。
-  </Say>
-  <Gather input="speech"
-          language="ja-JP"
-          speechTimeout="auto"
-          action="/twilio/voice/handle"
-          method="POST">
-    <Say language="ja-JP" voice="alice">
-      それでは、ご用件をどうぞ。 話し終わったら、そのままお待ちください。
-    </Say>
-  </Gather>
-  <Say language="ja-JP" voice="alice">
-    音声が確認できなかったため、通話を終了いたします。 ありがとうございました。
-  </Say>
+  <Redirect method="POST">/twilio/voice?step=start</Redirect>
 </Response>`;
-
-    res.type("text/xml").send(twiml);
-  }
-);
-
-// 2回目以降：お客さんの音声を AI に投げて、その回答を読み上げる
-app.post(
-  "/twilio/voice/handle",
-  express.urlencoded({ extended: false }),
-  async (req, res) => {
-    const callSid = req.body.CallSid || "";
-    const speechText = (req.body.SpeechResult || "").trim();
-    console.log("【Twilio SpeechResult】", speechText);
-
-    let aiReply;
-
-    if (!speechText) {
-      aiReply =
-        "すみません、音声がうまく聞き取れませんでした。 もう一度、ゆっくりお話しいただけますか。";
-    } else {
-      aiReply = await askOpenAIForPhone(callSid, speechText);
-    }
-
-    // 「もう大丈夫」「ありがとう」「失礼します」などを含んだら終了とみなす
-    const endKeywords = ["大丈夫", "ありがとう", "結構です", "失礼します", "切ります"];
-    const shouldEnd =
-      !speechText ||
-      endKeywords.some((kw) => speechText.includes(kw));
-
-    let twiml;
-
-    if (shouldEnd) {
-      // 最後の一言だけ言って終了
-      twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    ${aiReply}
-  </Say>
-  <Say language="ja-JP" voice="alice">
-    ご利用ありがとうございました。 それでは、失礼いたします。
-  </Say>
-</Response>`;
-      // 会話履歴を掃除
-      delete PHONE_CONVERSATIONS[callSid];
-    } else {
-      // 返答を読み上げて、さらに続けて質問を受け付ける
-      twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    ${aiReply}
-  </Say>
-  <Gather input="speech"
-          language="ja-JP"
-          speechTimeout="auto"
-          action="/twilio/voice/handle"
-          method="POST">
-    <Say language="ja-JP" voice="alice">
-      ほかにもご質問があれば、そのままお話しください。 終了する場合は、「もう大丈夫です」などとおっしゃってください。
-    </Say>
-  </Gather>
-  <Say language="ja-JP" voice="alice">
-    音声が確認できなかったため、通話を終了いたします。 ありがとうございました。
-  </Say>
-</Response>`;
-    }
-
-    res.type("text/xml").send(twiml);
+    return sendTwiml(twiml);
   }
 );
 

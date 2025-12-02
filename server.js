@@ -2525,6 +2525,7 @@ app.post("/twilio/cod/product", twilioCodParser, (req, res) => {
  * 3. 個数入力：1〜99 を受け取って、data/products.json から価格＆在庫を見て案内
  */
 app.post("/twilio/cod/qty", twilioCodParser, (req, res) => {
+  console.log("【/twilio/cod/qty】raw query =", req.query);
   const pid  = (req.query.pid  || "").toString();
   const nameFromQuery = (req.query.name || "").toString() || "ご希望の商品";
   const raw  = (req.body.Digits || "").replace(/\D/g, "");

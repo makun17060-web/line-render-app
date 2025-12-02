@@ -2409,20 +2409,57 @@ async function lookupAddressByZip(zip) {
   };
 }
 
-
-// ====== Twilio Voice (郵便番号から送料を案内するフロー) ======
-app.all(
+// ====== Twilio Voice (電話自動応答：郵便番号テスト版) ======
+app.post(
   "/twilio/voice",
   express.urlencoded({ extended: false }),
-  async (req, res) => {
-    // step パラメータで状態を分けます
-    const step = String(req.query.step || "start");
-    const digits = String(req.body.Digits || "").trim();
+  (req, res) => {
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather input="dtmf" numDigits="7" timeout="10" action="/twilio/voice/postal" method="POST">
+    <Say language="ja-JP" voice="alice">
+お電話ありがとうございます。手造りえびせんべい磯屋です。
+郵便番号によるご案内テスト中です。
+これから、郵便番号7桁を、ハイフンなしで押してください。
+  </Say>
+  </Gather>
+  <Say language="ja-JP" voice="alice">
+入力が確認できませんでした。お手数ですが、もう一度おかけ直しください。
+  </Say>
+</Response>`;
 
-    // 便利関数：XML を返す
-    const sendTwiml = (xml) => {
-      res.type("text/xml").send(xml);
-    };
+    res.type("text/xml").send(twiml);
+  }
+);
+// 郵便番号入力後の処理
+app.post(
+  "/twilio/voice/postal",
+  express.urlencoded({ extended: false }),
+  (req, res) => {
+    // Twilio から送られてくる押した番号
+    const raw = req.body.Digits || "";
+    const digits = raw.replace(/\D/g, "").slice(0, 7); // 数字だけ取り出して最大7桁
+
+    const 読み上げ用 =
+      digits.length === 7
+        ? digits.split("").join("、")
+        : digits.split("").join("、");
+
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+入力された郵便番号は、
+${読み上げ用}
+です。
+現在はテスト中のため、このまま通話を終了させていただきます。
+  </Say>
+</Response>`;
+
+    res.type("text/xml").send(twiml);
+  }
+);
+
+
 
     // ① 最初の案内：郵便番号7桁を押してもらう
     if (step === "start") {

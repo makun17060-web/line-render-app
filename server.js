@@ -2498,7 +2498,7 @@ app.post(
 
     twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Gather input="dtmf" numDigits="2" timeout="10" action="/twilio/cod/qty?pid=${encodeURIComponent(
+  <Gather input="dtmf" timeout="10" action="/twilio/cod/qty?pid=..." method="POST">
     p.id
   )}" method="POST">
     <Say language="ja-JP" voice="alice">

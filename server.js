@@ -2382,11 +2382,22 @@ app.post("/api/admin/products/set-image", (req, res) => {
   }
 });
 // ====== 郵便番号 → 住所（ZipCloud API） ======
-async function lookupAddressByZip(zip) {
-  const z = String(zip || "").trim();
-  if (!/^\d{7}$/.test(z)) {
-    throw new Error("invalid_zip");
+// ★ 郵便番号からざっくり住所情報を返すダミー関数（同期版）
+function lookupAddressByZip(zip) {
+  const digits = (zip || "").replace(/\D/g, "");
+  if (!digits || digits.length < 7) {
+    return null;
   }
+
+  // 本番ではここでAPIやCSV参照などに差し替え
+  return {
+    postal: digits.replace(/(\d{3})(\d{4})/, "$1-$2"),
+    prefecture: "",
+    city: "",
+    address1: "",
+  };
+}
+
 
   const url = `https://zipcloud.ibsnet.co.jp/api/search?zipcode=${z}`;
 

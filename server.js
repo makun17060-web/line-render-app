@@ -2316,438 +2316,127 @@ app.post("/api/admin/products/set-image", (req, res) => {
 
 // ====== Twilio Voice（メニュー + 問い合わせAI + 代引き）======
 
-// 商品IDとメニュー番号の対応表（必要に応じて調整OK）
+// ====== Twilio COD (代引き・商品＋数量確認だけの簡易版) ======
+
+// 電話で選べる商品一覧（キー: 押す番号）
 const COD_PRODUCTS = {
-  "1": { id: "kusuke-250",        name: "久助（えびせん）",       requireAddress: false }, // 店頭のみ（住所不要）
-  "2": { id: "nori-square-300",   name: "四角のりせん",           requireAddress: true  },
-  "3": { id: "premium-ebi-400",   name: "プレミアムえびせん",     requireAddress: true  },
+  "1": { id: "kusuke-250",        name: "久助（えびせん）",    price: 250 },
+  "2": { id: "nori-square-300",   name: "四角のりせん",        price: 300 },
+  "3": { id: "premium-ebi-400",   name: "プレミアムえびせん",  price: 400 },
 };
 
-// ===== 1. エントリーポイント：メインメニュー =====
-// 1 = 問い合わせAI / 2 = 代引き注文
-app.all(
-  "/twilio/voice",
-  express.urlencoded({ extended: false }),
-  (req, res) => {
-    const callSid = req.body.CallSid || "";
-    // 通話ごとに AI 会話履歴をリセット
-    delete PHONE_CONVERSATIONS[callSid];
+// 共通：TwiML を組み立てるヘルパー
+function buildTwiml(inner) {
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<Response>\n${inner}\n</Response>`;
+}
 
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Gather input="dtmf" numDigits="1" action="/twilio/voice/menu" method="POST">
-    <Say language="ja-JP" voice="alice">
-      お電話ありがとうございます。 手造りえびせんべい、磯屋です。
-      お問い合わせは 1 を、 代引きでのご注文は 2 を押してください。
-    </Say>
-  </Gather>
-  <Say language="ja-JP" voice="alice">
-    入力が確認できなかったため、通話を終了いたします。 ありがとうございました。
-  </Say>
-</Response>`;
-
-    res.type("text/xml").send(twiml);
-  }
-);
-
-// メニューの分岐
-app.post(
-  "/twilio/voice/menu",
-  express.urlencoded({ extended: false }),
-  (req, res) => {
-    const digit = (req.body.Digits || "").trim();
-    const callSid = req.body.CallSid || "";
-
-    let twiml;
-
-    if (digit === "1") {
-      // 問い合わせAIへ
-      twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Redirect method="POST">/twilio/voice/ai</Redirect>
-</Response>`;
-    } else if (digit === "2") {
-      // 代引きフローへ
-      delete PHONE_CONVERSATIONS[callSid];
-      twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Redirect method="POST">/twilio/cod/start</Redirect>
-</Response>`;
-    } else {
-      // 無効な入力 → メニューに戻す
-      twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    入力が確認できませんでした。 お問い合わせは 1 を、 代引きでのご注文は 2 を押してください。
-  </Say>
-  <Redirect method="POST">/twilio/voice</Redirect>
-</Response>`;
-    }
-
-    res.type("text/xml").send(twiml);
-  }
-);
-
-// ===== 2. 問い合わせAIフロー =====
-
-// 最初の案内＋AI会話開始
-app.all(
-  "/twilio/voice/ai",
-  express.urlencoded({ extended: false }),
-  (req, res) => {
-    const callSid = req.body.CallSid || "";
-    delete PHONE_CONVERSATIONS[callSid];
-
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    こちらは、AIによる自動応答です。 営業時間、場所、商品、久助のことなど、 ご質問をゆっくりお話しください。
-  </Say>
-  <Gather input="speech"
-          language="ja-JP"
-          speechTimeout="auto"
-          action="/twilio/voice/ai-handle"
-          method="POST">
-    <Say language="ja-JP" voice="alice">
-      それでは、ご用件をどうぞ。 話し終わったら、そのままお待ちください。
-    </Say>
-  </Gather>
-  <Say language="ja-JP" voice="alice">
-    音声が確認できなかったため、通話を終了いたします。 ありがとうございました。
-  </Say>
-</Response>`;
-
-    res.type("text/xml").send(twiml);
-  }
-);
-
-// 音声 → OpenAI → 返答
-app.post(
-  "/twilio/voice/ai-handle",
-  express.urlencoded({ extended: false }),
-  async (req, res) => {
-    const callSid = req.body.CallSid || "";
-    const speechText = (req.body.SpeechResult || "").trim();
-    console.log("【Twilio SpeechResult】", speechText);
-
-    let aiReply;
-    if (!speechText) {
-      aiReply =
-        "すみません、音声がうまく聞き取れませんでした。 もう一度、ゆっくりお話しいただけますか。";
-    } else {
-      aiReply = await askOpenAIForPhone(callSid, speechText);
-    }
-    aiReply = (aiReply || "").trim();
-
-    const endKeywords = ["大丈夫", "ありがとう", "結構です", "失礼します", "切ります", "以上です"];
-    const shouldEnd =
-      !speechText || endKeywords.some((kw) => speechText.includes(kw));
-
-    let twiml;
-    if (shouldEnd) {
-      twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    ${aiReply}
-  </Say>
-  <Say language="ja-JP" voice="alice">
-    ご利用ありがとうございました。 それでは、失礼いたします。
-  </Say>
-</Response>`;
-      delete PHONE_CONVERSATIONS[callSid];
-    } else {
-      twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    ${aiReply}
-  </Say>
-  <Gather input="speech"
-          language="ja-JP"
-          speechTimeout="auto"
-          action="/twilio/voice/ai-handle"
-          method="POST">
-    <Say language="ja-JP" voice="alice">
-      ほかにもご質問があれば、そのままお話しください。 終了する場合は、「もう大丈夫です」などとおっしゃってください。
-    </Say>
-  </Gather>
-  <Say language="ja-JP" voice="alice">
-    音声が確認できなかったため、通話を終了いたします。 ありがとうございました。
-  </Say>
-</Response>`;
-    }
-
-    res.type("text/xml").send(twiml);
-  }
-);
-
-// ===== 3. 代引き専用フロー（DTMF中心） =====
-
-// 3-1. 商品選択
+// ① 着信スタート：商品選択メニュー
 app.all(
   "/twilio/cod/start",
   express.urlencoded({ extended: false }),
   (req, res) => {
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Gather input="dtmf" numDigits="1" timeout="10" action="/twilio/cod/product" method="POST">
+    const body = `
+  <Say language="ja-JP" voice="alice">
+    お電話ありがとうございます。手造りえびせんべい、磯屋です。
+    こちらは、代引きご希望のお客さま向け、自動応答です。
+  </Say>
+  <Gather input="dtmf"
+          numDigits="1"
+          timeout="10"
+          action="/twilio/cod/product"
+          method="POST">
     <Say language="ja-JP" voice="alice">
-      代引きでのご注文を承ります。
-      商品をお選びください。
-      久助は 1。
-      四角のりせんは 2。
-      プレミアムえびせんは 3 を押してください。
+      商品を番号でお選びください。
+      久助をご希望の方は、1 を。
+      四角のりせんは 2 を。
+      プレミアムえびせんは 3 を、押してください。
     </Say>
   </Gather>
   <Say language="ja-JP" voice="alice">
-    入力が確認できなかったため、通話を終了いたします。 ありがとうございました。
-  </Say>
-</Response>`;
-
-    res.type("text/xml").send(twiml);
+    入力が確認できませんでした。お手数ですが、時間をおいておかけ直しください。
+  </Say>`;
+    res.type("text/xml").send(buildTwiml(body));
   }
 );
 
-// 3-2. 商品決定 → 数量へ
+// ② 商品番号を受け取る → 個数入力へ
 app.post(
   "/twilio/cod/product",
   express.urlencoded({ extended: false }),
   (req, res) => {
     const digit = (req.body.Digits || "").trim();
-    const prod = COD_PRODUCTS[digit];
+    const p = COD_PRODUCTS[digit];
 
-    if (!prod) {
-      const twimlBad = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    入力が確認できませんでした。 久助は 1、 四角のりせんは 2、 プレミアムえびせんは 3 を押してください。
-  </Say>
-  <Redirect method="POST">/twilio/cod/start</Redirect>
-</Response>`;
-      return res.type("text/xml").send(twimlBad);
+    if (!p) {
+      // 1,2,3 以外 → 最初からやり直し
+      const body = `
+    <Say language="ja-JP" voice="alice">
+      該当する商品が選択されませんでした。最初からやり直します。
+    </Say>
+    <Redirect method="POST">/twilio/cod/start</Redirect>`;
+      return res.type("text/xml").send(buildTwiml(body));
     }
 
-    const q = qstr({ pid: prod.id, name: prod.name, needAddr: prod.requireAddress ? "1" : "0" });
-
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Gather input="dtmf" numDigits="2" timeout="10" action="/twilio/cod/qty?${q}" method="POST">
+    const body = `
+  <Gather input="dtmf"
+          numDigits="2"
+          timeout="10"
+          action="/twilio/cod/qty?pid=${encodeURIComponent(p.id)}"
+          method="POST">
     <Say language="ja-JP" voice="alice">
-      ${prod.name} をお選びいただきました。
-      数量を、2桁の数字で押してください。 例として、1個は 01、 5個は 05、 10個は 10 のように押してください。
+      ${p.name} をお選びいただきました。
+      ご希望の個数を、二桁までの数字で押してください。
+      たとえば 3こなら、0 3。 10こなら、1 0 のように押してください。
     </Say>
   </Gather>
   <Say language="ja-JP" voice="alice">
-    入力が確認できなかったため、通話を終了いたします。 ありがとうございました。
-  </Say>
-</Response>`;
-
-    res.type("text/xml").send(twiml);
+    入力が確認できませんでした。お手数ですが、時間をおいておかけ直しください。
+  </Say>`;
+    res.type("text/xml").send(buildTwiml(body));
   }
 );
 
-// 3-3. 数量 → （必要なら）受取方法 → 名前
+// ③ 個数を受け取る → 合計金額を案内して終了
 app.post(
   "/twilio/cod/qty",
   express.urlencoded({ extended: false }),
   (req, res) => {
-    const pid = (req.query.pid || "").trim();
-    const name = (req.query.name || "").trim() || "商品";
-    const needAddr = (req.query.needAddr || "0") === "1";
+    const pid = String(req.query.pid || "");
+    const digits = (req.body.Digits || "").replace(/\D/g, "");
+    let qty = Number(digits || "0");
 
-    const digitsRaw = (req.body.Digits || "").replace(/\D/g, "");
-    let qty = parseInt(digitsRaw, 10);
-    if (!qty || qty < 1 || qty > 99) {
-      const twimlBad = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    数量は 1 から 99 までの数字でお願いします。 例として、1個は 01、 5個は 05 と押してください。
-  </Say>
-  <Redirect method="POST">/twilio/cod/start</Redirect>
-</Response>`;
-      return res.type("text/xml").send(twimlBad);
+    if (!qty || qty < 1) {
+      const body = `
+    <Say language="ja-JP" voice="alice">
+      個数の入力が正しくありませんでした。最初からやり直します。
+    </Say>
+    <Redirect method="POST">/twilio/cod/start</Redirect>`;
+      return res.type("text/xml").send(buildTwiml(body));
     }
 
-    // 久助など住所不要の商品（店頭受取のみ）の場合 → そのまま名前入力へ
-    if (!needAddr) {
-      const q = qstr({ pid, name, qty, method: "pickup" });
-      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Gather input="speech" language="ja-JP" speechTimeout="auto" action="/twilio/cod/name?${q}" method="POST">
-    <Say language="ja-JP" voice="alice">
-      数量は ${qty} 個でお受けいたします。
-      最後に、ご注文者様のお名前をフルネームでゆっくりお話しください。
-    </Say>
-  </Gather>
-  <Say language="ja-JP" voice="alice">
-    音声が確認できなかったため、通話を終了いたします。 ありがとうございました。
-  </Say>
-</Response>`;
-      return res.type("text/xml").send(twiml);
-    }
+    if (qty > 99) qty = 99; // 上限 99 個
 
-    // 住所が必要な商品 → 受取方法（店頭 or 発送）を選択
-    const q = qstr({ pid, name, qty });
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Gather input="dtmf" numDigits="1" timeout="10" action="/twilio/cod/method?${q}" method="POST">
-    <Say language="ja-JP" voice="alice">
-      数量は ${qty} 個でお受けいたします。
-      続いて、受け取り方法をお選びください。
-      店頭でのお受け取りは 1 を、
-      発送をご希望の場合は 2 を押してください。
-    </Say>
-  </Gather>
-  <Say language="ja-JP" voice="alice">
-    入力が確認できなかったため、通話を終了いたします。 ありがとうございました。
-  </Say>
-</Response>`;
-
-    res.type("text/xml").send(twiml);
-  }
-);
-
-// 3-4. 受取方法 → 名前
-app.post(
-  "/twilio/cod/method",
-  express.urlencoded({ extended: false }),
-  (req, res) => {
-    const pid = (req.query.pid || "").trim();
-    const name = (req.query.name || "").trim() || "商品";
-    const qty = parseInt((req.query.qty || "1").replace(/\D/g, ""), 10) || 1;
-
-    const digit = (req.body.Digits || "").trim();
-    let method = "";
-    let methodText = "";
-
-    if (digit === "1") {
-      method = "pickup";
-      methodText = "店頭でのお受け取り";
-    } else if (digit === "2") {
-      method = "delivery";
-      methodText = "発送でのお届け";
-    } else {
-      const twimlBad = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    入力が確認できませんでした。 店頭受取は 1、 発送希望は 2 を押してください。
-  </Say>
-  <Redirect method="POST">/twilio/cod/start</Redirect>
-</Response>`;
-      return res.type("text/xml").send(twimlBad);
-    }
-
-    const q = qstr({ pid, name, qty, method });
-
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Gather input="speech" language="ja-JP" speechTimeout="auto" action="/twilio/cod/name?${q}" method="POST">
-    <Say language="ja-JP" voice="alice">
-      ${methodText} で承ります。
-      最後に、ご注文者様のお名前をフルネームでゆっくりお話しください。
-    </Say>
-  </Gather>
-  <Say language="ja-JP" voice="alice">
-    音声が確認できなかったため、通話を終了いたします。 ありがとうございました。
-  </Say>
-</Response>`;
-
-    res.type("text/xml").send(twiml);
-  }
-);
-
-// 3-5. 名前取得 → 注文記録＋管理者LINEへ通知
-app.post(
-  "/twilio/cod/name",
-  express.urlencoded({ extended: false }),
-  async (req, res) => {
-    const pid = (req.query.pid || "").trim();
-    const pname = (req.query.name || "").trim() || "商品";
-    const qty = parseInt((req.query.qty || "1").replace(/\D/g, ""), 10) || 1;
-    const method = (req.query.method || "pickup").trim(); // pickup / delivery
-
-    const caller = (req.body.From || "").trim(); // 発信者電話番号
-    const nameSpeech = (req.body.SpeechResult || "").trim();
-
-    const customerName =
-      nameSpeech ||
-      "お名前の音声がうまく取得できませんでした（通話録音をご確認ください）。";
-
-    // products.json から価格を取得（見つからなければ 0円）
+    // products.json から商品情報を探す（見つからなければ名前だけフォールバック）
     const products = readProducts();
-    const product = products.find((p) => p.id === pid) || {
-      id: pid,
-      name: pname,
-      price: 0,
-    };
-    const price = Number(product.price || 0);
-    const subtotal = price * qty;
+    const product =
+      products.find((p) => p.id === pid) ||
+      { name: "ご指定の商品", price: 0 };
 
-    // ここでは送料・手数料は 0 としておき、後で手作業で調整
-    const codFee = 0;
-    const shipping = 0;
-    const total = subtotal + codFee + shipping;
+    const unit = Number(product.price) || 0;
+    const subtotal = unit * qty;
 
-    // ログに残す
-    const order = {
-      ts: new Date().toISOString(),
-      source: "twilio-cod",
-      caller,
-      productId: product.id,
-      productName: product.name || pname,
-      qty,
-      price,
-      subtotal,
-      shipping,
-      codFee,
-      total,
-      method,          // pickup / delivery
-      customerName,
-    };
-    try {
-      fs.appendFileSync(ORDERS_LOG, JSON.stringify(order) + "\n", "utf8");
-      console.log("[twilio-cod] order logged:", order);
-    } catch (e) {
-      console.error("[twilio-cod] orders.log write error:", e);
-    }
-
-    // 管理者 LINE へ通知
-    if (ADMIN_USER_ID) {
-      const lines = [
-        "📞【電話 代引き注文】",
-        `発信者：${caller || "不明"}`,
-        `お名前（音声認識）：${customerName}`,
-        "",
-        `商品：${product.name || pname}`,
-        `数量：${qty}個`,
-        `小計：${yen(subtotal)}（単価：${yen(price)}）`,
-        "",
-        `受取方法：${method === "delivery" ? "発送（要住所確認）" : "店頭受取"}`,
-        "",
-        "※ 住所や送料の詳細は、折り返しのお電話や LINE のトークでご確認ください。",
-      ];
-      try {
-        await client.pushMessage(ADMIN_USER_ID, {
-          type: "text",
-          text: lines.join("\n"),
-        });
-      } catch (e) {
-        console.error("[twilio-cod] admin push error:", e?.response?.data || e);
-      }
-    }
-
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
+    const body = `
   <Say language="ja-JP" voice="alice">
-    ご注文内容をお預かりいたしました。 ありがとうございます。
-    内容を確認のうえ、折り返しご連絡させていただきます。
-    お電話、ありがとうございました。
-  </Say>
-</Response>`;
-
-    res.type("text/xml").send(twiml);
+    ${product.name} を、${qty}こ ご希望ですね。
+    商品代金の合計は、およそ ${subtotal} えん です。
+    送料と代引き手数料は、別途 かかります。
+    詳しい金額とお届け先については、
+    このあと、ライン公式アカウントからご案内いたします。
+    ご利用ありがとうございました。 それでは、失礼いたします。
+  </Say>`;
+    res.type("text/xml").send(buildTwiml(body));
   }
 );
-
 
 // ====== Webhook ======
 app.post(

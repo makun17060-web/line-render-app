@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server-line.js",       
     "start-line": "node server-line.js",  
-    "start-phone": "node server-phone.js"
+    "start-phone": "node server-phone.js",
     "start-phone-cod": "node server-phone-cod.js"
   },
   "dependencies": {

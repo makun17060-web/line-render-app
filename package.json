@@ -1,10 +1,12 @@
 {
   "name": "line-admin-server",
   "version": "1.0.0",
-  "description": "LINE Bot 管理画面＋Flex配信＋画像アップロード＋リサイズ機能付き",
-  "main": "server.js",
+  "description": "LINE Bot 管理画面＋Flex配信＋画像アップロード＋リサイズ機能＋Twilio電話AI＋代引き注文",
+  "main": "server-line.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server-line.js",       // Render（LINE用）
+    "start-line": "node server-line.js",  // 手動LINE起動
+    "start-phone": "node server-phone.js" // 電話サーバー/Twilio起動
   },
   "dependencies": {
     "@line/bot-sdk": "^7.6.0",
@@ -15,7 +17,8 @@
     "multer": "^1.4.5-lts.1",
     "sharp": "^0.33.4",
     "stripe": "^16.0.0",
-    "twilio": "^5.10.6"
+    "twilio": "^5.10.6",
+    "path": "^0.12.7"
   },
   "engines": {
     "node": ">=18.x"

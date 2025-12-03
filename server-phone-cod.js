@@ -1,5 +1,7 @@
 // server-phone-cod.js
-// Twilio 代引き専用 AI 自動受付サーバー（郵便番号→住所 自動確認 + 送料 & 代引き手数料案内付き）
+// Twilio 代引き専用 AI 自動受付サーバー
+// ・会話式：/twilio/cod, /twilio/cod/handle
+// ・プッシュ式テスト：/twilio/cod-dtmf 以下
 
 "use strict";
 
@@ -31,19 +33,18 @@ function safeReadJSON(p, fb) {
 }
 
 function readProducts() {
-  // DTMF用 商品オプション（番号 → products.json の id）
+  return safeReadJSON(PRODUCTS_PATH, []);
+}
+
+// DTMF用 商品オプション（番号 → products.json の id）
 const DTMF_PRODUCT_OPTIONS = [
   { digit: "1", id: "kusuke",         label: "久助" },
   { digit: "2", id: "square-norisen", label: "四角のりせん" },
   { digit: "3", id: "premium-ebisen", label: "プレミアムえびせん" },
 ];
 
-  return safeReadJSON(PRODUCTS_PATH, []);
-}
-
 // ==== 送料 & 代引き手数料（ミニアプリと共通） ==========================
 
-// server.js 側と同じテーブル
 const SHIPPING_BY_REGION = {
   北海道: 1560,
   東北: 1070,
@@ -61,7 +62,6 @@ const COD_FEE = 330;
 
 /**
  * 住所オブジェクトから送料地域を判定
- * server.js の detectRegionFromAddress と同じロジック
  */
 function detectRegionFromAddress(address = {}) {
   const pref = String(address.prefecture || address.pref || "").trim();
@@ -88,45 +88,39 @@ const PORT = process.env.PORT || 3000;
 
 // ==== 通話ごとのメモリ ==================================================
 
-// 会話履歴
+// 会話履歴（会話式AI用）
 const PHONE_CONVERSATIONS = {};
 // 郵便番号から推定された住所（通話単位）
 const PHONE_ADDRESS_CACHE = {};
+// プッシュ式（DTMF）用の注文情報
+// 例: DTMF_ORDERS[callSid] = { items: [ { productId, name, price, qty }, ... ] }
+const DTMF_ORDERS = {};
 
 // ==== 郵便番号 → 住所 変換 =============================================
 
 /**
  * 発話テキストから郵便番号らしき数字を抜き出す
- * 例:
- *   "郵便番号は 4780001 です"    → "4780001"
- *   "４７８ー０１２３ です"      → "4780123"
  */
 function extractZipFromText(text) {
   if (!text) return null;
   const s = String(text).replace(/[^\d\-ー－]/g, "");
-  // パターン1: 3桁-4桁
+  // 3桁-4桁
   const m1 = /(\d{3})[-ー－]?(\d{4})/.exec(s);
   if (m1) return m1[1] + m1[2];
-
-  // パターン2: 7桁連続
+  // 7桁連続
   const m2 = /(\d{7})/.exec(s);
   if (m2) return m2[1];
-
   return null;
 }
 
 /**
  * zipcloud API で 郵便番号→住所 を取得
- * @param {string} zip 例: "4780001"
- * @returns {Promise<{zip:string, prefecture:string, city:string, town:string}|null>}
  */
 async function lookupAddressByZip(zip) {
   const z = (zip || "").replace(/\D/g, "");
   if (!z || z.length !== 7) return null;
 
-  const url = `https://zipcloud.ibsnet.co.jp/api/search?zipcode=${encodeURIComponent(
-    z
-  )}`;
+  const url = `https://zipcloud.ibsnet.co.jp/api/search?zipcode=${encodeURIComponent(z)}`;
 
   try {
     const resp = await fetch(url);
@@ -149,15 +143,8 @@ async function lookupAddressByZip(zip) {
   }
 }
 
-// ==== OpenAI に問い合わせる関数 =======================================
+// ==== OpenAI に問い合わせる関数（会話式） ==============================
 
-/**
- * 代引き専用 AI に質問して、返答をもらう
- * @param {string} callSid Twilio の CallSid
- * @param {string} userText お客さんの発話（SpeechResult）
- * @param {object|null} zipInfo {zip, prefecture, city, town, region?, shipping?} など
- * @returns {Promise<string>} 電話で読み上げる日本語テキスト
- */
 async function askOpenAIForCOD(callSid, userText, zipInfo) {
   if (!OPENAI_API_KEY) {
     console.warn("⚠ OPENAI_API_KEY が設定されていません。");
@@ -166,7 +153,6 @@ async function askOpenAIForCOD(callSid, userText, zipInfo) {
 
   // 通話ごとの会話履歴を初期化
   if (!PHONE_CONVERSATIONS[callSid]) {
-    // ★ LINE側と共通の products.json から現在の商品一覧を取得
     const products = readProducts();
     const productListText =
       products.length > 0
@@ -213,16 +199,6 @@ async function askOpenAIForCOD(callSid, userText, zipInfo) {
       }
     ];
   }
-// ==== 通話ごとのメモリ ==================================================
-
-// 会話履歴（会話式AI用）
-const PHONE_CONVERSATIONS = {};
-// 郵便番号から推定された住所（通話単位）
-const PHONE_ADDRESS_CACHE = {};
-
-// プッシュ式（DTMF）用の注文情報
-// 例: DTMF_ORDERS[callSid] = { items: [ { productId, name, price, qty }, ... ] }
-const DTMF_ORDERS = {};
 
   const history = PHONE_CONVERSATIONS[callSid];
 
@@ -284,7 +260,7 @@ const app = express();
 const urlencoded = express.urlencoded({ extended: false });
 
 // ======================================================================
-// 1) 着信時：代引き専用の案内 → 最初の発話受付
+// 1) 会話式：着信時 /twilio/cod → 最初の発話受付
 // ======================================================================
 
 app.all("/twilio/cod", urlencoded, async (req, res) => {
@@ -307,7 +283,7 @@ app.all("/twilio/cod", urlencoded, async (req, res) => {
           action="/twilio/cod/handle"
           method="POST">
     <Say language="ja-JP" voice="alice">
-      それでは、ご注文の内容をお話しください。 話し終わりましたら、そのままお待ちください。
+      それでは、ご注文の内容をお話しください。 話し終わったら、そのままお待ちください。
     </Say>
   </Gather>
   <Say language="ja-JP" voice="alice">
@@ -319,7 +295,7 @@ app.all("/twilio/cod", urlencoded, async (req, res) => {
 });
 
 // ======================================================================
-// 2) 発話を受け取り → 郵便番号をチェック → 送料地域判定 → AI に渡す → 再度 Gather
+// 2) 会話式：発話を受け取り → 郵便番号チェック → AI へ → 再 Gather
 // ======================================================================
 
 app.post("/twilio/cod/handle", urlencoded, async (req, res) => {
@@ -335,7 +311,6 @@ app.post("/twilio/cod/handle", urlencoded, async (req, res) => {
     try {
       const addr = await lookupAddressByZip(zip);
       if (addr && addr.prefecture) {
-        // ここで送料地域と送料も判定して詰めておく
         let region = "";
         let shipping = 0;
         try {
@@ -360,7 +335,6 @@ app.post("/twilio/cod/handle", urlencoded, async (req, res) => {
       console.error("ZIP lookup failed:", e);
     }
   } else if (PHONE_ADDRESS_CACHE[callSid]) {
-    // すでに以前の発話で取得済みなら、それも AI に渡す
     zipInfo = PHONE_ADDRESS_CACHE[callSid];
   }
 
@@ -387,7 +361,7 @@ app.post("/twilio/cod/handle", urlencoded, async (req, res) => {
   const shouldEnd =
     !speechText || endKeywords.some((kw) => speechText.includes(kw));
 
-  // ログに残す
+  // ログ
   try {
     fs.appendFileSync(
       COD_LOG,
@@ -407,7 +381,6 @@ app.post("/twilio/cod/handle", urlencoded, async (req, res) => {
   let twiml;
 
   if (shouldEnd) {
-    // 最後の一言だけ言って終了
     twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="ja-JP" voice="alice">
@@ -417,11 +390,9 @@ app.post("/twilio/cod/handle", urlencoded, async (req, res) => {
     ご注文ありがとうございます。 それでは、失礼いたします。
   </Say>
 </Response>`;
-    // 会話履歴を掃除
     delete PHONE_CONVERSATIONS[callSid];
     delete PHONE_ADDRESS_CACHE[callSid];
   } else {
-    // 返答を読み上げて、さらに続けて受付を続行
     twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="ja-JP" voice="alice">
@@ -444,9 +415,9 @@ app.post("/twilio/cod/handle", urlencoded, async (req, res) => {
 
   res.type("text/xml").send(twiml);
 });
+
 // ======================================================================
-// プッシュ式（DTMF）注文テストフロー
-// エントリーポイント: /twilio/cod-dtmf
+// 3) プッシュ式（DTMF）テストフロー /twilio/cod-dtmf 以下
 // ======================================================================
 
 // 着信 → プッシュ式フロー開始
@@ -467,7 +438,7 @@ app.all("/twilio/cod-dtmf", urlencoded, (req, res) => {
   res.type("text/xml").send(twiml);
 });
 
-// 商品選択（1=久助, 2=四角のりせん, 3=プレミアムえびせん）
+// 商品選択
 app.post("/twilio/cod-dtmf/product", urlencoded, (req, res) => {
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -490,7 +461,7 @@ app.post("/twilio/cod-dtmf/product-handler", urlencoded, (req, res) => {
   const callSid = req.body.CallSid || "";
   const digit = (req.body.Digits || "").trim();
 
-  const opt = DTMF_PRODUCT_OPTIONS.find(o => o.digit === digit);
+  const opt = DTMF_PRODUCT_OPTIONS.find((o) => o.digit === digit);
 
   if (!opt) {
     const twimlError = `<?xml version="1.0" encoding="UTF-8"?>
@@ -503,7 +474,6 @@ app.post("/twilio/cod-dtmf/product-handler", urlencoded, (req, res) => {
     return res.type("text/xml").send(twimlError);
   }
 
-  // 一時的に「今回選ばれた商品ID」を覚えておく
   if (!DTMF_ORDERS[callSid]) {
     DTMF_ORDERS[callSid] = { items: [] };
   }
@@ -545,7 +515,6 @@ app.post("/twilio/cod-dtmf/qty", urlencoded, (req, res) => {
   const order = DTMF_ORDERS[callSid] || { items: [] };
   const productId = order.currentProductId;
   if (!productId) {
-    // 商品IDがない場合は最初からやり直し
     const twimlError = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="ja-JP" voice="alice">
@@ -557,18 +526,16 @@ app.post("/twilio/cod-dtmf/qty", urlencoded, (req, res) => {
     return res.type("text/xml").send(twimlError);
   }
 
-  // products.json から商品情報を取得
   const products = readProducts();
-  const p = products.find(x => x.id === productId);
+  const p = products.find((x) => x.id === productId);
   const name = p?.name || "ご指定の商品";
   const price = Number(p?.price || 0);
 
-  // 注文リストに追加
   order.items.push({
     productId,
     name,
     price,
-    qty
+    qty,
   });
   delete order.currentProductId;
   DTMF_ORDERS[callSid] = order;
@@ -591,7 +558,7 @@ app.post("/twilio/cod-dtmf/qty", urlencoded, (req, res) => {
   res.type("text/xml").send(twiml);
 });
 
-// 追加注文の有無 → 1: 商品選択へ戻る, 2: 合計確認へ
+// 追加注文の有無 → 1:商品選択へ / 2:合計確認へ
 app.post("/twilio/cod-dtmf/more", urlencoded, (req, res) => {
   const callSid = req.body.CallSid || "";
   const digit = (req.body.Digits || "").trim();
@@ -599,7 +566,6 @@ app.post("/twilio/cod-dtmf/more", urlencoded, (req, res) => {
   let twiml;
 
   if (digit === "1") {
-    // 追加注文 → 再び商品選択へ
     twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="ja-JP" voice="alice">
@@ -608,13 +574,11 @@ app.post("/twilio/cod-dtmf/more", urlencoded, (req, res) => {
   <Redirect method="POST">/twilio/cod-dtmf/product</Redirect>
 </Response>`;
   } else if (digit === "2") {
-    // これで注文完了 → 合計金額などの案内へ
     twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Redirect method="POST">/twilio/cod-dtmf/summary</Redirect>
 </Response>`;
   } else {
-    // 入力エラー
     twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="ja-JP" voice="alice">
@@ -627,7 +591,7 @@ app.post("/twilio/cod-dtmf/more", urlencoded, (req, res) => {
   res.type("text/xml").send(twiml);
 });
 
-// 入力エラー時の再Gather
+// more 入力エラー時の再Gather
 app.post("/twilio/cod-dtmf/more-retry", urlencoded, (req, res) => {
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -654,7 +618,7 @@ app.post("/twilio/cod-dtmf/summary", urlencoded, (req, res) => {
   if (order.items.length === 0) {
     summaryText = "ご注文内容が確認できませんでした。";
   } else {
-    const parts = order.items.map(item => {
+    const parts = order.items.map((item) => {
       const lineTotal = item.price * item.qty;
       total += lineTotal;
       return `${item.name}を${item.qty}個`;
@@ -665,7 +629,6 @@ app.post("/twilio/cod-dtmf/summary", urlencoded, (req, res) => {
       `で承りました。 商品代金の合計は、税込みで${total}円です。 この金額に、別途、送料と代引き手数料が加算されます。`;
   }
 
-  // 使い終わったので削除
   delete DTMF_ORDERS[callSid];
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -708,5 +671,6 @@ app.get("/api/health", (_req, res) => {
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`📦 COD phone server started on port ${PORT}`);
-  console.log("   Twilio inbound URL: POST /twilio/cod");
+  console.log("   会話式: Twilio inbound URL  → POST /twilio/cod");
+  console.log("   プッシュ式テスト:           → POST /twilio/cod-dtmf");
 });

@@ -171,74 +171,49 @@ async function askOpenAIForCOD(callSid, userText, zipInfo) {
             .join("\n")
         : "現在の商品情報は空です。";
 
-    PHONE_CONVERSATIONS[callSid] = [
-      {
-        role: "system",
-        content:
-          "あなたは「手造りえびせんべい磯屋」の【代金引換専用】電話自動受付スタッフです。" +
-          "この電話では、代引き注文の受付だけを行います。" +
-          "必ず丁寧な敬語で、日本語で、1回の返答は短く簡潔に話してください。" +
-          "以下の情報を、なるべく一つずつ順番に聞き取ってください。" +
-          "1) ご希望の商品名と個数。" +
-          "2) お名前。" +
-          "3) お電話番号。" +
-          "4) 郵便番号。" +
-          "5) 都道府県からのご住所（番地・建物名など）。" +
-          "6) 希望のお届け日時があれば、そのご希望。" +
-          "途中で足りない情報があれば、やさしく確認しながら質問してください。" +
-          "最後に、聞き取った内容を短く復唱し、「この内容で代金引換にて承ってもよろしいでしょうか？」と確認してください。" +
-          "代金引換では、商品代金に【送料】と【代引き手数料330円】が加算されることを、必ずお客様にお伝えしてください。" +
-          "電話なので、文章を読み上げるように、ゆっくり分かりやすく話してください。",
-      },
-      {
-        role: "system",
-        content:
-          "現在取り扱い中の商品一覧は次の通りです。\n" +
-          productListText +
-          "\n\nお客様の発話に出てくる商品名がこの一覧に近い場合は、その商品として扱い、できる範囲で合計金額を計算して案内してください。",
-      },
-    ];
   }
+PHONE_CONVERSATIONS[callSid] = [
+  {
+    role: "system",
+    content:
+      "あなたは「手造りえびせんべい磯屋」の【代金引換専用】電話自動受付スタッフです。" +
+      "この電話では、代引き注文の受付だけを行います。" +
+      "必ず丁寧な敬語で、日本語で話し、1回の返答は短く簡潔にしてください。" +
+      "以下の情報を、なるべく一つずつ順番に聞き取ってください。" +
+      "1) ご希望の商品名と個数。" +
+      "2) お名前。" +
+      "3) お電話番号。" +
+      "4) 郵便番号。" +
+      "5) 郵便番号から分かる都道府県・市区町村・町名を音声で復唱し、その【続きの番地・建物名・部屋番号】を必ず質問すること。" +
+      "6) 希望のお届け日時があれば、そのご希望。" +
+      "途中で足りない情報があれば、やさしく確認しながら質問してください。" +
+      "最後に、聞き取った内容（商品・個数・お名前・電話番号・住所）を短く復唱し、「この内容で代金引換にて承ってもよろしいでしょうか？」と確認してください。" +
+      "電話なので、文章を読み上げるように、ゆっくり分かりやすく話してください。"
+  },
+  {
+    role: "system",
+    content:
+      "現在取り扱い中の商品一覧は次の通りです。\n" +
+      productListText +
+      "\n\nお客様の発話に出てくる商品名がこの一覧に近い場合は、その商品として扱ってください。"
+  }
+];
 
   const history = PHONE_CONVERSATIONS[callSid];
 
   // 郵便番号から住所が引けた場合は、送料情報も含めてシステムメモとして AI に伝える
-  if (zipInfo && zipInfo.prefecture) {
-    const addrText = `${zipInfo.prefecture}${zipInfo.city || ""}${zipInfo.town || ""}`;
-
-    let region = zipInfo.region || "";
-    let shipping = typeof zipInfo.shipping === "number" ? zipInfo.shipping : 0;
-
-    try {
-      if (!region) {
-        region = detectRegionFromAddress({
-          prefecture: zipInfo.prefecture,
-          address1: `${zipInfo.city || ""}${zipInfo.town || ""}`,
-        });
-      }
-      if (region && !shipping) {
-        shipping = SHIPPING_BY_REGION[region] || 0;
-      }
-    } catch (e) {
-      console.error("detectRegionFromAddress error inside askOpenAIForCOD:", e);
-    }
-
-    let memo =
-      `システムメモ：お客様の郵便番号「${zipInfo.zip}」から、「${addrText}」と判定されました。`;
-
-    if (region && shipping) {
-      memo +=
-        ` 配送地域は「${region}」で、この地域の送料は ${shipping}円、代引き手数料は一律 ${COD_FEE}円です。` +
-        "合計金額を案内するときは、商品代金の合計に送料と代引き手数料を加えた金額をお客様にお伝えしてください。";
-    } else {
-      memo += " 必要に応じて住所を復唱し、「こちらのご住所でよろしいでしょうか？」と優しく確認してください。";
-    }
-
-    history.push({
-      role: "system",
-      content: memo,
-    });
-  }
+if (zipInfo && zipInfo.prefecture) {
+  const addrText = `${zipInfo.prefecture}${zipInfo.city}${zipInfo.town}`;
+  history.push({
+    role: "system",
+    content:
+      `システムメモ：お客様の郵便番号「${zipInfo.zip}」から、` +
+      `「${addrText}」と判定されました。` +
+      `必ず会話の中で「郵便番号から、${addrText} とお調べしました。」と音声で復唱し、` +
+      `そのあとに「こちらでお間違いないでしょうか？もし合っていれば、この続きの番地や建物名、お部屋番号も教えてください。」と質問してください。` +
+      `まだ番地・建物名・部屋番号は分かっていない前提で、丁寧に確認しながら続きを聞いてください。`
+  });
+}
 
   history.push({ role: "user", content: userText });
 

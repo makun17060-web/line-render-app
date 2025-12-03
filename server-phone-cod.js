@@ -330,7 +330,7 @@ app.post("/twilio/cod/handle", urlencoded, async (req, res) => {
 
   if (!speechText) {
     aiReply =
-      "すみません、音声がうまく聞き取れませんでした。 商品名と個数、そしてお名前とご住所を、もう一度ゆっくりお話しいただけますか。";
+      "すみません、聞き取れませんでした。もう一度お願いします。";
   } else {
     aiReply = await askOpenAIForCOD(callSid, speechText, zipInfo);
   }
@@ -399,7 +399,7 @@ app.post("/twilio/cod/handle", urlencoded, async (req, res) => {
     </Say>
   </Gather>
   <Say language="ja-JP" voice="alice">
-    音声が確認できなかったため、通話を終了いたします。 ありがとうございました。
+    すみません、聞き取れませんでした。もう一度お願いします。
   </Say>
 </Response>`;
   }

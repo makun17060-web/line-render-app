@@ -8,7 +8,20 @@ require("dotenv").config();
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
+const DATA_DIR = path.join(__dirname, "data");
+const PRODUCTS_PATH = path.join(DATA_DIR, "products.json");
 
+function safeReadJSON(p, fb) {
+  try {
+    return JSON.parse(fs.readFileSync(p, "utf8"));
+  } catch {
+    return fb;
+  }
+}
+
+function readProducts() {
+  return safeReadJSON(PRODUCTS_PATH, []);
+}
 // ==== 環境変数 =========================================================
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const PORT = process.env.PORT || 3000;
@@ -100,30 +113,48 @@ async function askOpenAIForCOD(callSid, userText, zipInfo) {
   }
 
   // 通話ごとの会話履歴を初期化
-  if (!PHONE_CONVERSATIONS[callSid]) {
-    PHONE_CONVERSATIONS[callSid] = [
-      {
-        role: "system",
-        content:
-          "あなたは「手造りえびせんべい磯屋」の【代金引換専用】電話自動受付スタッフです。" +
-          "この電話では、代引き注文の受付だけを行います。" +
-          "必ず丁寧な敬語で、日本語で、1回の返答は短く簡潔に話してください。" +
-          "以下の情報を、なるべく一つずつ順番に聞き取ってください。" +
-          "1) ご希望の商品名（例：久助、四角のりせん、プレミアムえびせんなど）と個数。" +
-          "2) お名前。" +
-          "3) お電話番号。" +
-          "4) 郵便番号。" +
-          "5) 都道府県からのご住所（番地・建物名など）。" +
-          "6) 希望のお届け日時があれば、そのご希望。" +
-          "途中で足りない情報があれば、やさしく確認しながら質問してください。" +
-          "最後に、聞き取った内容を短く復唱し、「この内容で代金引換にて承ってもよろしいでしょうか？」と確認してください。" +
-          "営業時間や場所など、それ以外の質問をされた場合は、簡単にお答えしたあと、必ず代引き注文の受付に話を戻してください。" +
-          "電話なので、文章を読み上げるように、ゆっくり分かりやすく話してください。",
-      },
-    ];
-  }
 
   const history = PHONE_CONVERSATIONS[callSid];
+if (!PHONE_CONVERSATIONS[callSid]) {
+  // ★ LINE側と共通の products.json から現在の商品一覧を取得
+  const products = readProducts();
+  const productListText =
+    products.length > 0
+      ? products
+          .map(
+            (p) =>
+              `・${p.name}（ID：${p.id} / 価格：${p.price}円 / 在庫：${p.stock ?? 0}個）`
+          )
+          .join("\n")
+      : "現在の商品情報は空です。";
+
+  PHONE_CONVERSATIONS[callSid] = [
+    {
+      role: "system",
+      content:
+        "あなたは「手造りえびせんべい磯屋」の【代金引換専用】電話自動受付スタッフです。" +
+        "この電話では、代引き注文の受付だけを行います。" +
+        "必ず丁寧な敬語で、日本語で、1回の返答は短く簡潔に話してください。" +
+        "以下の情報を、なるべく一つずつ順番に聞き取ってください。" +
+        "1) ご希望の商品名と個数。" +
+        "2) お名前。" +
+        "3) お電話番号。" +
+        "4) 郵便番号。" +
+        "5) 都道府県からのご住所（番地・建物名など）。" +
+        "6) 希望のお届け日時があれば、そのご希望。" +
+        "途中で足りない情報があれば、やさしく確認しながら質問してください。" +
+        "最後に、聞き取った内容を短く復唱し、「この内容で代金引換にて承ってもよろしいでしょうか？」と確認してください。" +
+        "電話なので、文章を読み上げるように、ゆっくり分かりやすく話してください。",
+    },
+    {
+      role: "system",
+      content:
+        "現在取り扱い中の商品一覧は次の通りです。\n" +
+        productListText +
+        "\n\nお客様の発話に出てくる商品名がこの一覧に近い場合は、その商品として扱ってください。",
+    },
+  ];
+}
 
   // 郵便番号から住所が引けた場合は、システムメモとして AI に伝える
   if (zipInfo && zipInfo.prefecture) {

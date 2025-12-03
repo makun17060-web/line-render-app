@@ -3,7 +3,9 @@
 //
 // ・商品〜個数〜追加注文〜郵便番号まではプッシュ式（DTMF）
 // ・郵便番号から 都道府県 + 市区町村 + 町名 まで自動取得
+// ・商品名は data/products.json から読み込み（先頭9件をメニューに）
 // ・「お名前」と「住所の続き（番地・建物名・部屋番号）」だけ OpenAI で丁寧な会話
+// ・連絡先電話番号はプッシュ式で入力
 // ・最後に 商品代 + 送料 + 代引き手数料 の合計金額を確定金額として読み上げ
 
 "use strict";
@@ -43,14 +45,6 @@ function readProducts() {
 
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const PORT = process.env.PORT || 3000;
-
-// ==== 商品マスタ（DTMF 番号 → products.json の id） ====================
-// ★ products.json の id に合わせて必要なら修正してください
-const DTMF_PRODUCT_OPTIONS = [
-  { digit: "1", id: "kusuke",         label: "久助" },
-  { digit: "2", id: "square-norisen", label: "四角のりせん" },
-  { digit: "3", id: "premium-ebisen", label: "プレミアムえびせん" },
-];
 
 // ==== 送料 & 代引き手数料 ==============================================
 
@@ -100,6 +94,8 @@ function detectRegionFromAddress(address = {}) {
 //   nameStage: "name" | "address" | "done",
 //   nameSpeech: "...",          // お客様が話した名前テキスト
 //   addressSpeech: "...",       // お客様が話した「住所の続き」テキスト
+//   phone: "09012345678",       // 連絡先電話番号（プッシュ入力）
+//   productMenu: [ { digit, id, name }, ... ] // この通話中のメニュー
 // }
 const DTMF_ORDERS = {};
 
@@ -153,7 +149,7 @@ async function askOpenAIForNameAddress(stage, speechText, order) {
     if (stage === "name") {
       return "ありがとうございます。 お名前を承りました。 続いて、ご住所をお伺いいたしますので、このあとの案内に続けてご住所をお話しください。";
     } else {
-      return "ありがとうございます。 ご住所を承りました。 このあと、合計金額をご案内いたしますので、そのままお待ちください。";
+      return "ありがとうございます。 ご住所を承りました。 このあと、連絡先のお電話番号をボタン操作でお伺いし、その後で合計金額をご案内いたします。 そのままお待ちください。";
     }
   }
 
@@ -190,7 +186,7 @@ async function askOpenAIForNameAddress(stage, speechText, order) {
         : "") +
       addrHint +
       "丁寧に復唱し、「こちらのご住所でお伺いいたしました。」のように確認してください。" +
-      "最後に、『このあと、商品代金と送料、代引き手数料を含めた合計金額をご案内いたしますので、そのままお待ちください。』とお伝えしてください。";
+      "最後に、『このあと、連絡先のお電話番号をボタン操作でお伺いし、その後で、商品代金と送料、代引き手数料を含めた合計金額をご案内いたしますので、そのままお待ちください。』とお伝えしてください。";
   }
 
   const messages = [
@@ -229,7 +225,7 @@ async function askOpenAIForNameAddress(stage, speechText, order) {
     if (stage === "name") {
       return "ありがとうございます。 お名前を承りました。 続いて、ご住所をお伺いいたしますので、このあとの案内の後にご住所をお話しください。";
     } else {
-      return "ありがとうございます。 ご住所を承りました。 このあと、合計金額をご案内いたしますので、そのままお待ちください。";
+      return "ありがとうございます。 ご住所を承りました。 このあと、連絡先のお電話番号をボタン操作でお伺いし、その後で合計金額をご案内いたします。 そのままお待ちください。";
     }
   }
 }
@@ -255,7 +251,7 @@ app.all("/twilio/cod", urlencoded, (req, res) => {
     お電話ありがとうございます。 手造りえびせんべい、磯屋です。 こちらは、ボタン操作による代金引換ご注文専用の自動受付です。
   </Say>
   <Say language="ja-JP" voice="alice">
-    まず、商品と個数をボタンでご指定いただき、 そのあとに郵便番号7桁をご入力いただきます。 最後に、お名前とご住所をお伺いし、 商品代金に送料と代引き手数料を加えた合計金額を、ご案内いたします。
+    まず、商品と個数をボタンでご指定いただき、 そのあとに郵便番号7桁をご入力いただきます。 最後に、お名前とご住所をお伺いし、 連絡先のお電話番号をボタンでご入力いただいたうえで、 商品代金に送料と代引き手数料を加えた合計金額を、ご案内いたします。
   </Say>
   <Redirect method="POST">/twilio/cod/product</Redirect>
 </Response>`;
@@ -268,11 +264,40 @@ app.all("/twilio/cod", urlencoded, (req, res) => {
 // ======================================================================
 
 app.post("/twilio/cod/product", urlencoded, (req, res) => {
+  const callSid = req.body.CallSid || "";
+  const order = DTMF_ORDERS[callSid] || { items: [] };
+
+  const products = readProducts();
+  const menu = products.slice(0, 9); // DTMFで1〜9まで
+
+  if (menu.length === 0) {
+    const twimlNoProducts = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    申し訳ございません。 現在、ご案内できる商品がございません。 恐れ入りますが、また時間をおいておかけ直しください。
+  </Say>
+  <Hangup/>
+</Response>`;
+    return res.type("text/xml").send(twimlNoProducts);
+  }
+
+  // この通話のメニュー定義を保存（digit → product id / name）
+  order.productMenu = menu.map((p, idx) => ({
+    digit: String(idx + 1),
+    id: p.id,
+    name: p.name,
+  }));
+  DTMF_ORDERS[callSid] = order;
+
+  const menuText = order.productMenu
+    .map((m) => `${m.name}は${m.digit}を`)
+    .join("、 ");
+
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Gather numDigits="1" action="/twilio/cod/product-handler" method="POST">
     <Say language="ja-JP" voice="alice">
-      ご希望の商品をお選びください。 久助は1を、 四角のりせんは2を、 プレミアムえびせんは3を押してください。
+      ご希望の商品をお選びください。 ${menuText} 押してください。
     </Say>
   </Gather>
   <Say language="ja-JP" voice="alice">
@@ -289,29 +314,36 @@ app.post("/twilio/cod/product-handler", urlencoded, (req, res) => {
   const callSid = req.body.CallSid || "";
   const digit = (req.body.Digits || "").trim();
 
-  const opt = DTMF_PRODUCT_OPTIONS.find((o) => o.digit === digit);
+  const order = DTMF_ORDERS[callSid] || { items: [] };
+  const menu = order.productMenu || [];
+  const opt = menu.find((o) => o.digit === digit);
 
   if (!opt) {
+    const menuText = menu.length
+      ? menu.map((m) => `${m.name}は${m.digit}を`).join("、 ")
+      : "商品をお選びください。";
+
     const twimlError = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="ja-JP" voice="alice">
-    入力が正しくありません。 久助は1、 四角のりせんは2、 プレミアムえびせんは3を押してください。
+    入力が正しくありません。 ${menuText} 押してください。
   </Say>
   <Redirect method="POST">/twilio/cod/product</Redirect>
 </Response>`;
     return res.type("text/xml").send(twimlError);
   }
 
-  if (!DTMF_ORDERS[callSid]) {
-    DTMF_ORDERS[callSid] = { items: [] };
-  }
-  DTMF_ORDERS[callSid].currentProductId = opt.id;
+  order.currentProductId = opt.id;
+  order.currentProductName = opt.name;
+  DTMF_ORDERS[callSid] = order;
+
+  const label = opt.name || "ご希望の商品";
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Gather numDigits="2" action="/twilio/cod/qty" method="POST">
     <Say language="ja-JP" voice="alice">
-      ${opt.label}の個数を押してください。 1から99までの数字でご入力いただけます。 入力後、シャープは不要です。
+      ${label}の個数を押してください。 1から99までの数字でご入力いただけます。 入力後、シャープは不要です。
     </Say>
   </Gather>
   <Say language="ja-JP" voice="alice">
@@ -345,6 +377,8 @@ app.post("/twilio/cod/qty", urlencoded, (req, res) => {
 
   const order = DTMF_ORDERS[callSid] || { items: [] };
   const productId = order.currentProductId;
+  const productNameFromMenu = order.currentProductName;
+
   if (!productId) {
     const twimlError = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -359,7 +393,7 @@ app.post("/twilio/cod/qty", urlencoded, (req, res) => {
 
   const products = readProducts();
   const p = products.find((x) => x.id === productId);
-  const name = p?.name || "ご指定の商品";
+  const name = p?.name || productNameFromMenu || "ご指定の商品";
   const price = Number(p?.price || 0);
 
   order.items.push({
@@ -369,6 +403,7 @@ app.post("/twilio/cod/qty", urlencoded, (req, res) => {
     qty,
   });
   delete order.currentProductId;
+  delete order.currentProductName;
   DTMF_ORDERS[callSid] = order;
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -634,7 +669,7 @@ app.post("/twilio/cod/name-addr-handler", urlencoded, async (req, res) => {
   </Say>
 </Response>`;
   } else {
-    // 住所フェーズが終わったので合計金額案内へ
+    // 住所フェーズが終わったので電話番号入力へ
     order = DTMF_ORDERS[callSid] || order;
     order.nameStage = "done";
     DTMF_ORDERS[callSid] = order;
@@ -644,10 +679,58 @@ app.post("/twilio/cod/name-addr-handler", urlencoded, async (req, res) => {
   <Say language="ja-JP" voice="alice">
     ${aiReply}
   </Say>
-  <Redirect method="POST">/twilio/cod/summary</Redirect>
+  <Redirect method="POST">/twilio/cod/phone</Redirect>
 </Response>`;
   }
 
+  res.type("text/xml").send(twiml);
+});
+
+// ======================================================================
+// 5.7) 連絡先電話番号をプッシュで取得
+// ======================================================================
+
+app.post("/twilio/cod/phone", urlencoded, (req, res) => {
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather numDigits="11" action="/twilio/cod/phone-handler" method="POST">
+    <Say language="ja-JP" voice="alice">
+      続いて、 ご連絡先のお電話番号をお伺いします。 市外局番からハイフンなしで、 9桁から11桁の数字を押してください。 入力後、シャープは不要です。
+    </Say>
+  </Gather>
+  <Say language="ja-JP" voice="alice">
+    入力が確認できませんでした。 お手数ですが、もう一度おかけ直しください。
+  </Say>
+</Response>`;
+  res.type("text/xml").send(twiml);
+});
+
+app.post("/twilio/cod/phone-handler", urlencoded, (req, res) => {
+  const callSid = req.body.CallSid || "";
+  const digits = (req.body.Digits || "").trim();
+
+  if (!digits || digits.length < 9 || digits.length > 11 || !/^\d+$/.test(digits)) {
+    const twimlErr = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    お電話番号の入力が確認できませんでした。 市外局番からハイフンなしで、 9桁から11桁の数字でご入力ください。
+  </Say>
+  <Redirect method="POST">/twilio/cod/phone</Redirect>
+</Response>`;
+    return res.type("text/xml").send(twimlErr);
+  }
+
+  const order = DTMF_ORDERS[callSid] || { items: [] };
+  order.phone = digits;
+  DTMF_ORDERS[callSid] = order;
+
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    ありがとうございます。 お電話番号は、 ${digits} でお預かりいたしました。 このあと、 ご注文内容と合計金額を確認いたしますので、 そのままお待ちください。
+  </Say>
+  <Redirect method="POST">/twilio/cod/summary</Redirect>
+</Response>`;
   res.type("text/xml").send(twiml);
 });
 
@@ -661,6 +744,7 @@ app.post("/twilio/cod/summary", urlencoded, (req, res) => {
 
   const nameSpeech = order.nameSpeech || "";
   const addressSpeech = order.addressSpeech || "";
+  const phoneDigits = order.phone || "";
 
   let itemsText = "";
   let itemsTotal = 0;
@@ -711,9 +795,15 @@ app.post("/twilio/cod/summary", urlencoded, (req, res) => {
           .join("、")}」とお伺いしました。`
       : "";
 
+  const phoneText =
+    phoneDigits
+      ? ` ご連絡先のお電話番号は、「${phoneDigits}」でお伺いしました。`
+      : "";
+
   const summaryText =
     itemsText +
     nameAddrText +
+    phoneText +
     ` 商品代金の合計は税込みで${itemsTotal}円です。 ` +
     `${shippingText} 代引き手数料は${codFee}円です。 ` +
     `商品代金、送料、代引き手数料を合わせたお支払い合計金額は、${finalTotal}円になります。`;
@@ -730,6 +820,7 @@ app.post("/twilio/cod/summary", urlencoded, (req, res) => {
         addr: order.addr || null,
         nameSpeech: nameSpeech || null,
         addressSpeech: addressSpeech || null,
+        phone: phoneDigits || null,
         itemsTotal,
         shipping,
         codFee,

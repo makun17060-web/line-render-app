@@ -1,8 +1,10 @@
 // server-phone-cod.js
-// Twilio 代引き専用 自動受付サーバー
-// ・商品〜郵便番号まではプッシュ式（DTMF）
-// ・名前と住所のところだけ OpenAI で丁寧な会話
-// ・最後に商品代 + 送料 + 代引き手数料の合計を読み上げ
+// Twilio 代引き専用 自動受付サーバー（ハイブリッド版）
+//
+// ・商品〜個数〜追加注文〜郵便番号まではプッシュ式（DTMF）
+// ・郵便番号から 都道府県 + 市区町村 + 町名 まで自動取得
+// ・「お名前」と「住所の続き（番地・建物名・部屋番号）」だけ OpenAI で丁寧な会話
+// ・最後に 商品代 + 送料 + 代引き手数料 の合計金額を確定金額として読み上げ
 
 "use strict";
 
@@ -94,10 +96,10 @@ function detectRegionFromAddress(address = {}) {
 // 例: DTMF_ORDERS[callSid] = {
 //   items: [ { productId, name, price, qty }, ... ],
 //   zip: "4780001",
-//   addr: { prefecture, city, town, region, shipping },
+//   addr: { zip, prefecture, city, town, region, shipping },
 //   nameStage: "name" | "address" | "done",
-//   nameSpeech: "...",
-//   addressSpeech: "..."
+//   nameSpeech: "...",          // お客様が話した名前テキスト
+//   addressSpeech: "...",       // お客様が話した「住所の続き」テキスト
 // }
 const DTMF_ORDERS = {};
 
@@ -158,12 +160,16 @@ async function askOpenAIForNameAddress(stage, speechText, order) {
   const nameSpeech = order?.nameSpeech || "";
   const addressSpeech = order?.addressSpeech || "";
   const addr = order?.addr || null;
+  const baseAddr = addr
+    ? `${addr.prefecture || ""}${addr.city || ""}${addr.town || ""}`
+    : "";
 
   const baseSystem =
     "あなたは「手造りえびせんべい磯屋」の電話受付スタッフです。" +
     "とても丁寧な敬語で、日本語で短く話してください。" +
     "相手はお客様なので、必ず「様」を付けてお呼びしてください。" +
-    "電話音声として読み上げられることを前提に、聞き取りやすい自然な文章にしてください。";
+    "電話音声として読み上げられることを前提に、聞き取りやすい自然な文章にしてください。" +
+    "不自然な日本語（例:「〜様かろ」「〜様かろう」など）は絶対に使わないでください。";
 
   let stageSystem;
   if (stage === "name") {
@@ -171,13 +177,12 @@ async function askOpenAIForNameAddress(stage, speechText, order) {
       "ユーザーの発話は、お客様のお名前です。" +
       "フルネームまたは名字をできる範囲で判断し、名字のあとに「様」を付けてお呼びください。" +
       "たとえば「木村太郎」の場合は、「木村太郎様でございますね。ありがとうございます。」のように復唱してください。" +
-      "そのあとで、「続いて、ご住所をお伺いいたしますので、このあとの案内の後にご住所をお話しください。」と丁寧に伝えてください。" +
-      "不自然な日本語（例:『〜様かろ』など）は絶対に使わないでください。";
+      "そのあとで、「続いて、ご住所をお伺いいたしますので、このあとの案内の後にご住所をお話しください。」と丁寧に伝えてください。";
   } else {
-    // address
-    const addrHint = addr
-      ? `なお、郵便番号から「${addr.prefecture}${addr.city}${addr.town}」付近であることは分かっています。これを参考にしても構いませんが、間違っていそうな場合は無理に合わせず、ユーザーの発話を優先してください。`
+    const addrHint = baseAddr
+      ? `すでに郵便番号から「${baseAddr}」までは分かっています。ユーザーの発話は、その続きの番地・建物名・お部屋番号であるとみなしてください。`
       : "";
+
     stageSystem =
       "ユーザーの発話は、お客様のご住所です。" +
       (nameSpeech
@@ -185,8 +190,7 @@ async function askOpenAIForNameAddress(stage, speechText, order) {
         : "") +
       addrHint +
       "丁寧に復唱し、「こちらのご住所でお伺いいたしました。」のように確認してください。" +
-      "最後に、『このあと、商品代金と送料、代引き手数料を含めた合計金額をご案内いたしますので、そのままお待ちください。』とお伝えしてください。" +
-      "不自然な日本語（例:『〜様かろ』など）は絶対に使わないでください。";
+      "最後に、『このあと、商品代金と送料、代引き手数料を含めた合計金額をご案内いたしますので、そのままお待ちください。』とお伝えしてください。";
   }
 
   const messages = [
@@ -563,17 +567,28 @@ app.post("/twilio/cod/name-addr-handler", urlencoded, async (req, res) => {
   const stage = order.nameStage || "name";
 
   if (!speech) {
-    const twimlNoSpeech = `<?xml version="1.0" encoding="UTF-8"?>
+    if (stage === "name") {
+      const twimlNoSpeech = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="ja-JP" voice="alice">
     すみません、音声がうまく聞き取れませんでした。 もう一度、お名前をゆっくりお話しいただけますか。
   </Say>
   <Redirect method="POST">/twilio/cod/name-addr</Redirect>
 </Response>`;
-    return res.type("text/xml").send(twimlNoSpeech);
+      return res.type("text/xml").send(twimlNoSpeech);
+    } else {
+      const twimlNoSpeech = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    すみません、音声がうまく聞き取れませんでした。 もう一度、ご住所の続きの番地や建物名、お部屋番号をお話しいただけますか。
+  </Say>
+  <Redirect method="POST">/twilio/cod/name-addr</Redirect>
+</Response>`;
+      return res.type("text/xml").send(twimlNoSpeech);
+    }
   }
 
-  // 発話内容を注文情報に保存（名前 or 住所）
+  // 発話内容を注文情報に保存（名前 or 住所の続き）
   if (stage === "name") {
     order.nameSpeech = speech;
   } else if (stage === "address") {
@@ -591,6 +606,15 @@ app.post("/twilio/cod/name-addr-handler", urlencoded, async (req, res) => {
     order.nameStage = "address";
     DTMF_ORDERS[callSid] = order;
 
+    const baseAddr =
+      order.addr
+        ? `${order.addr.prefecture || ""}${order.addr.city || ""}${order.addr.town || ""}`
+        : "";
+
+    const addrGuide = baseAddr
+      ? `郵便番号から、「${baseAddr}」まではこちらで確認できていますので、 その続きの番地や建物名、お部屋番号をゆっくりお話しください。`
+      : `ご住所を、都道府県から番地、建物名、お部屋番号まで、ゆっくりお話しください。`;
+
     twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="ja-JP" voice="alice">
@@ -602,7 +626,7 @@ app.post("/twilio/cod/name-addr-handler", urlencoded, async (req, res) => {
           action="/twilio/cod/name-addr-handler"
           method="POST">
     <Say language="ja-JP" voice="alice">
-      それでは、ご住所を、 都道府県から番地、建物名、お部屋番号まで、 ゆっくりお話しください。 話し終わりましたら、 そのままお待ちください。
+      ${addrGuide} 話し終わりましたら、 そのままお待ちください。
     </Say>
   </Gather>
   <Say language="ja-JP" voice="alice">
@@ -667,9 +691,22 @@ app.post("/twilio/cod/summary", urlencoded, (req, res) => {
   const codFee = COD_FEE;
   const finalTotal = itemsTotal + shipping + codFee;
 
+  const baseAddr =
+    order.addr
+      ? `${order.addr.prefecture || ""}${order.addr.city || ""}${order.addr.town || ""}`
+      : "";
+
+  const fullAddressText =
+    baseAddr || addressSpeech
+      ? `${baseAddr}${addressSpeech || ""}`
+      : "";
+
   const nameAddrText =
-    nameSpeech || addressSpeech
-      ? ` お名前とご住所は、「${[nameSpeech, addressSpeech]
+    nameSpeech || fullAddressText
+      ? ` お名前とご住所は、「${[
+          nameSpeech || "",
+          fullAddressText || ""
+        ]
           .filter(Boolean)
           .join("、")}」とお伺いしました。`
       : "";

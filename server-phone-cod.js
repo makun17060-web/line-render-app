@@ -1,5 +1,5 @@
 // server-phone-cod.js
-// Twilio 代引き専用 AI 自動受付サーバー（郵便番号→住所 自動確認付き）
+// Twilio 代引き専用 AI 自動受付サーバー（郵便番号→住所 自動確認 + 送料 & 代引き手数料案内付き）
 
 "use strict";
 
@@ -9,15 +9,19 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 
-// ==== ディレクトリ・ファイルパス定義 ==================================
+// ==== パス・ファイル ====================================================
+
 const DATA_DIR = path.join(__dirname, "data");
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
 const PRODUCTS_PATH = path.join(DATA_DIR, "products.json");
 const COD_LOG = path.join(DATA_DIR, "cod-phone-orders.log");
 
-// 共通 JSON 読み取りユーティリティ
+// data ディレクトリを必ず作成
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+// ==== 共通ユーティリティ ================================================
+
 function safeReadJSON(p, fb) {
   try {
     return JSON.parse(fs.readFileSync(p, "utf8"));
@@ -26,16 +30,56 @@ function safeReadJSON(p, fb) {
   }
 }
 
-// LINE 側と共通の products.json を読む
 function readProducts() {
   return safeReadJSON(PRODUCTS_PATH, []);
 }
 
+// ==== 送料 & 代引き手数料（ミニアプリと共通） ==========================
+
+// server.js 側と同じテーブル
+const SHIPPING_BY_REGION = {
+  北海道: 1560,
+  東北: 1070,
+  関東: 960,
+  中部: 960,
+  近畿: 960,
+  中国: 1070,
+  四国: 1180,
+  九州: 1190,
+  沖縄: 1840,
+};
+
+// 代引き手数料：固定 330円
+const COD_FEE = 330;
+
+/**
+ * 住所オブジェクトから送料地域を判定
+ * server.js の detectRegionFromAddress と同じロジック
+ */
+function detectRegionFromAddress(address = {}) {
+  const pref = String(address.prefecture || address.pref || "").trim();
+  const addr1 = String(address.addr1 || address.address1 || "").trim();
+  const hay = pref || addr1;
+
+  if (/北海道/.test(hay)) return "北海道";
+  if (/(青森|岩手|宮城|秋田|山形|福島|東北)/.test(hay)) return "東北";
+  if (/(茨城|栃木|群馬|埼玉|千葉|東京|神奈川|山梨|関東)/.test(hay)) return "関東";
+  if (/(新潟|富山|石川|福井|長野|岐阜|静岡|愛知|三重|中部)/.test(hay)) return "中部";
+  if (/(滋賀|京都|大阪|兵庫|奈良|和歌山|近畿)/.test(hay)) return "近畿";
+  if (/(鳥取|島根|岡山|広島|山口|中国)/.test(hay)) return "中国";
+  if (/(徳島|香川|愛媛|高知|四国)/.test(hay)) return "四国";
+  if (/(福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|九州)/.test(hay)) return "九州";
+  if (/(沖縄)/.test(hay)) return "沖縄";
+
+  return "";
+}
+
 // ==== 環境変数 =========================================================
+
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const PORT = process.env.PORT || 3000;
 
-// ==== 通話ごとのメモリ ================================================
+// ==== 通話ごとのメモリ ==================================================
 
 // 会話履歴
 const PHONE_CONVERSATIONS = {};
@@ -104,7 +148,7 @@ async function lookupAddressByZip(zip) {
  * 代引き専用 AI に質問して、返答をもらう
  * @param {string} callSid Twilio の CallSid
  * @param {string} userText お客さんの発話（SpeechResult）
- * @param {object|null} zipInfo {zip, prefecture, city, town} など
+ * @param {object|null} zipInfo {zip, prefecture, city, town, region?, shipping?} など
  * @returns {Promise<string>} 電話で読み上げる日本語テキスト
  */
 async function askOpenAIForCOD(callSid, userText, zipInfo) {
@@ -122,9 +166,7 @@ async function askOpenAIForCOD(callSid, userText, zipInfo) {
         ? products
             .map(
               (p) =>
-                `・${p.name}（ID：${p.id} / 価格：${p.price}円 / 在庫：${
-                  p.stock ?? 0
-                }個）`
+                `・${p.name}（ID：${p.id} / 価格：${p.price}円 / 在庫：${p.stock ?? 0}個）`
             )
             .join("\n")
         : "現在の商品情報は空です。";
@@ -145,6 +187,7 @@ async function askOpenAIForCOD(callSid, userText, zipInfo) {
           "6) 希望のお届け日時があれば、そのご希望。" +
           "途中で足りない情報があれば、やさしく確認しながら質問してください。" +
           "最後に、聞き取った内容を短く復唱し、「この内容で代金引換にて承ってもよろしいでしょうか？」と確認してください。" +
+          "代金引換では、商品代金に【送料】と【代引き手数料330円】が加算されることを、必ずお客様にお伝えしてください。" +
           "電話なので、文章を読み上げるように、ゆっくり分かりやすく話してください。",
       },
       {
@@ -152,22 +195,48 @@ async function askOpenAIForCOD(callSid, userText, zipInfo) {
         content:
           "現在取り扱い中の商品一覧は次の通りです。\n" +
           productListText +
-          "\n\nお客様の発話に出てくる商品名がこの一覧に近い場合は、その商品として扱ってください。",
+          "\n\nお客様の発話に出てくる商品名がこの一覧に近い場合は、その商品として扱い、できる範囲で合計金額を計算して案内してください。",
       },
     ];
   }
 
   const history = PHONE_CONVERSATIONS[callSid];
 
-  // 郵便番号から住所が引けた場合は、システムメモとして AI に伝える
+  // 郵便番号から住所が引けた場合は、送料情報も含めてシステムメモとして AI に伝える
   if (zipInfo && zipInfo.prefecture) {
-    const addrText = `${zipInfo.prefecture}${zipInfo.city}${zipInfo.town}`;
+    const addrText = `${zipInfo.prefecture}${zipInfo.city || ""}${zipInfo.town || ""}`;
+
+    let region = zipInfo.region || "";
+    let shipping = typeof zipInfo.shipping === "number" ? zipInfo.shipping : 0;
+
+    try {
+      if (!region) {
+        region = detectRegionFromAddress({
+          prefecture: zipInfo.prefecture,
+          address1: `${zipInfo.city || ""}${zipInfo.town || ""}`,
+        });
+      }
+      if (region && !shipping) {
+        shipping = SHIPPING_BY_REGION[region] || 0;
+      }
+    } catch (e) {
+      console.error("detectRegionFromAddress error inside askOpenAIForCOD:", e);
+    }
+
+    let memo =
+      `システムメモ：お客様の郵便番号「${zipInfo.zip}」から、「${addrText}」と判定されました。`;
+
+    if (region && shipping) {
+      memo +=
+        ` 配送地域は「${region}」で、この地域の送料は ${shipping}円、代引き手数料は一律 ${COD_FEE}円です。` +
+        "合計金額を案内するときは、商品代金の合計に送料と代引き手数料を加えた金額をお客様にお伝えしてください。";
+    } else {
+      memo += " 必要に応じて住所を復唱し、「こちらのご住所でよろしいでしょうか？」と優しく確認してください。";
+    }
+
     history.push({
       role: "system",
-      content:
-        `システムメモ：お客様の郵便番号「${zipInfo.zip}」から、` +
-        `「${addrText}」と判定されました。必要に応じて、` +
-        `「${addrText}ですね」と優しく確認してください。`,
+      content: memo,
     });
   }
 
@@ -224,7 +293,7 @@ app.all("/twilio/cod", urlencoded, async (req, res) => {
     お電話ありがとうございます。 手造りえびせんべい、磯屋です。 こちらは、代金引換でのご注文専用の自動受付です。
   </Say>
   <Say language="ja-JP" voice="alice">
-    ご希望の商品名と個数、 お名前、 お電話番号、 そして郵便番号とご住所を、 ゆっくりお話しください。 郵便番号から、こちらで住所を自動でお調べいたします。
+    ご希望の商品名と個数、 お名前、 お電話番号、 そして郵便番号とご住所を、 ゆっくりお話しください。 郵便番号から、こちらで住所を自動でお調べいたします。 代金引換では、商品代金に送料と代引き手数料が加算されます。
   </Say>
   <Gather input="speech"
           language="ja-JP"
@@ -244,7 +313,7 @@ app.all("/twilio/cod", urlencoded, async (req, res) => {
 });
 
 // ======================================================================
-// 2) 発話を受け取り → 郵便番号をチェック → AI に渡す → 再度 Gather
+// 2) 発話を受け取り → 郵便番号をチェック → 送料地域判定 → AI に渡す → 再度 Gather
 // ======================================================================
 
 app.post("/twilio/cod/handle", urlencoded, async (req, res) => {
@@ -260,9 +329,26 @@ app.post("/twilio/cod/handle", urlencoded, async (req, res) => {
     try {
       const addr = await lookupAddressByZip(zip);
       if (addr && addr.prefecture) {
-        zipInfo = addr;
-        PHONE_ADDRESS_CACHE[callSid] = addr;
-        console.log("ZIP resolved:", addr);
+        // ここで送料地域と送料も判定して詰めておく
+        let region = "";
+        let shipping = 0;
+        try {
+          region = detectRegionFromAddress({
+            prefecture: addr.prefecture,
+            address1: `${addr.city || ""}${addr.town || ""}`,
+          });
+          if (region) shipping = SHIPPING_BY_REGION[region] || 0;
+        } catch (e) {
+          console.error("detectRegionFromAddress error in handle:", e);
+        }
+
+        zipInfo = {
+          ...addr,
+          region,
+          shipping,
+        };
+        PHONE_ADDRESS_CACHE[callSid] = zipInfo;
+        console.log("ZIP resolved:", zipInfo);
       }
     } catch (e) {
       console.error("ZIP lookup failed:", e);
@@ -276,7 +362,7 @@ app.post("/twilio/cod/handle", urlencoded, async (req, res) => {
 
   if (!speechText) {
     aiReply =
-      "すみません、音声がうまく聞き取れませんでした。 商品名と個数、そしてお名前とご住所を、もう一度ゆっくりお話しいただけますか。";
+      "すみません、音声がうまく聞き取れませんでした。 商品名と個数、お名前、お電話番号、そして郵便番号とご住所を、もう一度ゆっくりお話しいただけますか。";
   } else {
     aiReply = await askOpenAIForCOD(callSid, speechText, zipInfo);
   }
@@ -336,18 +422,16 @@ app.post("/twilio/cod/handle", urlencoded, async (req, res) => {
     ${aiReply}
   </Say>
   <Gather input="speech"
-        language="ja-JP"
-        speechTimeout="auto"
-        action="/twilio/cod/handle"
-        method="POST">
+          language="ja-JP"
+          speechTimeout="auto"
+          action="/twilio/cod/handle"
+          method="POST">
+    <Say language="ja-JP" voice="alice">
+      お話が終わりましたら、そのままお待ちください。
+    </Say>
+  </Gather>
   <Say language="ja-JP" voice="alice">
-    お話が終わりましたら、そのままお待ちください。
-  </Say>
-</Gather>
-<Say language="ja-JP" voice="alice">
-  音声が確認できなかったため、通話を終了いたします。 ありがとうございました。
-</Say>
-
+    音声が確認できなかったため、通話を終了いたします。 ありがとうございました。
   </Say>
 </Response>`;
   }

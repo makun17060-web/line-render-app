@@ -1,5 +1,5 @@
 // server-phone-cod.js
-// Twilio 代引き専用 AI 自動受付サーバー（LINE 機能なし）
+// Twilio 代引き専用 AI 自動受付サーバー（郵便番号→住所 自動確認付き）
 
 "use strict";
 
@@ -14,23 +14,86 @@ const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const PORT = process.env.PORT || 3000;
 
 // ==== ログ保存用 =======================================================
-// data フォルダがなければ作成
+
 const DATA_DIR = path.join(__dirname, "data");
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 const COD_LOG = path.join(DATA_DIR, "cod-phone-orders.log");
 
-// ==== 会話メモリ（CallSid ごと） ======================================
+// ==== 通話ごとのメモリ ================================================
+
+// 会話履歴
 const PHONE_CONVERSATIONS = {};
+// 郵便番号から推定された住所（通話単位）
+const PHONE_ADDRESS_CACHE = {};
+
+// ==== 郵便番号 → 住所 変換 =============================================
+
+/**
+ * 発話テキストから郵便番号らしき数字を抜き出す
+ * 例:
+ *   "郵便番号は 4780001 です"    → "4780001"
+ *   "４７８ー０１２３ です"      → "4780123"
+ */
+function extractZipFromText(text) {
+  if (!text) return null;
+  const s = String(text).replace(/[^\d\-ー－]/g, "");
+  // パターン1: 3桁-4桁
+  const m1 = /(\d{3})[-ー－]?(\d{4})/.exec(s);
+  if (m1) return m1[1] + m1[2];
+
+  // パターン2: 7桁連続
+  const m2 = /(\d{7})/.exec(s);
+  if (m2) return m2[1];
+
+  return null;
+}
+
+/**
+ * zipcloud API で 郵便番号→住所 を取得
+ * @param {string} zip 例: "4780001"
+ * @returns {Promise<{zip:string, prefecture:string, city:string, town:string}|null>}
+ */
+async function lookupAddressByZip(zip) {
+  const z = (zip || "").replace(/\D/g, "");
+  if (!z || z.length !== 7) return null;
+
+  const url = `https://zipcloud.ibsnet.co.jp/api/search?zipcode=${encodeURIComponent(
+    z
+  )}`;
+
+  try {
+    const resp = await fetch(url);
+    const data = await resp.json();
+
+    if (data.status !== 200 || !data.results || !data.results[0]) {
+      return null;
+    }
+
+    const r = data.results[0];
+    return {
+      zip: z,
+      prefecture: r.address1 || "",
+      city: r.address2 || "",
+      town: r.address3 || "",
+    };
+  } catch (e) {
+    console.error("lookupAddressByZip error:", e);
+    return null;
+  }
+}
+
+// ==== OpenAI に問い合わせる関数 =======================================
 
 /**
  * 代引き専用 AI に質問して、返答をもらう
  * @param {string} callSid Twilio の CallSid
  * @param {string} userText お客さんの発話（SpeechResult）
+ * @param {object|null} zipInfo {zip, prefecture, city, town} など
  * @returns {Promise<string>} 電話で読み上げる日本語テキスト
  */
-async function askOpenAIForCOD(callSid, userText) {
+async function askOpenAIForCOD(callSid, userText, zipInfo) {
   if (!OPENAI_API_KEY) {
     console.warn("⚠ OPENAI_API_KEY が設定されていません。");
     return "申し訳ありません。現在AIによる自動受付が利用できません。時間をおいてお掛け直しいただくか、LINEからご注文ください。";
@@ -45,22 +108,35 @@ async function askOpenAIForCOD(callSid, userText) {
           "あなたは「手造りえびせんべい磯屋」の【代金引換専用】電話自動受付スタッフです。" +
           "この電話では、代引き注文の受付だけを行います。" +
           "必ず丁寧な敬語で、日本語で、1回の返答は短く簡潔に話してください。" +
-          "以下の情報を、なるべく1つずつ順番に聞き取ってください：" +
-          "1) ご希望の商品名（例：久助、四角のりせん、プレミアムえびせんなど）と個数、" +
-          "2) お名前、" +
-          "3) お電話番号、" +
-          "4) 郵便番号、" +
-          "5) 都道府県からのご住所、" +
-          "6) 希望のお届け日時があればその希望。" +
-          "途中で足りない情報があれば、やさしく聞き返してください。" +
-          "最後に、聞き取った内容を短く復唱して「この内容で代引きにて承ってもよろしいでしょうか？」と確認してください。" +
+          "以下の情報を、なるべく一つずつ順番に聞き取ってください。" +
+          "1) ご希望の商品名（例：久助、四角のりせん、プレミアムえびせんなど）と個数。" +
+          "2) お名前。" +
+          "3) お電話番号。" +
+          "4) 郵便番号。" +
+          "5) 都道府県からのご住所（番地・建物名など）。" +
+          "6) 希望のお届け日時があれば、そのご希望。" +
+          "途中で足りない情報があれば、やさしく確認しながら質問してください。" +
+          "最後に、聞き取った内容を短く復唱し、「この内容で代金引換にて承ってもよろしいでしょうか？」と確認してください。" +
           "営業時間や場所など、それ以外の質問をされた場合は、簡単にお答えしたあと、必ず代引き注文の受付に話を戻してください。" +
-          "電話なので、文章を読み上げるように、ゆっくり分かりやすく話してください。"
-      }
+          "電話なので、文章を読み上げるように、ゆっくり分かりやすく話してください。",
+      },
     ];
   }
 
   const history = PHONE_CONVERSATIONS[callSid];
+
+  // 郵便番号から住所が引けた場合は、システムメモとして AI に伝える
+  if (zipInfo && zipInfo.prefecture) {
+    const addrText = `${zipInfo.prefecture}${zipInfo.city}${zipInfo.town}`;
+    history.push({
+      role: "system",
+      content:
+        `システムメモ：お客様の郵便番号「${zipInfo.zip}」から、` +
+        `「${addrText}」と判定されました。必要に応じて、` +
+        `「${addrText}ですね」と優しく確認してください。`,
+    });
+  }
+
   history.push({ role: "user", content: userText });
 
   try {
@@ -68,14 +144,14 @@ async function askOpenAIForCOD(callSid, userText) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENAI_API_KEY}`
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini", // 安くて速いモデル
+        model: "gpt-4o-mini",
         messages: history,
         max_tokens: 220,
-        temperature: 0.5
-      })
+        temperature: 0.5,
+      }),
     });
 
     const data = await resp.json();
@@ -94,16 +170,19 @@ async function askOpenAIForCOD(callSid, userText) {
 }
 
 // ==== Express アプリ ===================================================
+
 const app = express();
 const urlencoded = express.urlencoded({ extended: false });
 
 // ======================================================================
-// 1) 着信時：代引き専用の案内 → AI への最初の質問へ
+// 1) 着信時：代引き専用の案内 → 最初の発話受付
 // ======================================================================
+
 app.all("/twilio/cod", urlencoded, async (req, res) => {
   const callSid = req.body.CallSid || "";
-  // 新しい通話なので履歴をリセット
+  // 新しい通話なので履歴・住所キャッシュをリセット
   delete PHONE_CONVERSATIONS[callSid];
+  delete PHONE_ADDRESS_CACHE[callSid];
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -111,7 +190,7 @@ app.all("/twilio/cod", urlencoded, async (req, res) => {
     お電話ありがとうございます。 手造りえびせんべい、磯屋です。 こちらは、代金引換でのご注文専用の自動受付です。
   </Say>
   <Say language="ja-JP" voice="alice">
-    ご希望の商品名と個数、 お名前、 お電話番号、 郵便番号とご住所を、 ゆっくりお話しください。 途中でこちらから確認の質問をさせていただきます。
+    ご希望の商品名と個数、 お名前、 お電話番号、 そして郵便番号とご住所を、 ゆっくりお話しください。 郵便番号から、こちらで住所を自動でお調べいたします。
   </Say>
   <Gather input="speech"
           language="ja-JP"
@@ -131,12 +210,33 @@ app.all("/twilio/cod", urlencoded, async (req, res) => {
 });
 
 // ======================================================================
-// 2) お客さんの発話を受け取って AI に投げる
+// 2) 発話を受け取り → 郵便番号をチェック → AI に渡す → 再度 Gather
 // ======================================================================
+
 app.post("/twilio/cod/handle", urlencoded, async (req, res) => {
   const callSid = req.body.CallSid || "";
   const speechText = (req.body.SpeechResult || "").trim();
   console.log("【Twilio COD SpeechResult】", speechText);
+
+  let zipInfo = null;
+
+  // 発話中から郵便番号を抽出
+  const zip = extractZipFromText(speechText);
+  if (zip) {
+    try {
+      const addr = await lookupAddressByZip(zip);
+      if (addr && addr.prefecture) {
+        zipInfo = addr;
+        PHONE_ADDRESS_CACHE[callSid] = addr;
+        console.log("ZIP resolved:", addr);
+      }
+    } catch (e) {
+      console.error("ZIP lookup failed:", e);
+    }
+  } else if (PHONE_ADDRESS_CACHE[callSid]) {
+    // すでに以前の発話で取得済みなら、それも AI に渡す
+    zipInfo = PHONE_ADDRESS_CACHE[callSid];
+  }
 
   let aiReply;
 
@@ -144,10 +244,10 @@ app.post("/twilio/cod/handle", urlencoded, async (req, res) => {
     aiReply =
       "すみません、音声がうまく聞き取れませんでした。 商品名と個数、そしてお名前とご住所を、もう一度ゆっくりお話しいただけますか。";
   } else {
-    aiReply = await askOpenAIForCOD(callSid, speechText);
+    aiReply = await askOpenAIForCOD(callSid, speechText, zipInfo);
   }
 
-  // 終了キーワード（「以上です」「これでお願いします」なども追加）
+  // 終了キーワード
   const endKeywords = [
     "大丈夫",
     "ありがとう",
@@ -156,12 +256,12 @@ app.post("/twilio/cod/handle", urlencoded, async (req, res) => {
     "切ります",
     "以上です",
     "これでお願いします",
-    "これで大丈夫です"
+    "これで大丈夫です",
   ];
   const shouldEnd =
     !speechText || endKeywords.some((kw) => speechText.includes(kw));
 
-  // ログに残す（任意）
+  // ログに残す
   try {
     fs.appendFileSync(
       COD_LOG,
@@ -169,7 +269,8 @@ app.post("/twilio/cod/handle", urlencoded, async (req, res) => {
         ts: new Date().toISOString(),
         callSid,
         speechText,
-        aiReply
+        aiReply,
+        zipInfo: zipInfo || null,
       }) + "\n",
       "utf8"
     );
@@ -192,6 +293,7 @@ app.post("/twilio/cod/handle", urlencoded, async (req, res) => {
 </Response>`;
     // 会話履歴を掃除
     delete PHONE_CONVERSATIONS[callSid];
+    delete PHONE_ADDRESS_CACHE[callSid];
   } else {
     // 返答を読み上げて、さらに続けて受付を続行
     twiml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -220,6 +322,7 @@ app.post("/twilio/cod/handle", urlencoded, async (req, res) => {
 // ======================================================================
 // Health check
 // ======================================================================
+
 app.get("/health", (_req, res) =>
   res.status(200).type("text/plain").send("OK")
 );
@@ -232,14 +335,15 @@ app.get("/api/health", (_req, res) => {
     time: new Date().toISOString(),
     node: process.version,
     env: {
-      OPENAI_API_KEY: !!OPENAI_API_KEY
-    }
+      OPENAI_API_KEY: !!OPENAI_API_KEY,
+    },
   });
 });
 
 // ======================================================================
 // 起動
 // ======================================================================
+
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`📦 COD phone server started on port ${PORT}`);
   console.log("   Twilio inbound URL: POST /twilio/cod");

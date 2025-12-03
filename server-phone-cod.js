@@ -2,12 +2,13 @@
 // Twilio 代引き専用 自動受付サーバー（ハイブリッド版）
 //
 // ・商品〜個数〜追加注文〜郵便番号まではプッシュ式（DTMF）
-// ・郵便番号から 都道府県 + 市区町村 + 町名 まで自動取得
+// ・郵便番号から 都道府県 + 市区町村 + 町名 まで自動取得（zipcloud）
 // ・商品名は data/products.json から読み込み（先頭9件をメニューに）
 // ・「お名前」と「住所の続き（番地・建物名・部屋番号）」だけ OpenAI で丁寧な会話
+// ・住所の続きは Google Maps Geocoding API で妥当性チェック
 // ・連絡先電話番号はプッシュ式で入力
 // ・最後に 商品代 + 送料 + 代引き手数料 の合計金額を確定金額として読み上げ
-// ・注文確定時に LINE 管理者へ通知（プッシュ）を送信
+// ・注文確定時に LINE 管理者へ通知（プッシュ）
 
 "use strict";
 
@@ -16,6 +17,9 @@ require("dotenv").config();
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
+
+// Node.js 18+ なら fetch はグローバルに存在
+// 古いバージョンなら node-fetch 等を require してください。
 
 // ==== パス・ファイル ====================================================
 
@@ -47,10 +51,13 @@ function readProducts() {
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const PORT = process.env.PORT || 3000;
 
-// ★ LINE 通知用：管理者へのプッシュ通知に使用
+// LINE 通知用
 const LINE_CHANNEL_ACCESS_TOKEN =
   (process.env.LINE_CHANNEL_ACCESS_TOKEN || "").trim();
 const LINE_ADMIN_USER_ID = (process.env.LINE_ADMIN_USER_ID || "").trim();
+
+// Google Maps Geocoding 用
+const GOOGLE_MAPS_API_KEY = (process.env.GOOGLE_MAPS_API_KEY || "").trim();
 
 // ==== 送料 & 代引き手数料 ==============================================
 
@@ -101,7 +108,8 @@ function detectRegionFromAddress(address = {}) {
 //   nameSpeech: "...",
 //   addressSpeech: "...",
 //   phone: "09012345678",
-//   productMenu: [ { digit, id, name }, ... ]
+//   productMenu: [ { digit, id, name }, ... ],
+//   googleFormattedAddress: "..." // Google整形済み住所（任意）
 // }
 const DTMF_ORDERS = {};
 
@@ -151,7 +159,7 @@ async function lookupAddressByZip(zip) {
  */
 async function askOpenAIForNameAddress(stage, speechText, order) {
   if (!OPENAI_API_KEY) {
-    // フォールバック：OpenAIキーがない場合はシンプルに固定文言
+    // フォールバック：OpenAIキーがない場合はシンプルな固定文言
     if (stage === "name") {
       return "ありがとうございます。 お名前を承りました。 続いて、ご住所をお伺いいたしますので、このあとの案内に続けてご住所をお話しください。";
     } else {
@@ -236,6 +244,63 @@ async function askOpenAIForNameAddress(stage, speechText, order) {
   }
 }
 
+// ==== Google Maps Geocoding API で住所チェック =========================
+
+/**
+ * Google Maps Geocoding API で 住所をチェック
+ * @param {string} fullAddress zipcloudで取った町名まで + お客様の番地・建物名など
+ * @returns {Promise<{ok:boolean, partial:boolean, formattedAddress:string, status:string}>}
+ */
+async function validateAddressWithGoogle(fullAddress) {
+  if (!GOOGLE_MAPS_API_KEY) {
+    console.warn("[ADDR] GOOGLE_MAPS_API_KEY 未設定のため Google 検証スキップ");
+    return {
+      ok: true,
+      partial: false,
+      formattedAddress: fullAddress,
+      status: "NO_KEY",
+    };
+  }
+
+  const url =
+    "https://maps.googleapis.com/maps/api/geocode/json" +
+    `?address=${encodeURIComponent(fullAddress)}` +
+    `&language=ja&region=jp&key=${GOOGLE_MAPS_API_KEY}`;
+
+  try {
+    const resp = await fetch(url);
+    const data = await resp.json();
+
+    if (data.status !== "OK" || !data.results || data.results.length === 0) {
+      return {
+        ok: false,
+        partial: false,
+        formattedAddress: "",
+        status: data.status,
+      };
+    }
+
+    const r = data.results[0];
+    const partial = !!r.partial_match;
+
+    return {
+      ok: !partial, // 完全一致っぽい → true
+      partial,
+      formattedAddress: r.formatted_address || "",
+      status: data.status,
+    };
+  } catch (e) {
+    console.error("[ADDR] Google geocode error:", e);
+    // エラー時は注文を落とさないために OK 扱いにしておく
+    return {
+      ok: true,
+      partial: true,
+      formattedAddress: fullAddress,
+      status: "ERROR",
+    };
+  }
+}
+
 // ==== LINE 管理者への通知関数 ==========================================
 
 /**
@@ -264,6 +329,7 @@ async function notifyLineAdminForCodOrder(payload) {
       shipping,
       codFee,
       finalTotal,
+      googleFormattedAddress,
     } = payload;
 
     const when = ts || new Date().toISOString();
@@ -272,9 +338,8 @@ async function notifyLineAdminForCodOrder(payload) {
       ? `${addr.prefecture || ""}${addr.city || ""}${addr.town || ""}`
       : "";
     const fullAddress =
-      addrBase || addressSpeech
-        ? `${addrBase}${addressSpeech || ""}`
-        : "（未取得）";
+      googleFormattedAddress ||
+      (addrBase || addressSpeech ? `${addrBase}${addressSpeech || ""}` : "（未取得）");
 
     const nameText = nameSpeech || "（未取得）";
     const phoneText = phone || "（未取得）";
@@ -673,7 +738,7 @@ app.post("/twilio/cod/zip-handler", urlencoded, async (req, res) => {
 });
 
 // ======================================================================
-// 5.5) 名前・住所だけ OpenAI で丁寧な会話
+// 5.5) 名前・住所だけ OpenAI で丁寧な会話 + Google住所チェック
 // ======================================================================
 
 // 名前フェーズ開始
@@ -704,7 +769,7 @@ app.post("/twilio/cod/name-addr", urlencoded, (req, res) => {
   res.type("text/xml").send(twiml);
 });
 
-// 名前 or 住所の発話を受け取り → OpenAI で丁寧な応答 → 次へ
+// 名前 or 住所の発話を受け取り → OpenAI で丁寧な応答 → 必要なら Google住所チェック
 app.post("/twilio/cod/name-addr-handler", urlencoded, async (req, res) => {
   const callSid = req.body.CallSid || "";
   const speech = (req.body.SpeechResult || "").trim();
@@ -734,20 +799,13 @@ app.post("/twilio/cod/name-addr-handler", urlencoded, async (req, res) => {
     }
   }
 
-  // 発話内容を注文情報に保存（名前 or 住所の続き）
   if (stage === "name") {
+    // ======== 名前フェーズ ========
     order.nameSpeech = speech;
-  } else if (stage === "address") {
-    order.addressSpeech = speech;
-  }
-  DTMF_ORDERS[callSid] = order;
+    DTMF_ORDERS[callSid] = order;
 
-  // OpenAI で丁寧な応答文を生成
-  const aiReply = await askOpenAIForNameAddress(stage, speech, order);
+    const aiReply = await askOpenAIForNameAddress("name", speech, order);
 
-  let twiml;
-  if (stage === "name") {
-    // 次は住所フェーズに進める
     order = DTMF_ORDERS[callSid] || order;
     order.nameStage = "address";
     DTMF_ORDERS[callSid] = order;
@@ -761,7 +819,7 @@ app.post("/twilio/cod/name-addr-handler", urlencoded, async (req, res) => {
       ? `郵便番号から、「${baseAddr}」まではこちらで確認できていますので、 その続きの番地や建物名、お部屋番号をゆっくりお話しください。`
       : `ご住所を、都道府県から番地、建物名、お部屋番号まで、ゆっくりお話しください。`;
 
-    twiml = `<?xml version="1.0" encoding="UTF-8"?>
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="ja-JP" voice="alice">
     ${aiReply}
@@ -779,10 +837,65 @@ app.post("/twilio/cod/name-addr-handler", urlencoded, async (req, res) => {
     音声が確認できなかったため、 通話を終了いたします。 ありがとうございました。
   </Say>
 </Response>`;
+
+    return res.type("text/xml").send(twiml);
+  }
+
+  // ======== 住所フェーズ（住所の続き） ========
+  order.addressSpeech = speech;
+  DTMF_ORDERS[callSid] = order;
+
+  // まず AI の丁寧な返事を作る
+  const aiReply = await askOpenAIForNameAddress("address", speech, order);
+
+  const baseAddr =
+    order.addr
+      ? `${order.addr.prefecture || ""}${order.addr.city || ""}${order.addr.town || ""}`
+      : "";
+
+  const fullAddrForCheck = `${baseAddr}${order.addressSpeech || ""}`;
+
+  // Google 住所チェック
+  const gResult = await validateAddressWithGoogle(fullAddrForCheck);
+
+  let twiml;
+
+  if (!gResult.ok) {
+    // ★ 住所として怪しい → もう一度住所だけ聞き直す
+    const retryText =
+      "住所がうまく認識できませんでした。 番地・建物名・お部屋番号を含めて、もう一度ゆっくりお話しいただけますか。";
+
+    // stageは address のままにして再度このハンドラに戻ってくる
+    order = DTMF_ORDERS[callSid] || order;
+    order.nameStage = "address";
+    DTMF_ORDERS[callSid] = order;
+
+    twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    ${aiReply}
+  </Say>
+  <Say language="ja-JP" voice="alice">
+    ${retryText}
+  </Say>
+  <Gather input="speech"
+          language="ja-JP"
+          speechTimeout="auto"
+          action="/twilio/cod/name-addr-handler"
+          method="POST">
+    <Say language="ja-JP" voice="alice">
+      もう一度、ご住所の続きの番地や建物名、お部屋番号をお話しください。 話し終わりましたら、そのままお待ちください。
+    </Say>
+  </Gather>
+  <Say language="ja-JP" voice="alice">
+    音声が確認できなかったため、 通話を終了いたします。 ありがとうございました。
+  </Say>
+</Response>`;
   } else {
-    // 住所フェーズが終わったので電話番号入力へ
+    // ★ OK → 電話番号フェーズへ進む
     order = DTMF_ORDERS[callSid] || order;
     order.nameStage = "done";
+    order.googleFormattedAddress = gResult.formattedAddress || null;
     DTMF_ORDERS[callSid] = order;
 
     twiml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -794,7 +907,7 @@ app.post("/twilio/cod/name-addr-handler", urlencoded, async (req, res) => {
 </Response>`;
   }
 
-  res.type("text/xml").send(twiml);
+  return res.type("text/xml").send(twiml);
 });
 
 // ======================================================================
@@ -891,10 +1004,12 @@ app.post("/twilio/cod/summary", urlencoded, async (req, res) => {
       ? `${order.addr.prefecture || ""}${order.addr.city || ""}${order.addr.town || ""}`
       : "";
 
+  const googleAddr = order.googleFormattedAddress || "";
   const fullAddressText =
-    baseAddr || addressSpeech
+    googleAddr ||
+    (baseAddr || addressSpeech
       ? `${baseAddr}${addressSpeech || ""}`
-      : "";
+      : "");
 
   const nameAddrText =
     nameSpeech || fullAddressText
@@ -928,6 +1043,7 @@ app.post("/twilio/cod/summary", urlencoded, async (req, res) => {
     addr: order.addr || null,
     nameSpeech: nameSpeech || null,
     addressSpeech: addressSpeech || null,
+    googleFormattedAddress: googleAddr || null,
     phone: phoneDigits || null,
     itemsTotal,
     shipping,
@@ -941,7 +1057,7 @@ app.post("/twilio/cod/summary", urlencoded, async (req, res) => {
     console.error("cod log write error:", e);
   }
 
-  // ★ LINE 管理者へ通知（失敗しても通話フローには影響しないように await で囲むだけ）
+  // ★ LINE 管理者へ通知（失敗しても通話フローには影響しないようにしておく）
   await notifyLineAdminForCodOrder(logPayload);
 
   // 使い終わったので削除
@@ -979,6 +1095,7 @@ app.get("/api/health", (_req, res) => {
       OPENAI_API_KEY: !!OPENAI_API_KEY,
       LINE_CHANNEL_ACCESS_TOKEN: !!LINE_CHANNEL_ACCESS_TOKEN,
       LINE_ADMIN_USER_ID: !!LINE_ADMIN_USER_ID,
+      GOOGLE_MAPS_API_KEY: !!GOOGLE_MAPS_API_KEY,
     },
   });
 });
@@ -994,5 +1111,9 @@ app.listen(PORT, "0.0.0.0", () => {
     "   LINE notify:",
     LINE_CHANNEL_ACCESS_TOKEN ? "token OK" : "token MISSING",
     LINE_ADMIN_USER_ID ? "admin OK" : "admin MISSING"
+  );
+  console.log(
+    "   Google Geocoding:",
+    GOOGLE_MAPS_API_KEY ? "key OK" : "key MISSING"
   );
 });

@@ -336,16 +336,18 @@ app.post("/twilio/cod/handle", urlencoded, async (req, res) => {
     ${aiReply}
   </Say>
   <Gather input="speech"
-          language="ja-JP"
-          speechTimeout="auto"
-          action="/twilio/cod/handle"
-          method="POST">
-    <Say language="ja-JP" voice="alice">
-      続けて、必要な情報をお話しください。 終了する場合は、「以上です」や「これでお願いします」などとおっしゃってください。
-    </Say>
-  </Gather>
+        language="ja-JP"
+        speechTimeout="auto"
+        action="/twilio/cod/handle"
+        method="POST">
   <Say language="ja-JP" voice="alice">
-    音声が確認できなかったため、通話を終了いたします。 ありがとうございました。
+    お話が終わりましたら、そのままお待ちください。
+  </Say>
+</Gather>
+<Say language="ja-JP" voice="alice">
+  音声が確認できなかったため、通話を終了いたします。 ありがとうございました。
+</Say>
+
   </Say>
 </Response>`;
   }

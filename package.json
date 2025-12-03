@@ -4,9 +4,9 @@
   "description": "LINE Bot 管理画面＋Flex配信＋画像アップロード＋リサイズ機能＋Twilio電話AI＋代引き注文",
   "main": "server-line.js",
   "scripts": {
-    "start": "node server-line.js",       // Render（LINE用）
-    "start-line": "node server-line.js",  // 手動LINE起動
-    "start-phone": "node server-phone.js" // 電話サーバー/Twilio起動
+    "start": "node server-line.js",       
+    "start-line": "node server-line.js",  
+    "start-phone": "node server-phone.js" 
   },
   "dependencies": {
     "@line/bot-sdk": "^7.6.0",

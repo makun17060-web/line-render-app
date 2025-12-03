@@ -2,12 +2,12 @@
 // Twilio 代引き専用 自動受付サーバー（ハイブリッド版）
 //
 // ・商品〜個数〜追加注文〜郵便番号まではプッシュ式（DTMF）
-// ・商品名は data/products.json から読み込み（先頭9件をメニューに）
 // ・郵便番号から 都道府県 + 市区町村 + 町名 まで自動取得
+// ・商品名は data/products.json から読み込み（先頭9件をメニューに）
 // ・「お名前」と「住所の続き（番地・建物名・部屋番号）」だけ OpenAI で丁寧な会話
 // ・連絡先電話番号はプッシュ式で入力
-// ・注文確定時：ログ + JSON保存 + 管理者LINE通知
 // ・最後に 商品代 + 送料 + 代引き手数料 の合計金額を確定金額として読み上げ
+// ・注文確定時に LINE 管理者へ通知（プッシュ）を送信
 
 "use strict";
 
@@ -22,7 +22,6 @@ const path = require("path");
 const DATA_DIR = path.join(__dirname, "data");
 const PRODUCTS_PATH = path.join(DATA_DIR, "products.json");
 const COD_LOG = path.join(DATA_DIR, "cod-phone-orders.log");
-const COD_JSON = path.join(DATA_DIR, "cod-orders.json"); // 一覧JSON（配列）保存用
 
 // data ディレクトリを必ず作成
 if (!fs.existsSync(DATA_DIR)) {
@@ -48,9 +47,10 @@ function readProducts() {
 const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const PORT = process.env.PORT || 3000;
 
-// LINE 管理者通知用
-const LINE_CHANNEL_ACCESS_TOKEN = (process.env.LINE_CHANNEL_ACCESS_TOKEN || "").trim();
-const ADMIN_LINE_USER_ID = (process.env.ADMIN_LINE_USER_ID || "").trim();
+// ★ LINE 通知用：管理者へのプッシュ通知に使用
+const LINE_CHANNEL_ACCESS_TOKEN =
+  (process.env.LINE_CHANNEL_ACCESS_TOKEN || "").trim();
+const LINE_ADMIN_USER_ID = (process.env.LINE_ADMIN_USER_ID || "").trim();
 
 // ==== 送料 & 代引き手数料 ==============================================
 
@@ -98,10 +98,10 @@ function detectRegionFromAddress(address = {}) {
 //   zip: "4780001",
 //   addr: { zip, prefecture, city, town, region, shipping },
 //   nameStage: "name" | "address" | "done",
-//   nameSpeech: "...",          // お客様が話した名前テキスト
-//   addressSpeech: "...",       // お客様が話した「住所の続き」テキスト
-//   phone: "09012345678",       // 連絡先電話番号（プッシュ入力）
-//   productMenu: [ { digit, id, name }, ... ] // この通話中のメニュー
+//   nameSpeech: "...",
+//   addressSpeech: "...",
+//   phone: "09012345678",
+//   productMenu: [ { digit, id, name }, ... ]
 // }
 const DTMF_ORDERS = {};
 
@@ -236,57 +236,78 @@ async function askOpenAIForNameAddress(stage, speechText, order) {
   }
 }
 
-// ==== 管理者にLINE通知を送る関数 =======================================
+// ==== LINE 管理者への通知関数 ==========================================
 
 /**
- * 管理者にLINEで電話注文の通知を送る
- * @param {object} orderRecord  /twilio/cod/summary で作った注文オブジェクト
+ * 電話代引き注文を LINE 管理者に通知
+ * @param {object} payload - 注文情報
  */
-async function sendAdminLineNotification(orderRecord) {
-  if (!LINE_CHANNEL_ACCESS_TOKEN || !ADMIN_LINE_USER_ID) {
+async function notifyLineAdminForCodOrder(payload) {
+  if (!LINE_CHANNEL_ACCESS_TOKEN || !LINE_ADMIN_USER_ID) {
     console.warn(
-      "LINE_CHANNEL_ACCESS_TOKEN または ADMIN_LINE_USER_ID が未設定のため、管理者通知は送信されません。"
+      "[COD/LINE] LINE_CHANNEL_ACCESS_TOKEN または LINE_ADMIN_USER_ID が未設定のため、通知をスキップします。"
     );
     return;
   }
 
-  const items = orderRecord.items || [];
-  const itemsLines = items.length
-    ? items.map((it) => {
-        const lineTotal =
-          (Number(it.price) || 0) * (Number(it.qty) || 0);
-        return `・${it.name} × ${it.qty}個 ＝ ${lineTotal}円`;
-      })
-    : ["（商品情報なし）"];
-
-  const addr = orderRecord.addr || {};
-  const baseAddr = `${addr.prefecture || ""}${addr.city || ""}${addr.town || ""}`;
-  const fullAddr = `${baseAddr}${orderRecord.addressSpeech || ""}`;
-
-  const tsJp = new Date(orderRecord.ts || Date.now()).toLocaleString(
-    "ja-JP",
-    {
-      timeZone: "Asia/Tokyo",
-    }
-  );
-
-  const text =
-    "【電話 代引き注文 受付】\n" +
-    `受付時刻：${tsJp}\n` +
-    `お名前　：${orderRecord.nameSpeech || "（未取得）"} 様\n` +
-    `電話番号：${orderRecord.phone || "（未取得）"}\n` +
-    `郵便番号：${orderRecord.zip || "（未取得）"}\n` +
-    `ご住所　：${fullAddr || "（未取得）"}\n` +
-    "\n" +
-    "■ご注文内容\n" +
-    itemsLines.join("\n") +
-    "\n\n" +
-    `商品小計：${orderRecord.itemsTotal}円\n` +
-    `送料　　：${orderRecord.shipping}円\n` +
-    `代引手数料：${orderRecord.codFee}円\n` +
-    `合計金額：${orderRecord.finalTotal}円\n`;
-
   try {
+    const {
+      ts,
+      callSid,
+      items = [],
+      zip,
+      addr,
+      nameSpeech,
+      addressSpeech,
+      phone,
+      itemsTotal,
+      shipping,
+      codFee,
+      finalTotal,
+    } = payload;
+
+    const when = ts || new Date().toISOString();
+
+    const addrBase = addr
+      ? `${addr.prefecture || ""}${addr.city || ""}${addr.town || ""}`
+      : "";
+    const fullAddress =
+      addrBase || addressSpeech
+        ? `${addrBase}${addressSpeech || ""}`
+        : "（未取得）";
+
+    const nameText = nameSpeech || "（未取得）";
+    const phoneText = phone || "（未取得）";
+    const zipText = zip || "（未取得）";
+    const regionText = addr?.region || "（不明）";
+
+    const itemsLines = items.length
+      ? items
+          .map((it) => {
+            const lineTotal = (it.price || 0) * (it.qty || 0);
+            return `・${it.name || "商品"} x ${it.qty || 0}個 = ${
+              lineTotal
+            }円`;
+          })
+          .join("\n")
+      : "（商品情報がありません）";
+
+    const message =
+      `【電話代引き 新規注文】\n` +
+      `日時: ${when}\n` +
+      `CallSid: ${callSid || "（なし）"}\n\n` +
+      `▼ご注文商品\n${itemsLines}\n\n` +
+      `商品小計: ${itemsTotal}円\n` +
+      `送料: ${shipping}円（地域: ${regionText}）\n` +
+      `代引き手数料: ${codFee}円\n` +
+      `合計金額: ${finalTotal}円\n\n` +
+      `▼お客様情報\n` +
+      `お名前: ${nameText}\n` +
+      `郵便番号: ${zipText}\n` +
+      `住所: ${fullAddress}\n` +
+      `電話番号: ${phoneText}\n\n` +
+      `※この注文は Twilio 電話受付（代引き専用）からです。`;
+
     const resp = await fetch("https://api.line.me/v2/bot/message/push", {
       method: "POST",
       headers: {
@@ -294,22 +315,29 @@ async function sendAdminLineNotification(orderRecord) {
         Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`,
       },
       body: JSON.stringify({
-        to: ADMIN_LINE_USER_ID,
+        to: LINE_ADMIN_USER_ID,
         messages: [
           {
             type: "text",
-            text,
+            text: message.slice(0, 2000), // 念のため 2000文字でカット
           },
         ],
       }),
     });
 
     if (!resp.ok) {
-      const body = await resp.text().catch(() => "");
-      console.error("LINE admin notify error:", resp.status, body);
+      const text = await resp.text().catch(() => "");
+      console.error(
+        "[COD/LINE] push error:",
+        resp.status,
+        resp.statusText,
+        text
+      );
+    } else {
+      console.log("[COD/LINE] 管理者へ注文通知を送信しました。");
     }
   } catch (e) {
-    console.error("LINE admin notify fetch error:", e);
+    console.error("[COD/LINE] notify error:", e);
   }
 }
 
@@ -724,9 +752,10 @@ app.post("/twilio/cod/name-addr-handler", urlencoded, async (req, res) => {
     order.nameStage = "address";
     DTMF_ORDERS[callSid] = order;
 
-    const baseAddr = order.addr
-      ? `${order.addr.prefecture || ""}${order.addr.city || ""}${order.addr.town || ""}`
-      : "";
+    const baseAddr =
+      order.addr
+        ? `${order.addr.prefecture || ""}${order.addr.city || ""}${order.addr.town || ""}`
+        : "";
 
     const addrGuide = baseAddr
       ? `郵便番号から、「${baseAddr}」まではこちらで確認できていますので、 その続きの番地や建物名、お部屋番号をゆっくりお話しください。`
@@ -817,10 +846,10 @@ app.post("/twilio/cod/phone-handler", urlencoded, (req, res) => {
 });
 
 // ======================================================================
-// 6) 合計金額の読み上げ → ログ保存・LINE通知 → 終了 /twilio/cod/summary
+// 6) 合計金額の読み上げ → 終了 /twilio/cod/summary
 // ======================================================================
 
-app.post("/twilio/cod/summary", urlencoded, (req, res) => {
+app.post("/twilio/cod/summary", urlencoded, async (req, res) => {
   const callSid = req.body.CallSid || "";
   const order = DTMF_ORDERS[callSid] || { items: [] };
 
@@ -857,9 +886,10 @@ app.post("/twilio/cod/summary", urlencoded, (req, res) => {
   const codFee = COD_FEE;
   const finalTotal = itemsTotal + shipping + codFee;
 
-  const baseAddr = order.addr
-    ? `${order.addr.prefecture || ""}${order.addr.city || ""}${order.addr.town || ""}`
-    : "";
+  const baseAddr =
+    order.addr
+      ? `${order.addr.prefecture || ""}${order.addr.city || ""}${order.addr.town || ""}`
+      : "";
 
   const fullAddressText =
     baseAddr || addressSpeech
@@ -870,15 +900,16 @@ app.post("/twilio/cod/summary", urlencoded, (req, res) => {
     nameSpeech || fullAddressText
       ? ` お名前とご住所は、「${[
           nameSpeech || "",
-          fullAddressText || ""
+          fullAddressText || "",
         ]
           .filter(Boolean)
           .join("、")}」とお伺いしました。`
       : "";
 
-  const phoneText = phoneDigits
-    ? ` ご連絡先のお電話番号は、「${phoneDigits}」でお伺いしました。`
-    : "";
+  const phoneText =
+    phoneDigits
+      ? ` ご連絡先のお電話番号は、「${phoneDigits}」でお伺いしました。`
+      : "";
 
   const summaryText =
     itemsText +
@@ -888,8 +919,8 @@ app.post("/twilio/cod/summary", urlencoded, (req, res) => {
     `${shippingText} 代引き手数料は${codFee}円です。 ` +
     `商品代金、送料、代引き手数料を合わせたお支払い合計金額は、${finalTotal}円になります。`;
 
-  // 今回の注文データを1つのオブジェクトにまとめる
-  const orderRecord = {
+  // ログに残す（★ このログ内容をそのまま LINE 通知にも使う）
+  const logPayload = {
     ts: new Date().toISOString(),
     callSid,
     items: order.items,
@@ -904,30 +935,14 @@ app.post("/twilio/cod/summary", urlencoded, (req, res) => {
     finalTotal,
   };
 
-  // ログファイル（1行1注文のテキスト）に追記
   try {
-    fs.appendFileSync(
-      COD_LOG,
-      JSON.stringify(orderRecord) + "\n",
-      "utf8"
-    );
+    fs.appendFileSync(COD_LOG, JSON.stringify(logPayload) + "\n", "utf8");
   } catch (e) {
     console.error("cod log write error:", e);
   }
 
-  // 注文一覧JSON（配列）にも保存：cod-orders.json
-  try {
-    const list = safeReadJSON(COD_JSON, []);
-    list.push(orderRecord);
-    fs.writeFileSync(COD_JSON, JSON.stringify(list, null, 2), "utf8");
-  } catch (e) {
-    console.error("cod json write error:", e);
-  }
-
-  // 管理者にLINE通知（awaitしないでバックグラウンド実行）
-  sendAdminLineNotification(orderRecord).catch((e) => {
-    console.error("sendAdminLineNotification error:", e);
-  });
+  // ★ LINE 管理者へ通知（失敗しても通話フローには影響しないように await で囲むだけ）
+  await notifyLineAdminForCodOrder(logPayload);
 
   // 使い終わったので削除
   delete DTMF_ORDERS[callSid];
@@ -963,7 +978,7 @@ app.get("/api/health", (_req, res) => {
     env: {
       OPENAI_API_KEY: !!OPENAI_API_KEY,
       LINE_CHANNEL_ACCESS_TOKEN: !!LINE_CHANNEL_ACCESS_TOKEN,
-      ADMIN_LINE_USER_ID: !!ADMIN_LINE_USER_ID,
+      LINE_ADMIN_USER_ID: !!LINE_ADMIN_USER_ID,
     },
   });
 });
@@ -975,4 +990,9 @@ app.get("/api/health", (_req, res) => {
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`📦 COD phone hybrid server started on port ${PORT}`);
   console.log("   Twilio inbound URL: POST /twilio/cod");
+  console.log(
+    "   LINE notify:",
+    LINE_CHANNEL_ACCESS_TOKEN ? "token OK" : "token MISSING",
+    LINE_ADMIN_USER_ID ? "admin OK" : "admin MISSING"
+  );
 });

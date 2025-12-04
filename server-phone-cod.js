@@ -1,14 +1,14 @@
 // server-phone-cod.js
-// Twilio 代引き専用 自動受付サーバー（会員番号方式）
+// Twilio 代引き専用 自動受付サーバー（会員番号方式・住所事前登録）
 //
 // ・商品〜個数〜追加注文まではプッシュ式（DTMF）
-// ・名前・住所・電話番号は、事前に Web 画面などで登録してもらう
-//    - data/cod-customers.json に保存しておく
-// ・電話では最後に「会員番号」を DTMF で押してもらい、
-//    - 会員情報（名前・住所・電話）を読み出す
+// ・名前・住所・電話番号は、事前に Web / LINE で登録してもらう
+//    - data/cod-customers.json に保存（code: {name, phone, zip, address}）
+// ・電話では最後に「会員番号」を DTMF で押してもらう
+//    - その会員番号から登録済みの名前・住所・電話を自動取得
 // ・住所文字列から地域を判定して送料計算
-// ・最後に 商品代 + 送料 + 代引き手数料 の合計金額を読み上げ
-// ・注文確定時に LINE 管理者へ通知（プッシュ）
+// ・注文確定時に JSON ログファイルへ保存 + 管理者に LINE 通知
+// ・住所登録時にも管理者に LINE 通知（新規 or 更新）
 
 "use strict";
 
@@ -48,12 +48,15 @@ function readProducts() {
   return safeReadJSON(PRODUCTS_PATH, []);
 }
 
+/**
+ * 会員データ
+ * 形式:
+ * {
+ *   "1234": { name, phone, zip, address },
+ *   "5678": { ... }
+ * }
+ */
 function readCustomers() {
-  // 形式:
-  // {
-  //   "1234": { name, phone, zip, address },
-  //   "5678": { ... }
-  // }
   return safeReadJSON(CUSTOMERS_PATH, {});
 }
 
@@ -114,12 +117,12 @@ function detectRegionFromAddress(address = {}) {
 // }
 const DTMF_ORDERS = {};
 
-// ==== LINE 管理者への通知関数 ==========================================
+// ==== LINE 管理者への通知関数（注文）===================================
 
 async function notifyLineAdminForCodOrder(payload) {
   if (!LINE_CHANNEL_ACCESS_TOKEN || !LINE_ADMIN_USER_ID) {
     console.warn(
-      "[COD/LINE] LINE_CHANNEL_ACCESS_TOKEN または LINE_ADMIN_USER_ID が未設定のため、通知をスキップします。"
+      "[COD/LINE] LINE_CHANNEL_ACCESS_TOKEN または LINE_ADMIN_USER_ID が未設定のため、注文通知をスキップします。"
     );
     return;
   }
@@ -149,9 +152,7 @@ async function notifyLineAdminForCodOrder(payload) {
       ? items
           .map((it) => {
             const lineTotal = (it.price || 0) * (it.qty || 0);
-            return `・${it.name || "商品"} x ${it.qty || 0}個 = ${
-              lineTotal
-            }円`;
+            return `・${it.name || "商品"} x ${it.qty || 0}個 = ${lineTotal}円`;
           })
           .join("\n")
       : "（商品情報がありません）";
@@ -195,7 +196,7 @@ async function notifyLineAdminForCodOrder(payload) {
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
       console.error(
-        "[COD/LINE] push error:",
+        "[COD/LINE] push(order) error:",
         resp.status,
         resp.statusText,
         text
@@ -204,7 +205,66 @@ async function notifyLineAdminForCodOrder(payload) {
       console.log("[COD/LINE] 管理者へ注文通知を送信しました。");
     }
   } catch (e) {
-    console.error("[COD/LINE] notify error:", e);
+    console.error("[COD/LINE] notify(order) error:", e);
+  }
+}
+
+// ==== LINE 管理者への通知関数（住所登録）===============================
+
+async function notifyLineAdminForCustomerRegister(payload) {
+  if (!LINE_CHANNEL_ACCESS_TOKEN || !LINE_ADMIN_USER_ID) {
+    console.warn(
+      "[COD/LINE] LINE_CHANNEL_ACCESS_TOKEN または LINE_ADMIN_USER_ID が未設定のため、住所登録通知をスキップします。"
+    );
+    return;
+  }
+
+  try {
+    const { ts, code, name, phone, zip, address, isUpdate } = payload;
+    const when = ts || new Date().toISOString();
+
+    const mode = isUpdate ? "【電話代引き 住所登録（更新）】" : "【電話代引き 住所登録（新規）】";
+
+    const message =
+      `${mode}\n` +
+      `日時: ${when}\n\n` +
+      `会員番号: ${code}\n` +
+      `お名前: ${name}\n` +
+      `電話番号: ${phone || "（未入力）"}\n` +
+      `郵便番号: ${zip || "（未入力）"}\n` +
+      `住所: ${address}\n\n` +
+      `※この登録は cod-register.html から行われました。`;
+
+    const resp = await fetch("https://api.line.me/v2/bot/message/push", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`,
+      },
+      body: JSON.stringify({
+        to: LINE_ADMIN_USER_ID,
+        messages: [
+          {
+            type: "text",
+            text: message.slice(0, 2000),
+          },
+        ],
+      }),
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      console.error(
+        "[COD/LINE] push(customer) error:",
+        resp.status,
+        resp.statusText,
+        text
+      );
+    } else {
+      console.log("[COD/LINE] 管理者へ住所登録通知を送信しました。");
+    }
+  } catch (e) {
+    console.error("[COD/LINE] notify(customer) error:", e);
   }
 }
 
@@ -215,33 +275,83 @@ const urlencoded = express.urlencoded({ extended: false });
 const jsonParser = express.json();
 
 // ======================================================================
-// 0) 会員情報 登録用 API（住所入力の別画面から使う想定）
+// 0) 会員情報 登録用 API（住所入力の別画面から使う）
 // ======================================================================
 //
 // POST /api/cod/customers
 // body: { code, name, phone, zip, address }
 //
-// ※LIFF や通常の Web フォームから fetch で叩いて cod-customers.json を更新する想定。
+// - code: 4〜8桁の数字
+// - すでに同じ code が存在する場合はエラー（重複チェック）
+//   → { ok:false, error:"...", code:"DUPLICATE_CODE" }
+//
+// GET /api/cod/customers/:code
+// - 登録内容の確認用（必要であれば）
 
-app.post("/api/cod/customers", jsonParser, (req, res) => {
+app.post("/api/cod/customers", jsonParser, async (req, res) => {
   try {
     const { code, name, phone, zip, address } = req.body || {};
 
-    if (!code || !/^\d+$/.test(String(code))) {
-      return res.status(400).json({ ok: false, error: "code(会員番号) が不正です" });
+    const codeStr = String(code || "").trim();
+
+    if (!codeStr || !/^\d{4,8}$/.test(codeStr)) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "code(会員番号) は4〜8桁の数字で入力してください。" });
     }
-    if (!name || !address) {
-      return res.status(400).json({ ok: false, error: "name または address が未入力です" });
+    if (!name || !String(name).trim()) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "name(お名前) が未入力です。" });
+    }
+    if (!address || !String(address).trim()) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "address(ご住所) が未入力です。" });
     }
 
+    const phoneStr = phone ? String(phone).replace(/-/g, "").trim() : "";
+    if (phoneStr && !/^\d{9,11}$/.test(phoneStr)) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "phone(電話番号) は9〜11桁の数字で入力してください。" });
+    }
+    const zipStr = zip ? String(zip).replace(/-/g, "").trim() : "";
+
     const customers = readCustomers();
-    customers[String(code)] = {
-      name: String(name),
-      phone: phone ? String(phone) : "",
-      zip: zip ? String(zip) : "",
-      address: String(address),
+
+    if (customers[codeStr]) {
+      // 重複チェック
+      return res.status(400).json({
+        ok: false,
+        error: "この会員番号はすでに登録されています。",
+        code: "DUPLICATE_CODE",
+      });
+    }
+
+    const now = new Date().toISOString();
+
+    customers[codeStr] = {
+      name: String(name).trim(),
+      phone: phoneStr,
+      zip: zipStr,
+      address: String(address).trim(),
+      updatedAt: now,
+      createdAt: now,
     };
+
     writeJSON(CUSTOMERS_PATH, customers);
+
+    // 管理者へ LINE 通知（新規登録）
+    await notifyLineAdminForCustomerRegister({
+      ts: now,
+      code: codeStr,
+      name: String(name).trim(),
+      phone: phoneStr,
+      zip: zipStr,
+      address: String(address).trim(),
+      isUpdate: false,
+    });
 
     return res.json({ ok: true });
   } catch (e) {
@@ -252,11 +362,15 @@ app.post("/api/cod/customers", jsonParser, (req, res) => {
 
 app.get("/api/cod/customers/:code", (req, res) => {
   const code = (req.params.code || "").trim();
-  if (!code) return res.status(400).json({ ok: false, error: "code is required" });
+  if (!code) {
+    return res.status(400).json({ ok: false, error: "code is required" });
+  }
 
   const customers = readCustomers();
   const c = customers[code];
-  if (!c) return res.status(404).json({ ok: false, error: "not found" });
+  if (!c) {
+    return res.status(404).json({ ok: false, error: "not found" });
+  }
 
   return res.json({ ok: true, customer: c });
 });
@@ -500,7 +614,7 @@ app.post("/twilio/cod/more-retry", urlencoded, (req, res) => {
 });
 
 // ======================================================================
-// 5) 会員番号入力（DTMF）→ 会員情報の読込
+// 5) 会員番号入力（DTMF）→ 会員情報の読込 & 送料計算
 // ======================================================================
 
 app.post("/twilio/cod/member", urlencoded, (req, res) => {
@@ -625,7 +739,7 @@ app.post("/twilio/cod/summary", urlencoded, async (req, res) => {
   let itemsText = "";
   let itemsTotal = 0;
 
-  if (order.items.length === 0) {
+  if (!order.items || order.items.length === 0) {
     itemsText = "ご注文内容が確認できませんでした。";
   } else {
     const partsText = order.items.map((item) => {
@@ -687,14 +801,17 @@ app.post("/twilio/cod/summary", urlencoded, async (req, res) => {
     finalTotal,
   };
 
+  // ログファイルに1行追記
   try {
     fs.appendFileSync(COD_LOG, JSON.stringify(logPayload) + "\n", "utf8");
   } catch (e) {
     console.error("cod log write error:", e);
   }
 
+  // 管理者へ LINE 通知
   await notifyLineAdminForCodOrder(logPayload);
 
+  // メモリから削除
   delete DTMF_ORDERS[callSid];
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>

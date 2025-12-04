@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>住所登録（電話注文用）</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      padding: 16px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f6f3e9;
+      color: #333;
+    }
+    h1 {
+      font-size: 20px;
+      margin: 0 0 8px;
+    }
+    p.desc {
+      font-size: 13px;
+      margin: 0 0 16px;
+      color: #555;
+      white-space: pre-line;
+    }
+    .card {
+      background: #fff;
+      border-radius: 8px;
+      padding: 12px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+    }
+    .field {
+      margin-bottom: 10px;
+    }
+    .field label {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+    .field input,
+    .field select,
+    .field textarea {
+      width: 100%;
+      padding: 8px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      font-size: 14px;
+    }
+    .field small {
+      display: block;
+      font-size: 11px;
+      color: #777;
+      margin-top: 2px;
+    }
+    .buttons {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    button {
+      flex: 1;
+      padding: 10px;
+      border-radius: 6px;
+      border: none;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button.primary {
+      background: #c85a2e;
+      color: #fff;
+    }
+    button.secondary {
+      background: #eee;
+      color: #333;
+    }
+    .small {
+      font-size: 11px;
+      color: #777;
+      margin-top: 8px;
+    }
+    .notice {
+      font-size: 11px;
+      color: #b33;
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>住所登録（電話注文用）</h1>
+  <p class="desc">
+    これからかける電話注文のための「お届け先住所」と「電話番号」を登録します。
+    一度登録すると、次回から電話での入力がかんたんになります。
+  </p>
+
+  <div class="card">
+    <div class="field">
+      <label for="name">お名前</label>
+      <input id="name" type="text" placeholder="例）磯屋 太郎" />
+      <small>LINEの表示名をそのまま使う場合は下のボタンを押してください。</small>
+    </div>
+
+    <div class="field">
+      <label for="phone">電話番号（電話注文で発信する番号）</label>
+      <input id="phone" type="tel" inputmode="tel" placeholder="例）09012345678" />
+      <small>ハイフン無しで入力してください。<br>この番号から Twilio の電話番号へ発信した場合に、住所を自動でひも付けます。</small>
+    </div>
+
+    <div class="field">
+      <label for="zip">郵便番号</label>
+      <input id="zip" type="text" inputmode="numeric" placeholder="例）4411234" />
+      <small>ハイフン無しで入力してください。</small>
+    </div>
+
+    <div class="field">
+      <label for="pref">都道府県</label>
+      <input id="pref" type="text" placeholder="例）愛知県" />
+    </div>
+
+    <div class="field">
+      <label for="addr1">市区町村・番地</label>
+      <input id="addr1" type="text" placeholder="例）豊橋市○○町1-2-3" />
+    </div>
+
+    <div class="field">
+      <label for="addr2">建物名・部屋番号（任意）</label>
+      <input id="addr2" type="text" placeholder="例）○○マンション101号室" />
+    </div>
+
+    <div class="field">
+      <label for="memo">備考（任意）</label>
+      <textarea id="memo" rows="2" placeholder="表札が違う・インターホンの場所などがあれば"></textarea>
+    </div>
+
+    <div class="buttons">
+      <button type="button" class="secondary" id="btnUseLineName">
+        LINEの名前を使う
+      </button>
+      <button type="button" class="primary" id="btnSave">
+        この内容で登録する
+      </button>
+    </div>
+
+    <p class="small">
+      入力した情報は、磯屋のサーバーで電話注文と配送のためだけに利用されます。
+    </p>
+    <p class="notice" id="message"></p>
+  </div>
+
+  <!-- LIFF SDK -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script>
+    // ★ここをあなたの実際の LIFF ID に変更してください
+    const LIFF_ID = "YOUR_LIFF_ID_HERE";
+
+    // 住所登録APIのURL（server-phone-cod.js 側と合わせる）
+    // 例: app.post('/api/address/register', ...)
+    const ADDRESS_REGISTER_ENDPOINT = "/api/address/register";
+
+    const elName   = document.getElementById("name");
+    const elPhone  = document.getElementById("phone");
+    const elZip    = document.getElementById("zip");
+    const elPref   = document.getElementById("pref");
+    const elAddr1  = document.getElementById("addr1");
+    const elAddr2  = document.getElementById("addr2");
+    const elMemo   = document.getElementById("memo");
+    const elMsg    = document.getElementById("message");
+    const btnUseLineName = document.getElementById("btnUseLineName");
+    const btnSave  = document.getElementById("btnSave");
+
+    let lineUserId = null;
+    let lineDisplayName = null;
+
+    // --- LIFF 初期化 ---
+    async function initLiff() {
+      try {
+        await liff.init({ liffId: LIFF_ID });
+
+        if (!liff.isLoggedIn()) {
+          liff.login();
+          return;
+        }
+
+        const profile = await liff.getProfile();
+        lineUserId = profile.userId;
+        lineDisplayName = profile.displayName;
+
+        // 名前欄が空なら、LINE名を仮で入れておく（ユーザーが後から変更も可能）
+        if (!elName.value) {
+          elName.value = lineDisplayName;
+        }
+      } catch (err) {
+        console.error("LIFF init error:", err);
+        showMessage("LIFF の初期化でエラーが発生しました。LINEアプリから開き直してみてください。");
+      }
+    }
+
+    // --- メッセージ表示 ---
+    function showMessage(text, isError = true) {
+      elMsg.textContent = text || "";
+      elMsg.style.color = isError ? "#b33" : "#2c7c31";
+    }
+
+    // --- 入力チェック ---
+    function validate() {
+      if (!elName.value.trim()) {
+        showMessage("お名前を入力してください。");
+        return false;
+      }
+      if (!elPhone.value.trim()) {
+        showMessage("電話番号を入力してください。");
+        return false;
+      }
+      const phoneDigits = elPhone.value.replace(/[^\d+]/g, "");
+      if (!/^\+?\d{8,15}$/.test(phoneDigits)) {
+        showMessage("電話番号の形式を確認してください。（数字のみ・必要なら+81を含めてください）");
+        return false;
+      }
+      if (!elZip.value.trim()) {
+        showMessage("郵便番号を入力してください。");
+        return false;
+      }
+      if (!elPref.value.trim()) {
+        showMessage("都道府県を入力してください。");
+        return false;
+      }
+      if (!elAddr1.value.trim()) {
+        showMessage("市区町村・番地を入力してください。");
+        return false;
+      }
+      showMessage(""); // エラー消去
+      return true;
+    }
+
+    // --- 保存処理 ---
+    async function saveAddress() {
+      if (!validate()) return;
+
+      // Twilio の From とのマッチをしやすくするため、電話番号の空白やハイフンを削除
+      let phone = elPhone.value.replace(/[^\d+]/g, "");
+
+      const payload = {
+        lineUserId,
+        name: elName.value.trim(),
+        phone,
+        zip: elZip.value.trim(),
+        prefecture: elPref.value.trim(),
+        address1: elAddr1.value.trim(),
+        address2: elAddr2.value.trim(),
+        memo: elMemo.value.trim()
+      };
+
+      try {
+        showMessage("送信中です…", false);
+
+        const res = await fetch(ADDRESS_REGISTER_ENDPOINT, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          throw new Error("HTTP " + res.status);
+        }
+
+        const data = await res.json().catch(() => ({}));
+
+        if (!data || data.ok === false) {
+          throw new Error(data && data.error ? data.error : "登録に失敗しました。");
+        }
+
+        showMessage("住所を登録しました。ありがとうございます！", false);
+
+        // 数秒後に LIFF ウィンドウを閉じる（LINEアプリ内の場合）
+        setTimeout(() => {
+          if (window.liff && liff.isInClient()) {
+            liff.closeWindow();
+          }
+        }, 1200);
+      } catch (err) {
+        console.error("saveAddress error:", err);
+        showMessage("登録時にエラーが発生しました。時間をおいてもう一度お試しください。");
+      }
+    }
+
+    // --- イベント設定 ---
+    btnUseLineName.addEventListener("click", () => {
+      if (lineDisplayName) {
+        elName.value = lineDisplayName;
+        showMessage("LINEの表示名をセットしました。", false);
+      } else {
+        showMessage("LINEの情報がまだ取得できていません。少し待ってから再度お試しください。");
+      }
+    });
+
+    btnSave.addEventListener("click", saveAddress);
+
+    // ページ読み込み時に LIFF 初期化
+    document.addEventListener("DOMContentLoaded", initLiff);
+  </script>
+</body>
+</html>

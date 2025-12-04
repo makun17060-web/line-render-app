@@ -1,9 +1,12 @@
-// createRichMenu_2x2.js
-// 2段2列リッチメニュー(2500x1686)
-// 左上=問い合わせ(メッセージ)
-// 右上=直接注文(テキスト送信)
-// 左下=オンライン注文(LIFFミニアプリ経由で products.html)
-// 右下=住所登録(URI：cod-register.html)
+// createRichMenu_6areas.js
+// 3列×2段リッチメニュー(2500x1686 / 6分割)
+//
+// 左上：問い合わせ（メッセージ）
+// 左下：オンライン注文（LIFFミニアプリ products.html）
+// 中央上：電話注文（メッセージ）
+// 中央下：住所登録（URI：cod-register.html など）
+// 右上：ECショップ（URI：ECショップ本番URL）
+// 右下：直接注文（メッセージ）
 
 "use strict";
 
@@ -16,11 +19,12 @@ const {
   LINE_CHANNEL_ACCESS_TOKEN,
   LINE_CHANNEL_SECRET,
   LIFF_ID_MINIAPP,
-  SURVEY_URL,
+  SURVEY_URL,          // いまは未使用（残しておいてOK）
   MEMBER_URL,          // いまは未使用（残しておいてOK）
   RICHMENU_IMAGE,
   PUBLIC_BASE_URL,
-  ADDRESS_REGISTER_URL, // ★ 住所登録ページ用（任意）
+  ADDRESS_REGISTER_URL, // 住所登録ページ用（任意）
+  EC_SHOP_URL,          // ★ ECショップ本番URL（MakeShop 等）
 } = process.env;
 
 // ===== 必須チェック =====
@@ -45,7 +49,9 @@ const sanitizeBase = (u) =>
     .replace(/[\/\.\s]+$/, "");
 
 // Renderの公開URL（envなければ既定値）
-const baseUrl = sanitizeBase(PUBLIC_BASE_URL || "https://line-render-app-1.onrender.com");
+const baseUrl = sanitizeBase(
+  PUBLIC_BASE_URL || "https://line-render-app-1.onrender.com"
+);
 
 // products.html（①商品選択）の実URL（ログ用）
 const PRODUCTS_URL = `${baseUrl}/public/products.html`;
@@ -59,75 +65,101 @@ const MINIAPP_LIFF_URL =
     `/public/products.html?v=${CACHE_BUSTER}`
   )}`;
 
-// 他URL
-const surveyUrl = (SURVEY_URL || "https://example.com/survey").trim();
-
 // ★ 住所登録ページURL
 //   - 通常は baseUrl/public/cod-register.html にしておく
 //   - もし電話専用サーバーが別ドメインなら ADDRESS_REGISTER_URL にフルURLを入れて上書き
 const addressRegisterUrl = (ADDRESS_REGISTER_URL || `${baseUrl}/public/cod-register.html`).trim();
 
+// ★ ECショップURL
+//   - MakeShop 等の本番ショップURLを EC_SHOP_URL に入れてください
+//   - 未設定の場合はいったん baseUrl を使う（要あとで修正）
+const ecShopUrl = (EC_SHOP_URL || baseUrl).trim();
+
 (async () => {
   try {
+    // ==== 6分割用リッチメニュー定義 ====
+    // 2500 x 1686 を 3列×2段に分割
+    // 幅：833 / 834 / 833，高さ：843 / 843
     const richMenu = {
       size: { width: 2500, height: 1686 },
       selected: true,
-      name: "磯屋_2x2",
+      name: "磯屋_3x2_6areas",
       chatBarText: "メニュー",
       areas: [
-        // 左上：問い合わせ（メッセージ送信）
+        // --- 1行目 ---
+        // 左上：問い合わせ（メッセージ）
         {
-          bounds: { x: 0, y: 0, width: 1250, height: 843 },
+          bounds: { x: 0, y: 0, width: 833, height: 843 },
           action: {
             type: "message",
+            label: "問い合わせ",
             text: "問い合わせ",
           },
         },
-
-        // 右上：直接注文（テキスト送信）
+        // 中央上：電話注文（メッセージ）
         {
-          bounds: { x: 1250, y: 0, width: 1250, height: 843 },
+          bounds: { x: 833, y: 0, width: 834, height: 843 },
           action: {
             type: "message",
-            label: "直接注文",
-            text: "直接注文",
+            label: "電話注文",
+            text: "電話注文",
+          },
+        },
+        // 右上：ECショップ（URI）
+        {
+          bounds: { x: 1667, y: 0, width: 833, height: 843 },
+          action: {
+            type: "uri",
+            label: "ECショップ",
+            uri: ecShopUrl,
           },
         },
 
-        // 左下：オンライン注文（LIFF経由で products.html）
+        // --- 2行目 ---
+        // 左下：オンライン注文（LIFFミニアプリ）
         {
-          bounds: { x: 0, y: 843, width: 1250, height: 843 },
+          bounds: { x: 0, y: 843, width: 833, height: 843 },
           action: {
             type: "uri",
             label: "オンライン注文",
             uri: MINIAPP_LIFF_URL,
           },
         },
-
-        // 右下：住所登録（cod-register.html）
+        // 中央下：住所登録（住所登録ページ）
         {
-          bounds: { x: 1250, y: 843, width: 1250, height: 843 },
+          bounds: { x: 833, y: 843, width: 834, height: 843 },
           action: {
             type: "uri",
             label: "住所登録",
             uri: addressRegisterUrl,
           },
         },
+        // 右下：直接注文（メッセージ）
+        {
+          bounds: { x: 1667, y: 843, width: 833, height: 843 },
+          action: {
+            type: "message",
+            label: "直接注文",
+            text: "直接注文",
+          },
+        },
       ],
     };
 
-    console.log("=== createRichMenu start ===");
+    console.log("=== createRichMenu(6 areas) start ===");
     console.log("BASE URL:", baseUrl);
     console.log("PRODUCTS_URL:", PRODUCTS_URL);
     console.log("ONLINE→LIFF:", MINIAPP_LIFF_URL);
-    console.log("ADDRESS_REGISTER_URL:", addressRegisterUrl); // ★ログ出力
+    console.log("ADDRESS_REGISTER_URL:", addressRegisterUrl);
+    console.log("EC_SHOP_URL:", ecShopUrl);
 
     // 1) リッチメニュー作成
     const richMenuId = await client.createRichMenu(richMenu);
     console.log("✅ richMenuId:", richMenuId);
 
     // 2) 画像アップロード（publicから読む）
-    const imageFile = (RICHMENU_IMAGE || "richmenu_2x2_2500x1686.jpg").trim();
+    //    6分割用の画像ファイル名に変更してください
+    const imageFile = (RICHMENU_IMAGE || "richmenu_6_2500x1686.jpg").trim();
     const imagePath = path.join(__dirname, "public", imageFile);
 
     if (!fs.existsSync(imagePath)) {
@@ -160,7 +192,9 @@ const addressRegisterUrl = (ADDRESS_REGISTER_URL || `${baseUrl}/public/cod-regis
     await client.setDefaultRichMenu(richMenuId);
     console.log("✅ setDefaultRichMenu OK");
 
-    console.log("🎉 完了！左下→オンライン注文（ミニアプリ） / 右下→住所登録ページ");
+    console.log("🎉 完了！6分割リッチメニューをデフォルトに設定しました。");
+    console.log("   左上：問い合わせ / 左下：オンライン注文 / 中央上：電話注文");
+    console.log("   中央下：住所登録 / 右上：ECショップ / 右下：直接注文");
 
   } catch (e) {
     console.error("❌ Error:", e?.message);

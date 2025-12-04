@@ -1,16 +1,14 @@
 // server-phone-cod.js
-// Twilio 代引き専用 自動受付サーバー（ハイブリッド版・分割住所版）
+// Twilio 代引き専用 自動受付サーバー（会員番号方式）
 //
 // ・商品〜個数〜追加注文まではプッシュ式（DTMF）
-// ・名前は音声入力 ＋ OpenAI で丁寧な会話
-// ・住所は「都道府県」「市区町村」「町名」「番地〜建物・部屋番号」の4分割で音声入力
-// ・4つを結合して Google Maps Geocoding API で住所チェック
-//   - status=OK なら partial_match でも OK として進む
-// ・地域は住所文字列から判定して送料計算
-// ・連絡先電話番号はプッシュ式で入力
+// ・名前・住所・電話番号は、事前に Web 画面などで登録してもらう
+//    - data/cod-customers.json に保存しておく
+// ・電話では最後に「会員番号」を DTMF で押してもらい、
+//    - 会員情報（名前・住所・電話）を読み出す
+// ・住所文字列から地域を判定して送料計算
 // ・最後に 商品代 + 送料 + 代引き手数料 の合計金額を読み上げ
 // ・注文確定時に LINE 管理者へ通知（プッシュ）
-// ・住所録音時間は speechTimeout=5 / timeout=10 で余裕あり
 
 "use strict";
 
@@ -20,13 +18,12 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 
-// Node.js 18+ なら fetch はグローバル。古い場合は node-fetch 等を追加してください。
-
 // ==== パス・ファイル ====================================================
 
 const DATA_DIR = path.join(__dirname, "data");
 const PRODUCTS_PATH = path.join(DATA_DIR, "products.json");
 const COD_LOG = path.join(DATA_DIR, "cod-phone-orders.log");
+const CUSTOMERS_PATH = path.join(DATA_DIR, "cod-customers.json");
 
 // data ディレクトリを必ず作成
 if (!fs.existsSync(DATA_DIR)) {
@@ -43,22 +40,31 @@ function safeReadJSON(p, fb) {
   }
 }
 
+function writeJSON(p, obj) {
+  fs.writeFileSync(p, JSON.stringify(obj, null, 2), "utf8");
+}
+
 function readProducts() {
   return safeReadJSON(PRODUCTS_PATH, []);
 }
 
+function readCustomers() {
+  // 形式:
+  // {
+  //   "1234": { name, phone, zip, address },
+  //   "5678": { ... }
+  // }
+  return safeReadJSON(CUSTOMERS_PATH, {});
+}
+
 // ==== 環境変数 =========================================================
 
-const OPENAI_API_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const PORT = process.env.PORT || 3000;
 
 // LINE 通知用
 const LINE_CHANNEL_ACCESS_TOKEN =
   (process.env.LINE_CHANNEL_ACCESS_TOKEN || "").trim();
 const LINE_ADMIN_USER_ID = (process.env.LINE_ADMIN_USER_ID || "").trim();
-
-// Google Maps Geocoding 用
-const GOOGLE_MAPS_API_KEY = (process.env.GOOGLE_MAPS_API_KEY || "").trim();
 
 // ==== 送料 & 代引き手数料 ==============================================
 
@@ -83,7 +89,7 @@ const COD_FEE = 330;
 function detectRegionFromAddress(address = {}) {
   const pref = String(address.prefecture || address.pref || "").trim();
   const addr1 = String(address.addr1 || address.address1 || "").trim();
-  const hay = pref || addr1;
+  const hay = (pref + addr1) || "";
 
   if (/北海道/.test(hay)) return "北海道";
   if (/(青森|岩手|宮城|秋田|山形|福島|東北)/.test(hay)) return "東北";
@@ -102,140 +108,11 @@ function detectRegionFromAddress(address = {}) {
 
 // 例: DTMF_ORDERS[callSid] = {
 //   items: [ { productId, name, price, qty }, ... ],
-//   nameSpeech: "お客さまの名前",
-//   addressStage: "pref" | "city" | "town" | "rest" | "done",
-//   addressParts: {
-//     pref: "愛知県",
-//     city: "知多市",
-//     town: "○○町△丁目",
-//     rest: "〇番地××マンション101号室"
-//   },
-//   phone: "09012345678",
-//   productMenu: [ { digit, id, name }, ... ],
-//   googleFormattedAddress: "...", // Google 整形済み住所
-//   googlePartial: boolean,        // Google 上で partial_match だったか
-//   googleStatus: string,          // geocode status
-//   addr: { region, shipping },    // 送料計算用
+//   memberCode: "1234",
+//   customer: { name, phone, zip, address },
+//   addr: { region, shipping },
 // }
 const DTMF_ORDERS = {};
-
-// ==== OpenAI に「お名前だけ」丁寧会話させる関数 =======================
-
-/**
- * お名前フェーズで、丁寧な会話テキストを生成
- * @param {string} speechText Twilio の SpeechResult（お客さんが話した名前）
- * @returns {Promise<string>} 音声で読み上げる日本語テキスト
- */
-async function askOpenAIForName(speechText) {
-  if (!OPENAI_API_KEY) {
-    return "ありがとうございます。 お名前を承りました。 続いて、ご住所をお伺いいたしますので、 このあとのご案内に続けて、都道府県からご住所をお話しください。";
-  }
-
-  const baseSystem =
-    "あなたは「手造りえびせんべい磯屋」の電話受付スタッフです。" +
-    "とても丁寧な敬語で、日本語で短く話してください。" +
-    "相手はお客様なので、必ず「様」を付けてお呼びしてください。" +
-    "電話音声として読み上げられることを前提に、聞き取りやすい自然な文章にしてください。" +
-    "不自然な日本語（例:「〜様かろ」「〜様かろう」など）は絶対に使わないでください。";
-
-  const stageSystem =
-    "ユーザーの発話は、お客様のお名前です。" +
-    "フルネームまたは名字をできる範囲で判断し、名字のあとに「様」を付けてお呼びください。" +
-    "たとえば「木村太郎」の場合は、「木村太郎様でございますね。ありがとうございます。」のように復唱してください。" +
-    "そのあとで、「続いて、ご住所をお伺いいたしますので、このあとのご案内の後に、都道府県からご住所をお話しください。」と丁寧に伝えてください。";
-
-  const messages = [
-    { role: "system", content: baseSystem },
-    { role: "system", content: stageSystem },
-    {
-      role: "user",
-      content: speechText || "",
-    },
-  ];
-
-  try {
-    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages,
-        max_tokens: 200,
-        temperature: 0.4,
-      }),
-    });
-
-    const data = await resp.json();
-    const aiText =
-      data?.choices?.[0]?.message?.content ||
-      "ありがとうございます。お名前を承りました。続いてご住所をお伺いいたします。";
-
-    return aiText.replace(/\s+/g, " ");
-  } catch (e) {
-    console.error("OpenAI name error:", e);
-    return "ありがとうございます。 お名前を承りました。 続いて、ご住所をお伺いいたしますので、このあとのご案内の後に、都道府県からご住所をお話しください。";
-  }
-}
-
-// ==== Google Maps Geocoding API で住所チェック =========================
-
-/**
- * Google Maps Geocoding API で 住所をチェック
- * @param {string} fullAddress 都道府県からのフル住所文字列
- * @returns {Promise<{ok:boolean, partial:boolean, formattedAddress:string, status:string}>}
- */
-async function validateAddressWithGoogle(fullAddress) {
-  if (!GOOGLE_MAPS_API_KEY) {
-    console.warn("[ADDR] GOOGLE_MAPS_API_KEY 未設定のため Google 検証スキップ");
-    return {
-      ok: true,
-      partial: false,
-      formattedAddress: fullAddress,
-      status: "NO_KEY",
-    };
-  }
-
-  const url =
-    "https://maps.googleapis.com/maps/api/geocode/json" +
-    `?address=${encodeURIComponent(fullAddress)}` +
-    `&language=ja&region=jp&key=${GOOGLE_MAPS_API_KEY}`;
-
-  try {
-    const resp = await fetch(url);
-    const data = await resp.json();
-
-    if (data.status !== "OK" || !data.results || data.results.length === 0) {
-      return {
-        ok: false,
-        partial: false,
-        formattedAddress: "",
-        status: data.status,
-      };
-    }
-
-    const r = data.results[0];
-    const partial = !!r.partial_match;
-
-    // 部分一致でも「一応OK」として通す。
-    return {
-      ok: true,
-      partial,
-      formattedAddress: r.formatted_address || "",
-      status: data.status,
-    };
-  } catch (e) {
-    console.error("[ADDR] Google geocode error:", e);
-    return {
-      ok: true,
-      partial: true,
-      formattedAddress: fullAddress,
-      status: "ERROR",
-    };
-  }
-}
 
 // ==== LINE 管理者への通知関数 ==========================================
 
@@ -253,30 +130,19 @@ async function notifyLineAdminForCodOrder(payload) {
       callSid,
       items = [],
       addr,
-      nameSpeech,
-      addressParts,
-      phone,
+      customer,
       itemsTotal,
       shipping,
       codFee,
       finalTotal,
-      googleFormattedAddress,
-      googlePartial,
-      googleStatus,
+      memberCode,
     } = payload;
 
     const when = ts || new Date().toISOString();
 
-    const fullAddress =
-      googleFormattedAddress ||
-      (addressParts
-        ? `${addressParts.pref || ""}${addressParts.city || ""}${
-            addressParts.town || ""
-          }${addressParts.rest || ""}`
-        : "（未取得）");
-
-    const nameText = nameSpeech || "（未取得）";
-    const phoneText = phone || "（未取得）";
+    const fullAddress = customer?.address || "（未登録）";
+    const nameText = customer?.name || "（未登録）";
+    const phoneText = customer?.phone || "（未登録）";
     const regionText = addr?.region || "（不明）";
 
     const itemsLines = items.length
@@ -290,17 +156,14 @@ async function notifyLineAdminForCodOrder(payload) {
           .join("\n")
       : "（商品情報がありません）";
 
-    const addrNote = googlePartial
-      ? "\n（※Google上では部分一致の住所です。念のため確認をお願いします。）"
-      : "";
-    const addrStatusNote = googleStatus
-      ? `\n[Google status: ${googleStatus}]`
-      : "";
+    const memberLine = memberCode ? `会員番号: ${memberCode}\n` : "";
 
     const message =
       `【電話代引き 新規注文】\n` +
       `日時: ${when}\n` +
-      `CallSid: ${callSid || "（なし）"}\n\n` +
+      `CallSid: ${callSid || "（なし）"}\n` +
+      memberLine +
+      `\n` +
       `▼ご注文商品\n${itemsLines}\n\n` +
       `商品小計: ${itemsTotal}円\n` +
       `送料: ${shipping}円（地域: ${regionText}）\n` +
@@ -308,9 +171,9 @@ async function notifyLineAdminForCodOrder(payload) {
       `合計金額: ${finalTotal}円\n\n` +
       `▼お客様情報\n` +
       `お名前: ${nameText}\n` +
-      `住所: ${fullAddress}${addrNote}${addrStatusNote}\n` +
+      `住所: ${fullAddress}\n` +
       `電話番号: ${phoneText}\n\n` +
-      `※この注文は Twilio 電話受付（代引き専用）からです。`;
+      `※この注文は Twilio 電話受付（代引き専用・会員番号方式）からです。`;
 
     const resp = await fetch("https://api.line.me/v2/bot/message/push", {
       method: "POST",
@@ -349,6 +212,54 @@ async function notifyLineAdminForCodOrder(payload) {
 
 const app = express();
 const urlencoded = express.urlencoded({ extended: false });
+const jsonParser = express.json();
+
+// ======================================================================
+// 0) 会員情報 登録用 API（住所入力の別画面から使う想定）
+// ======================================================================
+//
+// POST /api/cod/customers
+// body: { code, name, phone, zip, address }
+//
+// ※LIFF や通常の Web フォームから fetch で叩いて cod-customers.json を更新する想定。
+
+app.post("/api/cod/customers", jsonParser, (req, res) => {
+  try {
+    const { code, name, phone, zip, address } = req.body || {};
+
+    if (!code || !/^\d+$/.test(String(code))) {
+      return res.status(400).json({ ok: false, error: "code(会員番号) が不正です" });
+    }
+    if (!name || !address) {
+      return res.status(400).json({ ok: false, error: "name または address が未入力です" });
+    }
+
+    const customers = readCustomers();
+    customers[String(code)] = {
+      name: String(name),
+      phone: phone ? String(phone) : "",
+      zip: zip ? String(zip) : "",
+      address: String(address),
+    };
+    writeJSON(CUSTOMERS_PATH, customers);
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("POST /api/cod/customers error:", e);
+    return res.status(500).json({ ok: false, error: "internal error" });
+  }
+});
+
+app.get("/api/cod/customers/:code", (req, res) => {
+  const code = (req.params.code || "").trim();
+  if (!code) return res.status(400).json({ ok: false, error: "code is required" });
+
+  const customers = readCustomers();
+  const c = customers[code];
+  if (!c) return res.status(404).json({ ok: false, error: "not found" });
+
+  return res.json({ ok: true, customer: c });
+});
 
 // ======================================================================
 // 1) エントリーポイント /twilio/cod
@@ -359,12 +270,6 @@ app.all("/twilio/cod", urlencoded, (req, res) => {
 
   DTMF_ORDERS[callSid] = {
     items: [],
-    addressParts: {
-      pref: "",
-      city: "",
-      town: "",
-      rest: "",
-    },
   };
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -373,7 +278,7 @@ app.all("/twilio/cod", urlencoded, (req, res) => {
     お電話ありがとうございます。 手造りえびせんべい、磯屋です。 こちらは、ボタン操作による代金引換ご注文専用の自動受付です。
   </Say>
   <Say language="ja-JP" voice="alice">
-    まず、商品と個数をボタンでご指定いただきます。 そのあとに、お名前と、都道府県からのご住所を、いくつかに分けて音声でお伺いし、 最後に、連絡先のお電話番号をボタンでご入力いただきます。 商品代金に送料と代引き手数料を加えた合計金額を、最後にご案内いたします。
+    まず、商品と個数をボタンでご指定いただきます。 そのあとに、事前にご登録いただいた会員番号をボタンでご入力いただき、 ご登録済みのご住所とお電話番号にお届けいたします。 商品代金に送料と代引き手数料を加えた合計金額を、最後にご案内いたします。
   </Say>
   <Redirect method="POST">/twilio/cod/product</Redirect>
 </Response>`;
@@ -544,7 +449,7 @@ app.post("/twilio/cod/qty", urlencoded, (req, res) => {
 });
 
 // ======================================================================
-// 4) 追加注文の有無 → 2なら名前フェーズへ
+// 4) 追加注文の有無 → 2なら会員番号入力へ
 // ======================================================================
 
 app.post("/twilio/cod/more", urlencoded, (req, res) => {
@@ -564,7 +469,7 @@ app.post("/twilio/cod/more", urlencoded, (req, res) => {
   } else if (digit === "2") {
     twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Redirect method="POST">/twilio/cod/name</Redirect>
+  <Redirect method="POST">/twilio/cod/member</Redirect>
 </Response>`;
   } else {
     twiml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -595,262 +500,15 @@ app.post("/twilio/cod/more-retry", urlencoded, (req, res) => {
 });
 
 // ======================================================================
-// 5) お名前（音声＋OpenAI）
+// 5) 会員番号入力（DTMF）→ 会員情報の読込
 // ======================================================================
 
-app.post("/twilio/cod/name", urlencoded, (req, res) => {
-  const callSid = req.body.CallSid || "";
-  const order = DTMF_ORDERS[callSid] || { items: [] };
-  order.nameSpeech = "";
-  DTMF_ORDERS[callSid] = order;
-
+app.post("/twilio/cod/member", urlencoded, (req, res) => {
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Gather input="speech"
-          language="ja-JP"
-          speechTimeout="5"
-          timeout="10"
-          action="/twilio/cod/name-handler"
-          method="POST">
+  <Gather numDigits="8" action="/twilio/cod/member-handler" method="POST">
     <Say language="ja-JP" voice="alice">
-      最後に、お名前とご住所をお伺いします。 まず、お名前をフルネームで、 ゆっくりお話しください。 話し終わりましたら、 そのままお待ちください。
-    </Say>
-  </Gather>
-  <Say language="ja-JP" voice="alice">
-    音声が確認できなかったため、 通話を終了いたします。 ありがとうございました。
-  </Say>
-</Response>`;
-
-  res.type("text/xml").send(twiml);
-});
-
-app.post("/twilio/cod/name-handler", urlencoded, async (req, res) => {
-  const callSid = req.body.CallSid || "";
-  const speech = (req.body.SpeechResult || "").trim();
-
-  let order = DTMF_ORDERS[callSid] || { items: [] };
-
-  if (!speech) {
-    const twimlNoSpeech = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    すみません、音声がうまく聞き取れませんでした。 もう一度、お名前をゆっくりお話しいただけますか。
-  </Say>
-  <Redirect method="POST">/twilio/cod/name</Redirect>
-</Response>`;
-    return res.type("text/xml").send(twimlNoSpeech);
-  }
-
-  order.nameSpeech = speech;
-  DTMF_ORDERS[callSid] = order;
-
-  const aiReply = await askOpenAIForName(speech);
-
-  // 次は住所分割フェーズへ
-  order = DTMF_ORDERS[callSid] || order;
-  order.addressStage = "pref";
-  if (!order.addressParts) {
-    order.addressParts = { pref: "", city: "", town: "", rest: "" };
-  }
-  DTMF_ORDERS[callSid] = order;
-
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    ${aiReply}
-  </Say>
-  <Gather input="speech"
-          language="ja-JP"
-          speechTimeout="5"
-          timeout="10"
-          action="/twilio/cod/address-handler"
-          method="POST">
-    <Say language="ja-JP" voice="alice">
-      それでは、ご住所をお伺いします。 まず、都道府県名だけをお話しください。 たとえば、「愛知県」「三重県」のように、県名だけお話しください。
-    </Say>
-  </Gather>
-  <Say language="ja-JP" voice="alice">
-    音声が確認できなかったため、 通話を終了いたします。 ありがとうございました。
-  </Say>
-</Response>`;
-
-  res.type("text/xml").send(twiml);
-});
-
-// ======================================================================
-// 6) 住所（都道府県 → 市区町村 → 町名 → 番地・建物）
-// ======================================================================
-
-app.post("/twilio/cod/address", urlencoded, (req, res) => {
-  const callSid = req.body.CallSid || "";
-  let order = DTMF_ORDERS[callSid] || { items: [] };
-  order.addressStage = "pref";
-  if (!order.addressParts) {
-    order.addressParts = { pref: "", city: "", town: "", rest: "" };
-  }
-  DTMF_ORDERS[callSid] = order;
-
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Gather input="speech"
-          language="ja-JP"
-          speechTimeout="5"
-          timeout="10"
-          action="/twilio/cod/address-handler"
-          method="POST">
-    <Say language="ja-JP" voice="alice">
-      まず、都道府県名だけをお話しください。 たとえば、「愛知県」「三重県」のように、県名だけお話しください。
-    </Say>
-  </Gather>
-  <Say language="ja-JP" voice="alice">
-    音声が確認できなかったため、 通話を終了いたします。 ありがとうございました。
-  </Say>
-</Response>`;
-
-  res.type("text/xml").send(twiml);
-});
-
-app.post("/twilio/cod/address-handler", urlencoded, async (req, res) => {
-  const callSid = req.body.CallSid || "";
-  const speech = (req.body.SpeechResult || "").trim();
-
-  let order = DTMF_ORDERS[callSid] || { items: [] };
-  let stage = order.addressStage || "pref";
-
-  if (!order.addressParts) {
-    order.addressParts = { pref: "", city: "", town: "", rest: "" };
-  }
-
-  if (!speech) {
-    // stage に応じて再度同じステップへ
-    let msg;
-    if (stage === "pref") {
-      msg =
-        "すみません、音声がうまく聞き取れませんでした。 「愛知県」「三重県」のように、都道府県名だけをお話しいただけますか。";
-    } else if (stage === "city") {
-      msg =
-        "すみません、音声がうまく聞き取れませんでした。 「知多市」「東海市」のように、市区町村名だけをお話しいただけますか。";
-    } else if (stage === "town") {
-      msg =
-        "すみません、音声がうまく聞き取れませんでした。 「○○町○丁目」のように、町名と丁目までをお話しいただけますか。";
-    } else {
-      msg =
-        "すみません、音声がうまく聞き取れませんでした。 番地や建物名、お部屋番号までをお話しいただけますか。";
-    }
-
-    const twimlRetry = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    ${msg}
-  </Say>
-  <Redirect method="POST">/twilio/cod/address</Redirect>
-</Response>`;
-    return res.type("text/xml").send(twimlRetry);
-  }
-
-  let nextStage;
-  let nextPrompt;
-
-  if (stage === "pref") {
-    order.addressParts.pref = speech;
-    nextStage = "city";
-    nextPrompt =
-      "ありがとうございます。 続いて、市区町村名をお伺いします。 「知多市」「東海市」のように、市区町村名だけをお話しください。";
-  } else if (stage === "city") {
-    order.addressParts.city = speech;
-    nextStage = "town";
-    nextPrompt =
-      "ありがとうございます。 続いて、町名と丁目までをお伺いします。 「○○町○丁目」のように、お話しください。";
-  } else if (stage === "town") {
-    order.addressParts.town = speech;
-    nextStage = "rest";
-    nextPrompt =
-      "ありがとうございます。 最後に、番地、建物名、お部屋番号までをお伺いします。 「〇番地××マンション101号室」のようにお話しください。";
-  } else {
-    // rest まで来た → 住所入力終了
-    order.addressParts.rest = speech;
-    nextStage = "done";
-  }
-
-  order.addressStage = nextStage;
-  DTMF_ORDERS[callSid] = order;
-
-  if (nextStage !== "done") {
-    const twimlNext = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Gather input="speech"
-          language="ja-JP"
-          speechTimeout="5"
-          timeout="10"
-          action="/twilio/cod/address-handler"
-          method="POST">
-    <Say language="ja-JP" voice="alice">
-      ${nextPrompt}
-    </Say>
-  </Gather>
-  <Say language="ja-JP" voice="alice">
-    音声が確認できなかったため、 通話を終了いたします。 ありがとうございました。
-  </Say>
-</Response>`;
-    return res.type("text/xml").send(twimlNext);
-  }
-
-  // ===== 4つすべて取得できたので、結合して Google 住所チェック =====
-  const parts = order.addressParts;
-  const fullAddress =
-    (parts.pref || "") + (parts.city || "") + (parts.town || "") + (parts.rest || "");
-
-  const gResult = await validateAddressWithGoogle(fullAddress);
-
-  let formatted = gResult.formattedAddress || fullAddress;
-  const googlePartial = !!gResult.partial;
-  const googleStatus = gResult.status || "";
-
-  // 地域判定・送料計算
-  let region = "";
-  let shipping = 0;
-  try {
-    region = detectRegionFromAddress({
-      prefecture: formatted,
-      address1: formatted,
-    });
-    if (region) shipping = SHIPPING_BY_REGION[region] || 0;
-  } catch (e) {
-    console.error("detectRegionFromAddress error:", e);
-  }
-
-  order = DTMF_ORDERS[callSid] || order;
-  order.addressStage = "done";
-  order.googleFormattedAddress = formatted;
-  order.googlePartial = googlePartial;
-  order.googleStatus = googleStatus;
-  order.addr = {
-    region,
-    shipping,
-  };
-  DTMF_ORDERS[callSid] = order;
-
-  const twimlDone = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say language="ja-JP" voice="alice">
-    ご住所を承りました。 このあと、連絡先のお電話番号をボタン操作でお伺いし、 その後で、商品代金と送料、代引き手数料を含めた合計金額をご案内いたします。 そのままお待ちください。
-  </Say>
-  <Redirect method="POST">/twilio/cod/phone</Redirect>
-</Response>`;
-
-  return res.type("text/xml").send(twimlDone);
-});
-
-// ======================================================================
-// 7) 電話番号（DTMF）
-// ======================================================================
-
-app.post("/twilio/cod/phone", urlencoded, (req, res) => {
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Gather numDigits="11" action="/twilio/cod/phone-handler" method="POST">
-    <Say language="ja-JP" voice="alice">
-      続いて、 ご連絡先のお電話番号をお伺いします。 市外局番からハイフンなしで、 9桁から11桁の数字を押してください。 入力後、シャープは不要です。
+      事前にご登録いただいた会員番号を、 4桁から8桁の数字で押してください。 入力後、シャープは不要です。
     </Say>
   </Gather>
   <Say language="ja-JP" voice="alice">
@@ -860,54 +518,109 @@ app.post("/twilio/cod/phone", urlencoded, (req, res) => {
   res.type("text/xml").send(twiml);
 });
 
-app.post("/twilio/cod/phone-handler", urlencoded, (req, res) => {
+app.post("/twilio/cod/member-handler", urlencoded, (req, res) => {
   const callSid = req.body.CallSid || "";
   const digits = (req.body.Digits || "").trim();
 
-  if (!digits || digits.length < 9 || digits.length > 11 || !/^\d+$/.test(digits)) {
+  if (!digits || digits.length < 4 || digits.length > 8 || !/^\d+$/.test(digits)) {
     const twimlErr = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="ja-JP" voice="alice">
-    お電話番号の入力が確認できませんでした。 市外局番からハイフンなしで、 9桁から11桁の数字でご入力ください。
+    会員番号の入力が確認できませんでした。 4桁から8桁の数字でご入力ください。
   </Say>
-  <Redirect method="POST">/twilio/cod/phone</Redirect>
+  <Redirect method="POST">/twilio/cod/member</Redirect>
 </Response>`;
     return res.type("text/xml").send(twimlErr);
   }
 
-  const order = DTMF_ORDERS[callSid] || { items: [] };
-  order.phone = digits;
-  DTMF_ORDERS[callSid] = order;
+  const customers = readCustomers();
+  const customer = customers[digits];
 
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+  if (!customer) {
+    const twimlNotFound = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say language="ja-JP" voice="alice">
-    ありがとうございます。 お電話番号は、 ${digits} でお預かりいたしました。 このあと、 ご注文内容と合計金額を確認いたしますので、 そのままお待ちください。
+    入力いただいた会員番号に対応するご登録情報が見つかりませんでした。 番号をお確かめのうえ、もう一度ご入力いただくか、 恐れ入りますが、別の方法でご注文をお願いいたします。
+  </Say>
+  <Redirect method="POST">/twilio/cod/member-retry</Redirect>
+</Response>`;
+    return res.type("text/xml").send(twimlNotFound);
+  }
+
+  const order = DTMF_ORDERS[callSid] || { items: [] };
+
+  order.memberCode = digits;
+  order.customer = {
+    name: customer.name || "",
+    phone: customer.phone || "",
+    zip: customer.zip || "",
+    address: customer.address || "",
+  };
+
+  // 送料計算（住所文字列から地域判定）
+  const fullAddr = order.customer.address || "";
+  let region = "";
+  let shipping = 0;
+  try {
+    region = detectRegionFromAddress({
+      prefecture: fullAddr,
+      address1: fullAddr,
+    });
+    if (region) {
+      shipping = SHIPPING_BY_REGION[region] || 0;
+    }
+  } catch (e) {
+    console.error("detectRegionFromAddress error:", e);
+  }
+
+  order.addr = {
+    region,
+    shipping,
+  };
+
+  DTMF_ORDERS[callSid] = order;
+
+  const confirmName = order.customer.name || "お客様";
+  const twimlOk = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say language="ja-JP" voice="alice">
+    ありがとうございます。 会員番号、${digits}番、 ${confirmName}様のご登録情報で承ります。 このあと、 ご注文内容と合計金額を確認いたしますので、 そのままお待ちください。
   </Say>
   <Redirect method="POST">/twilio/cod/summary</Redirect>
 </Response>`;
-  res.type("text/xml").send(twiml);
+
+  return res.type("text/xml").send(twimlOk);
+});
+
+app.post("/twilio/cod/member-retry", urlencoded, (req, res) => {
+  const twimlRetry = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather numDigits="8" action="/twilio/cod/member-handler" method="POST">
+    <Say language="ja-JP" voice="alice">
+      もう一度、会員番号を、 4桁から8桁の数字で押してください。 入力後、シャープは不要です。
+    </Say>
+  </Gather>
+  <Say language="ja-JP" voice="alice">
+    入力が確認できなかったため、 通話を終了いたします。 ありがとうございました。
+  </Say>
+</Response>`;
+  res.type("text/xml").send(twimlRetry);
 });
 
 // ======================================================================
-// 8) 合計金額の読み上げ → ログ保存＋LINE通知 → 終了
+// 6) 合計金額の読み上げ → ログ保存＋LINE通知 → 終了
 // ======================================================================
 
 app.post("/twilio/cod/summary", urlencoded, async (req, res) => {
   const callSid = req.body.CallSid || "";
   const order = DTMF_ORDERS[callSid] || { items: [] };
 
-  const nameSpeech = order.nameSpeech || "";
-  const addressParts = order.addressParts || {
-    pref: "",
-    city: "",
-    town: "",
-    rest: "",
+  const customer = order.customer || {
+    name: "",
+    phone: "",
+    zip: "",
+    address: "",
   };
-  const phoneDigits = order.phone || "";
-  const googleAddr = order.googleFormattedAddress || "";
-  const googlePartial = !!order.googlePartial;
-  const googleStatus = order.googleStatus || "";
 
   let itemsText = "";
   let itemsTotal = 0;
@@ -938,25 +651,19 @@ app.post("/twilio/cod/summary", urlencoded, async (req, res) => {
   const codFee = COD_FEE;
   const finalTotal = itemsTotal + shipping + codFee;
 
-  const fullAddressText =
-    googleAddr ||
-    `${addressParts.pref || ""}${addressParts.city || ""}${
-      addressParts.town || ""
-    }${addressParts.rest || ""}`;
-
   const nameAddrText =
-    nameSpeech || fullAddressText
+    customer.name || customer.address
       ? ` お名前とご住所は、「${[
-          nameSpeech || "",
-          fullAddressText || "",
+          customer.name || "",
+          customer.address || "",
         ]
           .filter(Boolean)
-          .join("、")}」とお伺いしました。`
+          .join("、")}」のご登録情報で承ります。`
       : "";
 
   const phoneText =
-    phoneDigits
-      ? ` ご連絡先のお電話番号は、「${phoneDigits}」でお伺いしました。`
+    customer.phone
+      ? ` ご連絡先のお電話番号は、「${customer.phone}」のご登録で承ります。`
       : "";
 
   const summaryText =
@@ -972,12 +679,8 @@ app.post("/twilio/cod/summary", urlencoded, async (req, res) => {
     callSid,
     items: order.items,
     addr: order.addr || null,
-    nameSpeech: nameSpeech || null,
-    addressParts,
-    googleFormattedAddress: googleAddr || null,
-    googlePartial,
-    googleStatus,
-    phone: phoneDigits || null,
+    customer,
+    memberCode: order.memberCode || null,
     itemsTotal,
     shipping,
     codFee,
@@ -1023,10 +726,8 @@ app.get("/api/health", (_req, res) => {
     time: new Date().toISOString(),
     node: process.version,
     env: {
-      OPENAI_API_KEY: !!OPENAI_API_KEY,
       LINE_CHANNEL_ACCESS_TOKEN: !!LINE_CHANNEL_ACCESS_TOKEN,
       LINE_ADMIN_USER_ID: !!LINE_ADMIN_USER_ID,
-      GOOGLE_MAPS_API_KEY: !!GOOGLE_MAPS_API_KEY,
     },
   });
 });
@@ -1036,15 +737,11 @@ app.get("/api/health", (_req, res) => {
 // ======================================================================
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`📦 COD phone hybrid server (split-address) started on port ${PORT}`);
+  console.log(`📦 COD phone member server started on port ${PORT}`);
   console.log("   Twilio inbound URL: POST /twilio/cod");
   console.log(
     "   LINE notify:",
     LINE_CHANNEL_ACCESS_TOKEN ? "token OK" : "token MISSING",
     LINE_ADMIN_USER_ID ? "admin OK" : "admin MISSING"
-  );
-  console.log(
-    "   Google Geocoding:",
-    GOOGLE_MAPS_API_KEY ? "key OK" : "key MISSING"
   );
 });

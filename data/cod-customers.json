@@ -1,0 +1,18 @@
+// 例: ブラウザ側 JavaScript
+async function registerMember() {
+  const body = {
+    code: document.querySelector("#code").value,
+    name: document.querySelector("#name").value,
+    phone: document.querySelector("#phone").value,
+    zip: document.querySelector("#zip").value,
+    address: document.querySelector("#address").value, // 都道府県から全部
+  };
+
+  const resp = await fetch("/api/cod/customers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json();
+  console.log(data);
+}

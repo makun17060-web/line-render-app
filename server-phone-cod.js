@@ -606,7 +606,8 @@ app.post("/twilio/cod/name-addr", urlencoded, (req, res) => {
 <Response>
   <Gather input="speech"
           language="ja-JP"
-          speechTimeout="auto"
+          speechTimeout="5"
+          timeout="10"
           action="/twilio/cod/name-addr-handler"
           method="POST">
     <Say language="ja-JP" voice="alice">
@@ -671,7 +672,8 @@ app.post("/twilio/cod/name-addr-handler", urlencoded, async (req, res) => {
   </Say>
   <Gather input="speech"
           language="ja-JP"
-          speechTimeout="auto"
+          speechTimeout="5"
+          timeout="10"
           action="/twilio/cod/name-addr-handler"
           method="POST">
     <Say language="ja-JP" voice="alice">
@@ -717,7 +719,8 @@ app.post("/twilio/cod/name-addr-handler", urlencoded, async (req, res) => {
   </Say>
   <Gather input="speech"
           language="ja-JP"
-          speechTimeout="auto"
+          speechTimeout="5"
+          timeout="10"
           action="/twilio/cod/name-addr-handler"
           method="POST">
     <Say language="ja-JP" voice="alice">

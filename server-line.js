@@ -114,6 +114,7 @@ if (!fs.existsSync(UPLOAD_DIR)) {
 }
 
 // ====== ミドルウェア ======
+// /api 以下に JSON / urlencoded を適用
 app.use("/api", express.json(), express.urlencoded({ extended: true }));
 app.use("/public", express.static(PUBLIC_DIR));
 
@@ -382,9 +383,7 @@ function toPublicImageUrl(raw) {
 
   let fname = s;
   const lastSlash = s.lastIndexOf("/");
-  if (lastSlash >= 0) {
-    fname = s.slice(lastSlash + 1);
-  }
+  if (lastSlash >= 0) fname = s.slice(lastSlash + 1);
   const pathPart = `/public/uploads/${fname}`;
 
   const hostFromRender =
@@ -438,8 +437,6 @@ function productsFlex(allProducts) {
             size: "sm",
             wrap: true,
           },
-
-          // ★ 内容量（volume）があれば表示
           p.volume
             ? {
                 type: "text",
@@ -448,8 +445,6 @@ function productsFlex(allProducts) {
                 wrap: true,
               }
             : null,
-
-          // 説明文
           p.desc
             ? {
                 type: "text",
@@ -460,7 +455,6 @@ function productsFlex(allProducts) {
             : null,
         ].filter(Boolean),
       },
-
       footer: {
         type: "box",
         layout: "horizontal",
@@ -535,10 +529,7 @@ function productsFlex(allProducts) {
     contents:
       bubbles.length === 1
         ? bubbles[0]
-        : {
-            type: "carousel",
-            contents: bubbles,
-          },
+        : { type: "carousel", contents: bubbles },
   };
 }
 
@@ -617,17 +608,13 @@ function qtyFlex(id, qty = 1) {
               },
             })),
           },
-          // ★ 店頭受取用：先に名前を聞くステップへ
           {
             type: "button",
             style: "primary",
             action: {
               type: "postback",
               label: "店頭での受取名前を入力",
-              data: `order_pickup_name?${qstr({
-                id,
-                qty: q,
-              })}`,
+              data: `order_pickup_name?${qstr({ id, qty: q })}`,
             },
           },
           {
@@ -680,11 +667,7 @@ function methodFlex(id, qty) {
             action: {
               type: "postback",
               label: "宅配（送料あり）",
-              data: `order_region?${qstr({
-                id,
-                qty,
-                method: "delivery",
-              })}`,
+              data: `order_region?${qstr({ id, qty, method: "delivery" })}`,
             },
           },
           {
@@ -825,8 +808,7 @@ function paymentFlex(id, qty, method, region) {
     };
   }
 
-  const regionText =
-    method === "delivery" ? `（配送地域：${region}）` : "";
+  const regionText = method === "delivery" ? `（配送地域：${region}）` : "";
   return {
     type: "flex",
     altText: "お支払い方法を選択してください",
@@ -892,7 +874,6 @@ function paymentFlex(id, qty, method, region) {
 }
 
 function confirmFlex(product, qty, method, region, payment, liffIdForBtn, options = {}) {
-  // options.pickupName を追加で受け取る
   const pickupName = (options.pickupName || "").trim();
 
   if (typeof product?.id === "string" && product.id.startsWith("other:")) {
@@ -934,7 +915,6 @@ function confirmFlex(product, qty, method, region, payment, liffIdForBtn, option
     `合計：${yen(total)}`,
   ];
 
-  // ★ 店頭受取の場合、入力されたお名前も表示
   if (method === "pickup" && pickupName) {
     lines.push(`お名前：${pickupName}`);
   }
@@ -969,7 +949,6 @@ function confirmFlex(product, qty, method, region, payment, liffIdForBtn, option
       action: {
         type: "postback",
         label: "この内容で確定",
-        // ★ 名前も postback に載せる
         data: `order_confirm?${qstr({
           id: product.id,
           qty,
@@ -1067,12 +1046,101 @@ function labelOf(q, code) {
   return code;
 }
 
+// ====== 電話番号正規化（住所登録用） ======
+function normalizePhoneForKey(raw) {
+  if (!raw) return "";
+  let p = String(raw).trim().replace(/[^\d+]/g, "");
+  if (!p) return "";
+  if (!p.startsWith("+") && p.startsWith("0") && (p.length === 10 || p.length === 11)) {
+    p = "+81" + p.slice(1);
+  }
+  if (!p.startsWith("+") && /^\d{8,15}$/.test(p)) {
+    p = "+" + p;
+  }
+  return p;
+}
+
 // ====== LIFF API ======
+
+// 電話注文用：住所登録（phone-address.html から）
+// POST /api/address/register
+app.post("/api/address/register", (req, res) => {
+  try {
+    const body = req.body || {};
+    const lineUserId = String(body.lineUserId || "").trim();
+    const name = String(body.name || "").trim();
+    const phoneRaw = String(body.phone || "").trim();
+    const zip = String(body.zip || "").trim();
+    const prefecture = String(body.prefecture || "").trim();
+    const address1 = String(body.address1 || "").trim();
+    const address2 = String(body.address2 || "").trim();
+    const memo = String(body.memo || "").trim();
+
+    if (!name || !phoneRaw || !zip || !prefecture || !address1) {
+      return res.status(400).json({
+        ok: false,
+        error: "必須項目が不足しています。（name, phone, zip, prefecture, address1）",
+      });
+    }
+
+    const keyPhone = normalizePhoneForKey(phoneRaw);
+    if (!keyPhone) {
+      return res.status(400).json({
+        ok: false,
+        error: "電話番号の形式を確認してください。",
+      });
+    }
+
+    const book = readAddresses();
+
+    // 電話番号キーで保存（Twilio連携などで利用）
+    book[keyPhone] = {
+      lineUserId: lineUserId || null,
+      name,
+      phone: keyPhone,
+      zip,
+      prefecture,
+      address1,
+      address2,
+      memo,
+      updatedAt: new Date().toISOString(),
+      source: "phone-address-liff",
+    };
+
+    // おまけ：LINEユーザーID発のレコードも更新（既存の /api/liff/address と共存）
+    if (lineUserId) {
+      const prev = book[lineUserId] || {};
+      book[lineUserId] = {
+        ...prev,
+        name: prev.name || name,
+        phone: prev.phone || keyPhone,
+        postal: prev.postal || zip,
+        prefecture: prev.prefecture || prefecture,
+        city: prev.city || "",
+        address1: prev.address1 || address1,
+        address2: prev.address2 || address2,
+        ts: new Date().toISOString(),
+      };
+    }
+
+    writeAddresses(book);
+    console.log("[/api/address/register] saved for phone =", keyPhone, "userId =", lineUserId);
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("/api/address/register error:", e);
+    return res.status(500).json({
+      ok: false,
+      error: "サーバーエラーが発生しました。",
+    });
+  }
+});
+
 // 住所保存（LIFF）
 app.post("/api/liff/address", async (req, res) => {
   try {
     const userId = String(req.body?.userId || "").trim();
-    const addr = req.body?.address || {}; // ★ address を受け取る
+    const addr = req.body?.address || {};
 
     if (!userId) {
       return res.status(400).json({ ok: false, error: "userId required" });
@@ -1130,7 +1198,6 @@ app.get("/api/liff/config", (_req, res) =>
 // ====== Stripe 決済（Checkout Session） ======
 app.post("/api/pay-stripe", async (req, res) => {
   try {
-    // 先頭で初期化した stripe を使う想定
     if (!stripe) {
       console.error("STRIPE_SECRET_KEY が設定されていません");
       return res
@@ -1145,10 +1212,9 @@ app.post("/api/pay-stripe", async (req, res) => {
       return res.status(400).json({ ok: false, error: "no_items" });
     }
 
-    // フロントから送られてきた合計（confirm.js/pay.js 側）
     const itemsTotal = Number(order.itemsTotal || 0);
     const shipping   = Number(order.shipping   || 0);
-    const codFee     = Number(order.codFee     || 0); // 今は 0 想定
+    const codFee     = Number(order.codFee     || 0);
     const finalTotal = Number(
       order.finalTotal || (itemsTotal + shipping + codFee)
     );
@@ -1161,10 +1227,8 @@ app.post("/api/pay-stripe", async (req, res) => {
       "finalTotal:", finalTotal
     );
 
-    // ===== Stripe に渡す line_items を作成 =====
     const line_items = [];
 
-    // 商品行
     for (const it of items) {
       const unit = Number(it.price) || 0;
       const qty  = Number(it.qty)   || 0;
@@ -1176,13 +1240,12 @@ app.post("/api/pay-stripe", async (req, res) => {
           product_data: {
             name: String(it.name || it.id || "商品"),
           },
-          unit_amount: unit, // 例: 300 → 300円
+          unit_amount: unit,
         },
         quantity: qty,
       });
     }
 
-    // 送料行（あれば）
     if (shipping > 0) {
       line_items.push({
         price_data: {
@@ -1194,7 +1257,6 @@ app.post("/api/pay-stripe", async (req, res) => {
       });
     }
 
-    // 代引き手数料行（将来使う場合）
     if (codFee > 0) {
       line_items.push({
         price_data: {
@@ -1212,7 +1274,6 @@ app.post("/api/pay-stripe", async (req, res) => {
         .json({ ok: false, error: "no_valid_line_items" });
     }
 
-    // ベースURL (PUBLIC_BASE_URL優先)
     const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
     const host  = req.headers.host;
     const base =
@@ -1253,7 +1314,6 @@ app.post("/api/order/complete", async (req, res) => {
 
     const items = Array.isArray(order.items) ? order.items : [];
     if (items.length === 0) {
-      // 二度目以降など、注文データが無いときはエラーにせずスキップ
       console.log("[order-complete] no_items – skip notify");
       return res.json({ ok: false, error: "no_items" });
     }
@@ -1277,15 +1337,9 @@ app.post("/api/order/complete", async (req, res) => {
       const a = order.address;
       addrText =
         `住所：${a.zip || a.postal || ""} ` +
-        `${a.prefecture || a.pref || ""}${a.city || ""}${
-          a.addr1 || a.address1 || ""
-        }` +
-        `${
-          a.addr2 || a.address2 ? " " + (a.addr2 || a.address2) : ""
-        }\n` +
-        `氏名：${(a.lastName || "")}${
-          (a.firstName || "") || a.name || ""
-        }\n` +
+        `${a.prefecture || a.pref || ""}${a.city || ""}${a.addr1 || a.address1 || ""}` +
+        `${a.addr2 || a.address2 ? " " + (a.addr2 || a.address2) : ""}\n` +
+        `氏名：${(a.lastName || "")}${(a.firstName || "") || a.name || ""}\n` +
         `TEL：${a.tel || a.phone || ""}`;
     }
 
@@ -1362,7 +1416,6 @@ app.post("/api/order/complete", async (req, res) => {
     return res.status(500).json({ ok: false, error: "server_error" });
   }
 });
-
 
 // ====== 管理API（要トークン） ======
 app.get("/api/admin/ping", (req, res) => {
@@ -1693,15 +1746,15 @@ app.post("/api/admin/stock/add", (req, res) => {
 app.get("/api/products", (req, res) => {
   try {
     const items = readProducts()
-      .filter((p) => p.id !== "kusuke-250") // ★ 久助を除外
+      .filter((p) => p.id !== "kusuke-250")
       .map((p) => ({
         id: p.id,
         name: p.name,
         price: p.price,
         stock: p.stock ?? 0,
         desc: p.desc || "",
-        volume: p.volume || "",                     // ★ 内容量（volume）
-        image: toPublicImageUrl(p.image || ""),     // ★ 画像URL
+        volume: p.volume || "",
+        image: toPublicImageUrl(p.image || ""),
       }));
 
     res.json({ ok: true, products: items });
@@ -1712,13 +1765,6 @@ app.get("/api/products", (req, res) => {
 });
 
 // ====== ミニアプリ用：送料計算 API ======
-// 受け取り例:
-// {
-//   items: [{ id, price, qty }],
-//   address: { zip, prefecture, addr1 }
-// }
-// 返す例: { ok:true, itemsTotal, shipping, finalTotal }
-
 function detectRegionFromAddress(address = {}) {
   const pref = String(
     address.prefecture || address.pref || ""
@@ -1730,31 +1776,15 @@ function detectRegionFromAddress(address = {}) {
 
   if (/北海道/.test(hay)) return "北海道";
   if (/(青森|岩手|宮城|秋田|山形|福島|東北)/.test(hay)) return "東北";
-  if (
-    /(茨城|栃木|群馬|埼玉|千葉|東京|神奈川|山梨|関東)/.test(
-      hay
-    )
-  )
+  if (/(茨城|栃木|群馬|埼玉|千葉|東京|神奈川|山梨|関東)/.test(hay))
     return "関東";
-  if (
-    /(新潟|富山|石川|福井|長野|岐阜|静岡|愛知|三重|中部)/.test(
-      hay
-    )
-  )
+  if (/(新潟|富山|石川|福井|長野|岐阜|静岡|愛知|三重|中部)/.test(hay))
     return "中部";
-  if (
-    /(滋賀|京都|大阪|兵庫|奈良|和歌山|近畿)/.test(
-      hay
-    )
-  )
+  if (/(滋賀|京都|大阪|兵庫|奈良|和歌山|近畿)/.test(hay))
     return "近畿";
   if (/(鳥取|島根|岡山|広島|山口|中国)/.test(hay)) return "中国";
   if (/(徳島|香川|愛媛|高知|四国)/.test(hay)) return "四国";
-  if (
-    /(福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|九州)/.test(
-      hay
-    )
-  )
+  if (/(福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|九州)/.test(hay))
     return "九州";
   if (/(沖縄)/.test(hay)) return "沖縄";
 
@@ -2249,7 +2279,6 @@ app.post("/api/admin/products/set-image", (req, res) => {
   }
 });
 
-
 // ====== Webhook ======
 app.post(
   "/webhook",
@@ -2277,7 +2306,6 @@ app.post(
 // ====== イベント処理 ======
 async function handleEvent(ev) {
   try {
-    // ===== message =====
     if (ev.type === "message" && ev.message?.type === "text") {
       try {
         const rec = {
@@ -2299,7 +2327,6 @@ async function handleEvent(ev) {
       const text = (ev.message.text || "").trim();
       const t = text.replace(/\s+/g, " ").trim();
 
-      // ★「問い合わせ」最優先
       if (t === "問い合わせ") {
         await client.replyMessage(ev.replyToken, {
           type: "text",
@@ -2311,7 +2338,6 @@ async function handleEvent(ev) {
         return;
       }
 
-      // ★ 久助テキスト注文
       const kusukeRe = /^久助(?:\s+(\d+))?$/i;
       const km = kusukeRe.exec(text);
       if (km) {
@@ -2357,7 +2383,6 @@ async function handleEvent(ev) {
         return;
       }
 
-      // ★ その他フロー
       if (sess?.await === "otherName") {
         const name = (text || "").slice(0, 50).trim();
         if (!name) {
@@ -2393,11 +2418,9 @@ async function handleEvent(ev) {
         const id = temp.id;
         const qty = Math.max(1, Math.min(99, Number(temp.qty) || 1));
 
-        // セッションはここで終了
         delete sessions[uid];
         writeSessions(sessions);
 
-        // 商品取得
         let product;
         if (String(id).startsWith("other:")) {
           const parts = String(id).split(":");
@@ -2421,7 +2444,6 @@ async function handleEvent(ev) {
           return;
         }
 
-        // ★ 店頭受取・現金のみで最終確認画面を表示（お名前付き）
         await client.replyMessage(
           ev.replyToken,
           confirmFlex(product, qty, "pickup", "", "cash", LIFF_ID, {
@@ -2455,7 +2477,6 @@ async function handleEvent(ev) {
         return;
       }
 
-      // ★ 管理者コマンド
       if (
         ev.source?.userId &&
         ADMIN_USER_ID &&
@@ -2819,7 +2840,6 @@ async function handleEvent(ev) {
         }
       }
 
-      // ★ 一般ユーザー
       if (text === "直接注文") {
         await client.replyMessage(
           ev.replyToken,
@@ -2828,11 +2848,9 @@ async function handleEvent(ev) {
         return;
       }
 
-      // 久助は上で処理済み。それ以外のテキストは返信なし。
       return;
     }
 
-    // ===== postback =====
     if (ev.type === "postback") {
       const d = ev.postback?.data || "";
 
@@ -2967,7 +2985,6 @@ async function handleEvent(ev) {
           }
         }
 
-        // ★ 直接注文の住所入力は LIFF_ID_DIRECT_ADDRESS を使用
         await client.replyMessage(
           ev.replyToken,
           confirmFlex(
@@ -2997,7 +3014,7 @@ async function handleEvent(ev) {
         let method = parsed.method;
         let region = parsed.region;
         const payment = parsed.payment;
-        const pickupName = (parsed.pickupName || "").trim(); // ★ 追加
+        const pickupName = (parsed.pickupName || "").trim();
 
         const need = Math.max(1, Number(qty) || 1);
 
@@ -3066,7 +3083,7 @@ async function handleEvent(ev) {
           method,
           address: addr,
           image: product.image || "",
-          pickupName, // ★ ログにも残す
+          pickupName,
         };
         fs.appendFileSync(ORDERS_LOG, JSON.stringify(order) + "\n", "utf8");
 
@@ -3093,7 +3110,6 @@ async function handleEvent(ev) {
           `合計：${yen(total)}`,
         ];
 
-        // ★ ユーザー向けメッセージにも名前を表示
         if (method === "pickup" && pickupName) {
           userLines.push("", `お名前：${pickupName}`);
         }
@@ -3123,7 +3139,6 @@ async function handleEvent(ev) {
           text: userLines.join("\n"),
         });
 
-        // ★ 管理者向けメッセージにも名前を追加
         const adminMsg = [
           "🧾 新規注文",
           `ユーザーID：${ev.source?.userId || ""}`,

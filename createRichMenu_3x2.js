@@ -3,7 +3,7 @@
 //
 // 左上：問い合わせ（メッセージ）
 // 左下：オンライン注文（LIFFミニアプリ products.html）
-// 中央上：電話注文（メッセージ）
+// 中央上：電話注文（電話発信：+1 747-946-7151）
 // 中央下：住所登録（URI：cod-register.html など）
 // 右上：ECショップ（URI：ECショップ本番URL）
 // 右下：直接注文（メッセージ）
@@ -75,6 +75,9 @@ const addressRegisterUrl = (ADDRESS_REGISTER_URL || `${baseUrl}/public/cod-regis
 //   - 未設定の場合はいったん baseUrl を使う（要あとで修正）
 const ecShopUrl = (EC_SHOP_URL || baseUrl).trim();
 
+// ★ 電話注文用の発信先（Twilio US番号）
+const PHONE_ORDER_TEL = "tel:+17479467151"; // +1 747-946-7151
+
 (async () => {
   try {
     // ==== 6分割用リッチメニュー定義 ====
@@ -96,13 +99,13 @@ const ecShopUrl = (EC_SHOP_URL || baseUrl).trim();
             text: "問い合わせ",
           },
         },
-        // 中央上：電話注文（メッセージ）
+        // 中央上：電話注文（電話発信：+1 747-946-7151）
         {
           bounds: { x: 833, y: 0, width: 834, height: 843 },
           action: {
-            type: "message",
+            type: "uri",
             label: "電話注文",
-            text: "電話注文",
+            uri: PHONE_ORDER_TEL, // ← ここで電話アプリを起動
           },
         },
         // 右上：ECショップ（URI）
@@ -152,6 +155,7 @@ const ecShopUrl = (EC_SHOP_URL || baseUrl).trim();
     console.log("ONLINE→LIFF:", MINIAPP_LIFF_URL);
     console.log("ADDRESS_REGISTER_URL:", addressRegisterUrl);
     console.log("EC_SHOP_URL:", ecShopUrl);
+    console.log("PHONE_ORDER_TEL:", PHONE_ORDER_TEL);
 
     // 1) リッチメニュー作成
     const richMenuId = await client.createRichMenu(richMenu);
@@ -193,7 +197,7 @@ const ecShopUrl = (EC_SHOP_URL || baseUrl).trim();
     console.log("✅ setDefaultRichMenu OK");
 
     console.log("🎉 完了！6分割リッチメニューをデフォルトに設定しました。");
-    console.log("   左上：問い合わせ / 左下：オンライン注文 / 中央上：電話注文");
+    console.log("   左上：問い合わせ / 左下：オンライン注文 / 中央上：電話注文（+1 747-946-7151）");
     console.log("   中央下：住所登録 / 右上：ECショップ / 右下：直接注文");
 
   } catch (e) {

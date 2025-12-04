@@ -5,9 +5,7 @@
   <title>住所登録（電話注文用）</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
     body {
       margin: 0;
       padding: 16px;
@@ -15,10 +13,7 @@
       background: #f6f3e9;
       color: #333;
     }
-    h1 {
-      font-size: 20px;
-      margin: 0 0 8px;
-    }
+    h1 { font-size: 20px; margin: 0 0 8px; }
     p.desc {
       font-size: 13px;
       margin: 0 0 16px;
@@ -31,16 +26,13 @@
       padding: 12px;
       box-shadow: 0 2px 6px rgba(0,0,0,0.06);
     }
-    .field {
-      margin-bottom: 10px;
-    }
+    .field { margin-bottom: 10px; }
     .field label {
       display: block;
       font-size: 13px;
       margin-bottom: 4px;
     }
     .field input,
-    .field select,
     .field textarea {
       width: 100%;
       padding: 8px;
@@ -68,24 +60,10 @@
       font-weight: 600;
       cursor: pointer;
     }
-    button.primary {
-      background: #c85a2e;
-      color: #fff;
-    }
-    button.secondary {
-      background: #eee;
-      color: #333;
-    }
-    .small {
-      font-size: 11px;
-      color: #777;
-      margin-top: 8px;
-    }
-    .notice {
-      font-size: 11px;
-      color: #b33;
-      margin-top: 4px;
-    }
+    button.primary { background: #c85a2e; color: #fff; }
+    button.secondary { background: #eee; color: #333; }
+    .small { font-size: 11px; color: #777; margin-top: 8px; }
+    .notice { font-size: 11px; color: #b33; margin-top: 4px; }
   </style>
 </head>
 <body>
@@ -153,10 +131,9 @@
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script>
     // ★ここをあなたの実際の LIFF ID に変更してください
-    const LIFF_ID = "2008406620-G5j1gjzM";
+    const LIFF_ID = "YOUR_LIFF_ID_HERE";
 
-    // 住所登録APIのURL（server-phone-cod.js 側と合わせる）
-    // 例: app.post('/api/address/register', ...)
+    // 住所登録API（LINE側サーバーの /api/address/register）
     const ADDRESS_REGISTER_ENDPOINT = "/api/address/register";
 
     const elName   = document.getElementById("name");
@@ -173,7 +150,6 @@
     let lineUserId = null;
     let lineDisplayName = null;
 
-    // --- LIFF 初期化 ---
     async function initLiff() {
       try {
         await liff.init({ liffId: LIFF_ID });
@@ -187,7 +163,6 @@
         lineUserId = profile.userId;
         lineDisplayName = profile.displayName;
 
-        // 名前欄が空なら、LINE名を仮で入れておく（ユーザーが後から変更も可能）
         if (!elName.value) {
           elName.value = lineDisplayName;
         }
@@ -197,21 +172,17 @@
       }
     }
 
-    // --- メッセージ表示 ---
     function showMessage(text, isError = true) {
       elMsg.textContent = text || "";
       elMsg.style.color = isError ? "#b33" : "#2c7c31";
     }
 
-    // --- 入力チェック ---
     function validate() {
       if (!elName.value.trim()) {
-        showMessage("お名前を入力してください。");
-        return false;
+        showMessage("お名前を入力してください。"); return false;
       }
       if (!elPhone.value.trim()) {
-        showMessage("電話番号を入力してください。");
-        return false;
+        showMessage("電話番号を入力してください。"); return false;
       }
       const phoneDigits = elPhone.value.replace(/[^\d+]/g, "");
       if (!/^\+?\d{8,15}$/.test(phoneDigits)) {
@@ -219,26 +190,21 @@
         return false;
       }
       if (!elZip.value.trim()) {
-        showMessage("郵便番号を入力してください。");
-        return false;
+        showMessage("郵便番号を入力してください。"); return false;
       }
       if (!elPref.value.trim()) {
-        showMessage("都道府県を入力してください。");
-        return false;
+        showMessage("都道府県を入力してください。"); return false;
       }
       if (!elAddr1.value.trim()) {
-        showMessage("市区町村・番地を入力してください。");
-        return false;
+        showMessage("市区町村・番地を入力してください。"); return false;
       }
-      showMessage(""); // エラー消去
+      showMessage("");
       return true;
     }
 
-    // --- 保存処理 ---
     async function saveAddress() {
       if (!validate()) return;
 
-      // Twilio の From とのマッチをしやすくするため、電話番号の空白やハイフンを削除
       let phone = elPhone.value.replace(/[^\d+]/g, "");
 
       const payload = {
@@ -257,25 +223,18 @@
 
         const res = await fetch(ADDRESS_REGISTER_ENDPOINT, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
         });
 
-        if (!res.ok) {
-          throw new Error("HTTP " + res.status);
-        }
-
+        if (!res.ok) throw new Error("HTTP " + res.status);
         const data = await res.json().catch(() => ({}));
-
         if (!data || data.ok === false) {
           throw new Error(data && data.error ? data.error : "登録に失敗しました。");
         }
 
         showMessage("住所を登録しました。ありがとうございます！", false);
 
-        // 数秒後に LIFF ウィンドウを閉じる（LINEアプリ内の場合）
         setTimeout(() => {
           if (window.liff && liff.isInClient()) {
             liff.closeWindow();
@@ -287,7 +246,6 @@
       }
     }
 
-    // --- イベント設定 ---
     btnUseLineName.addEventListener("click", () => {
       if (lineDisplayName) {
         elName.value = lineDisplayName;
@@ -299,7 +257,6 @@
 
     btnSave.addEventListener("click", saveAddress);
 
-    // ページ読み込み時に LIFF 初期化
     document.addEventListener("DOMContentLoaded", initLiff);
   </script>
 </body>

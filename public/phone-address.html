@@ -74,52 +74,56 @@
   </p>
 
   <div class="card">
-    <div class="field">
-      <label for="name">お名前</label>
-      <input id="name" type="text" placeholder="例）磯屋 太郎" />
-      <small>LINEの表示名をそのまま使う場合は下のボタンを押してください。</small>
-    </div>
+    <!-- ★ form で submit をフックする -->
+    <form id="addrForm" onsubmit="saveAddress(event)">
+      <div class="field">
+        <label for="name">お名前</label>
+        <input id="name" type="text" placeholder="例）磯屋 太郎" />
+        <small>LINEの表示名をそのまま使う場合は下のボタンを押してください。</small>
+      </div>
 
-    <div class="field">
-      <label for="phone">電話番号（電話注文で発信する番号）</label>
-      <input id="phone" type="tel" inputmode="tel" placeholder="例）09012345678" />
-      <small>ハイフン無しで入力してください。<br>この番号から Twilio の電話番号へ発信した場合に、住所を自動でひも付けます。</small>
-    </div>
+      <div class="field">
+        <label for="phone">電話番号（電話注文で発信する番号）</label>
+        <input id="phone" type="tel" inputmode="tel" placeholder="例）09012345678" />
+        <small>ハイフン無しで入力してください。<br>この番号から Twilio の電話番号へ発信した場合に、住所を自動でひも付けます。</small>
+      </div>
 
-    <div class="field">
-      <label for="zip">郵便番号</label>
-      <input id="zip" type="text" inputmode="numeric" placeholder="例）4411234" />
-      <small>ハイフン無しで入力してください。</small>
-    </div>
+      <div class="field">
+        <label for="zip">郵便番号</label>
+        <input id="zip" type="text" inputmode="numeric" placeholder="例）4411234" />
+        <small>ハイフン無しで入力してください。</small>
+      </div>
 
-    <div class="field">
-      <label for="pref">都道府県</label>
-      <input id="pref" type="text" placeholder="例）愛知県" />
-    </div>
+      <div class="field">
+        <label for="pref">都道府県</label>
+        <input id="pref" type="text" placeholder="例）愛知県" />
+      </div>
 
-    <div class="field">
-      <label for="addr1">市区町村・番地</label>
-      <input id="addr1" type="text" placeholder="例）豊橋市○○町1-2-3" />
-    </div>
+      <div class="field">
+        <label for="addr1">市区町村・番地</label>
+        <input id="addr1" type="text" placeholder="例）豊橋市○○町1-2-3" />
+      </div>
 
-    <div class="field">
-      <label for="addr2">建物名・部屋番号（任意）</label>
-      <input id="addr2" type="text" placeholder="例）○○マンション101号室" />
-    </div>
+      <div class="field">
+        <label for="addr2">建物名・部屋番号（任意）</label>
+        <input id="addr2" type="text" placeholder="例）○○マンション101号室" />
+      </div>
 
-    <div class="field">
-      <label for="memo">備考（任意）</label>
-      <textarea id="memo" rows="2" placeholder="表札が違う・インターホンの場所などがあれば"></textarea>
-    </div>
+      <div class="field">
+        <label for="memo">備考（任意）</label>
+        <textarea id="memo" rows="2" placeholder="表札が違う・インターホンの場所などがあれば"></textarea>
+      </div>
 
-    <div class="buttons">
-      <button type="button" class="secondary" id="btnUseLineName">
-        LINEの名前を使う
-      </button>
-      <button type="button" class="primary" id="btnSave">
-        この内容で登録する
-      </button>
-    </div>
+      <div class="buttons">
+        <button type="button" class="secondary" id="btnUseLineName">
+          LINEの名前を使う
+        </button>
+        <!-- ★ type="submit" なので、必ず saveAddress が呼ばれる -->
+        <button type="submit" class="primary" id="btnSave">
+          この内容で登録する
+        </button>
+      </div>
+    </form>
 
     <p class="small">
       入力した情報は、磯屋のサーバーで電話注文と配送のためだけに利用されます。
@@ -130,10 +134,10 @@
   <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script>
-    // ★ここをあなたの実際の LIFF ID に変更してください
-    const LIFF_ID = ""2008406620-4QJ06JLv;
+    // ★ここを住所登録用の LIFF ID に必ず変更する（ミニアプリ用とは別の LIFF）
+    const LIFF_ID = "2008406620-4QJ06JLv";
 
-    // 住所登録API（LINE側サーバーの /api/address/register）
+    // 住所登録API（同じサーバー上の /api/address/register を想定）
     const ADDRESS_REGISTER_ENDPOINT = "/api/address/register";
 
     const elName   = document.getElementById("name");
@@ -145,11 +149,11 @@
     const elMemo   = document.getElementById("memo");
     const elMsg    = document.getElementById("message");
     const btnUseLineName = document.getElementById("btnUseLineName");
-    const btnSave  = document.getElementById("btnSave");
 
     let lineUserId = null;
     let lineDisplayName = null;
 
+    // ---- LIFF 初期化 ----
     async function initLiff() {
       try {
         await liff.init({ liffId: LIFF_ID });
@@ -202,8 +206,15 @@
       return true;
     }
 
-    async function saveAddress() {
+    // ★ form の onsubmit から必ず呼ばれる関数
+    async function saveAddress(event) {
+      if (event) event.preventDefault(); // ページ遷移させない
+
       if (!validate()) return;
+
+      // 動いているか確認用の一時テスト（必要ならコメントアウトOK）
+      console.log("saveAddress called");
+      // alert("送信処理を開始します");
 
       let phone = elPhone.value.replace(/[^\d+]/g, "");
 
@@ -246,6 +257,7 @@
       }
     }
 
+    // LINEの名前をセットするボタン
     btnUseLineName.addEventListener("click", () => {
       if (lineDisplayName) {
         elName.value = lineDisplayName;
@@ -254,8 +266,6 @@
         showMessage("LINEの情報がまだ取得できていません。少し待ってから再度お試しください。");
       }
     });
-
-    btnSave.addEventListener("click", saveAddress);
 
     document.addEventListener("DOMContentLoaded", initLiff);
   </script>

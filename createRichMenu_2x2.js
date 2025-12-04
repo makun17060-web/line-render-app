@@ -95,7 +95,7 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
         // 右下：会員ログイン
         {
           bounds: { x: 1250, y: 843, width: 1250, height: 843 },
-          action: { type: "uri", label: "会員ログイン", uri: memberUrl },
+          action: { type: "uri", label: "会員ログイン", uri:  addressRegisterUrl},
         },
       ],
     };

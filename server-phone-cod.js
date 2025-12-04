@@ -273,6 +273,11 @@ async function notifyLineAdminForCustomerRegister(payload) {
 const app = express();
 const urlencoded = express.urlencoded({ extended: false });
 const jsonParser = express.json();
+// 静的ファイル（/public 以下の HTML など）を配信
+const PUBLIC_DIR = path.join(__dirname, "public");
+if (fs.existsSync(PUBLIC_DIR)) {
+  app.use("/public", express.static(PUBLIC_DIR));
+}
 
 // ======================================================================
 // 0) 会員情報 登録用 API（住所入力の別画面から使う）

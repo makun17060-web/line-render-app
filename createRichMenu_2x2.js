@@ -1,9 +1,9 @@
 // createRichMenu_2x2.js
 // 2段2列リッチメニュー(2500x1686)
-// 左上=アンケート(URI)
+// 左上=問い合わせ(メッセージ)
 // 右上=直接注文(テキスト送信)
 // 左下=オンライン注文(LIFFミニアプリ経由で products.html)
-// 右下=会員ログイン(URI)
+// 右下=住所登録(URI：cod-register.html)
 
 "use strict";
 
@@ -17,9 +17,10 @@ const {
   LINE_CHANNEL_SECRET,
   LIFF_ID_MINIAPP,
   SURVEY_URL,
-  MEMBER_URL,
+  MEMBER_URL,          // いまは未使用（残しておいてOK）
   RICHMENU_IMAGE,
   PUBLIC_BASE_URL,
+  ADDRESS_REGISTER_URL, // ★ 住所登録ページ用（任意）
 } = process.env;
 
 // ===== 必須チェック =====
@@ -58,9 +59,13 @@ const MINIAPP_LIFF_URL =
     `/public/products.html?v=${CACHE_BUSTER}`
   )}`;
 
-// 他URL（未設定なら仮）
+// 他URL
 const surveyUrl = (SURVEY_URL || "https://example.com/survey").trim();
-const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
+
+// ★ 住所登録ページURL
+//   - 通常は baseUrl/public/cod-register.html にしておく
+//   - もし電話専用サーバーが別ドメインなら ADDRESS_REGISTER_URL にフルURLを入れて上書き
+const addressRegisterUrl = (ADDRESS_REGISTER_URL || `${baseUrl}/public/cod-register.html`).trim();
 
 (async () => {
   try {
@@ -70,32 +75,43 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
       name: "磯屋_2x2",
       chatBarText: "メニュー",
       areas: [
-       // 左上：問い合わせ
-{
-  bounds: { x: 0, y: 0, width: 1250, height: 843 },
-  action: {
-    type: "message",
-    text: "問い合わせ"
-  }
-},
-
+        // 左上：問い合わせ（メッセージ送信）
+        {
+          bounds: { x: 0, y: 0, width: 1250, height: 843 },
+          action: {
+            type: "message",
+            text: "問い合わせ",
+          },
+        },
 
         // 右上：直接注文（テキスト送信）
         {
           bounds: { x: 1250, y: 0, width: 1250, height: 843 },
-          action: { type: "message", label: "直接注文", text: "直接注文" },
+          action: {
+            type: "message",
+            label: "直接注文",
+            text: "直接注文",
+          },
         },
 
         // 左下：オンライン注文（LIFF経由で products.html）
         {
           bounds: { x: 0, y: 843, width: 1250, height: 843 },
-          action: { type: "uri", label: "オンライン注文", uri: MINIAPP_LIFF_URL },
+          action: {
+            type: "uri",
+            label: "オンライン注文",
+            uri: MINIAPP_LIFF_URL,
+          },
         },
 
-        // 右下：会員ログイン
+        // 右下：住所登録（cod-register.html）
         {
           bounds: { x: 1250, y: 843, width: 1250, height: 843 },
-          action: { type: "uri", label: "会員ログイン", uri:  addressRegisterUrl},
+          action: {
+            type: "uri",
+            label: "住所登録",
+            uri: addressRegisterUrl,
+          },
         },
       ],
     };
@@ -104,6 +120,7 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
     console.log("BASE URL:", baseUrl);
     console.log("PRODUCTS_URL:", PRODUCTS_URL);
     console.log("ONLINE→LIFF:", MINIAPP_LIFF_URL);
+    console.log("ADDRESS_REGISTER_URL:", addressRegisterUrl); // ★ログ出力
 
     // 1) リッチメニュー作成
     const richMenuId = await client.createRichMenu(richMenu);
@@ -130,9 +147,11 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
     const imageBuffer = fs.readFileSync(imagePath);
     const ext = path.extname(imageFile).toLowerCase();
     const contentType =
-      ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" :
-      ext === ".png" ? "image/png" :
-      "image/png";
+      ext === ".jpg" || ext === ".jpeg"
+        ? "image/jpeg"
+        : ext === ".png"
+        ? "image/png"
+        : "image/png";
 
     await client.setRichMenuImage(richMenuId, imageBuffer, contentType);
     console.log("✅ setRichMenuImage OK");
@@ -141,7 +160,7 @@ const memberUrl = (MEMBER_URL || "https://example.com/member").trim();
     await client.setDefaultRichMenu(richMenuId);
     console.log("✅ setDefaultRichMenu OK");
 
-    console.log("🎉 完了！左下→LIFF経由 products.html / 右上→直接注文送信");
+    console.log("🎉 完了！左下→オンライン注文（ミニアプリ） / 右下→住所登録ページ");
 
   } catch (e) {
     console.error("❌ Error:", e?.message);

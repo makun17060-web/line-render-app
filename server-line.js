@@ -43,7 +43,7 @@ const app = express();
 
 // ====== 環境変数 ======
 const PORT = process.env.PORT || 3000;
-const LIFF_ID = (process.env.LIFF_ID || "2008406620-G5j1gjzM").trim();
+const LIFF_ID = (process.env.LIFF_ID || "2008406620-4QJ06JLv").trim();
 // ★ 直接注文の住所入力専用 LIFF（未設定なら LIFF_ID を流用）
 const LIFF_ID_DIRECT_ADDRESS = (process.env.LIFF_ID_DIRECT_ADDRESS || LIFF_ID).trim();
 

@@ -26,8 +26,7 @@ const {
   ADDRESS_REGISTER_URL, // 住所登録ページ用（任意・フォールバック）
   EC_SHOP_URL,          // ★ ECショップ本番URL（MakeShop 等）
   LIFF_ID_ADDRESS,      // ★ 住所登録用 LIFF ID（任意）
-  ADDRESS_LIFF_URL,
-  } = process.env;
+    } = process.env;
 
 // ===== 必須チェック =====
 if (!LINE_CHANNEL_ACCESS_TOKEN || !LINE_CHANNEL_SECRET) {

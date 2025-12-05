@@ -2,9 +2,9 @@
 // 3列×2段リッチメニュー(2500x1686 / 6分割)
 //
 // 左上：問い合わせ（メッセージ）
-// 左下：オンライン注文（LIFFミニアプリ products.html）
+// 左下：オンライン注文（LIFF ミニアプリ：products.html 用 LIFF）
 // 中央上：電話注文（電話発信：+1 747-946-7151）
-// 中央下：住所登録（住所登録用 LIFF または cod-register.html）
+// 中央下：住所登録（住所登録専用 LIFF：cod-register.html）
 // 右上：ECショップ（URI：ECショップ本番URL）
 // 右下：直接注文（メッセージ）
 
@@ -18,16 +18,15 @@ const path = require("path");
 const {
   LINE_CHANNEL_ACCESS_TOKEN,
   LINE_CHANNEL_SECRET,
-  LIFF_ID_MINIAPP,
-  SURVEY_URL,           // いまは未使用（残しておいてOK）
-  MEMBER_URL,           // いまは未使用（残しておいてOK）
+  LIFF_ID_MINIAPP,     // オンライン注文用 LIFF ID
+  SURVEY_URL,          // いまは未使用（残しておいてOK）
+  MEMBER_URL,          // いまは未使用（残しておいてOK）
   RICHMENU_IMAGE,
   PUBLIC_BASE_URL,
-  ADDRESS_REGISTER_URL, // 住所登録ページ用（任意・フォールバック）
-  EC_SHOP_URL,          // ★ ECショップ本番URL（MakeShop 等）
-  LIFF_ID_ADDRESS,      // ★ 住所登録用 LIFF ID（任意）
-  
-    } = process.env;
+  EC_SHOP_URL,         // ★ ECショップ本番URL（MakeShop 等）
+  ADDRESS_LIFF_ID,     // ★ 住所登録用 LIFF ID（新規）
+  ADDRESS_LIFF_URL,    // ★ 住所登録用 LIFF URL（任意・優先）
+} = process.env;
 
 // ===== 必須チェック =====
 if (!LINE_CHANNEL_ACCESS_TOKEN || !LINE_CHANNEL_SECRET) {
@@ -35,7 +34,7 @@ if (!LINE_CHANNEL_ACCESS_TOKEN || !LINE_CHANNEL_SECRET) {
   process.exit(1);
 }
 if (!LIFF_ID_MINIAPP) {
-  console.error("❌ LIFF_ID_MINIAPP（ミニアプリ用LIFF ID）がありません");
+  console.error("❌ LIFF_ID_MINIAPP（オンライン注文用 LIFF ID）がありません");
   process.exit(1);
 }
 
@@ -55,29 +54,23 @@ const baseUrl = sanitizeBase(
   PUBLIC_BASE_URL || "https://line-render-app-1.onrender.com"
 );
 
-// products.html（①商品選択）の実URL（ログ用）
-const PRODUCTS_URL = `${baseUrl}/public/products.html`;
-
-// ✅ LIFFで products.html を開く（redirect + キャッシュ無視 v=）
-const CACHE_BUSTER = "20251123_1"; 
-// ↑ 反映が怪しい時は数字を変えて再実行してください
-
-const MINIAPP_LIFF_URL =
-  `https://liff.line.me/${LIFF_ID_MINIAPP}?redirect=${encodeURIComponent(
-    `/public/products.html?v=${CACHE_BUSTER}`
-  )}`;
-
-// ★ 住所登録ページURL（フォールバック）
-//   - 通常は baseUrl/public/cod-register.html にしておく
-//   - もし電話専用サーバーが別ドメインなら ADDRESS_REGISTER_URL にフルURLを入れて上書き
-const addressRegisterUrl = (ADDRESS_REGISTER_URL || `${baseUrl}/public/cod-register.html`).trim();
+// ★ オンライン注文（ミニアプリ）用 LIFF URL
+//   - LIFF の Endpoint URL を products.html にしている前提
+//   - 特別な redirect は付けず、シンプルに liff.line.me/LIFF_ID
+const MINIAPP_LIFF_URL = `https://liff.line.me/${LIFF_ID_MINIAPP}`;
 
 // ★ 住所登録用 LIFF URL
-//   - LIFF_ID_ADDRESS が設定されていれば、LIFF で開く
-//   - 未設定なら、従来どおり addressRegisterUrl へ直接飛ぶ
-const ADDRESS_LIFF_URL = LIFF_ID_ADDRESS
-  ? `https://liff.line.me/${LIFF_ID_ADDRESS}`
-  : addressRegisterUrl;
+//   - 優先：ADDRESS_LIFF_URL があればそれを使う
+//   - なければ ADDRESS_LIFF_ID から https://liff.line.me/ID を組み立てる
+//   - それも無ければ最終手段として /public/cod-register.html に直リンク
+let addressLiffUrl = (ADDRESS_LIFF_URL || "").trim();
+if (!addressLiffUrl) {
+  if (ADDRESS_LIFF_ID) {
+    addressLiffUrl = `https://liff.line.me/${ADDRESS_LIFF_ID}`;
+  } else {
+    addressLiffUrl = `${baseUrl}/public/cod-register.html`;
+  }
+}
 
 // ★ ECショップURL
 //   - MakeShop 等の本番ショップURLを EC_SHOP_URL に入れてください
@@ -112,9 +105,9 @@ const PHONE_ORDER_TEL = "tel:+17479467151"; // +1 747-946-7151
         {
           bounds: { x: 833, y: 0, width: 834, height: 843 },
           action: {
-            type: "message",
-            text: "電話注文",
-            uri: PHONE_ORDER_TEL, // ← 電話アプリを起動
+            type: "uri",
+            label: "電話注文",
+            uri: PHONE_ORDER_TEL,
           },
         },
         // 右上：ECショップ（URI）
@@ -128,7 +121,7 @@ const PHONE_ORDER_TEL = "tel:+17479467151"; // +1 747-946-7151
         },
 
         // --- 2行目 ---
-        // 左下：オンライン注文（LIFFミニアプリ）
+        // 左下：オンライン注文（オンライン注文 LIFF）
         {
           bounds: { x: 0, y: 843, width: 833, height: 843 },
           action: {
@@ -137,16 +130,13 @@ const PHONE_ORDER_TEL = "tel:+17479467151"; // +1 747-946-7151
             uri: MINIAPP_LIFF_URL,
           },
         },
-        // 中央下：住所登録（住所登録用 LIFF or cod-register.html）
+        // 中央下：住所登録（住所登録専用 LIFF）
         {
           bounds: { x: 833, y: 843, width: 834, height: 843 },
           action: {
             type: "uri",
             label: "住所登録",
-            uri: ADDRESS_LIFF_URL ||
-               `https://liff.line.me/${LIFF_ID_MINIAPP}?redirect=${encodeURIComponent(
-        "/public/cod-register.html"
-             )}`,   
+            uri: addressLiffUrl,
           },
         },
         // 右下：直接注文（メッセージ）
@@ -163,10 +153,8 @@ const PHONE_ORDER_TEL = "tel:+17479467151"; // +1 747-946-7151
 
     console.log("=== createRichMenu(6 areas) start ===");
     console.log("BASE URL:", baseUrl);
-    console.log("PRODUCTS_URL:", PRODUCTS_URL);
-    console.log("ONLINE→LIFF:", MINIAPP_LIFF_URL);
-    console.log("ADDRESS_REGISTER_URL:", addressRegisterUrl);
-    console.log("ADDRESS_LIFF_URL:", ADDRESS_LIFF_URL);
+    console.log("ONLINE(LIFF):", MINIAPP_LIFF_URL);
+    console.log("ADDRESS(LIFF):", addressLiffUrl);
     console.log("EC_SHOP_URL:", ecShopUrl);
     console.log("PHONE_ORDER_TEL:", PHONE_ORDER_TEL);
 
@@ -175,7 +163,6 @@ const PHONE_ORDER_TEL = "tel:+17479467151"; // +1 747-946-7151
     console.log("✅ richMenuId:", richMenuId);
 
     // 2) 画像アップロード（publicから読む）
-    //    6分割用の画像ファイル名に変更してください
     const imageFile = (RICHMENU_IMAGE || "richmenu_6_2500x1686.jpg").trim();
     const imagePath = path.join(__dirname, "public", imageFile);
 
@@ -210,8 +197,9 @@ const PHONE_ORDER_TEL = "tel:+17479467151"; // +1 747-946-7151
     console.log("✅ setDefaultRichMenu OK");
 
     console.log("🎉 完了！6分割リッチメニューをデフォルトに設定しました。");
-    console.log("   左上：問い合わせ / 左下：オンライン注文（LIFF） / 中央上：電話注文（+1 747-946-7151）");
-    console.log("   中央下：住所登録（LIFF or cod-register） / 右上：ECショップ / 右下：直接注文");
+    console.log("   左上：問い合わせ / 左下：オンライン注文(LIFF_MINIAPP)");
+    console.log("   中央上：電話注文 / 中央下：住所登録(ADDRESS_LIFF)");
+    console.log("   右上：ECショップ / 右下：直接注文");
 
   } catch (e) {
     console.error("❌ Error:", e?.message);

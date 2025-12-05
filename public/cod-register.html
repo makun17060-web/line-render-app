@@ -2,22 +2,27 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
+  <title>電話代引き用 住所登録</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>住所登録（電話代引き用 会員番号）</title>
   <style>
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       margin: 0;
-      padding: 16px;
+      padding: 12px;
       background: #f7f7f7;
     }
-    h1 {
-      font-size: 18px;
-      margin: 0 0 8px;
+    header {
+      margin-bottom: 12px;
     }
-    p {
-      font-size: 13px;
-      margin: 4px 0;
+    header h1 {
+      font-size: 18px;
+      margin: 0 0 4px;
+    }
+    header p {
+      font-size: 12px;
+      margin: 0;
+      color: #555;
+      white-space: pre-line;
     }
     .card {
       background: #fff;
@@ -26,299 +31,253 @@
       box-shadow: 0 1px 3px rgba(0,0,0,0.08);
       margin-bottom: 12px;
     }
-    label {
+    .field {
+      margin-bottom: 10px;
+    }
+    .field label {
       display: block;
       font-size: 13px;
-      margin-top: 8px;
-      margin-bottom: 2px;
+      margin-bottom: 4px;
     }
-    input, textarea {
+    .field input,
+    .field textarea {
       width: 100%;
       box-sizing: border-box;
-      padding: 8px;
       font-size: 14px;
+      padding: 8px;
       border-radius: 4px;
       border: 1px solid #ccc;
     }
-    textarea {
-      min-height: 72px;
+    .field textarea {
+      min-height: 80px;
       resize: vertical;
     }
+    .note {
+      font-size: 11px;
+      color: #777;
+      margin-top: 2px;
+    }
     button {
-      display: inline-block;
-      margin-top: 12px;
-      padding: 10px 16px;
-      font-size: 14px;
-      border-radius: 6px;
+      width: 100%;
+      padding: 10px;
+      font-size: 15px;
+      border-radius: 999px;
       border: none;
-      cursor: pointer;
-    }
-    .btn-primary {
-      background: #0f9d58;
+      background: #00b900;
       color: #fff;
+      font-weight: 600;
     }
-    .btn-secondary {
-      background: #eee;
-      color: #333;
-      margin-left: 4px;
+    button:disabled {
+      opacity: 0.6;
     }
-    .code-box {
-      font-size: 22px;
-      font-weight: bold;
-      text-align: center;
-      padding: 12px;
-      border-radius: 8px;
-      background: #f0f7ff;
-      margin: 8px 0 4px;
-      letter-spacing: 0.3em;
-    }
-    .small {
+    #status {
       font-size: 12px;
-      color: #666;
-    }
-    .error {
-      font-size: 12px;
-      color: #c00;
-      margin-top: 4px;
+      color: #d00;
+      margin-top: 8px;
       white-space: pre-line;
     }
-    .success {
-      font-size: 12px;
-      color: #0a7;
-      margin-top: 4px;
+    #liffState {
+      font-size: 11px;
+      color: #555;
+      margin-bottom: 8px;
       white-space: pre-line;
-    }
-    #loading {
-      font-size: 14px;
-      text-align: center;
-      padding: 20px 0;
     }
   </style>
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
 <body>
-  <h1>電話代引き用 会員番号のご案内</h1>
-  <p class="small">
-    LINE からの電話注文（代金引換）でお届け先の住所を省略していただくため、<br>
-    あらかじめお名前・ご住所・お電話番号と「会員番号」をご登録いただくページです。
-  </p>
-
-  <div id="loading">読み込み中です…</div>
-
-  <!-- ✅ 登録済みユーザー向け：会員番号表示だけ出す -->
-  <div id="view-registered" class="card" style="display:none;">
-    <h2 style="font-size:16px; margin:0 0 4px;">すでに住所登録が完了しています</h2>
-    <p style="margin:0 0 4px;">電話でご注文の際は、つぎの会員番号をボタンで入力してください。</p>
-    <div id="registered-code" class="code-box">----</div>
-    <p class="small">
-      電話の自動音声で「会員番号を入力してください」と案内されたら、<br>
-      上の数字を 4〜8桁のままボタンで押してください。
+  <header>
+    <h1>電話代引き用 住所登録</h1>
+    <p>
+      電話での代金引換ご注文の際に使う、
+      「会員番号」とお届け先の情報を事前にご登録いただくページです。
     </p>
+  </header>
 
-    <div style="margin-top:8px;">
-      <p class="small" id="registered-name"></p>
-      <p class="small" id="registered-address"></p>
-      <p class="small" id="registered-phone"></p>
-    </div>
+  <div class="card">
+    <div id="liffState">LIFF 初期化中です…</div>
 
-    <button id="btn-show-form" class="btn-secondary">
-      登録内容を変更する
-    </button>
+    <form id="addrForm">
+      <div class="field">
+        <label>会員番号（4〜8桁の数字）<span style="color:#d00">*</span></label>
+        <input type="tel" id="code" inputmode="numeric" pattern="[0-9]*" maxlength="8" />
+        <div class="note">電話受付時に、ボタンで押していただく番号です。</div>
+      </div>
+
+      <div class="field">
+        <label>お名前<span style="color:#d00">*</span></label>
+        <input type="text" id="name" />
+      </div>
+
+      <div class="field">
+        <label>電話番号（ハイフンなし 可）</label>
+        <input type="tel" id="phone" inputmode="numeric" pattern="[0-9\-]*" />
+        <div class="note">ご連絡先の電話番号です。</div>
+      </div>
+
+      <div class="field">
+        <label>郵便番号（ハイフンなし 可）</label>
+        <input type="tel" id="zip" inputmode="numeric" pattern="[0-9\-]*" />
+      </div>
+
+      <div class="field">
+        <label>ご住所<span style="color:#d00">*</span></label>
+        <textarea id="address" placeholder="例）愛知県知多郡美浜町〇〇…"></textarea>
+      </div>
+
+      <button type="submit" id="submitBtn" disabled>この内容で登録する</button>
+
+      <div id="status"></div>
+    </form>
   </div>
 
-  <!-- ✏ 未登録 or 再登録用フォーム -->
-  <div id="view-form" class="card" style="display:none;">
-    <h2 style="font-size:16px; margin:0 0 4px;">住所登録フォーム</h2>
-    <p class="small">
-      はじめての方、または住所を変更したい方は、<br>
-      会員番号とお届け先情報をご入力ください。
-    </p>
-
-    <label for="code">会員番号（4〜8桁の数字）</label>
-    <input id="code" type="tel" inputmode="numeric" placeholder="例）1234" />
-    <p class="small">※ 電話注文時にボタンで押していただく番号です。</p>
-
-    <label for="name">お名前</label>
-    <input id="name" type="text" placeholder="例）磯屋 太郎" />
-
-    <label for="zip">郵便番号</label>
-    <input id="zip" type="tel" inputmode="numeric" placeholder="例）4700000（ハイフンなし）" />
-
-    <label for="address">ご住所</label>
-    <textarea id="address" placeholder="都道府県からマンション名・部屋番号まで"></textarea>
-
-    <label for="phone">お電話番号</label>
-    <input id="phone" type="tel" inputmode="numeric" placeholder="例）09012345678（ハイフンなし）" />
-    <p class="small">※ お届けに関して確認が必要な場合にのみ使用します。</p>
-
-    <div id="form-message" class=""></div>
-
-    <button id="btn-submit" class="btn-primary">この内容で登録する</button>
-  </div>
-
+  <!-- LIFF SDK -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script>
-    // ★ ここにミニアプリ用の LIFF ID を入れてください
-    const LIFF_ID = ";2008406620-G5j1gjzM" // ←使っているIDに合わせて変更
+    // ★★★ ここを必ず「住所登録用 LIFF ID」に書き換えてください ★★★
+    const LIFF_ID = "ここに住所登録用 LIFF ID を入れてください";
 
-    let gLineUserId = "";
+    // 住所情報の送信先（phone-cod サーバー）
+    const API_BASE = "https://phone-cod.onrender.com";
+    const REGISTER_ENDPOINT = API_BASE + "/api/cod/customers";
 
-    function showView(id) {
-      document.getElementById("view-registered").style.display = "none";
-      document.getElementById("view-form").style.display = "none";
-      const el = document.getElementById(id);
-      if (el) el.style.display = "block";
-    }
+    const liffStateEl = document.getElementById("liffState");
+    const statusEl = document.getElementById("status");
+    const formEl = document.getElementById("addrForm");
+    const submitBtn = document.getElementById("submitBtn");
 
-    function setMessage(text, type = "error") {
-      const el = document.getElementById("form-message");
-      el.className = type;
-      el.textContent = text || "";
+    let lineUserId = null;
+
+    function setStatus(msg, isError = true) {
+      statusEl.style.color = isError ? "#d00" : "#008800";
+      statusEl.textContent = msg || "";
     }
 
     async function initLiff() {
       try {
-        await liff.init({ liffId:2008406620-4QJ06JLv});
-        if (!liff.isLoggedIn()) {
-          liff.login();
+        console.log("[cod-register] liff.init start", LIFF_ID);
+        await liff.init({ liffId: LIFF_ID });
+
+        if (!liff.isInClient()) {
+          liffStateEl.textContent = "LINE アプリ内から開いてご利用ください。";
+          submitBtn.disabled = true;
           return;
         }
-        const profile = await liff.getProfile();
-        gLineUserId = profile.userId || "";
+
+        const ctx = liff.getContext();
+        const profile = await liff.getProfile().catch(() => null);
+
+        lineUserId =
+          (ctx && ctx.userId) ||
+          (profile && profile.userId) ||
+          null;
+
+        console.log("[cod-register] context:", ctx);
+        console.log("[cod-register] profile:", profile);
+        console.log("[cod-register] lineUserId:", lineUserId);
+
+        if (lineUserId) {
+          liffStateEl.textContent =
+            "LIFF 初期化に成功しました。\nこのLINEアカウントに住所情報を登録します。";
+        } else {
+          liffStateEl.textContent =
+            "LIFF 初期化に成功しましたが、ユーザーIDが取得できませんでした。";
+        }
+
+        submitBtn.disabled = false;
       } catch (e) {
-        console.error("LIFF init error:", e);
-        document.getElementById("loading").textContent =
-          "LIFFの初期化に失敗しました。時間をおいて再度お試しください。";
-        return;
+        console.error("[cod-register] liff.init error:", e);
+        liffStateEl.textContent =
+          "LIFF の初期化に失敗しました。\n" +
+          "・LINE Developers の LIFF ID とこのページの LIFF_ID が一致しているか\n" +
+          "・エンドポイント URL が https://line-render-app-1.onrender.com/public/cod-register.html になっているか\n" +
+          "をご確認ください。";
+        submitBtn.disabled = true;
       }
+    }
 
-      // LINE userId から会員情報を検索
-      if (!gLineUserId) {
-        document.getElementById("loading").textContent =
-          "ユーザー情報の取得に失敗しました。";
-        return;
-      }
+    document.addEventListener("DOMContentLoaded", () => {
+      initLiff().catch((e) => {
+        console.error(e);
+      });
 
-      try {
-        const res = await fetch(
-          "/api/cod/customers/line/" + encodeURIComponent(gLineUserId),
-          {
-            method: "GET",
+      formEl.addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        setStatus("");
+
+        const code = document.getElementById("code").value.trim();
+        const name = document.getElementById("name").value.trim();
+        const phone = document.getElementById("phone").value.trim();
+        const zip = document.getElementById("zip").value.trim();
+        const address = document.getElementById("address").value.trim();
+
+        if (!code || !/^\d{4,8}$/.test(code)) {
+          setStatus("会員番号は 4〜8 桁の数字で入力してください。", true);
+          return;
+        }
+        if (!name) {
+          setStatus("お名前を入力してください。", true);
+          return;
+        }
+        if (!address) {
+          setStatus("ご住所を入力してください。", true);
+          return;
+        }
+
+        submitBtn.disabled = true;
+        setStatus("登録中です…", false);
+
+        try {
+          const body = {
+            code,
+            name,
+            phone,
+            zip,
+            address,
+            // サーバー側で lineUserId を使う場合は受け取れるようにしておく
+            lineUserId: lineUserId || null,
+          };
+
+          const resp = await fetch(REGISTER_ENDPOINT, {
+            method: "POST",
             headers: {
               "Content-Type": "application/json",
             },
-          }
-        );
+            body: JSON.stringify(body),
+          });
 
-        document.getElementById("loading").style.display = "none";
+          const data = await resp.json().catch(() => ({}));
 
-        if (res.ok) {
-          const data = await res.json();
-          if (data.ok && data.customer) {
-            // ✅ 登録済み → 会員番号表示だけ
-            const code = data.code || "";
-            const c = data.customer || {};
-
-            document.getElementById("registered-code").textContent = code || "----";
-            document.getElementById("registered-name").textContent =
-              c.name ? "お名前: " + c.name : "";
-            document.getElementById("registered-address").textContent =
-              c.address ? "ご住所: " + c.address : "";
-            document.getElementById("registered-phone").textContent =
-              c.phone ? "電話番号: " + c.phone : "";
-
-            showView("view-registered");
+          if (!resp.ok || !data.ok) {
+            console.error("[cod-register] API error:", resp.status, data);
+            if (data.code === "DUPLICATE_CODE") {
+              setStatus("この会員番号はすでに登録されています。別の番号をお試しください。");
+            } else if (data.error) {
+              setStatus(data.error);
+            } else {
+              setStatus("登録中にエラーが発生しました。時間をおいて再度お試しください。");
+            }
+            submitBtn.disabled = false;
             return;
           }
+
+          setStatus("ご登録ありがとうございました。電話でのご注文の際は、この会員番号を押してください。", false);
+
+          // 数秒後に LIFF を閉じる
+          setTimeout(() => {
+            try {
+              if (liff.isInClient()) {
+                liff.closeWindow();
+              }
+            } catch (e) {
+              console.error(e);
+            }
+          }, 2500);
+        } catch (e) {
+          console.error("[cod-register] fetch error:", e);
+          setStatus("通信エラーが発生しました。電波状況をご確認ください。");
+          submitBtn.disabled = false;
         }
-
-        // ❌ 404 or 未登録 → フォーム表示
-        showView("view-form");
-      } catch (e) {
-        console.error("fetch customers/line error:", e);
-        document.getElementById("loading").style.display = "none";
-        showView("view-form");
-      }
-    }
-
-    // フォーム送信
-    async function submitForm() {
-      setMessage("", "");
-
-      const code = document.getElementById("code").value.trim();
-      const name = document.getElementById("name").value.trim();
-      const zip = document.getElementById("zip").value.trim();
-      const address = document.getElementById("address").value.trim();
-      const phone = document.getElementById("phone").value.trim();
-
-      if (!code || !/^\d{4,8}$/.test(code)) {
-        setMessage("会員番号は4〜8桁の数字で入力してください。", "error");
-        return;
-      }
-      if (!name) {
-        setMessage("お名前を入力してください。", "error");
-        return;
-      }
-      if (!address) {
-        setMessage("ご住所を入力してください。", "error");
-        return;
-      }
-
-      const payload = {
-        code,
-        name,
-        zip,
-        address,
-        phone,
-        lineUserId: gLineUserId || "",
-      };
-
-      try {
-        const res = await fetch("/api/cod/customers", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(payload),
-        });
-
-        const data = await res.json().catch(() => ({}));
-
-        if (!res.ok || !data.ok) {
-          const msg = data && data.error ? data.error : "登録に失敗しました。";
-          setMessage(msg, "error");
-          return;
-        }
-
-        setMessage("登録が完了しました。会員番号は「" + code + "」です。", "success");
-
-        // 登録完了後、会員番号表示ビューに切り替える
-        document.getElementById("registered-code").textContent = code;
-        document.getElementById("registered-name").textContent =
-          name ? "お名前: " + name : "";
-        document.getElementById("registered-address").textContent =
-          address ? "ご住所: " + address : "";
-        document.getElementById("registered-phone").textContent =
-          phone ? "電話番号: " + phone : "";
-        showView("view-registered");
-      } catch (e) {
-        console.error("submitForm error:", e);
-        setMessage("通信エラーが発生しました。時間をおいて再度お試しください。", "error");
-      }
-    }
-
-    window.addEventListener("load", () => {
-      initLiff();
-
-      document
-        .getElementById("btn-submit")
-        .addEventListener("click", submitForm);
-
-      document
-        .getElementById("btn-show-form")
-        .addEventListener("click", () => {
-          // 「登録内容を変更する」ボタン → フォームを開く
-          showView("view-form");
-        });
+      });
     });
   </script>
 </body>

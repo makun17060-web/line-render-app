@@ -2,80 +2,79 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <title>磯屋 LIFF エントリ</title>
+  <title>LIFF Entry</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <style>
-    body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      margin: 0;
-      padding: 16px;
-      background: #f5f5f5;
-    }
-    .box {
-      max-width: 480px;
-      margin: 40px auto;
-      background: #fff;
-      border-radius: 8px;
-      padding: 16px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-      text-align: center;
-      font-size: 14px;
-      line-height: 1.6;
-    }
-  </style>
 </head>
 <body>
-<div class="box" id="status">読み込み中です…</div>
+  <p id="status">LIFF 初期化中です…</p>
 
-<script>
-(async () => {
-  const statusEl = document.getElementById("status");
+  <!-- LIFF SDK -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script>
+    // ★ ここに実際の LIFF ID を入れてください
+    const LIFF_ID = "2008406620-4QJ06JLv"; // ← あなたの LIFF_ID_MINIAPP
 
-  function setStatus(msg) {
-    statusEl.textContent = msg;
-  }
+    function resolveRedirectUrl(raw) {
+      if (!raw) return null;
 
-  try {
-    setStatus("LIFF を初期化しています…");
+      try {
+        // もし URL エンコードされていたらデコード
+        const decoded = decodeURIComponent(raw);
+        let redirect = decoded;
 
-    // ✅ server.js の /api/liff/config から共通 LIFF ID を取得
-    const confRes = await fetch("/api/liff/config");
-    const conf = await confRes.json().catch(() => ({}));
-    const liffId = conf.liffId;
-    if (!liffId) {
-      setStatus("LIFF ID が取得できませんでした。（/api/liff/config）");
-      return;
+        // フル URL ではなく /public/... などのパスだけが来る想定
+        // （万一フルURLが来ても、ドメインだけ置き換える）
+        const origin = window.location.origin;
+
+        if (redirect.startsWith("http://") || redirect.startsWith("https://")) {
+          // 他ドメインには飛ばさないように、自分の origin に差し替え
+          try {
+            const u = new URL(redirect);
+            redirect = origin + u.pathname + u.search + u.hash;
+          } catch (e) {
+            // URL としておかしければ products にフォールバック
+            return origin + "/public/products.html";
+          }
+        } else {
+          // /public/... のようなパスの場合
+          if (!redirect.startsWith("/")) {
+            redirect = "/" + redirect.replace(/^\.?\//, "");
+          }
+          redirect = origin + redirect;
+        }
+        return redirect;
+      } catch (e) {
+        console.error("resolveRedirectUrl error:", e);
+        return null;
+      }
     }
 
-    await liff.init({ liffId });
+    async function main() {
+      const statusEl = document.getElementById("status");
+      statusEl.textContent = "LIFF 初期化中です…";
 
-    // LIFF クライアント内想定（LINE アプリから開く）
-    const profile = await liff.getProfile();
-    const userId = profile.userId;
+      try {
+        await liff.init({ liffId: LIFF_ID });
+        statusEl.textContent = "LIFF 初期化に成功しました。ページを遷移します…";
 
-    // クエリ文字列を見て飛び先を決める
-    const params = new URLSearchParams(window.location.search);
-    const page = params.get("page") || "products"; // デフォルトは商品一覧
+        const params = new URLSearchParams(window.location.search);
+        const rawRedirect = params.get("redirect");
 
-    let targetPath = "/public/products.html";
-    if (page === "address") {
-      targetPath = "/public/phone-address.html";
+        // redirect が指定されていなければ、デフォルトは products.html
+        let redirectUrl = resolveRedirectUrl(rawRedirect) ||
+                          (window.location.origin + "/public/products.html");
+
+        console.log("redirect ->", redirectUrl);
+
+        // 履歴を残さずに遷移
+        window.location.replace(redirectUrl);
+      } catch (e) {
+        console.error("liff.init error:", e);
+        statusEl.textContent = "LIFF の初期化に失敗しました: " + (e.message || e);
+      }
     }
 
-    // userId をクエリに付与
-    const q = new URLSearchParams();
-    q.set("userId", userId);
-
-    const url = `${targetPath}?${q.toString()}`;
-    setStatus("画面へ移動します…");
-    window.location.href = url;
-
-  } catch (e) {
-    console.error(e);
-    setStatus("LIFF 初期化に失敗しました: " + (e.message || e));
-  }
-})();
-</script>
+    main();
+  </script>
 </body>
 </html>

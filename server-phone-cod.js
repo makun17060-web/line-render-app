@@ -1,9 +1,12 @@
 // server-phone-cod.js
-// Twilio 代引き専用 自動受付サーバー（会員番号方式・住所事前登録）
+// Twilio 代引き専用 自動受付サーバー（会員番号方式・住所事前登録 + LIFF連携）
 //
 // ・商品〜個数〜追加注文まではプッシュ式（DTMF）
 // ・名前・住所・電話番号は、事前に Web / LINE で登録してもらう
-//    - data/cod-customers.json に保存（code: {name, phone, zip, address}）
+//    - data/cod-customers.json に保存
+//      { [code]: { name, phone, zip, address, lineUserId? } }
+//    - lineUserId がある場合は MAIN_APP_BASE の /api/liff/address/me にも問い合わせて
+//      LIFF 側の住所（addresses.json）を優先採用
 // ・電話では最後に「会員番号」を DTMF で押してもらう
 //    - その会員番号から登録済みの名前・住所・電話を自動取得
 // ・住所文字列から地域を判定して送料計算
@@ -52,7 +55,7 @@ function readProducts() {
  * 会員データ
  * 形式:
  * {
- *   "1234": { name, phone, zip, address },
+ *   "1234": { name, phone, zip, address, lineUserId? },
  *   "5678": { ... }
  * }
  */
@@ -68,6 +71,12 @@ const PORT = process.env.PORT || 3000;
 const LINE_CHANNEL_ACCESS_TOKEN =
   (process.env.LINE_CHANNEL_ACCESS_TOKEN || "").trim();
 const LINE_ADMIN_USER_ID = (process.env.LINE_ADMIN_USER_ID || "").trim();
+
+// メイン（LINE／ミニアプリ）側サーバーのベースURL
+// 例: https://line-render-app-1.onrender.com
+const MAIN_APP_BASE = (process.env.MAIN_APP_BASE || "")
+  .trim()
+  .replace(/\/+$/, "");
 
 // ==== 送料 & 代引き手数料 ==============================================
 
@@ -107,12 +116,47 @@ function detectRegionFromAddress(address = {}) {
   return "";
 }
 
+/**
+ * MAIN_APP_BASE（line-render 側）の /api/liff/address/me を叩いて
+ * LIFF で登録済みの住所を取得する
+ *
+ * @param {string} lineUserId LINE の userId
+ * @returns {Promise<object|null>} { name, phone, postal, prefecture, city, address1, address2, ts } or null
+ */
+async function fetchAddressFromMain(lineUserId) {
+  if (!MAIN_APP_BASE || !lineUserId) return null;
+
+  const url = `${MAIN_APP_BASE}/api/liff/address/me?userId=${encodeURIComponent(
+    lineUserId
+  )}`;
+  try {
+    const res = await fetch(url);
+    if (!res || !res.ok) {
+      console.error(
+        "[COD] fetchAddressFromMain HTTP error:",
+        res && res.status,
+        url
+      );
+      return null;
+    }
+    const data = await res.json().catch(() => null);
+    if (!data || !data.ok || !data.address) {
+      console.log("[COD] fetchAddressFromMain no address:", data);
+      return null;
+    }
+    return data.address;
+  } catch (e) {
+    console.error("[COD] fetchAddressFromMain error:", e);
+    return null;
+  }
+}
+
 // ==== 通話ごとのメモリ ================================================
 
 // 例: DTMF_ORDERS[callSid] = {
 //   items: [ { productId, name, price, qty }, ... ],
 //   memberCode: "1234",
-//   customer: { name, phone, zip, address },
+//   customer: { name, phone, zip, address, lineUserId? },
 //   addr: { region, shipping },
 // }
 const DTMF_ORDERS = {};
@@ -284,7 +328,7 @@ if (fs.existsSync(PUBLIC_DIR)) {
 // ======================================================================
 //
 // POST /api/cod/customers
-// body: { code, name, phone, zip, address }
+// body: { code, name, phone, zip, address, lineUserId? }
 //
 // - code: 4〜8桁の数字
 // - すでに同じ code が存在する場合はエラー（重複チェック）
@@ -295,7 +339,7 @@ if (fs.existsSync(PUBLIC_DIR)) {
 
 app.post("/api/cod/customers", jsonParser, async (req, res) => {
   try {
-    const { code, name, phone, zip, address } = req.body || {};
+    const { code, name, phone, zip, address, lineUserId } = req.body || {};
 
     const codeStr = String(code || "").trim();
 
@@ -341,6 +385,7 @@ app.post("/api/cod/customers", jsonParser, async (req, res) => {
       phone: phoneStr,
       zip: zipStr,
       address: String(address).trim(),
+      lineUserId: lineUserId ? String(lineUserId).trim() : "",
       updatedAt: now,
       createdAt: now,
     };
@@ -619,7 +664,7 @@ app.post("/twilio/cod/more-retry", urlencoded, (req, res) => {
 });
 
 // ======================================================================
-// 5) 会員番号入力（DTMF）→ 会員情報の読込 & 送料計算
+// 5) 会員番号入力（DTMF）→ 会員情報の読込 & 送料計算（LIFF連携）
 // ======================================================================
 
 app.post("/twilio/cod/member", urlencoded, (req, res) => {
@@ -637,7 +682,7 @@ app.post("/twilio/cod/member", urlencoded, (req, res) => {
   res.type("text/xml").send(twiml);
 });
 
-app.post("/twilio/cod/member-handler", urlencoded, (req, res) => {
+app.post("/twilio/cod/member-handler", urlencoded, async (req, res) => {
   const callSid = req.body.CallSid || "";
   const digits = (req.body.Digits || "").trim();
 
@@ -669,22 +714,74 @@ app.post("/twilio/cod/member-handler", urlencoded, (req, res) => {
   const order = DTMF_ORDERS[callSid] || { items: [] };
 
   order.memberCode = digits;
-  order.customer = {
+
+  // ベースとなる会員情報（cod-customers.json）
+  const baseCustomer = {
     name: customer.name || "",
     phone: customer.phone || "",
     zip: customer.zip || "",
     address: customer.address || "",
+    lineUserId: customer.lineUserId || "",
   };
 
-  // 送料計算（住所文字列から地域判定）
-  const fullAddr = order.customer.address || "";
+  // LIFF 側（MAIN_APP_BASE）から住所取得を試みる
+  let liffAddress = null;
+  if (baseCustomer.lineUserId) {
+    liffAddress = await fetchAddressFromMain(baseCustomer.lineUserId);
+  }
+
+  // LIFF の住所が取れた場合はそちらを優先してマージ
+  let mergedCustomer = { ...baseCustomer };
+  if (liffAddress) {
+    const fullAddressParts = [
+      liffAddress.postal || liffAddress.zip || "",
+      liffAddress.prefecture || liffAddress.pref || "",
+      liffAddress.city || "",
+      liffAddress.address1 || liffAddress.addr1 || "",
+      liffAddress.address2 || liffAddress.addr2 || "",
+    ].filter(Boolean);
+    const fullAddress = fullAddressParts.join(" ");
+
+    mergedCustomer = {
+      name: String(
+        liffAddress.name ||
+          baseCustomer.name ||
+          ""
+      ).trim(),
+      phone: String(
+        liffAddress.phone ||
+          liffAddress.tel ||
+          baseCustomer.phone ||
+          ""
+      ).trim(),
+      zip: String(
+        liffAddress.postal ||
+          liffAddress.zip ||
+          baseCustomer.zip ||
+          ""
+      ).trim(),
+      address: fullAddress || baseCustomer.address || "",
+      lineUserId: baseCustomer.lineUserId || "",
+    };
+  }
+
+  order.customer = mergedCustomer;
+
+  // 送料計算
   let region = "";
   let shipping = 0;
   try {
-    region = detectRegionFromAddress({
-      prefecture: fullAddr,
-      address1: fullAddr,
-    });
+    if (liffAddress) {
+      // LIFF 側の詳細住所から地域判定
+      region = detectRegionFromAddress(liffAddress);
+    } else {
+      // 従来通り、1行住所から判定
+      const fullAddr = order.customer.address || "";
+      region = detectRegionFromAddress({
+        prefecture: fullAddr,
+        address1: fullAddr,
+      });
+    }
     if (region) {
       shipping = SHIPPING_BY_REGION[region] || 0;
     }
@@ -850,6 +947,7 @@ app.get("/api/health", (_req, res) => {
     env: {
       LINE_CHANNEL_ACCESS_TOKEN: !!LINE_CHANNEL_ACCESS_TOKEN,
       LINE_ADMIN_USER_ID: !!LINE_ADMIN_USER_ID,
+      MAIN_APP_BASE: !!MAIN_APP_BASE,
     },
   });
 });
@@ -865,5 +963,9 @@ app.listen(PORT, "0.0.0.0", () => {
     "   LINE notify:",
     LINE_CHANNEL_ACCESS_TOKEN ? "token OK" : "token MISSING",
     LINE_ADMIN_USER_ID ? "admin OK" : "admin MISSING"
+  );
+  console.log(
+    "   MAIN_APP_BASE:",
+    MAIN_APP_BASE || "(not set – LIFF住所連携なし)"
   );
 });

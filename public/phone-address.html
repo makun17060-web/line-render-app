@@ -220,151 +220,178 @@
   </form>
 
   <script>
-    let currentUserId = "";
-    let liffInited = false;
+  let currentUserId = "";
+  let liffInited = false;
 
-    // 既存の住所を読み込む
-    async function loadMyAddress(userId) {
-      try {
-        const res = await fetch("/api/liff/address/me?userId=" + encodeURIComponent(userId));
-        const data = await res.json();
-        if (!data.ok || !data.address) return;
+  // 既存の住所を読み込む
+  async function loadMyAddress(userId) {
+    try {
+      const res = await fetch("/api/liff/address/me?userId=" + encodeURIComponent(userId));
+      const data = await res.json();
+      if (!data.ok || !data.address) return;
 
-        const a = data.address || {};
-        document.getElementById("name").value      = a.name      || "";
-        document.getElementById("phone").value     = a.phone     || "";
-        document.getElementById("postal").value    = a.postal    || "";
-        document.getElementById("prefecture").value= a.prefecture || "";
-        document.getElementById("city").value      = a.city      || "";
-        document.getElementById("address1").value  = a.address1  || "";
-        document.getElementById("address2").value  = a.address2  || "";
+      const a = data.address || {};
+      document.getElementById("name").value      = a.name      || "";
+      document.getElementById("phone").value     = a.phone     || "";
+      document.getElementById("postal").value    = a.postal    || "";
+      document.getElementById("prefecture").value= a.prefecture || "";
+      document.getElementById("city").value      = a.city      || "";
+      document.getElementById("address1").value  = a.address1  || "";
+      document.getElementById("address2").value  = a.address2  || "";
 
-        const status = document.getElementById("status");
-        status.textContent = "以前登録された住所を読み込みました。内容を確認して、必要なら修正してください。";
-        status.className = "status ok";
-      } catch (e) {
-        console.log("loadMyAddress error", e);
-      }
-    }
-
-    // LIFF 初期化（ミニアプリ用）
-    async function initLiffIfPossible() {
-      try {
-        // サーバーから LIFF ID を取得
-        const res = await fetch("/api/liff/config");
-        const cfg = await res.json();
-        const liffId = (cfg && cfg.liffId) || "";
-        if (!liffId || !window.liff) {
-          // LIFF が使えない環境 → 通常ブラウザモード
-          document.getElementById("userIdRow").style.display = "block";
-          return;
-        }
-
-        await liff.init({ liffId });
-        liffInited = true;
-
-        if (!liff.isLoggedIn()) {
-          // LINE アプリ外から開かれた場合など
-          document.getElementById("userIdRow").style.display = "block";
-          return;
-        }
-
-        const profile = await liff.getProfile();
-        currentUserId = profile.userId;
-        // userId 入力欄は不要なので隠す
-        document.getElementById("userIdRow").style.display = "none";
-
-        // 既存の住所を読み込み
-        loadMyAddress(currentUserId);
-
-        const status = document.getElementById("status");
-        status.textContent = "LINE と連携しました。このアカウントの住所として登録されます。";
-        status.className = "status ok";
-      } catch (e) {
-        console.log("LIFF init error", e);
-        // 失敗した場合は通常ブラウザモードにしておく
-        document.getElementById("userIdRow").style.display = "block";
-      }
-    }
-
-    document.addEventListener("DOMContentLoaded", () => {
-      // LIFF があれば初期化を試みる
-      if (window.liff) {
-        initLiffIfPossible();
-      } else {
-        // LIFF SDK 読み込み失敗時など
-        document.getElementById("userIdRow").style.display = "block";
-      }
-
-      const form = document.getElementById("addressForm");
       const status = document.getElementById("status");
-      const submitBtn = document.getElementById("submitBtn");
+      status.textContent = "以前登録された住所を読み込みました。内容を確認して、必要なら修正してください。";
+      status.className = "status ok";
+    } catch (e) {
+      console.log("loadMyAddress error", e);
+    }
+  }
 
-      form.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        status.textContent = "";
+  // LIFF 初期化（ミニアプリ用）
+  async function initLiffIfPossible() {
+    const uidRow   = document.getElementById("userIdRow");
+    const uidInput = document.getElementById("userIdInput");
+    const status   = document.getElementById("status");
+
+    try {
+      // サーバーから LIFF ID を取得
+      const res = await fetch("/api/liff/config");
+      const cfg = await res.json();
+      const liffId = (cfg && cfg.liffId) || "";
+
+      if (!liffId || !window.liff) {
+        // LIFF が使えない環境 → 通常ブラウザモード
+        uidRow.style.display = "block";
+        uidInput.readOnly = false;
+        status.textContent = "LINE ミニアプリ以外から開いています。必要であればユーザーIDを手入力してください。";
         status.className = "status";
+        return;
+      }
 
-        // userId を決定（LIFF優先／なければ手動入力）
-        const manualUserId = document.getElementById("userIdInput").value.trim();
-        const userId = currentUserId || manualUserId;
+      await liff.init({ liffId });
+      liffInited = true;
 
-        if (!userId) {
-          status.textContent = "ユーザーIDが特定できません。LINE アプリ内から開くか、ユーザーIDを入力してください。";
-          status.className = "status err";
-          return;
+      if (!liff.isLoggedIn()) {
+        // LINE アプリ外から開かれた場合など
+        uidRow.style.display = "block";
+        uidInput.readOnly = false;
+        status.textContent = "LINE ログイン状態ではありません。ユーザーIDを手入力するか、LINE アプリ内から開いてください。";
+        status.className = "status err";
+        return;
+      }
+
+      // プロフィールから userId を取得
+      const profile = await liff.getProfile();
+      currentUserId = profile.userId;
+
+      // 画面の userId 欄に自動でセット（読み取り専用）
+      uidRow.style.display = "block";
+      uidInput.value = currentUserId;
+      uidInput.readOnly = true;
+
+      // 既存の住所を読み込み
+      loadMyAddress(currentUserId);
+
+      status.textContent = "LINE と連携しました。このアカウントの住所として登録されます。";
+      status.className = "status ok";
+    } catch (e) {
+      console.log("LIFF init error", e);
+      // エラー時は通常ブラウザモードにする
+      uidRow.style.display = "block";
+      uidInput.readOnly = false;
+      const status = document.getElementById("status");
+      status.textContent = "LIFF 初期化に失敗しました。PC からの場合はユーザーIDを手入力してください。";
+      status.className = "status err";
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const uidRow   = document.getElementById("userIdRow");
+    const uidInput = document.getElementById("userIdInput");
+
+    // デフォルトでは「一応表示」しておく（LIFF 成功時は自動入力 & 読み取り専用化）
+    uidRow.style.display = "block";
+    uidInput.readOnly = false;
+
+    // LIFF があれば初期化を試みる
+    if (window.liff) {
+      initLiffIfPossible();
+    } else {
+      const status = document.getElementById("status");
+      status.textContent = "LIFF SDK が利用できない環境です。必要であればユーザーIDを手入力してください。";
+      status.className = "status";
+    }
+
+    const form = document.getElementById("addressForm");
+    const status = document.getElementById("status");
+    const submitBtn = document.getElementById("submitBtn");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      status.textContent = "";
+      status.className = "status";
+
+      // userId を決定（LIFF優先／なければ手動入力）
+      const manualUserId = uidInput.value.trim();
+      const userId = currentUserId || manualUserId;
+
+      if (!userId) {
+        status.textContent = "ユーザーIDが特定できません。LINE アプリ内から開くか、ユーザーIDを入力してください。";
+        status.className = "status err";
+        return;
+      }
+
+      const addr = {
+        name:      document.getElementById("name").value.trim(),
+        phone:     document.getElementById("phone").value.trim(),
+        postal:    document.getElementById("postal").value.trim(),
+        prefecture:document.getElementById("prefecture").value,
+        city:      document.getElementById("city").value.trim(),
+        address1:  document.getElementById("address1").value.trim(),
+        address2:  document.getElementById("address2").value.trim(),
+      };
+
+      if (!addr.name || !addr.phone || !addr.prefecture || !addr.city || !addr.address1) {
+        status.textContent = "必須項目が未入力です。お名前・電話番号・都道府県・市区町村・番地を入力してください。";
+        status.className = "status err";
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = "送信中…";
+
+      try {
+        const resp = await fetch("/api/liff/address", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, address: addr }),
+        });
+        const data = await resp.json();
+
+        if (!data.ok) {
+          throw new Error(data.error || "保存に失敗しました");
         }
 
-        const addr = {
-          name:      document.getElementById("name").value.trim(),
-          phone:     document.getElementById("phone").value.trim(),
-          postal:    document.getElementById("postal").value.trim(),
-          prefecture:document.getElementById("prefecture").value,
-          city:      document.getElementById("city").value.trim(),
-          address1:  document.getElementById("address1").value.trim(),
-          address2:  document.getElementById("address2").value.trim(),
-        };
+        status.textContent = "住所を登録しました。ありがとうございました。";
+        status.className = "status ok";
 
-        if (!addr.name || !addr.phone || !addr.prefecture || !addr.city || !addr.address1) {
-          status.textContent = "必須項目が未入力です。お名前・電話番号・都道府県・市区町村・番地を入力してください。";
-          status.className = "status err";
-          return;
+        // ミニアプリからなら閉じてあげる
+        if (liffInited && window.liff && liff.isInClient()) {
+          setTimeout(() => {
+            try { liff.closeWindow(); } catch (e) {}
+          }, 1200);
         }
-
-        submitBtn.disabled = true;
-        submitBtn.textContent = "送信中…";
-
-        try {
-          const resp = await fetch("/api/liff/address", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ userId, address: addr }),
-          });
-          const data = await resp.json();
-
-          if (!data.ok) {
-            throw new Error(data.error || "保存に失敗しました");
-          }
-
-          status.textContent = "住所を登録しました。ありがとうございました。";
-          status.className = "status ok";
-
-          // ミニアプリからなら閉じてあげる
-          if (liffInited && window.liff && liff.isInClient()) {
-            setTimeout(() => {
-              try { liff.closeWindow(); } catch (e) {}
-            }, 1200);
-          }
-        } catch (err) {
-          console.error("save error", err);
-          status.textContent = "登録中にエラーが発生しました。時間をおいてもう一度お試しください。";
-          status.className = "status err";
-        } finally {
-          submitBtn.disabled = false;
-          submitBtn.textContent = "この内容で住所を登録する";
-        }
-      });
+      } catch (err) {
+        console.error("save error", err);
+        status.textContent = "登録中にエラーが発生しました。時間をおいてもう一度お試しください。";
+        status.className = "status err";
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "この内容で住所を登録する";
+      }
     });
-  </script>
+  });
+</script>
+
 </body>
 </html>

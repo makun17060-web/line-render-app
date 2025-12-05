@@ -2,363 +2,324 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <title>電話代引き用 住所登録｜手造りえびせんべい 磯屋</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>住所登録（電話代引き用 会員番号）</title>
   <style>
-    :root {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      color-scheme: light;
-    }
     body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       margin: 0;
       padding: 16px;
-      background: #f7f3e9;
-      color: #333;
-    }
-    .container {
-      max-width: 560px;
-      margin: 0 auto;
-      background: #fff;
-      border-radius: 12px;
-      padding: 16px 16px 20px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+      background: #f7f7f7;
     }
     h1 {
-      font-size: 20px;
-      margin: 0 0 4px;
+      font-size: 18px;
+      margin: 0 0 8px;
     }
-    .subtitle {
+    p {
       font-size: 13px;
-      color: #666;
+      margin: 4px 0;
+    }
+    .card {
+      background: #fff;
+      border-radius: 8px;
+      padding: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
       margin-bottom: 12px;
-      line-height: 1.5;
-      white-space: pre-line;
     }
     label {
       display: block;
-      font-size: 14px;
-      margin-bottom: 4px;
+      font-size: 13px;
+      margin-top: 8px;
+      margin-bottom: 2px;
     }
-    .required {
-      color: #c0392b;
-      font-size: 12px;
-      margin-left: 4px;
-    }
-    input[type="text"],
-    input[type="tel"],
-    textarea {
+    input, textarea {
       width: 100%;
       box-sizing: border-box;
-      padding: 10px;
-      border-radius: 8px;
+      padding: 8px;
+      font-size: 14px;
+      border-radius: 4px;
       border: 1px solid #ccc;
-      font-size: 15px;
     }
     textarea {
-      min-height: 80px;
+      min-height: 72px;
       resize: vertical;
     }
-    .field {
-      margin-bottom: 12px;
-    }
-    .hint {
-      font-size: 12px;
-      color: #777;
-      margin-top: 2px;
-      white-space: pre-line;
-    }
-    .btn-main {
-      width: 100%;
-      padding: 12px;
-      border-radius: 999px;
-      border: none;
-      font-size: 16px;
-      font-weight: 600;
-      cursor: pointer;
-      background: #e67e22;
-      color: #fff;
-      box-shadow: 0 3px 6px rgba(0,0,0,0.15);
-    }
-    .btn-main:disabled {
-      opacity: 0.6;
-      cursor: default;
-      box-shadow: none;
-    }
-    .message {
+    button {
+      display: inline-block;
       margin-top: 12px;
+      padding: 10px 16px;
       font-size: 14px;
-      white-space: pre-line;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
     }
-    .message.error {
-      color: #c0392b;
+    .btn-primary {
+      background: #0f9d58;
+      color: #fff;
     }
-    .message.success {
-      color: #1e8449;
+    .btn-secondary {
+      background: #eee;
+      color: #333;
+      margin-left: 4px;
     }
-    .member-box {
-      margin-top: 14px;
-      padding: 12px;
-      border-radius: 10px;
-      background: #fffaf0;
-      border: 1px solid #f1c40f;
-    }
-    .member-label {
-      font-size: 13px;
-      color: #666;
-      margin-bottom: 4px;
-    }
-    .member-code {
-      font-size: 26px;
-      font-weight: 700;
-      letter-spacing: 0.15em;
+    .code-box {
+      font-size: 22px;
+      font-weight: bold;
       text-align: center;
-      margin-bottom: 6px;
+      padding: 12px;
+      border-radius: 8px;
+      background: #f0f7ff;
+      margin: 8px 0 4px;
+      letter-spacing: 0.3em;
     }
-    .flow {
-      margin-top: 12px;
-      font-size: 13px;
-      line-height: 1.6;
+    .small {
+      font-size: 12px;
+      color: #666;
+    }
+    .error {
+      font-size: 12px;
+      color: #c00;
+      margin-top: 4px;
       white-space: pre-line;
     }
-    .footer-note {
-      margin-top: 16px;
-      font-size: 11px;
-      color: #999;
-      line-height: 1.6;
+    .success {
+      font-size: 12px;
+      color: #0a7;
+      margin-top: 4px;
       white-space: pre-line;
+    }
+    #loading {
+      font-size: 14px;
+      text-align: center;
+      padding: 20px 0;
     }
   </style>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
 <body>
-  <div class="container">
-    <h1>電話代引き用 住所登録</h1>
-    <div class="subtitle">
-      電話での代金引換注文をスムーズにするための、事前登録フォームです。
-      一度ご登録いただくと、次回からは「会員番号」と「ご希望の商品」を電話で押すだけでご注文いただけます。
+  <h1>電話代引き用 会員番号のご案内</h1>
+  <p class="small">
+    LINE からの電話注文（代金引換）でお届け先の住所を省略していただくため、<br>
+    あらかじめお名前・ご住所・お電話番号と「会員番号」をご登録いただくページです。
+  </p>
+
+  <div id="loading">読み込み中です…</div>
+
+  <!-- ✅ 登録済みユーザー向け：会員番号表示だけ出す -->
+  <div id="view-registered" class="card" style="display:none;">
+    <h2 style="font-size:16px; margin:0 0 4px;">すでに住所登録が完了しています</h2>
+    <p style="margin:0 0 4px;">電話でご注文の際は、つぎの会員番号をボタンで入力してください。</p>
+    <div id="registered-code" class="code-box">----</div>
+    <p class="small">
+      電話の自動音声で「会員番号を入力してください」と案内されたら、<br>
+      上の数字を 4〜8桁のままボタンで押してください。
+    </p>
+
+    <div style="margin-top:8px;">
+      <p class="small" id="registered-name"></p>
+      <p class="small" id="registered-address"></p>
+      <p class="small" id="registered-phone"></p>
     </div>
 
-    <form id="codForm">
-      <!-- 会員番号 -->
-      <div class="field">
-        <label for="code">
-          会員番号（4〜8桁の数字）
-          <span class="required">必須</span>
-        </label>
-        <input
-          type="text"
-          id="code"
-          inputmode="numeric"
-          pattern="[0-9]*"
-          autocomplete="off"
-          placeholder="例：電話番号の下4桁など"
-        />
-        <div class="hint">
-          電話注文のときに押していただく番号です。
-          覚えやすい4〜8桁の数字を決めてください。（電話番号の下4桁などがおすすめです）
-          すでに登録されている番号は使えません。
-        </div>
-      </div>
+    <button id="btn-show-form" class="btn-secondary">
+      登録内容を変更する
+    </button>
+  </div>
 
-      <!-- お名前 -->
-      <div class="field">
-        <label for="name">
-          お名前
-          <span class="required">必須</span>
-        </label>
-        <input
-          type="text"
-          id="name"
-          autocomplete="name"
-          placeholder="例：磯屋 太郎"
-        />
-      </div>
+  <!-- ✏ 未登録 or 再登録用フォーム -->
+  <div id="view-form" class="card" style="display:none;">
+    <h2 style="font-size:16px; margin:0 0 4px;">住所登録フォーム</h2>
+    <p class="small">
+      はじめての方、または住所を変更したい方は、<br>
+      会員番号とお届け先情報をご入力ください。
+    </p>
 
-      <!-- 電話番号 -->
-      <div class="field">
-        <label for="phone">
-          お電話番号
-          <span class="required">必須</span>
-        </label>
-        <input
-          type="tel"
-          id="phone"
-          inputmode="tel"
-          autocomplete="tel"
-          placeholder="ハイフンなし 例：09012345678"
-        />
-      </div>
+    <label for="code">会員番号（4〜8桁の数字）</label>
+    <input id="code" type="tel" inputmode="numeric" placeholder="例）1234" />
+    <p class="small">※ 電話注文時にボタンで押していただく番号です。</p>
 
-      <!-- 郵便番号（任意） -->
-      <div class="field">
-        <label for="zip">
-          郵便番号（任意）
-        </label>
-        <input
-          type="text"
-          id="zip"
-          inputmode="numeric"
-          pattern="[0-9\-]*"
-          placeholder="例：4780001 または 478-0001"
-        />
-        <div class="hint">
-          未入力でもかまいません。分かる場合はハイフンあり／なしどちらでも大丈夫です。
-        </div>
-      </div>
+    <label for="name">お名前</label>
+    <input id="name" type="text" placeholder="例）磯屋 太郎" />
 
-      <!-- 住所（1行で） -->
-      <div class="field">
-        <label for="address">
-          ご住所（都道府県からお部屋番号まで）
-          <span class="required">必須</span>
-        </label>
-        <textarea
-          id="address"
-          placeholder="例：愛知県知多市新知台2-3-10 磯屋マンション201号室"
-        ></textarea>
-        <div class="hint">
-          都道府県名から、番地・建物名・お部屋番号まで、1行でご入力ください。
-        </div>
-      </div>
+    <label for="zip">郵便番号</label>
+    <input id="zip" type="tel" inputmode="numeric" placeholder="例）4700000（ハイフンなし）" />
 
-      <button type="submit" class="btn-main" id="submitBtn">
-        この内容で登録する
-      </button>
+    <label for="address">ご住所</label>
+    <textarea id="address" placeholder="都道府県からマンション名・部屋番号まで"></textarea>
 
-      <div id="message" class="message" aria-live="polite"></div>
+    <label for="phone">お電話番号</label>
+    <input id="phone" type="tel" inputmode="numeric" placeholder="例）09012345678（ハイフンなし）" />
+    <p class="small">※ お届けに関して確認が必要な場合にのみ使用します。</p>
 
-      <div id="memberBox" class="member-box" style="display:none;">
-        <div class="member-label">あなたの会員番号</div>
-        <div id="memberCode" class="member-code"></div>
-        <div class="hint">
-          メモするか、スクリーンショットを保存しておいてください。
-          次回からの電話注文で、この番号をボタンで押していただきます。
-        </div>
-        <div class="flow" id="flowText">
-          【次回からの電話注文の流れ】
-          1）磯屋の電話注文番号にお電話ください。
-             ★ここを磯屋さんの電話番号に書き換えてください → 050-XXXX-XXXX
-          2）案内にしたがって「商品番号・個数」をボタンで入力
-          3）最後に、今の会員番号「○○○○」をボタンで入力
-        </div>
-      </div>
+    <div id="form-message" class=""></div>
 
-      <div class="footer-note">
-        ※操作がむずかしい場合は、店頭やお電話にてスタッフが登録をお手伝いいたします。
-      </div>
-    </form>
+    <button id="btn-submit" class="btn-primary">この内容で登録する</button>
   </div>
 
   <script>
-    (function() {
-      const form = document.getElementById("codForm");
-      const submitBtn = document.getElementById("submitBtn");
-      const messageEl = document.getElementById("message");
-      const memberBox = document.getElementById("memberBox");
-      const memberCodeEl = document.getElementById("memberCode");
-      const flowTextEl = document.getElementById("flowText");
+    // ★ ここにミニアプリ用の LIFF ID を入れてください
+    const LIFF_ID = ";2008406620-G5j1gjzM" // ←使っているIDに合わせて変更
 
-      function showMessage(text, type) {
-        messageEl.textContent = text || "";
-        messageEl.className = "message" + (type ? " " + type : "");
+    let gLineUserId = "";
+
+    function showView(id) {
+      document.getElementById("view-registered").style.display = "none";
+      document.getElementById("view-form").style.display = "none";
+      const el = document.getElementById(id);
+      if (el) el.style.display = "block";
+    }
+
+    function setMessage(text, type = "error") {
+      const el = document.getElementById("form-message");
+      el.className = type;
+      el.textContent = text || "";
+    }
+
+    async function initLiff() {
+      try {
+        await liff.init({ liffId: LIFF_ID });
+        if (!liff.isLoggedIn()) {
+          liff.login();
+          return;
+        }
+        const profile = await liff.getProfile();
+        gLineUserId = profile.userId || "";
+      } catch (e) {
+        console.error("LIFF init error:", e);
+        document.getElementById("loading").textContent =
+          "LIFFの初期化に失敗しました。時間をおいて再度お試しください。";
+        return;
       }
 
-      form.addEventListener("submit", async function(e) {
-        e.preventDefault();
-        showMessage("", "");
-        memberBox.style.display = "none";
-        memberCodeEl.textContent = "";
+      // LINE userId から会員情報を検索
+      if (!gLineUserId) {
+        document.getElementById("loading").textContent =
+          "ユーザー情報の取得に失敗しました。";
+        return;
+      }
 
-        const code = document.getElementById("code").value.trim();
-        const name = document.getElementById("name").value.trim();
-        const phone = document.getElementById("phone").value.trim();
-        const zip = document.getElementById("zip").value.trim();
-        const address = document.getElementById("address").value.trim();
+      try {
+        const res = await fetch(
+          "/api/cod/customers/line/" + encodeURIComponent(gLineUserId),
+          {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+            },
+          }
+        );
 
-        if (!code) {
-          showMessage("会員番号をご入力ください。電話番号の下4桁など、覚えやすい数字がおすすめです。", "error");
-          return;
-        }
-        if (!/^\d{4,8}$/.test(code)) {
-          showMessage("会員番号は 4〜8桁の数字でご入力ください。", "error");
-          return;
-        }
-        if (!name) {
-          showMessage("お名前をご入力ください。", "error");
-          return;
-        }
-        if (!phone) {
-          showMessage("お電話番号をご入力ください。", "error");
-          return;
-        }
-        if (!/^\d{9,11}$/.test(phone.replace(/-/g, ""))) {
-          showMessage("お電話番号は、ハイフンなしで9〜11桁の数字でご入力ください。", "error");
-          return;
-        }
-        if (!address) {
-          showMessage("ご住所をご入力ください。", "error");
-          return;
-        }
+        document.getElementById("loading").style.display = "none";
 
-        submitBtn.disabled = true;
-        submitBtn.textContent = "登録中…";
+        if (res.ok) {
+          const data = await res.json();
+          if (data.ok && data.customer) {
+            // ✅ 登録済み → 会員番号表示だけ
+            const code = data.code || "";
+            const c = data.customer || {};
 
-        try {
-          const body = {
-            code,
-            name,
-            phone: phone.replace(/-/g, ""),
-            zip: zip.replace(/-/g, ""),
-            address
-          };
+            document.getElementById("registered-code").textContent = code || "----";
+            document.getElementById("registered-name").textContent =
+              c.name ? "お名前: " + c.name : "";
+            document.getElementById("registered-address").textContent =
+              c.address ? "ご住所: " + c.address : "";
+            document.getElementById("registered-phone").textContent =
+              c.phone ? "電話番号: " + c.phone : "";
 
-          const resp = await fetch("/api/cod/customers", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body)
-          });
-
-          const data = await resp.json().catch(() => ({}));
-
-          if (!resp.ok || !data.ok) {
-            // 重複エラー専用メッセージ
-            if (data && data.code === "DUPLICATE_CODE") {
-              showMessage(
-                "この会員番号はすでに登録されています。\n別の数字（電話番号の下4桁＋1桁追加など）でお試しください。",
-                "error"
-              );
-              return;
-            }
-
-            const errMsg =
-              (data && data.error) ||
-              "登録時にエラーが発生しました。時間をおいて、もう一度お試しください。";
-            showMessage("登録に失敗しました：" + errMsg, "error");
+            showView("view-registered");
             return;
           }
-
-          // 成功
-          showMessage(
-            "ご登録ありがとうございました。\nこの下に表示されている「会員番号」を、電話注文の際にお使いください。",
-            "success"
-          );
-          memberCodeEl.textContent = code;
-          memberBox.style.display = "block";
-
-          // フロー説明内の「○○○○」部分を実際の番号に置き換え
-          flowTextEl.textContent = flowTextEl.textContent.replace("○○○○", code);
-
-        } catch (err) {
-          console.error(err);
-          showMessage(
-            "通信エラーが発生しました。電波状況をご確認のうえ、もう一度お試しください。",
-            "error"
-          );
-        } finally {
-          submitBtn.disabled = false;
-          submitBtn.textContent = "この内容で登録する";
         }
-      });
-    })();
+
+        // ❌ 404 or 未登録 → フォーム表示
+        showView("view-form");
+      } catch (e) {
+        console.error("fetch customers/line error:", e);
+        document.getElementById("loading").style.display = "none";
+        showView("view-form");
+      }
+    }
+
+    // フォーム送信
+    async function submitForm() {
+      setMessage("", "");
+
+      const code = document.getElementById("code").value.trim();
+      const name = document.getElementById("name").value.trim();
+      const zip = document.getElementById("zip").value.trim();
+      const address = document.getElementById("address").value.trim();
+      const phone = document.getElementById("phone").value.trim();
+
+      if (!code || !/^\d{4,8}$/.test(code)) {
+        setMessage("会員番号は4〜8桁の数字で入力してください。", "error");
+        return;
+      }
+      if (!name) {
+        setMessage("お名前を入力してください。", "error");
+        return;
+      }
+      if (!address) {
+        setMessage("ご住所を入力してください。", "error");
+        return;
+      }
+
+      const payload = {
+        code,
+        name,
+        zip,
+        address,
+        phone,
+        lineUserId: gLineUserId || "",
+      };
+
+      try {
+        const res = await fetch("/api/cod/customers", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok || !data.ok) {
+          const msg = data && data.error ? data.error : "登録に失敗しました。";
+          setMessage(msg, "error");
+          return;
+        }
+
+        setMessage("登録が完了しました。会員番号は「" + code + "」です。", "success");
+
+        // 登録完了後、会員番号表示ビューに切り替える
+        document.getElementById("registered-code").textContent = code;
+        document.getElementById("registered-name").textContent =
+          name ? "お名前: " + name : "";
+        document.getElementById("registered-address").textContent =
+          address ? "ご住所: " + address : "";
+        document.getElementById("registered-phone").textContent =
+          phone ? "電話番号: " + phone : "";
+        showView("view-registered");
+      } catch (e) {
+        console.error("submitForm error:", e);
+        setMessage("通信エラーが発生しました。時間をおいて再度お試しください。", "error");
+      }
+    }
+
+    window.addEventListener("load", () => {
+      initLiff();
+
+      document
+        .getElementById("btn-submit")
+        .addEventListener("click", submitForm);
+
+      document
+        .getElementById("btn-show-form")
+        .addEventListener("click", () => {
+          // 「登録内容を変更する」ボタン → フォームを開く
+          showView("view-form");
+        });
+    });
   </script>
 </body>
 </html>

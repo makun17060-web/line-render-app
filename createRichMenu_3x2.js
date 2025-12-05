@@ -145,6 +145,7 @@ const PHONE_ORDER_TEL = "tel:+17479467151"; // +1 747-946-7151
             uri: ADDRESS_LIFF_URL ||
                `https://liff.line.me/${LIFF_ID_MINIAPP}?redirect=${encodeURIComponent(
         "/public/cod-register.html"
+             )}`,   
           },
         },
         // 右下：直接注文（メッセージ）

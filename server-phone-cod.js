@@ -3,12 +3,13 @@
 //
 // ・商品〜個数〜追加注文まではプッシュ式（DTMF）
 // ・名前・住所・電話番号は、事前に Web / LINE で登録してもらう
-//    - data/cod-customers.json に保存（code: {name, phone, zip, address, lineUserId}）
+//    - data/cod-customers.json に保存（code: {name, phone, zip, address, lineUserId, lineDisplayName}）
 // ・電話では最後に「会員番号」を DTMF で押してもらう
 //    - その会員番号から登録済みの名前・住所・電話を自動取得
 // ・住所文字列から地域を判定して送料計算
 // ・注文確定時に JSON ログファイルへ保存 + 管理者に LINE 通知
-// ・住所登録時にも管理者に LINE 通知（新規 or 更新）
+// ・住所登録時にも管理者に LINE 通知（新規）
+// ・LINEユーザーID & 電話番号で「住所登録済みかどうか」を確認する lookup API 付き
 
 "use strict";
 
@@ -18,7 +19,8 @@ const express = require("express");
 const fs = require("fs");
 const path = require("path");
 
-// Node18+ なら fetch はグローバルでOK（Render の Node 25 でもOK）
+// Node 18+ なら fetch はグローバルにある想定
+const fetchFn = typeof fetch !== "undefined" ? fetch : null;
 
 // ==== パス・ファイル ====================================================
 
@@ -54,8 +56,12 @@ function readProducts() {
  * 会員データ
  * 形式:
  * {
- *   "1234": { name, phone, zip, address, lineUserId, createdAt, updatedAt },
- *   "5678": { ... }
+ *   "1234": {
+ *     name, phone, zip, address,
+ *     lineUserId, lineDisplayName,
+ *     createdAt, updatedAt
+ *   },
+ *   ...
  * }
  */
 function readCustomers() {
@@ -128,6 +134,10 @@ async function notifyLineAdminForCodOrder(payload) {
     );
     return;
   }
+  if (!fetchFn) {
+    console.warn("[COD/LINE] fetch が利用できないため、注文通知をスキップします。");
+    return;
+  }
 
   try {
     const {
@@ -178,7 +188,7 @@ async function notifyLineAdminForCodOrder(payload) {
       `電話番号: ${phoneText}\n\n` +
       `※この注文は Twilio 電話受付（代引き専用・会員番号方式）からです。`;
 
-    const resp = await fetch("https://api.line.me/v2/bot/message/push", {
+    const resp = await fetchFn("https://api.line.me/v2/bot/message/push", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -220,12 +230,31 @@ async function notifyLineAdminForCustomerRegister(payload) {
     );
     return;
   }
+  if (!fetchFn) {
+    console.warn("[COD/LINE] fetch が利用できないため、住所登録通知をスキップします。");
+    return;
+  }
 
   try {
-    const { ts, code, name, phone, zip, address, isUpdate } = payload;
+    const {
+      ts,
+      code,
+      name,
+      phone,
+      zip,
+      address,
+      isUpdate,
+      lineUserId,
+      lineDisplayName,
+    } = payload;
     const when = ts || new Date().toISOString();
 
     const mode = isUpdate ? "【電話代引き 住所登録（更新）】" : "【電話代引き 住所登録（新規）】";
+
+    const lineInfo = lineUserId
+      ? `LINEユーザーID: ${lineUserId}\n` +
+        (lineDisplayName ? `LINE表示名: ${lineDisplayName}\n` : "")
+      : "";
 
     const message =
       `${mode}\n` +
@@ -235,9 +264,10 @@ async function notifyLineAdminForCustomerRegister(payload) {
       `電話番号: ${phone || "（未入力）"}\n` +
       `郵便番号: ${zip || "（未入力）"}\n` +
       `住所: ${address}\n\n` +
-      `※この登録は cod-register.html から行われました。`;
+      lineInfo +
+      `※この登録は cod-register.html（LIFF）から行われました。`;
 
-    const resp = await fetch("https://api.line.me/v2/bot/message/push", {
+    const resp = await fetchFn("https://api.line.me/v2/bot/message/push", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -287,19 +317,30 @@ if (fs.existsSync(PUBLIC_DIR)) {
 // ======================================================================
 //
 // POST /api/cod/customers
-// body: { code, name, phone, zip, address, lineUserId }
+// body: { code, name, phone, zip, address, lineUserId?, lineDisplayName? }
 //
 // - code: 4〜8桁の数字
-// - すでに同じ code が存在する場合：
-//    ・lineUserId が同じ → 更新モード（上書きOK）
-//    ・lineUserId が違う or 既存に lineUserId が無い → エラー（重複）
+// - すでに同じ code が存在する場合はエラー（重複チェック）
+//   → { ok:false, error:"...", code:"DUPLICATE_CODE" }
 //
 // GET /api/cod/customers/:code
-// GET /api/cod/customers/line/:lineUserId
+// - 登録内容の確認用
+//
+// GET /api/cod/customers/lookup?lineUserId=xxx&phone=yyy
+// - lineUserId または phone から登録済みかどうかチェック
+//   → { ok:true, code, customer } または { ok:false, error:"not found" }
 
 app.post("/api/cod/customers", jsonParser, async (req, res) => {
   try {
-    const { code, name, phone, zip, address, lineUserId } = req.body || {};
+    const {
+      code,
+      name,
+      phone,
+      zip,
+      address,
+      lineUserId,
+      lineDisplayName,
+    } = req.body || {};
 
     const codeStr = String(code || "").trim();
 
@@ -328,44 +369,32 @@ app.post("/api/cod/customers", jsonParser, async (req, res) => {
     const zipStr = zip ? String(zip).replace(/-/g, "").trim() : "";
 
     const customers = readCustomers();
-    const now = new Date().toISOString();
 
-    const newLineUserId = lineUserId ? String(lineUserId).trim() : "";
-
-    const existing = customers[codeStr];
-
-    let isUpdate = false;
-
-    if (existing) {
-      // 既存レコードがある場合
-      const existingLineUserId = (existing.lineUserId || "").trim();
-
-      if (existingLineUserId && newLineUserId && existingLineUserId === newLineUserId) {
-        // ✅ 同じ LINE アカウントからの再登録 → 更新モード
-        isUpdate = true;
-      } else {
-        // 別の LINE アカウント / lineUserId 不明 → 重複としてエラー
-        return res.status(400).json({
-          ok: false,
-          error: "この会員番号はすでに登録されています。",
-          code: "DUPLICATE_CODE",
-        });
-      }
+    if (customers[codeStr]) {
+      // 重複チェック（既存仕様を維持）
+      return res.status(400).json({
+        ok: false,
+        error: "この会員番号はすでに登録されています。",
+        code: "DUPLICATE_CODE",
+      });
     }
+
+    const now = new Date().toISOString();
 
     customers[codeStr] = {
       name: String(name).trim(),
       phone: phoneStr,
       zip: zipStr,
       address: String(address).trim(),
-      lineUserId: newLineUserId,
-      createdAt: existing?.createdAt || now,
+      lineUserId: lineUserId ? String(lineUserId).trim() : "",
+      lineDisplayName: lineDisplayName ? String(lineDisplayName).trim() : "",
       updatedAt: now,
+      createdAt: now,
     };
 
     writeJSON(CUSTOMERS_PATH, customers);
 
-    // 管理者へ LINE 通知（新規 or 更新）
+    // 管理者へ LINE 通知（新規登録）
     await notifyLineAdminForCustomerRegister({
       ts: now,
       code: codeStr,
@@ -373,10 +402,12 @@ app.post("/api/cod/customers", jsonParser, async (req, res) => {
       phone: phoneStr,
       zip: zipStr,
       address: String(address).trim(),
-      isUpdate,
+      isUpdate: false,
+      lineUserId: lineUserId ? String(lineUserId).trim() : "",
+      lineDisplayName: lineDisplayName ? String(lineDisplayName).trim() : "",
     });
 
-    return res.json({ ok: true, updated: isUpdate });
+    return res.json({ ok: true });
   } catch (e) {
     console.error("POST /api/cod/customers error:", e);
     return res.status(500).json({ ok: false, error: "internal error" });
@@ -398,35 +429,60 @@ app.get("/api/cod/customers/:code", (req, res) => {
   return res.json({ ok: true, customer: c });
 });
 
-// ★ 追加：LINE userId から会員を探す
-app.get("/api/cod/customers/line/:lineUserId", (req, res) => {
-  const lineUserId = (req.params.lineUserId || "").trim();
-  if (!lineUserId) {
-    return res.status(400).json({ ok: false, error: "lineUserId is required" });
-  }
+// lineUserId / phone から登録済みかどうか検索
+app.get("/api/cod/customers/lookup", (req, res) => {
+  try {
+    const lineUserId = (req.query.lineUserId || "").toString().trim();
+    const phoneRaw = (req.query.phone || "").toString().trim();
+    const phoneNorm = phoneRaw.replace(/[^\d]/g, "");
 
-  const customers = readCustomers();
-
-  let foundCode = null;
-  let foundCustomer = null;
-  for (const [code, c] of Object.entries(customers)) {
-    if (!c) continue;
-    if ((c.lineUserId || "").trim() === lineUserId) {
-      foundCode = code;
-      foundCustomer = c;
-      break;
+    if (!lineUserId && !phoneNorm) {
+      return res.status(400).json({
+        ok: false,
+        error: "lineUserId または phone を指定してください。",
+      });
     }
-  }
 
-  if (!foundCustomer) {
-    return res.status(404).json({ ok: false, error: "not found" });
-  }
+    const customers = readCustomers();
 
-  return res.json({
-    ok: true,
-    code: foundCode,
-    customer: foundCustomer,
-  });
+    let foundCode = null;
+    let foundCustomer = null;
+
+    // 1. lineUserId 優先で検索
+    if (lineUserId) {
+      for (const [code, c] of Object.entries(customers)) {
+        if (c.lineUserId && c.lineUserId === lineUserId) {
+          foundCode = code;
+          foundCustomer = c;
+          break;
+        }
+      }
+    }
+
+    // 2. 見つからず、phone が指定されていれば電話番号で検索
+    if (!foundCustomer && phoneNorm) {
+      for (const [code, c] of Object.entries(customers)) {
+        if (c.phone && c.phone === phoneNorm) {
+          foundCode = code;
+          foundCustomer = c;
+          break;
+        }
+      }
+    }
+
+    if (!foundCustomer) {
+      return res.json({ ok: false, error: "not found" });
+    }
+
+    return res.json({
+      ok: true,
+      code: foundCode,
+      customer: foundCustomer,
+    });
+  } catch (e) {
+    console.error("GET /api/cod/customers/lookup error:", e);
+    return res.status(500).json({ ok: false, error: "internal error" });
+  }
 });
 
 // ======================================================================
@@ -480,6 +536,7 @@ app.post("/twilio/cod/product", urlencoded, (req, res) => {
     digit: String(idx + 1),
     id: p.id,
     name: p.name,
+    price: Number(p.price || 0),
   }));
   DTMF_ORDERS[callSid] = order;
 

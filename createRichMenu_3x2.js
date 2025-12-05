@@ -111,8 +111,8 @@ const PHONE_ORDER_TEL = "tel:+17479467151"; // +1 747-946-7151
         {
           bounds: { x: 833, y: 0, width: 834, height: 843 },
           action: {
-            type: "uri",
-            label: "電話注文",
+            type: "message",
+            text: "電話注文",
             uri: PHONE_ORDER_TEL, // ← 電話アプリを起動
           },
         },

@@ -2,12 +2,11 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <title>住所登録（電話注文用）</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>住所登録（電話注文・ミニアプリ共通）</title>
   <style>
     body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont,
-        "Segoe UI", sans-serif;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       margin: 0;
       padding: 16px;
       background: #f7f7f7;
@@ -16,241 +15,356 @@
       font-size: 18px;
       margin: 0 0 8px;
     }
-    p.desc {
+    p {
+      margin: 0 0 8px;
       font-size: 13px;
-      color: #555;
-      margin: 0 0 16px;
-      line-height: 1.4;
+      color: #444;
+      white-space: pre-line;
     }
     form {
       background: #fff;
       border-radius: 8px;
       padding: 12px;
       box-shadow: 0 2px 4px rgba(0,0,0,0.06);
+      font-size: 14px;
     }
     .field {
       margin-bottom: 10px;
     }
     label {
       display: block;
-      font-size: 13px;
-      margin-bottom: 2px;
+      font-size: 12px;
+      margin-bottom: 4px;
+      color: #333;
     }
-    input, textarea, select {
+    input, select {
       width: 100%;
       box-sizing: border-box;
       padding: 8px;
-      font-size: 14px;
       border-radius: 4px;
       border: 1px solid #ccc;
-    }
-    textarea {
-      min-height: 60px;
-      resize: vertical;
-    }
-    .hint {
-      font-size: 11px;
-      color: #999;
-      margin-top: 2px;
-    }
-    .buttons {
-      margin-top: 16px;
-      display: flex;
-      gap: 8px;
+      font-size: 14px;
     }
     button {
-      flex: 1;
-      padding: 10px 12px;
-      font-size: 14px;
-      border-radius: 999px;
+      width: 100%;
+      padding: 10px;
+      border-radius: 6px;
       border: none;
+      font-size: 14px;
+      font-weight: 600;
       cursor: pointer;
     }
-    button.primary {
+    .btn-primary {
       background: #00c300;
       color: #fff;
-      font-weight: 600;
     }
-    button.secondary {
-      background: #eee;
-      color: #333;
+    .btn-primary:disabled {
+      opacity: 0.7;
+      cursor: default;
     }
-    .msg {
+    .info {
+      font-size: 12px;
+      color: #555;
+      margin-top: 6px;
+    }
+    .status {
       margin-top: 10px;
       font-size: 13px;
+      white-space: pre-line;
     }
-    .msg.ok {
-      color: #0a7d00;
+    .status.ok {
+      color: #007700;
     }
-    .msg.ng {
-      color: #d32f2f;
+    .status.err {
+      color: #c00;
+    }
+
+    .user-id-row {
+      margin-bottom: 10px;
+      padding: 8px;
+      border-radius: 4px;
+      background: #fafafa;
+      border: 1px dashed #ddd;
+    }
+    .user-id-row small {
+      display: block;
+      font-size: 11px;
+      color: #666;
+      margin-top: 2px;
+    }
+    .tag {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: #e5f6ff;
+      color: #0369a1;
+      font-size: 11px;
+      margin-left: 4px;
     }
   </style>
-  <!-- LIFF SDK -->
+  <!-- LIFF SDK（ミニアプリで使う） -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
 <body>
-  <h1>お届け先の住所登録</h1>
-  <p class="desc">
-    電話での代引き注文に使うお届け先の住所を登録します。<br />
-    一度登録すると、次回から電話番号だけで住所を自動で読み上げます。
-  </p>
+  <header>
+    <h1>住所登録</h1>
+    <p>
+電話の代引き注文・ミニアプリのどちらでも
+共通で使えるお届け先住所を登録します。
+    </p>
+  </header>
 
-  <form id="addrForm">
-    <!-- LIFF から取得した LINE ユーザーIDを保持 -->
-    <input type="hidden" id="lineUserId" />
+  <!-- 通常ブラウザ用：手動で userId を入れたい場合に使う欄（LIFFでは自動で隠す） -->
+  <div id="userIdRow" class="user-id-row" style="display:none;">
+    <label for="userIdInput">
+      ユーザーID（LINEの userId）<span class="tag">上級者向け</span>
+    </label>
+    <input id="userIdInput" type="text" placeholder="例：Uxxxxxxxxxxxxxxxxxxxx" />
+    <small>
+       通常は LINE アプリ内（ミニアプリ）から開くと自動取得されます。<br>
+       PC などから登録する場合だけ、手動で userId を入れてください。
+    </small>
+  </div>
 
+  <form id="addressForm">
     <div class="field">
-      <label for="name">お名前（必須）</label>
-      <input id="name" type="text" autocomplete="name" />
-    </div>
-
-    <div class="field">
-      <label for="phone">電話番号（必須・電話発信用の番号）</label>
-      <input id="phone" type="tel" inputmode="tel"
-             placeholder="09012345678 または +819012345678" />
-      <div class="hint">
-        ※ この番号からお電話いただくと、住所が自動で呼び出されます。
-      </div>
-    </div>
-
-    <div class="field">
-      <label for="zip">郵便番号（必須）</label>
-      <input id="zip" type="text" inputmode="numeric"
-             placeholder="4410000 など（ハイフンなしOK）" />
+      <label for="name">お名前</label>
+      <input id="name" type="text" autocomplete="name" required />
     </div>
 
     <div class="field">
-      <label for="prefecture">都道府県（必須）</label>
-      <input id="prefecture" type="text" placeholder="愛知県 など" />
+      <label for="phone">電話番号（ハイフンなし）</label>
+      <input id="phone" type="tel" inputmode="numeric" pattern="[0-9]+" required />
+      <div class="info">実際にお電話をかけてくださる番号を入力してください。</div>
     </div>
 
     <div class="field">
-      <label for="address1">市区町村・番地（必須）</label>
-      <input id="address1" type="text"
-             placeholder="豊橋市○○町1-2-3 など" />
+      <label for="postal">郵便番号（ハイフンなし）</label>
+      <input id="postal" type="tel" inputmode="numeric" pattern="[0-9]*" />
     </div>
 
     <div class="field">
-      <label for="address2">建物名・部屋番号（任意）</label>
-      <input id="address2" type="text"
-             placeholder="○○マンション101号室 など" />
+      <label for="prefecture">都道府県</label>
+      <select id="prefecture" required>
+        <option value="">選択してください</option>
+        <option>北海道</option>
+        <option>青森県</option>
+        <option>岩手県</option>
+        <option>宮城県</option>
+        <option>秋田県</option>
+        <option>山形県</option>
+        <option>福島県</option>
+        <option>茨城県</option>
+        <option>栃木県</option>
+        <option>群馬県</option>
+        <option>埼玉県</option>
+        <option>千葉県</option>
+        <option>東京都</option>
+        <option>神奈川県</option>
+        <option>新潟県</option>
+        <option>富山県</option>
+        <option>石川県</option>
+        <option>福井県</option>
+        <option>山梨県</option>
+        <option>長野県</option>
+        <option>岐阜県</option>
+        <option>静岡県</option>
+        <option>愛知県</option>
+        <option>三重県</option>
+        <option>滋賀県</option>
+        <option>京都府</option>
+        <option>大阪府</option>
+        <option>兵庫県</option>
+        <option>奈良県</option>
+        <option>和歌山県</option>
+        <option>鳥取県</option>
+        <option>島根県</option>
+        <option>岡山県</option>
+        <option>広島県</option>
+        <option>山口県</option>
+        <option>徳島県</option>
+        <option>香川県</option>
+        <option>愛媛県</option>
+        <option>高知県</option>
+        <option>福岡県</option>
+        <option>佐賀県</option>
+        <option>長崎県</option>
+        <option>熊本県</option>
+        <option>大分県</option>
+        <option>宮崎県</option>
+        <option>鹿児島県</option>
+        <option>沖縄県</option>
+      </select>
     </div>
 
     <div class="field">
-      <label for="memo">備考（任意）</label>
-      <textarea id="memo" placeholder="不在時は宅配ボックス など"></textarea>
+      <label for="city">市区町村</label>
+      <input id="city" type="text" required />
     </div>
 
-    <div class="buttons">
-      <button type="button" class="secondary" id="closeBtn">
-        閉じる
-      </button>
-      <button type="submit" class="primary">
-        この内容で登録する
-      </button>
+    <div class="field">
+      <label for="address1">番地・丁目など</label>
+      <input id="address1" type="text" required />
     </div>
 
-    <div class="msg" id="msgArea"></div>
+    <div class="field">
+      <label for="address2">建物名・部屋番号（あれば）</label>
+      <input id="address2" type="text" />
+    </div>
+
+    <button id="submitBtn" class="btn-primary" type="submit">
+      この内容で住所を登録する
+    </button>
+
+    <div id="status" class="status"></div>
   </form>
 
   <script>
-    // ★ ここをあなたの LIFF ID（phone-address 用）に差し替えてください
-    const LIFF_ID = "YOUR_LIFF_ID_FOR_PHONE_ADDRESS";
+    let currentUserId = "";
+    let liffInited = false;
 
-    const msgArea = document.getElementById("msgArea");
+    // 既存の住所を読み込む
+    async function loadMyAddress(userId) {
+      try {
+        const res = await fetch("/api/liff/address/me?userId=" + encodeURIComponent(userId));
+        const data = await res.json();
+        if (!data.ok || !data.address) return;
 
-    function setMsg(text, ok) {
-      msgArea.textContent = text || "";
-      msgArea.className = "msg " + (ok ? "ok" : "ng");
+        const a = data.address || {};
+        document.getElementById("name").value      = a.name      || "";
+        document.getElementById("phone").value     = a.phone     || "";
+        document.getElementById("postal").value    = a.postal    || "";
+        document.getElementById("prefecture").value= a.prefecture || "";
+        document.getElementById("city").value      = a.city      || "";
+        document.getElementById("address1").value  = a.address1  || "";
+        document.getElementById("address2").value  = a.address2  || "";
+
+        const status = document.getElementById("status");
+        status.textContent = "以前登録された住所を読み込みました。内容を確認して、必要なら修正してください。";
+        status.className = "status ok";
+      } catch (e) {
+        console.log("loadMyAddress error", e);
+      }
     }
 
-    async function initLiff() {
+    // LIFF 初期化（ミニアプリ用）
+    async function initLiffIfPossible() {
       try {
-        await liff.init({ liffId: LIFF_ID });
+        // サーバーから LIFF ID を取得
+        const res = await fetch("/api/liff/config");
+        const cfg = await res.json();
+        const liffId = (cfg && cfg.liffId) || "";
+        if (!liffId || !window.liff) {
+          // LIFF が使えない環境 → 通常ブラウザモード
+          document.getElementById("userIdRow").style.display = "block";
+          return;
+        }
+
+        await liff.init({ liffId });
+        liffInited = true;
 
         if (!liff.isLoggedIn()) {
-          liff.login();
+          // LINE アプリ外から開かれた場合など
+          document.getElementById("userIdRow").style.display = "block";
           return;
         }
 
-        const idToken = liff.getDecodedIDToken();
-        const lineUserId = (idToken && idToken.sub) ? idToken.sub : "";
+        const profile = await liff.getProfile();
+        currentUserId = profile.userId;
+        // userId 入力欄は不要なので隠す
+        document.getElementById("userIdRow").style.display = "none";
 
-        document.getElementById("lineUserId").value = lineUserId || "";
+        // 既存の住所を読み込み
+        loadMyAddress(currentUserId);
 
-      } catch (err) {
-        console.error("LIFF init error:", err);
-        setMsg("LIFFの初期化でエラーが発生しました。時間をおいてお試しください。", false);
+        const status = document.getElementById("status");
+        status.textContent = "LINE と連携しました。このアカウントの住所として登録されます。";
+        status.className = "status ok";
+      } catch (e) {
+        console.log("LIFF init error", e);
+        // 失敗した場合は通常ブラウザモードにしておく
+        document.getElementById("userIdRow").style.display = "block";
       }
     }
 
-    document.getElementById("addrForm").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      setMsg("", false);
-
-      const lineUserId = document.getElementById("lineUserId").value.trim();
-      const name       = document.getElementById("name").value.trim();
-      const phone      = document.getElementById("phone").value.trim();
-      const zip        = document.getElementById("zip").value.trim();
-      const prefecture = document.getElementById("prefecture").value.trim();
-      const address1   = document.getElementById("address1").value.trim();
-      const address2   = document.getElementById("address2").value.trim();
-      const memo       = document.getElementById("memo").value.trim();
-
-      if (!name || !phone || !zip || !prefecture || !address1) {
-        setMsg("必須項目（お名前・電話番号・郵便番号・都道府県・市区町村・番地）を入力してください。", false);
-        return;
+    document.addEventListener("DOMContentLoaded", () => {
+      // LIFF があれば初期化を試みる
+      if (window.liff) {
+        initLiffIfPossible();
+      } else {
+        // LIFF SDK 読み込み失敗時など
+        document.getElementById("userIdRow").style.display = "block";
       }
 
-      try {
-        const res = await fetch("/api/address/register", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            lineUserId,
-            name,
-            phone,
-            zip,
-            prefecture,
-            address1,
-            address2,
-            memo,
-          }),
-        });
+      const form = document.getElementById("addressForm");
+      const status = document.getElementById("status");
+      const submitBtn = document.getElementById("submitBtn");
 
-        const data = await res.json().catch(() => ({}));
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        status.textContent = "";
+        status.className = "status";
 
-        if (!res.ok || !data.ok) {
-          const errMsg = data.error || "登録に失敗しました。時間をおいてやり直してください。";
-          setMsg(errMsg, false);
+        // userId を決定（LIFF優先／なければ手動入力）
+        const manualUserId = document.getElementById("userIdInput").value.trim();
+        const userId = currentUserId || manualUserId;
+
+        if (!userId) {
+          status.textContent = "ユーザーIDが特定できません。LINE アプリ内から開くか、ユーザーIDを入力してください。";
+          status.className = "status err";
           return;
         }
 
-        setMsg("住所を登録しました。ありがとうございます。", true);
+        const addr = {
+          name:      document.getElementById("name").value.trim(),
+          phone:     document.getElementById("phone").value.trim(),
+          postal:    document.getElementById("postal").value.trim(),
+          prefecture:document.getElementById("prefecture").value,
+          city:      document.getElementById("city").value.trim(),
+          address1:  document.getElementById("address1").value.trim(),
+          address2:  document.getElementById("address2").value.trim(),
+        };
 
-        // 少し待ってから LIFF ウィンドウを閉じる
-        setTimeout(() => {
-          if (window.liff && liff.isInClient()) {
-            liff.closeWindow();
+        if (!addr.name || !addr.phone || !addr.prefecture || !addr.city || !addr.address1) {
+          status.textContent = "必須項目が未入力です。お名前・電話番号・都道府県・市区町村・番地を入力してください。";
+          status.className = "status err";
+          return;
+        }
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = "送信中…";
+
+        try {
+          const resp = await fetch("/api/liff/address", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId, address: addr }),
+          });
+          const data = await resp.json();
+
+          if (!data.ok) {
+            throw new Error(data.error || "保存に失敗しました");
           }
-        }, 800);
 
-      } catch (err) {
-        console.error("register error:", err);
-        setMsg("通信エラーが発生しました。ネットワーク環境をご確認ください。", false);
-      }
+          status.textContent = "住所を登録しました。ありがとうございました。";
+          status.className = "status ok";
+
+          // ミニアプリからなら閉じてあげる
+          if (liffInited && window.liff && liff.isInClient()) {
+            setTimeout(() => {
+              try { liff.closeWindow(); } catch (e) {}
+            }, 1200);
+          }
+        } catch (err) {
+          console.error("save error", err);
+          status.textContent = "登録中にエラーが発生しました。時間をおいてもう一度お試しください。";
+          status.className = "status err";
+        } finally {
+          submitBtn.disabled = false;
+          submitBtn.textContent = "この内容で住所を登録する";
+        }
+      });
     });
-
-    document.getElementById("closeBtn").addEventListener("click", () => {
-      if (window.liff && liff.isInClient()) {
-        liff.closeWindow();
-      } else {
-        window.close();
-      }
-    });
-
-    initLiff();
   </script>
 </body>
 </html>

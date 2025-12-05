@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>磯屋 LIFF エントリ</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: #f5f5f5;
+    }
+    .box {
+      max-width: 480px;
+      margin: 40px auto;
+      background: #fff;
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+      text-align: center;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+<div class="box" id="status">読み込み中です…</div>
+
+<script>
+(async () => {
+  const statusEl = document.getElementById("status");
+
+  function setStatus(msg) {
+    statusEl.textContent = msg;
+  }
+
+  try {
+    setStatus("LIFF を初期化しています…");
+
+    // ✅ server.js の /api/liff/config から共通 LIFF ID を取得
+    const confRes = await fetch("/api/liff/config");
+    const conf = await confRes.json().catch(() => ({}));
+    const liffId = conf.liffId;
+    if (!liffId) {
+      setStatus("LIFF ID が取得できませんでした。（/api/liff/config）");
+      return;
+    }
+
+    await liff.init({ liffId });
+
+    // LIFF クライアント内想定（LINE アプリから開く）
+    const profile = await liff.getProfile();
+    const userId = profile.userId;
+
+    // クエリ文字列を見て飛び先を決める
+    const params = new URLSearchParams(window.location.search);
+    const page = params.get("page") || "products"; // デフォルトは商品一覧
+
+    let targetPath = "/public/products.html";
+    if (page === "address") {
+      targetPath = "/public/phone-address.html";
+    }
+
+    // userId をクエリに付与
+    const q = new URLSearchParams();
+    q.set("userId", userId);
+
+    const url = `${targetPath}?${q.toString()}`;
+    setStatus("画面へ移動します…");
+    window.location.href = url;
+
+  } catch (e) {
+    console.error(e);
+    setStatus("LIFF 初期化に失敗しました: " + (e.message || e));
+  }
+})();
+</script>
+</body>
+</html>

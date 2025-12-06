@@ -44,14 +44,14 @@
       border: 1px solid #ccc;
       box-sizing: border-box;
     }
-    .member-code {
-      font-size: 16px;
-      font-weight: 700;
-      padding: 6px 10px;
+    .member-code-box {
+      padding: 8px;
       border-radius: 4px;
-      background: #f1f3f4;
-      display: inline-block;
-      min-width: 120px;
+      background: #f2f8ff;
+      border: 1px solid #bcd4ff;
+      font-size: 13px;
+      line-height: 1.6;
+      word-break: break-all;
     }
     button {
       width: 100%;
@@ -62,11 +62,9 @@
       background: #06c755;
       color: #fff;
       font-weight: 600;
-      cursor: pointer;
     }
     button:disabled {
       opacity: 0.6;
-      cursor: default;
     }
     .status {
       margin-top: 8px;
@@ -85,25 +83,23 @@
   </style>
 </head>
 <body>
-  <h1>お届け先住所の登録</h1>
+  <h1>お届け先住所の登録（会員コード連携）</h1>
   <p class="small">
     代引き配送用のお届け先住所を登録します。<br>
-    一度登録すると、次回からは電話注文・LINE注文の両方でこの住所が使われます。<br>
-    電話注文では、下記の「会員コード（数字）」で照合してお届けします。
+    一度登録すると、次回からは <b>電話注文・LINE注文の両方で、この住所と会員コードが使われます。</b><br>
+    電話注文のときは、最後に <b>会員番号（数字）</b>をプッシュしていただきます。
   </p>
 
   <div class="card">
-    <!-- 会員コード表示（自動発行 / 自動表示） -->
     <div class="field">
       <label>会員コード（自動発行）</label>
-      <div id="memberCode" class="member-code">未発行</div>
-      <p class="small">
-        ※チャットなどでは「IS1234」のように表示されます。<br>
-        ※電話注文の際は、数字の「1234」のみをボタンで入力してください。
-      </p>
+      <div id="memberCodeDisplay" class="member-code-box">
+        未発行です。<br>
+        「住所を保存する」と、自動的に会員コードが発行されます。
+      </div>
     </div>
 
-    <hr style="margin: 12px 0; border: none; border-top: 1px solid #eee;" />
+    <hr style="margin: 14px 0; border: none; border-top: 1px dashed #ddd;" />
 
     <div class="field">
       <label for="name">お名前</label>
@@ -139,41 +135,104 @@
   </div>
 
   <script>
-    // ★ここにあなたの LIFF ID を設定してください
-    //   例: const LIFF_ID = "2008406620-4QJ06JLv";
-    const LIFF_ID = "YOUR_LIFF_ID_HERE";
+    // ★ここを phone-cod サーバーの URL に変更してください
+    const API_BASE = "https://phone-cod.onrender.com";
 
     const statusEl = document.getElementById("status");
     const saveBtn = document.getElementById("saveBtn");
-    const memberCodeEl = document.getElementById("memberCode");
+    const memberCodeDisplay = document.getElementById("memberCodeDisplay");
 
     let currentUserId = "";
-    let currentMemberCode = ""; // 数字だけ（例: "1234"）
+    let currentMemberCode = ""; // 数字のみ（例: "1234"）
 
     function setStatus(msg, kind) {
       statusEl.textContent = msg;
       statusEl.className = "status " + (kind || "");
     }
 
-    function setMemberCode(code) {
-      if (!code) {
-        currentMemberCode = "";
-        memberCodeEl.textContent = "未発行";
-        return;
+    function updateMemberCodeDisplay() {
+      if (currentMemberCode) {
+        memberCodeDisplay.innerHTML =
+          'あなたの会員コードは <b>IS' + currentMemberCode +
+          '</b> です。<br>' +
+          '電話でご注文の際は、音声案内にしたがって、<b>数字「' +
+          currentMemberCode +
+          '」</b>と押してください。';
+      } else {
+        memberCodeDisplay.innerHTML =
+          '未発行です。<br>' +
+          'この画面で住所を保存すると、自動的に会員コードが発行されます。';
       }
-      currentMemberCode = String(code);
-      memberCodeEl.textContent = "IS" + currentMemberCode;
+    }
+
+    async function loadExistingCustomer(lineUserId) {
+      try {
+        const url =
+          API_BASE +
+          "/api/cod/customers/by-line?lineUserId=" +
+          encodeURIComponent(lineUserId);
+
+        const res = await fetch(url);
+        if (!res.ok) {
+          // 404などは「未登録」として扱う
+          console.log("by-line status:", res.status);
+          setStatus(
+            "まだ住所の登録がありません。必要事項を入力して保存してください。",
+            ""
+          );
+          updateMemberCodeDisplay();
+          return;
+        }
+
+        const data = await res.json();
+        if (data && data.ok && data.customer) {
+          const c = data.customer;
+          currentMemberCode = data.code || "";
+
+          document.getElementById("name").value = c.name || "";
+          document.getElementById("phone").value = c.phone || "";
+          document.getElementById("postal").value = c.zip || "";
+          // address は 1本の文字列なので、ここでは都道府県などは手入力想定
+          // すでに綺麗に分けてある場合は、pref/city/address1 に分解してもOK
+          document.getElementById("prefecture").value = "";
+          document.getElementById("city").value = "";
+          document.getElementById("address1").value = "";
+          document.getElementById("address2").value = "";
+
+          setStatus(
+            "登録済みの会員情報を読み込みました。必要であれば修正して保存してください。",
+            "ok"
+          );
+          updateMemberCodeDisplay();
+        } else {
+          setStatus(
+            "まだ住所の登録がありません。必要事項を入力して保存してください。",
+            ""
+          );
+          updateMemberCodeDisplay();
+        }
+      } catch (e) {
+        console.warn("loadExistingCustomer error:", e);
+        setStatus(
+          "登録済みの会員情報を取得できませんでした。新規登録として入力してください。",
+          "err"
+        );
+        updateMemberCodeDisplay();
+      }
     }
 
     async function init() {
       try {
-        if (!LIFF_ID || LIFF_ID === "YOUR_LIFF_ID_HERE") {
-          setStatus("LIFF ID が設定されていません。HTML 内の LIFF_ID を設定してください。", "err");
+        // サーバーから LIFF ID を取得（line-render 側の /api/liff/config を想定）
+        const cfgRes = await fetch("/api/liff/config");
+        const cfg = await cfgRes.json();
+        const liffId = cfg.liffId;
+        if (!liffId) {
+          setStatus("LIFF設定が取得できませんでした。", "err");
           return;
         }
 
-        await liff.init({ liffId: LIFF_ID });
-
+        await liff.init({ liffId });
         if (!liff.isLoggedIn()) {
           liff.login();
           return;
@@ -183,91 +242,26 @@
         currentUserId = prof.userId;
         console.log("LINE userId:", currentUserId);
 
+        saveBtn.disabled = false;
         setStatus(
-          "LINEアカウントを確認しました。登録済みの会員情報があれば自動で読み込みます。",
+          "LINEアカウントを取得しました。必要事項を入力して保存してください。",
           "ok"
         );
 
-        // 既存会員情報を読み込み
-        await loadExistingCustomerByLine(currentUserId);
-
-        // 入力可能に
-        saveBtn.disabled = false;
+        // 既に会員登録があれば読み込み
+        await loadExistingCustomer(currentUserId);
       } catch (e) {
         console.error(e);
-        setStatus("初期化中にエラーが発生しました。時間をおいて再度お試しください。", "err");
-      }
-    }
-
-    async function loadExistingCustomerByLine(lineUserId) {
-      try {
-        const res = await fetch(
-          "/api/cod/customers/by-line?lineUserId=" +
-            encodeURIComponent(lineUserId)
-        );
-
-        if (res.status === 404) {
-          // 初回利用（未登録）
-          setMemberCode("");
-          setStatus(
-            "会員情報が未登録のようです。必要事項を入力して保存すると、会員コードが自動発行されます。",
-            "ok"
-          );
-          return;
-        }
-
-        if (!res.ok) {
-          console.warn("by-line error status:", res.status);
-          setStatus(
-            "会員情報の読み込みに失敗しましたが、新規登録は可能です。",
-            "err"
-          );
-          return;
-        }
-
-        const data = await res.json();
-        if (!data || !data.ok || !data.customer) {
-          setStatus(
-            "会員情報の読み込みに失敗しましたが、新規登録は可能です。",
-            "err"
-          );
-          return;
-        }
-
-        // 会員コード（数字）を表示
-        if (data.code) {
-          setMemberCode(data.code);
-        } else {
-          setMemberCode("");
-        }
-
-        const c = data.customer;
-
-        document.getElementById("name").value = c.name || "";
-        document.getElementById("phone").value = c.phone || "";
-        document.getElementById("postal").value = c.zip || "";
-
-        // 以前の登録データは「address」に1本で入っているので、とりあえず番地欄に入れる
-        if (c.address) {
-          document.getElementById("address1").value = c.address;
-        }
-
-        setStatus(
-          "登録済みの住所情報を読み込みました。必要であれば修正して「住所を保存する」を押してください。",
-          "ok"
-        );
-      } catch (e) {
-        console.warn("loadExistingCustomerByLine error:", e);
-        setStatus(
-          "会員情報の読み込み中にエラーが発生しましたが、新規登録は可能です。",
-          "err"
-        );
+        setStatus("初期化中にエラーが発生しました。", "err");
       }
     }
 
     async function saveAddress() {
       if (!currentUserId) {
-        setStatus("LINEユーザー情報が取得できていません。もう一度開き直してください。", "err");
+        setStatus(
+          "LINEユーザー情報が取得できていません。LINEからもう一度開き直してください。",
+          "err"
+        );
         return;
       }
 
@@ -279,22 +273,8 @@
       const address1   = document.getElementById("address1").value.trim();
       const address2   = document.getElementById("address2").value.trim();
 
-      if (!name || !postal || !prefecture || !city || !address1) {
-        setStatus(
-          "必須項目（お名前・郵便番号・都道府県・市区町村・番地）が未入力です。",
-          "err"
-        );
-        return;
-      }
-
-      // 簡易チェック（サーバー側でも厳密チェックされます）
-      if (!/^\d{7}$/.test(postal)) {
-        setStatus("郵便番号は7桁の数字で入力してください。", "err");
-        return;
-      }
-
-      if (phone && !/^\d{9,11}$/.test(phone.replace(/-/g, ""))) {
-        setStatus("電話番号は9〜11桁の数字で入力してください。", "err");
+      if (!name || !phone || !postal || !prefecture || !city || !address1) {
+        setStatus("必須項目が未入力です。すべて入力してください。", "err");
         return;
       }
 
@@ -302,8 +282,7 @@
       setStatus("保存中です…", "");
 
       try {
-        // ★ 会員コード付きの住所登録API
-        const res = await fetch("/api/member/liff-register", {
+        const res = await fetch(API_BASE + "/api/member/liff-register", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -320,32 +299,26 @@
           }),
         });
 
-        const data = await res.json().catch(() => null);
+        const data = await res.json();
+        if (data.ok) {
+          currentMemberCode = data.code || currentMemberCode;
+          updateMemberCodeDisplay();
 
-        if (!res.ok || !data || !data.ok) {
-          console.error("save error:", res.status, data);
-          const msg =
-            (data && data.error) ||
-            "保存に失敗しました。時間をおいてもう一度お試しください。";
-          setStatus(msg, "err");
-          return;
-        }
+          const disp = data.displayCode || (currentMemberCode ? "IS" + currentMemberCode : "");
 
-        // 会員コードの表示更新
-        if (data.code || data.displayCode) {
-          const code = data.code || (data.displayCode || "").replace(/^IS/, "");
-          setMemberCode(code);
-        }
-
-        if (data.mode === "new") {
           setStatus(
-            `住所を保存しました。あなたの会員コードは「${memberCodeEl.textContent}」です。電話注文の際は数字の「${currentMemberCode}」をボタンで入力してください。`,
+            "住所を保存しました。あなたの会員コードは「" +
+              disp +
+              "」です。電話注文の際は、数字「" +
+              currentMemberCode +
+              "」を押してください。",
             "ok"
           );
         } else {
+          console.error("save error:", data);
           setStatus(
-            `住所を更新しました。会員コードは「${memberCodeEl.textContent}」です。電話注文の際は数字の「${currentMemberCode}」をボタンで入力してください。`,
-            "ok"
+            "保存に失敗しました：" + (data.error || "時間をおいてもう一度お試しください。"),
+            "err"
           );
         }
       } catch (e) {

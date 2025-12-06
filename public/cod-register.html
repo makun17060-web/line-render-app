@@ -142,7 +142,7 @@
 
     async function init() {
       try {
-        // ① LINEサーバーから LIFF ID を取得
+        // ① LINEサーバー(line-render-app-1) から LIFF ID を取得
         const cfgRes = await fetch("/api/liff/config");
         const cfg = await cfgRes.json();
         const liffId = cfg.liffId;
@@ -170,9 +170,11 @@
         // ③ すでに登録済みかどうか（lineUserId から）電話サーバーに確認
         try {
           const meRes = await fetch(
-            API_BASE + "/api/cod/customers/by-line?lineUserId=" +
+            API_BASE +
+              "/api/cod/customers/by-line?lineUserId=" +
               encodeURIComponent(currentUserId)
           );
+
           if (meRes.ok) {
             const me = await meRes.json();
             if (me && me.ok && me.customer) {
@@ -182,7 +184,7 @@
               if (existingMemberCode) {
                 const memberCodeInput = document.getElementById("memberCode");
                 memberCodeInput.value = existingMemberCode;
-                // 既存登録がある場合は会員番号の変更はできない仕様にする
+                // 既存登録がある場合は会員番号の変更はできない仕様
                 memberCodeInput.disabled = true;
               }
 
@@ -190,10 +192,8 @@
               document.getElementById("phone").value = c.phone || "";
               document.getElementById("zip").value   = c.zip || "";
 
-              // 住所は一塊で保存しているので、ここではそのまま表示
+              // 住所は一塊で保存しているので、とりあえず address1 にそのまま入れる
               if (c.address) {
-                // "大阪府泉大津市松之浜町1-2-3 磯屋マンション101号" のような形なら
-                // とりあえず address1 に入れておく
                 document.getElementById("prefecture").value = "";
                 document.getElementById("city").value       = "";
                 document.getElementById("address1").value   = c.address;
@@ -201,10 +201,13 @@
               }
 
               setStatus(
-                "すでに登録済みの情報があります。必要があれば修正して保存してください。",
+                "すでに登録済みの情報があります。必要があれば修正して保存してください。（会員番号は変更できません）",
                 "ok"
               );
             }
+          } else {
+            // 404 など → 未登録扱い
+            console.log("no existing member for this LINE user");
           }
         } catch (e) {
           console.warn("load existing customer error:", e);
@@ -218,11 +221,12 @@
     }
 
     function buildFullAddress() {
-      const pref  = document.getElementById("prefecture").value.trim();
-      const city  = document.getElementById("city").value.trim();
-      const a1    = document.getElementById("address1").value.trim();
-      const a2    = document.getElementById("address2").value.trim();
+      const pref = document.getElementById("prefecture").value.trim();
+      const city = document.getElementById("city").value.trim();
+      const a1   = document.getElementById("address1").value.trim();
+      const a2   = document.getElementById("address2").value.trim();
 
+      // サーバー側は「1本の住所文字列」として保存しているので結合
       return [pref, city, a1, a2].filter(Boolean).join("");
     }
 
@@ -238,19 +242,38 @@
       const memberCodeInput = document.getElementById("memberCode");
       const code = memberCodeInput.value.trim();
 
-      const name  = document.getElementById("name").value.trim();
-      const phone = document.getElementById("phone").value.trim();
-      const zip   = document.getElementById("zip").value.trim();
-      const address = buildFullAddress();
+      const name       = document.getElementById("name").value.trim();
+      const phoneInput = document.getElementById("phone").value.trim();
+      const zipInput   = document.getElementById("zip").value.trim();
+      const address    = buildFullAddress();
 
       if (!code || !/^\d{4,8}$/.test(code)) {
         setStatus("会員番号は 4〜8桁の数字で入力してください。", "err");
         return;
       }
-      if (!name || !address) {
-        setStatus("お名前と住所は必須です。入力してください。", "err");
+      if (!name) {
+        setStatus("お名前を入力してください。", "err");
         return;
       }
+      if (!phoneInput) {
+        setStatus("電話番号を入力してください。", "err");
+        return;
+      }
+      if (!zipInput) {
+        setStatus("郵便番号を入力してください。", "err");
+        return;
+      }
+      if (!address) {
+        setStatus("住所（都道府県・市区町村・番地）を入力してください。", "err");
+        return;
+      }
+
+      const phoneDigits = phoneInput.replace(/-/g, "");
+      if (!/^\d{9,11}$/.test(phoneDigits)) {
+        setStatus("電話番号は 9〜11桁の数字で入力してください。", "err");
+        return;
+      }
+      const zipDigits = zipInput.replace(/-/g, "");
 
       saveBtn.disabled = true;
       setStatus("登録中です…", "");
@@ -264,8 +287,8 @@
           body: JSON.stringify({
             code,
             name,
-            phone,
-            zip,
+            phone: phoneDigits,
+            zip: zipDigits,
             address,
             lineUserId: currentUserId,
           }),
@@ -275,22 +298,31 @@
 
         if (res.ok && data.ok) {
           setStatus(
-            "会員番号と住所を登録しました。今後は電話注文の際に、この番号で照合されます。",
+            "会員番号と住所を登録しました。今後は電話注文の際に、この会員番号で照合されます。",
             "ok"
           );
-          // 以後、会員番号は変更不可にする
           memberCodeInput.disabled = true;
         } else {
-          // サーバーからのエラーメッセージがあれば表示（重複コードなど）
-          if (data && data.error) {
+          if (data && data.code === "DUPLICATE_CODE") {
+            setStatus(
+              "この会員番号はすでに他の方が使用しています。別の番号を入力してください。",
+              "err"
+            );
+          } else if (data && data.error) {
             setStatus("登録に失敗しました：" + data.error, "err");
           } else {
-            setStatus("登録に失敗しました。時間をおいてもう一度お試しください。", "err");
+            setStatus(
+              "登録に失敗しました。時間をおいてもう一度お試しください。",
+              "err"
+            );
           }
         }
       } catch (e) {
         console.error(e);
-        setStatus("通信エラーで登録できませんでした。電波状況をご確認ください。", "err");
+        setStatus(
+          "通信エラーで登録できませんでした。電波状況をご確認のうえ、もう一度お試しください。",
+          "err"
+        );
       } finally {
         saveBtn.disabled = false;
       }

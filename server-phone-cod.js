@@ -353,7 +353,48 @@ app.post("/api/cod/customers", jsonParser, async (req, res) => {
     const { code, name, phone, zip, address, lineUserId } = req.body || {};
 
     const codeStr = String(code || "").trim();
+　　const customers = readCustomers();
 
+    if (customers[codeStr]) {
+      // 重複チェック
+      return res.status(400).json({
+        ok: false,
+        error: "この会員番号はすでに登録されています。",
+        code: "DUPLICATE_CODE",
+      });
+    }
+
+    const now = new Date().toISOString();
+
+    customers[codeStr] = {
+      name: String(name).trim(),
+      phone: phoneStr,
+      zip: zipStr,
+      address: String(address).trim(),
+      lineUserId: lineUserId ? String(lineUserId).trim() : "",  // ★ ここを追加
+      updatedAt: now,
+      createdAt: now,
+    };
+
+    writeJSON(CUSTOMERS_PATH, customers);
+
+    // 管理者へ LINE 通知（新規登録）
+    await notifyLineAdminForCustomerRegister({
+      ts: now,
+      code: codeStr,
+      name: String(name).trim(),
+      phone: phoneStr,
+      zip: zipStr,
+      address: String(address).trim(),
+      isUpdate: false,
+    });
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("POST /api/cod/customers error:", e);
+    return res.status(500).json({ ok: false, error: "internal error" });
+  }
+});
     if (!codeStr || !/^\d{4,8}$/.test(codeStr)) {
       return res
         .status(400)
@@ -437,6 +478,37 @@ app.get("/api/cod/customers/:code", (req, res) => {
   }
 
   return res.json({ ok: true, customer: c });
+});
+// lineUserId から登録済み会員を探す API
+// GET /api/cod/customers/lookup-by-line?lineUserId=xxxxx
+app.get("/api/cod/customers/lookup-by-line", (req, res) => {
+  const lineUserId = (req.query.lineUserId || "").trim();
+  if (!lineUserId) {
+    return res.status(400).json({ ok: false, error: "lineUserId is required" });
+  }
+
+  const customers = readCustomers();
+
+  let foundCode = null;
+  let foundCustomer = null;
+
+  for (const [code, c] of Object.entries(customers)) {
+    if (c.lineUserId && c.lineUserId === lineUserId) {
+      foundCode = code;
+      foundCustomer = c;
+      break;
+    }
+  }
+
+  if (!foundCustomer) {
+    return res.status(404).json({ ok: false, error: "not found" });
+  }
+
+  return res.json({
+    ok: true,
+    code: foundCode,
+    customer: foundCustomer,
+  });
 });
 
 app.get("/api/cod/customers/by-line/:lineUserId", (req, res) => {

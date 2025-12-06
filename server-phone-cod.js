@@ -337,7 +337,7 @@ if (fs.existsSync(PUBLIC_DIR)) {
 // body: { code, name, phone, zip, address, lineUserId }
 //
 // GET /api/cod/customers/:code
-// GET /api/cod/customers/by-line?lineUserId=xxxxx
+// GET /api/cod/customers/by-line?lineUserId=U1bc8c57a3ce2be1146f3f7acd6e650e5
 // GET /api/cod/customers/by-line/:lineUserId
 // ======================================================================
 

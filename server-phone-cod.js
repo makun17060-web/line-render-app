@@ -329,7 +329,6 @@ const PUBLIC_DIR = path.join(__dirname, "public");
 if (fs.existsSync(PUBLIC_DIR)) {
   app.use("/public", express.static(PUBLIC_DIR));
 }
-
 // ======================================================================
 // 0) 会員情報 登録用 API（住所入力の別画面 / LIFF から使う）
 // ======================================================================
@@ -337,26 +336,21 @@ if (fs.existsSync(PUBLIC_DIR)) {
 // POST /api/cod/customers
 // body: { code, name, phone, zip, address, lineUserId }
 //
-// - code: 4〜8桁の数字
-// - すでに同じ code が存在する場合はエラー（重複チェック）
-//   → { ok:false, error:"...", code:"DUPLICATE_CODE" }
-//
 // GET /api/cod/customers/:code
-// - 登録内容の確認用
-//
-// GET /api/cod/customers/by-line/:lineUserId
 // GET /api/cod/customers/by-line?lineUserId=xxxxx
-// - LINEユーザーID から会員番号を逆引き
+// GET /api/cod/customers/by-line/:lineUserId
+// ======================================================================
+
 app.post("/api/cod/customers", jsonParser, async (req, res) => {
   try {
     const { code, name, phone, zip, address, lineUserId } = req.body || {};
 
-    // ---- 入力チェック ------------------------------------
     const codeStr = String(code || "").trim();
     if (!codeStr || !/^\d{4,8}$/.test(codeStr)) {
-      return res
-        .status(400)
-        .json({ ok: false, error: "code(会員番号) は4〜8桁の数字で入力してください。" });
+      return res.status(400).json({
+        ok: false,
+        error: "code(会員番号) は4〜8桁の数字で入力してください。",
+      });
     }
 
     if (!name || !String(name).trim()) {
@@ -382,9 +376,10 @@ app.post("/api/cod/customers", jsonParser, async (req, res) => {
     const zipStr = zip ? String(zip).replace(/-/g, "").trim() : "";
     const lineUserIdStr = lineUserId ? String(lineUserId).trim() : "";
 
-    // ---- 重複チェック ------------------------------------
     const customers = readCustomers();
+
     if (customers[codeStr]) {
+      // 重複チェック
       return res.status(400).json({
         ok: false,
         error: "この会員番号はすでに登録されています。",
@@ -392,7 +387,6 @@ app.post("/api/cod/customers", jsonParser, async (req, res) => {
       });
     }
 
-    // ---- 保存 --------------------------------------------
     const now = new Date().toISOString();
 
     customers[codeStr] = {
@@ -400,7 +394,7 @@ app.post("/api/cod/customers", jsonParser, async (req, res) => {
       phone: phoneStr,
       zip: zipStr,
       address: String(address).trim(),
-      lineUserId: lineUserIdStr,  // ★ LINEユーザーID を紐付け
+      lineUserId: lineUserIdStr,
       updatedAt: now,
       createdAt: now,
     };
@@ -440,40 +434,10 @@ app.get("/api/cod/customers/:code", (req, res) => {
 
   return res.json({ ok: true, customer: c });
 });
-// lineUserId から登録済み会員を探す API
-// GET /api/cod/customers/lookup-by-line?lineUserId=xxxxx
-app.get("/api/cod/customers/lookup-by-line", (req, res) => {
+
+// lineUserId → 会員情報（クエリ版）
+app.get("/api/cod/customers/by-line", (req, res) => {
   const lineUserId = (req.query.lineUserId || "").trim();
-  if (!lineUserId) {
-    return res.status(400).json({ ok: false, error: "lineUserId is required" });
-  }
-
-  const customers = readCustomers();
-
-  let foundCode = null;
-  let foundCustomer = null;
-
-  for (const [code, c] of Object.entries(customers)) {
-    if (c.lineUserId && c.lineUserId === lineUserId) {
-      foundCode = code;
-      foundCustomer = c;
-      break;
-    }
-  }
-
-  if (!foundCustomer) {
-    return res.status(404).json({ ok: false, error: "not found" });
-  }
-
-  return res.json({
-    ok: true,
-    code: foundCode,
-    customer: foundCustomer,
-  });
-});
-
-app.get("/api/cod/customers/by-line/:lineUserId", (req, res) => {
-  const lineUserId = (req.params.lineUserId || "").trim();
   if (!lineUserId) {
     return res
       .status(400)
@@ -492,9 +456,9 @@ app.get("/api/cod/customers/by-line/:lineUserId", (req, res) => {
   });
 });
 
-// クエリ版 (?lineUserId=xxxxx) も許可しておく
-app.get("/api/cod/customers/by-line", (req, res) => {
-  const lineUserId = (req.query.lineUserId || "").trim();
+// lineUserId → 会員情報（パス版）
+app.get("/api/cod/customers/by-line/:lineUserId", (req, res) => {
+  const lineUserId = (req.params.lineUserId || "").trim();
   if (!lineUserId) {
     return res
       .status(400)

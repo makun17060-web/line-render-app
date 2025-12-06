@@ -347,16 +347,44 @@ if (fs.existsSync(PUBLIC_DIR)) {
 // GET /api/cod/customers/by-line/:lineUserId
 // GET /api/cod/customers/by-line?lineUserId=xxxxx
 // - LINEユーザーID から会員番号を逆引き
-
 app.post("/api/cod/customers", jsonParser, async (req, res) => {
   try {
     const { code, name, phone, zip, address, lineUserId } = req.body || {};
 
+    // ---- 入力チェック ------------------------------------
     const codeStr = String(code || "").trim();
-　　const customers = readCustomers();
+    if (!codeStr || !/^\d{4,8}$/.test(codeStr)) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "code(会員番号) は4〜8桁の数字で入力してください。" });
+    }
 
+    if (!name || !String(name).trim()) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "name(お名前) が未入力です。" });
+    }
+
+    if (!address || !String(address).trim()) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "address(ご住所) が未入力です。" });
+    }
+
+    const phoneStr = phone ? String(phone).replace(/-/g, "").trim() : "";
+    if (phoneStr && !/^\d{9,11}$/.test(phoneStr)) {
+      return res.status(400).json({
+        ok: false,
+        error: "phone(電話番号) は9〜11桁の数字で入力してください。",
+      });
+    }
+
+    const zipStr = zip ? String(zip).replace(/-/g, "").trim() : "";
+    const lineUserIdStr = lineUserId ? String(lineUserId).trim() : "";
+
+    // ---- 重複チェック ------------------------------------
+    const customers = readCustomers();
     if (customers[codeStr]) {
-      // 重複チェック
       return res.status(400).json({
         ok: false,
         error: "この会員番号はすでに登録されています。",
@@ -364,6 +392,7 @@ app.post("/api/cod/customers", jsonParser, async (req, res) => {
       });
     }
 
+    // ---- 保存 --------------------------------------------
     const now = new Date().toISOString();
 
     customers[codeStr] = {
@@ -371,14 +400,14 @@ app.post("/api/cod/customers", jsonParser, async (req, res) => {
       phone: phoneStr,
       zip: zipStr,
       address: String(address).trim(),
-      lineUserId: lineUserId ? String(lineUserId).trim() : "",  // ★ ここを追加
+      lineUserId: lineUserIdStr,  // ★ LINEユーザーID を紐付け
       updatedAt: now,
       createdAt: now,
     };
 
     writeJSON(CUSTOMERS_PATH, customers);
 
-    // 管理者へ LINE 通知（新規登録）
+    // ---- 管理者へ LINE 通知 ------------------------------
     await notifyLineAdminForCustomerRegister({
       ts: now,
       code: codeStr,
@@ -386,8 +415,16 @@ app.post("/api/cod/customers", jsonParser, async (req, res) => {
       phone: phoneStr,
       zip: zipStr,
       address: String(address).trim(),
+      lineUserId: lineUserIdStr,
       isUpdate: false,
     });
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("POST /api/cod/customers error:", e);
+    return res.status(500).json({ ok: false, error: "internal error" });
+  }
+});
 
     return res.json({ ok: true });
   } catch (e) {

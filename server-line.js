@@ -209,6 +209,48 @@ const parse = (data) => {
 };
 const uniq = (arr) => Array.from(new Set((arr || []).filter(Boolean)));
 
+// ===== 会員コードユーティリティ =====
+function getOrCreateMemberCode(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) return null;
+
+  const book = readAddresses();
+  const entry = book[uid];
+  if (!entry) {
+    // 住所登録がまだ
+    return null;
+  }
+
+  // すでにコードがあればそれを返す
+  if (entry.memberCode && typeof entry.memberCode === "string") {
+    const existing = entry.memberCode.trim();
+    if (existing) return existing;
+  }
+
+  // 既存のコード一覧を作成
+  const existingCodes = new Set(
+    Object.values(book)
+      .map((a) =>
+        a && typeof a.memberCode === "string"
+          ? a.memberCode.trim()
+          : ""
+      )
+      .filter(Boolean)
+  );
+
+  // 新しいコードを発行（IS + 6桁数字） ※重複しないように
+  let newCode = "";
+  do {
+    const rand = Math.floor(100000 + Math.random() * 900000); // 6桁
+    newCode = `IS${rand}`;
+  } while (existingCodes.has(newCode));
+
+  entry.memberCode = newCode;
+  book[uid] = entry;
+  writeAddresses(book);
+  return newCode;
+}
+
 // ====== 在庫ユーティリティ ======
 const LOW_STOCK_THRESHOLD = 5; // しきい値
 const PRODUCT_ALIASES = {
@@ -1079,15 +1121,18 @@ app.post("/api/liff/address", async (req, res) => {
     }
 
     const book = readAddresses();
+    const prev = book[userId] || {}; // ★ 既存のmemberCodeなどは残す
+
     book[userId] = {
-      name:        String(addr.name || "").trim(),
-      phone:       String(addr.phone || "").trim(),
-      postal:      String(addr.postal || "").trim(),
-      prefecture:  String(addr.prefecture || "").trim(),
-      city:        String(addr.city || "").trim(),
-      address1:    String(addr.address1 || "").trim(),
-      address2:    String(addr.address2 || "").trim(),
-      ts: new Date().toISOString(),
+      ...prev,
+      name:       String(addr.name || "").trim(),
+      phone:      String(addr.phone || "").trim(),
+      postal:     String(addr.postal || "").trim(),
+      prefecture: String(addr.prefecture || "").trim(),
+      city:       String(addr.city || "").trim(),
+      address1:   String(addr.address1 || "").trim(),
+      address2:   String(addr.address2 || "").trim(),
+      ts:         new Date().toISOString(),
     };
 
     writeAddresses(book);
@@ -2307,6 +2352,39 @@ async function handleEvent(ev) {
             "お問い合わせありがとうございます。\n" +
             "このままトークにご質問内容を送ってください。\n" +
             "スタッフが確認して返信します。",
+        });
+        return;
+      }
+
+      // ★「会員コード」と送られたら自分の会員コードを返信
+      if (t === "会員コード") {
+        const userId = ev.source?.userId || "";
+        if (!userId) {
+          await client.replyMessage(ev.replyToken, {
+            type: "text",
+            text: "会員コードは1対1トークでのみ確認できます。",
+          });
+          return;
+        }
+
+        const code = getOrCreateMemberCode(userId);
+        if (!code) {
+          await client.replyMessage(ev.replyToken, {
+            type: "text",
+            text:
+              "まだ会員登録（住所登録）が完了していません。\n" +
+              "リッチメニューの「住所登録」ボタンから一度ご登録ください。",
+          });
+          return;
+        }
+
+        await client.replyMessage(ev.replyToken, {
+          type: "text",
+          text:
+            "磯屋 会員コード\n" +
+            "----------------------\n" +
+            `${code}\n\n` +
+            "ご注文やお問い合わせの際に、この会員コードをお知らせください。",
         });
         return;
       }

@@ -6,34 +6,19 @@ const fs = require("fs");
 const path = require("path");
 const express = require("express");
 
-// ================== 基本設定 ==================
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Twilio からは x-www-form-urlencoded で飛んでくる
+// Twilio からは x-www-form-urlencoded
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// データファイル
+// ===== データファイル =====
 const DATA_DIR = path.join(__dirname, "data");
 const PRODUCTS_PATH = path.join(DATA_DIR, "products.json");
 const ADDRESSES_PATH = path.join(DATA_DIR, "addresses.json");
 
-// ============ OpenAI（任意） ============
-let openai = null;
-if (process.env.OPENAI_API_KEY) {
-  try {
-    const OpenAI = require("openai");
-    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    console.log("✅ OpenAI 有効化");
-  } catch (e) {
-    console.warn("⚠️ OpenAI SDK 読み込みに失敗しました:", e.message || e);
-    openai = null;
-  }
-}
-
-// ============ ユーティリティ ============
-
+// ===== ユーティリティ =====
 function safeReadJSON(p, fallback) {
   try {
     return JSON.parse(fs.readFileSync(p, "utf8"));
@@ -55,7 +40,6 @@ function yen(n) {
   return `${Number(n || 0).toLocaleString("ja-JP")}円`;
 }
 
-// XML エスケープ（& < >）
 function escXml(s) {
   return String(s || "")
     .replace(/&/g, "&amp;")
@@ -67,8 +51,7 @@ function xmlWrap(inner) {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<Response>\n${inner}\n</Response>`;
 }
 
-// ============ 送料関連 ============
-
+// ===== 送料・地域判定 =====
 const SHIPPING_BY_REGION = {
   北海道: 1560,
   東北: 1070,
@@ -83,7 +66,8 @@ const SHIPPING_BY_REGION = {
 
 const COD_FEE = 330;
 
-function detectRegionFromAddress(address = {}) {
+function detectRegionFromAddress(address) {
+  address = address || {};
   const pref = String(address.prefecture || address.pref || "").trim();
   const addr1 = String(address.address1 || address.addr1 || "").trim();
   const hay = pref || addr1;
@@ -101,114 +85,59 @@ function detectRegionFromAddress(address = {}) {
 }
 
 /**
- * 電話で入力された 6桁 (例: 123456) から addresses.json を逆引きして住所を返す
- * LINE 側で memberCode: "IS123456" になっている想定
+ * 電話で入力された 6桁（例 123456）から addresses.json を逆引きする
+ * memberCode: "IS123456" を想定
  */
 function findAddressByMemberDigits(digits) {
   const numeric = String(digits || "").replace(/\D/g, "");
   if (!numeric) return null;
 
-  const codeCandidate1 = "IS" + numeric;
-  const codeCandidate2 = numeric; // 念のためそのままも見る
+  const code1 = "IS" + numeric;
+  const code2 = numeric;
 
   const book = readAddresses();
   for (const v of Object.values(book || {})) {
     if (!v) continue;
-    if (v.memberCode === codeCandidate1 || v.memberCode === codeCandidate2) {
+    if (v.memberCode === code1 || v.memberCode === code2) {
       return v;
     }
   }
   return null;
 }
 
-// ============ OpenAI で読み上げ文を作る（任意） ============
-async function buildSummaryWithAI(params) {
-  if (!openai || !process.env.OPENAI_API_KEY) return null;
-
-  const {
-    productName,
-    qty,
-    unitPrice,
-    subtotal,
-    shipping,
-    codFee,
-    total,
-    region,
-    addressLabel,
-  } = params;
-
-  const userText = [
-    `商品名: ${productName}`,
-    `数量: ${qty}個`,
-    `単価: ${unitPrice}円`,
-    `商品合計: ${subtotal}円`,
-    `送料: ${shipping}円`,
-    `地域: ${region || "不明"}`,
-    `代引き手数料: ${codFee}円`,
-    `合計: ${total}円`,
-    `お届け先: ${addressLabel}`,
-  ].join("\n");
-
-  try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content:
-            "あなたは電話注文の自動音声です。日本語で、60〜90文字くらいの聞き取りやすい一文にまとめてください。金額は『◯◯円』とそのまま読み上げやすく表現してください。",
-        },
-        {
-          role: "user",
-          content: userText,
-        },
-      ],
-      max_tokens: 120,
-    });
-
-    const text = completion.choices[0]?.message?.content || "";
-    return text.trim();
-  } catch (e) {
-    console.error("OpenAI error:", e.message || e);
-    return null;
-  }
-}
-
-// ============ Health チェック ============
-
+// ===== Health =====
 app.get("/health", (_req, res) => {
   res.status(200).type("text/plain").send("OK");
 });
 
-// ============ Twilio フロー本体 ============
+// =================================================
+//  Twilio フロー
+//  start → product → qty → confirm → member
+// =================================================
 
-/**
- * 入口:
- * Twilio の電話番号設定「A CALL COMES IN」 → POST https://○○.onrender.com/twilio/cod/start
- */
+// 入口
 app.post("/twilio/cod/start", (req, res) => {
-  const products = readProducts();
+  try {
+    const products = readProducts();
+    const target = products.slice(0, 9); // 1〜9番まで
 
-  // 先頭 9件だけ対象（1〜9）
-  const target = products.slice(0, 9);
+    let menuSpeech;
+    if (!target.length) {
+      menuSpeech =
+        "ただいま、電話でご注文いただける商品がありません。 恐れ入りますが、後ほどおかけ直しください。";
+    } else {
+      const lines = target.map((p, i) => {
+        const no = i + 1;
+        return `${p.name} は ${no} 番。`;
+      });
+      menuSpeech =
+        "お電話ありがとうございます。 手造りえびせんべい磯屋です。 こちらは代引きご希望のお客様専用の自動受付です。" +
+        "ご希望の商品番号を押してください。 " +
+        lines.join(" ");
+    }
 
-  let menuSpeech;
-  if (!target.length) {
-    menuSpeech =
-      "ただいま、電話でご注文いただける商品がありません。恐れ入りますが、後ほどおかけ直しください。";
-  } else {
-    const lines = target.map((p, idx) => {
-      const no = idx + 1;
-      return `${p.name} は ${no} 番。`;
-    });
-    menuSpeech =
-      "お電話ありがとうございます。 手造りえびせんべい磯屋です。 こちらは代引きご希望のお客様専用の自動受付です。" +
-      "ご希望の商品番号を押してください。" +
-      lines.join(" ");
-  }
-
-  const xml = xmlWrap(
-    `
+    const xml = xmlWrap(
+      `
 <Say language="ja-JP" voice="alice">
   ${escXml(menuSpeech)}
 </Say>
@@ -219,41 +148,53 @@ app.post("/twilio/cod/start", (req, res) => {
 </Say>
 <Hangup/>
 `.trim()
-  );
-
-  res.type("text/xml").send(xml);
-});
-
-/**
- * 商品番号を受け取る → 個数を聞く
- */
-app.post("/twilio/cod/product", (req, res) => {
-  const digit = (req.body.Digits || "").trim();
-  console.log("[/twilio/cod/product] Digits =", digit);
-
-  const products = readProducts();
-  const idx = Number(digit || 0) - 1;
-  const product = products[idx];
-
-  if (!product) {
+    );
+    res.type("text/xml").send(xml);
+  } catch (e) {
+    console.error("/twilio/cod/start error:", e);
     const xml = xmlWrap(
       `
+<Say language="ja-JP" voice="alice">
+  システムエラーが発生しました。 恐れ入りますが、後ほどおかけ直しください。
+</Say>
+<Hangup/>
+`.trim()
+    );
+    res.type("text/xml").send(xml);
+  }
+});
+
+// 商品番号 → 個数
+app.post("/twilio/cod/product", (req, res) => {
+  try {
+    const digit = (req.body.Digits || "").trim();
+    console.log("[/twilio/cod/product] Digits =", digit);
+
+    const products = readProducts();
+    const idx = Number(digit || 0) - 1;
+    const product = products[idx];
+
+    if (!product) {
+      const xml = xmlWrap(
+        `
 <Say language="ja-JP" voice="alice">
   入力された番号の商品が見つかりませんでした。 最初からおかけ直しください。
 </Say>
 <Hangup/>
 `.trim()
-    );
-    return res.type("text/xml").send(xml);
-  }
+      );
+      return res.type("text/xml").send(xml);
+    }
 
-  const askQtySpeech = `${product.name} ですね。 個数を押して、最後にシャープを押してください。 例えば 2個 の場合は、 2、シャープ のように押してください。`;
+    const askQtySpeech =
+      `${product.name} ですね。 個数を押して、最後にシャープを押してください。 ` +
+      "例えば 2個 の場合は、 2、シャープ のように押してください。";
 
-  const xml = xmlWrap(
-    `
+    const xml = xmlWrap(
+      `
 <Gather input="dtmf" timeout="10" finishOnKey="#" action="/twilio/cod/qty?pid=${encodeURIComponent(
-      product.id
-    )}" method="POST">
+        product.id
+      )}" method="POST">
   <Say language="ja-JP" voice="alice">
     ${escXml(askQtySpeech)}
   </Say>
@@ -263,46 +204,57 @@ app.post("/twilio/cod/product", (req, res) => {
 </Say>
 <Hangup/>
 `.trim()
-  );
-
-  res.type("text/xml").send(xml);
-});
-
-/**
- * 個数を受け取る → 「この内容でよいか？」確認
- */
-app.post("/twilio/cod/qty", (req, res) => {
-  const pid = (req.query.pid || "").trim();
-  const digitsRaw = (req.body.Digits || "").toString();
-  const digits = digitsRaw.replace(/[^0-9]/g, "");
-  const qty = Math.max(1, Math.min(99, Number(digits) || 0));
-
-  console.log("[/twilio/cod/qty] pid =", pid, "digits =", digits, "qty =", qty);
-
-  const products = readProducts();
-  const product = products.find((p) => p.id === pid);
-  if (!product) {
+    );
+    res.type("text/xml").send(xml);
+  } catch (e) {
+    console.error("/twilio/cod/product error:", e);
     const xml = xmlWrap(
       `
 <Say language="ja-JP" voice="alice">
-  商品情報が見つかりませんでした。 お手数ですが、最初からおかけ直しください。
+  システムエラーが発生しました。 恐れ入りますが、後ほどおかけ直しください。
 </Say>
 <Hangup/>
 `.trim()
     );
-    return res.type("text/xml").send(xml);
+    res.type("text/xml").send(xml);
   }
+});
 
-  const subtotal = (Number(product.price) || 0) * qty;
-  const speech =
-    `${product.name} を ${qty}個、商品合計は ${subtotal}円 でお受けしてよろしいでしょうか。` +
-    "よろしければ 1 を、やり直す場合は 2 を押してください。";
+// 個数 → 「これでいいか？」確認
+app.post("/twilio/cod/qty", (req, res) => {
+  try {
+    const pid = String(req.query.pid || "").trim();
+    const digitsRaw = (req.body.Digits || "").toString();
+    const digits = digitsRaw.replace(/[^0-9]/g, "");
+    const qty = Math.max(1, Math.min(99, Number(digits) || 0));
 
-  const xml = xmlWrap(
-    `
+    console.log("[/twilio/cod/qty] pid =", pid, "digits =", digits, "qty =", qty);
+
+    const products = readProducts();
+    const product = products.find((p) => p.id === pid);
+    if (!product) {
+      const xml = xmlWrap(
+        `
+<Say language="ja-JP" voice="alice">
+  商品情報が見つかりませんでした。 最初からおかけ直しください。
+</Say>
+<Hangup/>
+`.trim()
+      );
+      return res.type("text/xml").send(xml);
+    }
+
+    const unit = Number(product.price) || 0;
+    const subtotal = unit * qty;
+    const speech =
+      `${product.name} を ${qty}個、商品合計は ${subtotal}円 でお受けしてよろしいでしょうか。 ` +
+      "よろしければ 1 を、やり直す場合は 2 を押してください。";
+
+    const xml = xmlWrap(
+      `
 <Gather input="dtmf" numDigits="1" timeout="10" action="/twilio/cod/confirm?pid=${encodeURIComponent(
-      product.id
-    )}&qty=${qty}" method="POST">
+        pid
+      )}&qty=${qty}" method="POST">
   <Say language="ja-JP" voice="alice">
     ${escXml(speech)}
   </Say>
@@ -312,44 +264,52 @@ app.post("/twilio/cod/qty", (req, res) => {
 </Say>
 <Hangup/>
 `.trim()
-  );
-
-  res.type("text/xml").send(xml);
-});
-
-/**
- * 「これでいいか」確認 → OKなら会員番号入力へ
- */
-app.post("/twilio/cod/confirm", (req, res) => {
-  const pid = (req.query.pid || "").trim();
-  const qty = Math.max(1, Number(req.query.qty || 1) || 1);
-  const digit = (req.body.Digits || "").trim();
-
-  console.log("[/twilio/cod/confirm] pid =", pid, "qty =", qty, "Digits =", digit);
-
-  if (digit !== "1") {
-    // 2 など → 最初からメニューに戻す
+    );
+    res.type("text/xml").send(xml);
+  } catch (e) {
+    console.error("/twilio/cod/qty error:", e);
     const xml = xmlWrap(
       `
+<Say language="ja-JP" voice="alice">
+  システムエラーが発生しました。 恐れ入りますが、後ほどおかけ直しください。
+</Say>
+<Hangup/>
+`.trim()
+    );
+    res.type("text/xml").send(xml);
+  }
+});
+
+// これでいいか？ → OKなら会員番号入力へ
+app.post("/twilio/cod/confirm", (req, res) => {
+  try {
+    const pid = String(req.query.pid || "").trim();
+    const qty = Math.max(1, Number(req.query.qty || 1) || 1);
+    const digit = (req.body.Digits || "").trim();
+
+    console.log("[/twilio/cod/confirm] pid =", pid, "qty =", qty, "Digits =", digit);
+
+    if (digit !== "1") {
+      const xml = xmlWrap(
+        `
 <Say language="ja-JP" voice="alice">
   ありがとうございます。 もう一度最初から商品をお選びください。
 </Say>
 <Redirect method="POST">/twilio/cod/start</Redirect>
 `.trim()
-    );
-    return res.type("text/xml").send(xml);
-  }
+      );
+      return res.type("text/xml").send(xml);
+    }
 
-  // OK の場合 → 会員番号入力へ
-  const speech =
-    "ありがとうございます。 次に、会員番号を6桁の数字で入力し、最後にシャープを押してください。" +
-    "会員カードに記載の番号の、数字の部分だけを押してください。 例として、アイエス 123456 の場合は、 123456、シャープ のように押してください。";
+    const speech =
+      "ありがとうございます。 次に、会員番号を6桁の数字で入力し、最後にシャープを押してください。 " +
+      "会員カードに記載の番号の、数字の部分だけを押してください。 例として、アイエス 123456 の場合は、 123456、シャープ のように押してください。";
 
-  const xml = xmlWrap(
-    `
+    const xml = xmlWrap(
+      `
 <Gather input="dtmf" timeout="15" finishOnKey="#" action="/twilio/cod/member?pid=${encodeURIComponent(
-      pid
-    )}&qty=${qty}" method="POST">
+        pid
+      )}&qty=${qty}" method="POST">
   <Say language="ja-JP" voice="alice">
     ${escXml(speech)}
   </Say>
@@ -359,113 +319,117 @@ app.post("/twilio/cod/confirm", (req, res) => {
 </Say>
 <Hangup/>
 `.trim()
-  );
-
-  res.type("text/xml").send(xml);
-});
-
-/**
- * 会員番号 → 住所の地域判定 → 送料＋代引手数料込みの合計読み上げ
- */
-app.post("/twilio/cod/member", async (req, res) => {
-  const pid = (req.query.pid || "").trim();
-  const qty = Math.max(1, Number(req.query.qty || 1) || 1);
-  const digitsRaw = (req.body.Digits || "").toString();
-  const digits = digitsRaw.replace(/[^0-9]/g, "");
-
-  console.log("[/twilio/cod/member] pid =", pid, "qty =", qty, "member digits =", digits);
-
-  if (!digits) {
+    );
+    res.type("text/xml").send(xml);
+  } catch (e) {
+    console.error("/twilio/cod/confirm error:", e);
     const xml = xmlWrap(
       `
+<Say language="ja-JP" voice="alice">
+  システムエラーが発生しました。 恐れ入りますが、後ほどおかけ直しください。
+</Say>
+<Hangup/>
+`.trim()
+    );
+    res.type("text/xml").send(xml);
+  }
+});
+
+// 会員番号 → 送料 + 代引手数料込みの合計読み上げ
+app.post("/twilio/cod/member", (req, res) => {
+  try {
+    const pid = String(req.query.pid || "").trim();
+    const qty = Math.max(1, Number(req.query.qty || 1) || 1);
+    const digitsRaw = (req.body.Digits || "").toString();
+    const digits = digitsRaw.replace(/[^0-9]/g, "");
+
+    console.log("[/twilio/cod/member] pid =", pid, "qty =", qty, "member digits =", digits);
+
+    if (!digits) {
+      const xml = xmlWrap(
+        `
 <Say language="ja-JP" voice="alice">
   会員番号が入力されませんでした。 お手数ですが、最初からおかけ直しください。
 </Say>
 <Hangup/>
 `.trim()
-    );
-    return res.type("text/xml").send(xml);
-  }
+      );
+      return res.type("text/xml").send(xml);
+    }
 
-  const addr = findAddressByMemberDigits(digits);
-  if (!addr) {
-    const xml = xmlWrap(
-      `
+    const addr = findAddressByMemberDigits(digits);
+    if (!addr) {
+      const xml = xmlWrap(
+        `
 <Say language="ja-JP" voice="alice">
   入力された会員番号のご登録が見つかりませんでした。 お手数ですが、LINE の住所登録や会員登録をお確かめいただき、改めてお電話ください。
 </Say>
 <Hangup/>
 `.trim()
-    );
-    return res.type("text/xml").send(xml);
-  }
+      );
+      return res.type("text/xml").send(xml);
+    }
 
-  const products = readProducts();
-  const product = products.find((p) => p.id === pid);
-  if (!product) {
-    const xml = xmlWrap(
-      `
+    const products = readProducts();
+    const product = products.find((p) => p.id === pid);
+    if (!product) {
+      const xml = xmlWrap(
+        `
 <Say language="ja-JP" voice="alice">
   商品情報が見つかりませんでした。 お手数ですが、最初からおかけ直しください。
 </Say>
 <Hangup/>
 `.trim()
-    );
-    return res.type("text/xml").send(xml);
-  }
+      );
+      return res.type("text/xml").send(xml);
+    }
 
-  // 金額計算
-  const unitPrice = Number(product.price) || 0;
-  const subtotal = unitPrice * qty;
+    const unit = Number(product.price) || 0;
+    const subtotal = unit * qty;
 
-  const region = detectRegionFromAddress(addr);
-  const shipping = region ? SHIPPING_BY_REGION[region] || 0 : 0;
-  const codFee = COD_FEE;
-  const total = subtotal + shipping + codFee;
+    const region = detectRegionFromAddress(addr);
+    const shipping = region ? SHIPPING_BY_REGION[region] || 0 : 0;
+    const codFee = COD_FEE;
+    const total = subtotal + shipping + codFee;
 
-  const addrLabel =
-    `${addr.postal || ""} ` +
-    `${addr.prefecture || ""}${addr.city || ""}${addr.address1 || ""}` +
-    (addr.address2 ? ` ${addr.address2}` : "");
+    const addrText =
+      `${addr.postal || ""} ` +
+      `${addr.prefecture || ""}${addr.city || ""}${addr.address1 || ""}` +
+      (addr.address2 ? ` ${addr.address2}` : "");
 
-  // OpenAI で読み上げ文を作る（失敗したら固定文）
-  let mainSpeech =
-    `${product.name} を ${qty}個、ご登録の ${region || "地域不明"} へのお届けで、` +
-    `商品合計 ${subtotal}円、送料 ${shipping}円、代引き手数料 ${codFee}円、合計 ${total}円 となります。`;
+    const speech =
+      `${product.name} を ${qty}個、ご登録の ${region || "地域"} へのお届けで、 ` +
+      `商品合計 ${subtotal}円、送料 ${shipping}円、代引き手数料 ${codFee}円、 ` +
+      `合計 ${total}円 となります。 ` +
+      `お届け先は、${addrText} です。 ご注文ありがとうございました。`;
 
-  const aiText = await buildSummaryWithAI({
-    productName: product.name,
-    qty,
-    unitPrice,
-    subtotal,
-    shipping,
-    codFee,
-    total,
-    region,
-    addressLabel: addrLabel,
-  });
-
-  if (aiText) {
-    mainSpeech = aiText;
-  }
-
-  const xml = xmlWrap(
-    `
+    const xml = xmlWrap(
+      `
 <Say language="ja-JP" voice="alice">
-  ${escXml(mainSpeech)}
+  ${escXml(speech)}
 </Say>
 <Say language="ja-JP" voice="alice">
-  ご注文ありがとうございました。 内容にお間違いがある場合は、お手数ですがお店までご連絡ください。
+  内容にお間違いがある場合は、お手数ですが、お店までお問い合わせください。
 </Say>
 <Hangup/>
 `.trim()
-  );
-
-  res.type("text/xml").send(xml);
+    );
+    res.type("text/xml").send(xml);
+  } catch (e) {
+    console.error("/twilio/cod/member error:", e);
+    const xml = xmlWrap(
+      `
+<Say language="ja-JP" voice="alice">
+  システムエラーが発生しました。 恐れ入りますが、後ほどおかけ直しください。
+</Say>
+<Hangup/>
+`.trim()
+    );
+    res.type("text/xml").send(xml);
+  }
 });
 
-// ============ 起動 ============
-
+// ===== 起動 =====
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 server-phone-cod started on port ${PORT}`);
   console.log("   Twilio Voice Webhook → POST /twilio/cod/start");

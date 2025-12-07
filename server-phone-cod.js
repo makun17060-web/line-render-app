@@ -85,6 +85,7 @@ if (fs.existsSync(PUBLIC_DIR)) {
 // ===============================
 // ✅ LIFF 設定取得 API（★重要）
 // ===============================
+console.log("[liff-config] LIFF_ID_COD_REGISTER =", LIFF_ID_COD_REGISTER);
 app.get("/api/liff/config", (_req, res) => {
   return res.json({
     liffId: LIFF_ID_COD_REGISTER,

@@ -13,7 +13,8 @@ const PORT = process.env.PORT || 3000;
 // Twilio Webhook は x-www-form-urlencoded で来る
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-
+const PUBLIC_DIR = path.join(__dirname, "public");
+app.use("/public", express.static(PUBLIC_DIR));
 // ====== データパス ======
 const DATA_DIR = path.join(__dirname, "data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });

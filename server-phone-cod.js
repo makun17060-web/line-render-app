@@ -268,7 +268,7 @@ app.post("/twilio/cod/product", (req, res) => {
   res.type("text/xml").send(xml);
 });
 
-/**
+
  * 個数を受け取る → 「この内容でよいか？」確認
  app.post("/twilio/cod/qty", (req, res) => {
   try {

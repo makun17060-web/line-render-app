@@ -116,7 +116,15 @@ if (!fs.existsSync(UPLOAD_DIR)) {
 // ====== ミドルウェア ======
 app.use("/api", express.json(), express.urlencoded({ extended: true }));
 app.use("/public", express.static(PUBLIC_DIR));
+app.use((req, res, next) => {
+  console.log(
+    `[REQ] ${new Date().toISOString()} ${req.method} ${req.url}`
+  );
+  next();
+});
 
+app.use("/api", express.json(), express.urlencoded({ extended: true }));
+app.use("/public", express.static(PUBLIC_DIR));
 // 決済完了/失敗ページ
 app.all("/public/confirm-card-success.html", (req, res) => {
   return res.sendFile(path.join(PUBLIC_DIR, "confirm-card-success.html"));

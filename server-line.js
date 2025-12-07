@@ -1,4 +1,4 @@
-// server.js — フル機能版（Stripe + ミニアプリ + 画像管理)
+// server.js — フル機能版（Stripe + ミニアプリ + 画像管理）
 // + Flex配信
 // + 「その他＝価格入力なし」
 // + 久助専用テキスト購入フロー
@@ -1167,10 +1167,21 @@ app.get("/api/liff/address/me", (req, res) => {
   }
 });
 
-// LIFF 設定（★ 住所入力用 LIFF ID を返す）
-app.get("/api/liff/config", (_req, res) =>
-  res.json({ liffId: LIFF_ID_DIRECT_ADDRESS })
-);
+// LIFF 設定（★ kind=order / kind=cod で切替）
+//   /api/liff/config?kind=order → LIFF_ID（ミニアプリ / オンライン注文）
+//   /api/liff/config?kind=cod   → LIFF_ID_DIRECT_ADDRESS（代引き住所登録）
+app.get("/api/liff/config", (req, res) => {
+  const kind = (req.query.kind || "order").trim();
+
+  if (kind === "order") {
+    return res.json({ liffId: LIFF_ID });
+  }
+  if (kind === "cod") {
+    return res.json({ liffId: LIFF_ID_DIRECT_ADDRESS });
+  }
+  // 想定外の値でも一応 order を返す
+  return res.json({ liffId: LIFF_ID });
+});
 
 // ====== Stripe 決済（Checkout Session） ======
 app.post("/api/pay-stripe", async (req, res) => {
@@ -1313,13 +1324,9 @@ app.post("/api/order/complete", async (req, res) => {
       .join("\n");
 
     const itemsTotal = Number(order.itemsTotal ?? order.total ?? 0);
-    const shipping   = Number(order.shipping   ?? 0);
-    const codFee     = Number(order.codFee     ?? 0);
+    const shipping = Number(order.shipping ?? 0);
+    const codFee = Number(order.codFee ?? 0);
     const finalTotal = Number(order.finalTotal ?? order.total ?? 0);
-
-    // ★★ ここが重要：lineUserId が無くても userId から補う ★★
-    const lineUserId   = String(order.lineUserId   || order.userId || "").trim();
-    const lineUserName = String(order.lineUserName || order.userName || "").trim();
 
     let addrText = "住所：未登録";
     if (order.address) {
@@ -1332,21 +1339,17 @@ app.post("/api/order/complete", async (req, res) => {
         `${
           a.addr2 || a.address2 ? " " + (a.addr2 || a.address2) : ""
         }\n` +
-        // 氏名：姓 + 名 or name
         `氏名：${(a.lastName || "")}${
           (a.firstName || "") || a.name || ""
         }\n` +
         `TEL：${a.tel || a.phone || ""}`;
     }
 
-    // ★ ログにも補正済み lineUserId / lineUserName を残す
     try {
       const log = {
         ts: new Date().toISOString(),
         ...order,
-        lineUserId,
-        lineUserName,
-        source: order.source || "liff-stripe",
+        source: "liff-stripe",
       };
       fs.appendFileSync(ORDERS_LOG, JSON.stringify(log) + "\n", "utf8");
       console.log("[order-complete] orders.log append OK");
@@ -1357,10 +1360,9 @@ app.post("/api/order/complete", async (req, res) => {
     console.log("[order-complete] ADMIN_USER_ID:", ADMIN_USER_ID);
     console.log("[order-complete] MULTICAST_USER_IDS:", MULTICAST_USER_IDS);
 
-    // ★ 管理者向けメッセージ
     const adminMsg =
       `🧾【Stripe決済 新規注文】\n` +
-      (lineUserId   ? `ユーザーID：${lineUserId}\n` : "") +
+      (order.lineUserId ? `ユーザーID：${order.lineUserId}\n` : "") +
       (order.orderNumber ? `注文番号：${order.orderNumber}\n` : "") +
       `\n【内容】\n${itemsText}\n` +
       `\n商品合計：${yen(itemsTotal)}\n` +
@@ -1369,7 +1371,6 @@ app.post("/api/order/complete", async (req, res) => {
       `合計：${yen(finalTotal)}\n` +
       `\n${addrText}`;
 
-    // 管理者 & マルチキャスト
     try {
       if (ADMIN_USER_ID) {
         await client.pushMessage(ADMIN_USER_ID, {
@@ -1388,9 +1389,8 @@ app.post("/api/order/complete", async (req, res) => {
       console.error("admin push error:", e?.response?.data || e);
     }
 
-    // ★ 購入者への明細送信
     try {
-      if (lineUserId) {
+      if (order.lineUserId) {
         const userMsg =
           "ご注文ありがとうございます！\n\n" +
           "【ご注文内容】\n" +
@@ -1402,13 +1402,11 @@ app.post("/api/order/complete", async (req, res) => {
           `合計：${yen(finalTotal)}\n\n` +
           addrText;
 
-        await client.pushMessage(lineUserId, {
+        await client.pushMessage(order.lineUserId, {
           type: "text",
           text: userMsg,
         });
-        console.log("user receipt push OK:", lineUserId);
-      } else {
-        console.log("[order-complete] lineUserId is empty – skip user push");
+        console.log("user receipt push OK:", order.lineUserId);
       }
     } catch (e) {
       console.error("user receipt push error:", e?.response?.data || e);
@@ -3197,7 +3195,7 @@ async function handleEvent(ev) {
                   addr.prefecture || ""
                 }${addr.city || ""}${addr.address1 || ""}${
                   addr.address2 ? " " + addr.address2 : ""
-                }\n氏名：${addr.name || ""}\n電話：${
+                }\n氏名：${addr.name || ""}\n電話：{
                   addr.phone || ""
                 }`
               : "住所未登録です。メニューの「住所を入力（LIFF）」から登録してください。"

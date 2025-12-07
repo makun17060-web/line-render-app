@@ -1,180 +1,203 @@
-// public/products.js
-// /api/products から商品一覧を取得して表示し、
-// カート → liff-address.html → confirm.html の流れ。
+// products.js — オンライン注文（商品一覧）画面用
+// - /api/products から商品一覧を取得
+// - 個数をカートとして管理
+// - sessionStorage["isoOrder"] に { items:[{id, qty}] } を保存
+// - 「住所入力へ進む」で liff-address.html へ遷移
 
-(async function () {
-  const grid = document.getElementById("productGrid");
-  const cartSummary = document.getElementById("cartSummary");
-  const btnAddress = document.getElementById("toAddressBtn");
-  const statusMsg = document.getElementById("statusMsg");
+const productGridEl  = document.getElementById("productGrid");
+const cartSummaryEl  = document.getElementById("cartSummary");
+const toAddressBtn   = document.getElementById("toAddressBtn");
+const statusEl       = document.getElementById("statusMsg");
 
-  // ====== 商品一覧取得 ======
-  async function fetchProducts() {
-    try {
-      const res = await fetch("/api/products", { cache: "no-store" });
-      const data = await res.json();
+// カート： { [productId]: { product, qty } }
+const cart = {};
 
-      if (!data || !data.ok || !Array.isArray(data.products)) {
-        console.error("想定外のレスポンス形式:", data);
-        statusMsg.textContent = "商品一覧の取得に失敗しました。時間をおいて再度お試しください。";
-        return [];
-      }
-      return data.products;
-    } catch (e) {
-      console.error("商品一覧の取得に失敗:", e);
-      statusMsg.textContent = "商品一覧の取得に失敗しました。通信環境をご確認ください。";
-      return [];
-    }
-  }
-
-  const products = await fetchProducts();
-
-  // カートオブジェクト { productId: { id, name, price, qty } }
-  const cart = {};
-
-  function formatYen(n) {
-    return Number(n || 0).toLocaleString("ja-JP") + "円";
-  }
-
-  function updateCartSummary() {
-    const items = Object.values(cart);
-    if (items.length === 0) {
-      cartSummary.textContent = "カートに商品は入っていません。";
-      return;
-    }
-    let totalQty = 0;
-    let totalAmount = 0;
-    const lines = items.map(it => {
-      const sub = (Number(it.price) || 0) * (Number(it.qty) || 0);
-      totalQty += it.qty;
-      totalAmount += sub;
-      return `・${it.name} × ${it.qty}個 = ${formatYen(sub)}`;
-    });
-
-    lines.push("");
-    lines.push(`合計数量：${totalQty}個`);
-    lines.push(`商品合計：${formatYen(totalAmount)}`);
-    cartSummary.textContent = lines.join("\n");
-  }
-
-  function setQty(p, qty) {
-    const q = Math.max(0, Math.min(99, qty | 0));
-    if (q <= 0) {
-      delete cart[p.id];
-    } else {
-      cart[p.id] = {
-        id: p.id,
-        name: p.name,
-        price: p.price,
-        qty: q,
-      };
-    }
-    updateCartSummary();
-  }
-
-  // ====== 商品カード描画 ======
-  products.forEach(p => {
-    const card = document.createElement("div");
-    card.className = "card";
-
-    // 画像
-    if (p.image) {
-      const img = document.createElement("img");
-      img.src = p.image;
-      img.alt = p.name;
-      card.appendChild(img);
-    }
-
-    // 商品名
-    const title = document.createElement("div");
-    title.className = "card-title";
-    title.textContent = p.name;
-    card.appendChild(title);
-
-    // 説明文
-    if (p.desc) {
-      const desc = document.createElement("div");
-      desc.className = "card-desc";
-      desc.textContent = p.desc;
-      card.appendChild(desc);
-    }
-
-    // ★ 内容量（volume）
-    if (p.volume) {
-  const volume = document.createElement("div");
-  volume.className = "card-volume";
-  volume.textContent = `内容量：${p.volume}`;
-  card.appendChild(volume);
+function yen(n) {
+  return `${Number(n || 0).toLocaleString("ja-JP")}円`;
 }
 
+function setStatus(msg, kind) {
+  statusEl.textContent = msg || "";
+  statusEl.style.color =
+    kind === "ok"  ? "#0a7b19" :
+    kind === "err" ? "#d00"    :
+                     "#555";
+}
 
-    // 価格
-    const price = document.createElement("div");
-    price.className = "card-price";
-    price.textContent = `価格：${formatYen(p.price)}`;
-    card.appendChild(price);
+// ---- カート表示更新 ----
+function updateCartSummary() {
+  const entries = Object.values(cart).filter(e => e.qty > 0);
+  if (!entries.length) {
+    cartSummaryEl.textContent = "カートに商品は入っていません。";
+    return;
+  }
 
-    // 在庫
-    const stock = document.createElement("div");
-    stock.className = "card-stock";
-    stock.textContent = `在庫：${p.stock ?? 0}個`;
-    card.appendChild(stock);
+  let totalQty   = 0;
+  let itemsTotal = 0;
 
-    // 数量 +- ボタン
-    const qtyRow = document.createElement("div");
-    qtyRow.className = "qty-row";
-
-    const btnMinus = document.createElement("button");
-    btnMinus.textContent = "−";
-
-    const qtySpan = document.createElement("span");
-    qtySpan.textContent = "0";
-
-    const btnPlus = document.createElement("button");
-    btnPlus.textContent = "+";
-
-    btnMinus.onclick = () => {
-      const cur = Number(qtySpan.textContent) || 0;
-      const next = Math.max(0, cur - 1);
-      qtySpan.textContent = String(next);
-      setQty(p, next);
-    };
-
-    btnPlus.onclick = () => {
-      const cur = Number(qtySpan.textContent) || 0;
-      const next = Math.min(99, cur + 1);
-      qtySpan.textContent = String(next);
-      setQty(p, next);
-    };
-
-    qtyRow.appendChild(btnMinus);
-    qtyRow.appendChild(qtySpan);
-    qtyRow.appendChild(btnPlus);
-    card.appendChild(qtyRow);
-
-    grid.appendChild(card);
+  const lines = entries.map(e => {
+    const line = (Number(e.product.price) || 0) * e.qty;
+    totalQty   += e.qty;
+    itemsTotal += line;
+    return `${e.product.name} × ${e.qty} = ${yen(line)}`;
   });
 
-  updateCartSummary();
+  lines.push("");
+  lines.push(`合計点数：${totalQty}点`);
+  lines.push(`商品合計：${yen(itemsTotal)}`);
 
-  // ====== 住所入力へ進む ======
-  btnAddress.onclick = () => {
-    const items = Object.values(cart);
-    if (items.length === 0) {
-      alert("商品が選択されていません。");
+  cartSummaryEl.textContent = lines.join("\n");
+}
+
+// ---- 商品カード生成 ----
+function createProductCard(p) {
+  const card = document.createElement("div");
+  card.className = "card";
+
+  const img = document.createElement("img");
+  if (p.image) {
+    img.src = p.image;
+    img.alt = p.name || "";
+  } else {
+    img.style.display = "none";
+  }
+
+  const title = document.createElement("div");
+  title.className = "card-title";
+  title.textContent = p.name || "";
+
+  const desc = document.createElement("div");
+  desc.className = "card-desc";
+  desc.textContent = p.desc || "";
+
+  const volume = document.createElement("div");
+  volume.className = "card-volume";
+  volume.textContent = p.volume ? p.volume : "";
+
+  const price = document.createElement("div");
+  price.className = "card-price";
+  price.textContent = `価格：${yen(p.price)}`;
+
+  const stock = document.createElement("div");
+  stock.className = "card-stock";
+  stock.textContent = `在庫：${p.stock ?? 0}個`;
+
+  const qtyRow = document.createElement("div");
+  qtyRow.className = "qty-row";
+
+  const minusBtn = document.createElement("button");
+  minusBtn.textContent = "−";
+
+  const qtySpan = document.createElement("span");
+  qtySpan.textContent = "0";
+
+  const plusBtn = document.createElement("button");
+  plusBtn.textContent = "+";
+
+  qtyRow.appendChild(minusBtn);
+  qtyRow.appendChild(qtySpan);
+  qtyRow.appendChild(plusBtn);
+
+  card.appendChild(img);
+  card.appendChild(title);
+  card.appendChild(desc);
+  if (p.volume) card.appendChild(volume);
+  card.appendChild(price);
+  card.appendChild(stock);
+  card.appendChild(qtyRow);
+
+  // 初期カート
+  cart[p.id] = {
+    product: p,
+    qty: 0,
+  };
+
+  plusBtn.addEventListener("click", () => {
+    const entry = cart[p.id];
+    const now = entry.qty || 0;
+    const max = Number(p.stock ?? 0) || 0;
+    if (max && now >= max) {
+      setStatus(`「${p.name}」の在庫は ${max}個までです。`, "err");
+      return;
+    }
+    entry.qty = now + 1;
+    qtySpan.textContent = String(entry.qty);
+    setStatus("", "");
+    updateCartSummary();
+  });
+
+  minusBtn.addEventListener("click", () => {
+    const entry = cart[p.id];
+    const now = entry.qty || 0;
+    if (now <= 0) return;
+    entry.qty = now - 1;
+    qtySpan.textContent = String(entry.qty);
+    setStatus("", "");
+    updateCartSummary();
+  });
+
+  return card;
+}
+
+// ---- 商品一覧取得 ----
+async function loadProducts() {
+  try {
+    setStatus("商品情報を読み込んでいます…", "");
+    const res = await fetch("/api/products");
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error("products api error");
+    }
+    const items = Array.isArray(data.products) ? data.products : [];
+    if (!items.length) {
+      productGridEl.innerHTML =
+        "<div>商品が登録されていません。</div>";
+      setStatus("", "");
       return;
     }
 
-    const order = { items };
+    // グリッドに挿入
+    productGridEl.innerHTML = "";
+    items.forEach(p => {
+      const card = createProductCard(p);
+      productGridEl.appendChild(card);
+    });
 
-    try {
-      sessionStorage.setItem("currentOrder", JSON.stringify(order));
-    } catch (e) {
-      console.error("sessionStorage 保存エラー:", e);
-    }
+    setStatus("", "");
+    updateCartSummary();
+  } catch (e) {
+    console.error("/api/products error:", e);
+    productGridEl.innerHTML =
+      "<div>商品情報の読み込みに失敗しました。</div>";
+    setStatus("商品情報の取得に失敗しました。時間をおいて再度お試しください。", "err");
+  }
+}
 
-    // LIFF住所入力へ
-    location.href = "/public/liff-address.html";
-  };
+// ---- 住所入力へ進む ----
+toAddressBtn.addEventListener("click", () => {
+  const entries = Object.values(cart).filter(e => e.qty > 0);
+  if (!entries.length) {
+    setStatus("カートに商品がありません。数量を1つ以上選択してください。", "err");
+    return;
+  }
 
-})();
+  const itemsForOrder = entries.map(e => ({
+    id: e.product.id,
+    qty: e.qty,
+  }));
+
+  try {
+    const payload = { items: itemsForOrder };
+    sessionStorage.setItem("isoOrder", JSON.stringify(payload));
+  } catch (e) {
+    console.warn("sessionStorage isoOrder write error:", e);
+  }
+
+  // ★ 住所入力画面へ遷移（この後 liff-address.js 側で confirm.html へ）
+  window.location.href = "./liff-address.html";
+});
+
+// ---- 初期化 ----
+window.addEventListener("DOMContentLoaded", () => {
+  loadProducts();
+});

@@ -1,137 +1,138 @@
-// public/liff-address.js
-
-// ★ サーバー（line-render-app-1）のベースURL
-//   同じドメインなので相対パスでOK
-const API_BASE = "";
-
-// 画面要素
-const statusEl   = document.getElementById("statusMsg");
-const saveBtn    = document.getElementById("saveBtn");
-const backBtn    = document.getElementById("backBtn");
-
-const postalEl     = document.getElementById("postal");
-const prefEl       = document.getElementById("prefecture");
-const cityEl       = document.getElementById("city");
-const addr1El      = document.getElementById("address1");
-const addr2El      = document.getElementById("address2");
-const nameEl       = document.getElementById("name");
-const phoneEl      = document.getElementById("phone");
+// liff-address.js — オンライン注文用 住所入力（ミニアプリ用）
 
 let currentUserId = "";
 
-function setStatus(msg, isError = true) {
+const statusEl = document.getElementById("statusMsg");
+const saveBtn = document.getElementById("saveBtn");
+const backBtn = document.getElementById("backBtn");
+
+function setStatus(msg, kind) {
   statusEl.textContent = msg || "";
-  statusEl.style.color = isError ? "#d00" : "#0a7b19";
+  statusEl.style.color =
+    kind === "ok" ? "#0a7b19" :
+    kind === "err" ? "#d00" :
+    "#555";
 }
 
-async function initLiff() {
+function getVal(id) {
+  return (document.getElementById(id)?.value || "").trim();
+}
+
+function fillFormFromAddress(a) {
+  if (!a) return;
+  if (a.postal)     document.getElementById("postal").value     = a.postal;
+  if (a.prefecture) document.getElementById("prefecture").value = a.prefecture;
+  if (a.city)       document.getElementById("city").value       = a.city;
+  if (a.address1)   document.getElementById("address1").value   = a.address1;
+  if (a.address2)   document.getElementById("address2").value   = a.address2;
+  if (a.name)       document.getElementById("name").value       = a.name;
+  if (a.phone)      document.getElementById("phone").value      = a.phone;
+}
+
+// 住所入力画面 初期化
+async function initLiffAddress() {
   try {
-    // 1) サーバーから LIFF ID を取得
+    setStatus("初期化中です…", "");
+
+    // サーバーから LIFF ID を取得（他のミニアプリ画面と共通）
     const cfgRes = await fetch("/api/liff/config");
     const cfg = await cfgRes.json();
     const liffId = cfg.liffId;
     if (!liffId) {
-      setStatus("LIFF設定が取得できませんでした。（/api/liff/config が空）");
+      setStatus("LIFF設定が取得できませんでした。", "err");
       return;
     }
 
-    // 2) LIFF 初期化
     await liff.init({ liffId });
 
-    // 3) ログインしていなければログイン
     if (!liff.isLoggedIn()) {
+      // まだログインしていない場合は LINE ログインへ
       liff.login();
       return;
     }
 
-    // 4) プロフィールから userId 取得
     const prof = await liff.getProfile();
-    currentUserId = prof.userId;
-    console.log("LIFF userId:", currentUserId);
-
-    // 5) 既存住所の取得（あれば）
-    await loadExistingAddress();
-  } catch (e) {
-    console.error("initLiff error:", e);
-    setStatus("LIFF初期化中にエラーが発生しました。", true);
-  }
-}
-
-async function loadExistingAddress() {
-  try {
-    if (!currentUserId) return;
-
-    const url = `/api/liff/address/me?userId=${encodeURIComponent(
-      currentUserId
-    )}`;
-    const res = await fetch(url);
-    if (!res.ok) {
-      console.warn("address/me response not ok:", res.status);
-      return;
-    }
-    const data = await res.json();
-    if (!data || !data.ok || !data.address) {
+    currentUserId = prof.userId || "";
+    if (!currentUserId) {
+      setStatus("LINEユーザー情報が取得できませんでした。", "err");
       return;
     }
 
-    const a = data.address;
-
-    postalEl.value = a.postal || a.zip || "";
-    prefEl.value = a.prefecture || a.pref || "";
-    cityEl.value = a.city || "";
-    addr1El.value = a.address1 || a.addr1 || "";
-    addr2El.value = a.address2 || a.addr2 || "";
-    nameEl.value = a.name || "";
-    phoneEl.value = a.phone || a.tel || "";
-
-    setStatus("以前保存した住所を読み込みました。必要なら修正して保存してください。", false);
+    // すでに登録済みの住所があれば読み込む
+    try {
+      const meRes = await fetch(
+        "/api/liff/address/me?userId=" + encodeURIComponent(currentUserId)
+      );
+      const me = await meRes.json();
+      if (me && me.ok && me.address) {
+        fillFormFromAddress(me.address);
+        setStatus(
+          "登録済みの住所を読み込みました。必要であれば修正して保存してください。",
+          "ok"
+        );
+      } else {
+        setStatus(
+          "お届け先を入力して「住所を保存して確認画面へ」を押してください。",
+          ""
+        );
+      }
+    } catch (e) {
+      console.warn("/api/liff/address/me error:", e);
+      setStatus(
+        "お届け先を入力して「住所を保存して確認画面へ」を押してください。",
+        ""
+      );
+    }
   } catch (e) {
-    console.warn("loadExistingAddress error:", e);
+    console.error("LIFF init error:", e);
+    setStatus("初期化中にエラーが発生しました。時間をおいて再度お試しください。", "err");
   }
 }
 
-function collectAddress() {
-  const postal = postalEl.value.trim();
-  const pref   = prefEl.value.trim();
-  const city   = cityEl.value.trim();
-  const a1     = addr1El.value.trim();
-  const a2     = addr2El.value.trim();
-  const name   = nameEl.value.trim();
-  const phone  = phoneEl.value.trim();
+// 入力内容をまとめてチェック
+function buildAddressFromForm() {
+  const postal   = getVal("postal");
+  const pref     = getVal("prefecture");
+  const city     = getVal("city");
+  const address1 = getVal("address1");
+  const address2 = getVal("address2");
+  const name     = getVal("name");
+  const phone    = getVal("phone");
+
+  if (!postal || !pref || !city || !address1 || !name || !phone) {
+    setStatus(
+      "郵便番号・都道府県・市区町村・番地/建物・お名前・電話番号は必須です。",
+      "err"
+    );
+    return null;
+  }
 
   return {
     postal,
     prefecture: pref,
     city,
-    address1: a1,
-    address2: a2,
+    address1,
+    address2,
     name,
     phone,
   };
 }
 
-async function saveAddress() {
+// 「住所を保存して確認画面へ」ボタン
+async function handleSaveAndGoConfirm() {
+  if (!currentUserId) {
+    setStatus("LINEユーザー情報が取得できていません。画面を閉じてもう一度お試しください。", "err");
+    return;
+  }
+
+  const addr = buildAddressFromForm();
+  if (!addr) return; // バリデーションNG
+
   try {
-    if (!currentUserId) {
-      setStatus("LINEユーザー情報が取得できていません。もう一度開き直してください。");
-      return;
-    }
-
-    const addr = collectAddress();
-
-    if (!addr.postal || !addr.prefecture || !addr.city || !addr.address1) {
-      setStatus("郵便番号・都道府県・市区町村・番地は必須です。", true);
-      return;
-    }
-    if (!addr.name) {
-      setStatus("お名前を入力してください。", true);
-      return;
-    }
-
     saveBtn.disabled = true;
-    setStatus("住所を保存中です…", false);
+    setStatus("住所を保存しています…", "");
 
-    const res = await fetch(`${API_BASE}/api/liff/address`, {
+    const res = await fetch("/api/liff/address", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -142,42 +143,33 @@ async function saveAddress() {
 
     const data = await res.json().catch(() => ({}));
 
-    if (res.ok && data.ok) {
-      setStatus("住所を保存しました。確認画面に戻ります。", false);
-
-      // 戻り先の指定があれば考慮（例：?from=confirm）
-      const params = new URLSearchParams(location.search);
-      const from = params.get("from") || "";
-      if (from) {
-        // 確認画面側で window.history.back() 前提ならそのまま閉じるだけでもOK
-        setTimeout(() => {
-          liff.closeWindow();
-        }, 800);
-      } else {
-        setTimeout(() => {
-          liff.closeWindow();
-        }, 800);
-      }
-    } else {
-      setStatus("住所の保存に失敗しました。時間をおいてもう一度お試しください。", true);
+    if (!res.ok || !data.ok) {
+      console.error("/api/liff/address response:", data);
+      setStatus("住所の保存に失敗しました。時間をおいてもう一度お試しください。", "err");
+      saveBtn.disabled = false;
+      return;
     }
+
+    // ✅ ここがポイント：
+    //    住所保存後に confirm.html へ移動する
+    setStatus("住所を保存しました。確認画面に移動します…", "ok");
+    window.location.href = "./confirm.html";
   } catch (e) {
-    console.error("saveAddress error:", e);
-    setStatus("通信エラーで保存できませんでした。電波状況をご確認ください。", true);
-  } finally {
+    console.error("/api/liff/address error:", e);
+    setStatus("通信エラーで住所を保存できませんでした。電波状況をご確認ください。", "err");
     saveBtn.disabled = false;
   }
 }
 
-function backToConfirm() {
-  // LIFF のウィンドウを閉じて、元の画面（確認画面）に戻す
-  liff.closeWindow();
+// 「確認画面に戻る」ボタン
+function handleBackToConfirm() {
+  // 単純に confirm.html に戻す
+  window.location.href = "./confirm.html";
 }
 
-// 初期化
+// イベント登録
 document.addEventListener("DOMContentLoaded", () => {
-  setStatus("");
-  saveBtn.addEventListener("click", saveAddress);
-  backBtn.addEventListener("click", backToConfirm);
-  initLiff();
+  initLiffAddress();
+  saveBtn.addEventListener("click", handleSaveAndGoConfirm);
+  backBtn.addEventListener("click", handleBackToConfirm);
 });

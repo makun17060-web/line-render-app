@@ -37,7 +37,7 @@ async function initLiffAddress() {
     setStatus("初期化中です…", "");
 
     // サーバーから LIFF ID を取得
-    const cfgRes = await fetch("/api/liff/config");
+   const cfgRes = await fetch("/api/liff/config?kind=order");
     const cfg = await cfgRes.json();
     const liffId = cfg.liffId;
     if (!liffId) {

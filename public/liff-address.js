@@ -34,7 +34,7 @@ async function initLiffAddress() {
   try {
     setStatus("初期化中です…", "");
 
-    // サーバーから LIFF ID を取得（他のミニアプリ画面と共通）
+    // サーバーから LIFF ID を取得
     const cfgRes = await fetch("/api/liff/config");
     const cfg = await cfgRes.json();
     const liffId = cfg.liffId;
@@ -46,7 +46,6 @@ async function initLiffAddress() {
     await liff.init({ liffId });
 
     if (!liff.isLoggedIn()) {
-      // まだログインしていない場合は LINE ログインへ
       liff.login();
       return;
     }
@@ -118,6 +117,12 @@ function buildAddressFromForm() {
   };
 }
 
+// 住所保存後に戻る先URL（クエリを引き継ぐ）
+function buildConfirmUrl() {
+  const search = window.location.search || ""; // 例）?from=miniapp&xxx=yyy
+  return "./confirm.html" + search;
+}
+
 // 「住所を保存して確認画面へ」ボタン
 async function handleSaveAndGoConfirm() {
   if (!currentUserId) {
@@ -150,10 +155,9 @@ async function handleSaveAndGoConfirm() {
       return;
     }
 
-    // ✅ ここがポイント：
-    //    住所保存後に confirm.html へ移動する
+    // ✅ 住所保存後、元と同じクエリ付きで confirm.html に戻る
     setStatus("住所を保存しました。確認画面に移動します…", "ok");
-    window.location.href = "./confirm.html";
+    window.location.href = buildConfirmUrl();
   } catch (e) {
     console.error("/api/liff/address error:", e);
     setStatus("通信エラーで住所を保存できませんでした。電波状況をご確認ください。", "err");
@@ -163,8 +167,8 @@ async function handleSaveAndGoConfirm() {
 
 // 「確認画面に戻る」ボタン
 function handleBackToConfirm() {
-  // 単純に confirm.html に戻す
-  window.location.href = "./confirm.html";
+  // クエリ付きでそのまま戻る
+  window.location.href = buildConfirmUrl();
 }
 
 // イベント登録

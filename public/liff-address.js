@@ -57,6 +57,10 @@ async function initLiffAddress() {
       return;
     }
 
+    // ★ confirm 側でも使えるようにグローバルに保存
+    window._lineUserId = currentUserId;
+    window._lineUserName = prof.displayName || "";
+
     // すでに登録済みの住所があれば読み込む
     try {
       const meRes = await fetch(
@@ -155,7 +159,29 @@ async function handleSaveAndGoConfirm() {
       return;
     }
 
-    // ✅ 住所保存後、元と同じクエリ付きで confirm.html に戻る
+    // ★★★ ここから追加：カート情報 + 住所 を orderDraft にまとめて保存 ★★★
+    try {
+      // products.html / products.js 側で入れているカート内容
+      const items = JSON.parse(
+        sessionStorage.getItem("cartItems") || "[]"
+      );
+
+      const orderDraft = {
+        items,                // [{ id, name, price, qty }, ...]
+        address: addr,        // 今入力した住所
+        lineUserId: window._lineUserId || currentUserId,
+        lineUserName: window._lineUserName || "",
+      };
+
+      sessionStorage.setItem("orderDraft", JSON.stringify(orderDraft));
+      console.log("orderDraft stored:", orderDraft);
+    } catch (e) {
+      console.warn("orderDraft save error:", e);
+      // ここで失敗しても致命的ではないので続行
+    }
+    // ★★★ 追加ここまで ★★★
+
+    // 住所保存OK → 確認画面へ
     setStatus("住所を保存しました。確認画面に移動します…", "ok");
     window.location.href = buildConfirmUrl();
   } catch (e) {

@@ -1313,9 +1313,13 @@ app.post("/api/order/complete", async (req, res) => {
       .join("\n");
 
     const itemsTotal = Number(order.itemsTotal ?? order.total ?? 0);
-    const shipping = Number(order.shipping ?? 0);
-    const codFee = Number(order.codFee ?? 0);
+    const shipping   = Number(order.shipping   ?? 0);
+    const codFee     = Number(order.codFee     ?? 0);
     const finalTotal = Number(order.finalTotal ?? order.total ?? 0);
+
+    // ★★ ここが重要：lineUserId が無くても userId から補う ★★
+    const lineUserId   = String(order.lineUserId   || order.userId || "").trim();
+    const lineUserName = String(order.lineUserName || order.userName || "").trim();
 
     let addrText = "住所：未登録";
     if (order.address) {
@@ -1328,17 +1332,21 @@ app.post("/api/order/complete", async (req, res) => {
         `${
           a.addr2 || a.address2 ? " " + (a.addr2 || a.address2) : ""
         }\n` +
+        // 氏名：姓 + 名 or name
         `氏名：${(a.lastName || "")}${
           (a.firstName || "") || a.name || ""
         }\n` +
         `TEL：${a.tel || a.phone || ""}`;
     }
 
+    // ★ ログにも補正済み lineUserId / lineUserName を残す
     try {
       const log = {
         ts: new Date().toISOString(),
         ...order,
-        source: "liff-stripe",
+        lineUserId,
+        lineUserName,
+        source: order.source || "liff-stripe",
       };
       fs.appendFileSync(ORDERS_LOG, JSON.stringify(log) + "\n", "utf8");
       console.log("[order-complete] orders.log append OK");
@@ -1349,9 +1357,10 @@ app.post("/api/order/complete", async (req, res) => {
     console.log("[order-complete] ADMIN_USER_ID:", ADMIN_USER_ID);
     console.log("[order-complete] MULTICAST_USER_IDS:", MULTICAST_USER_IDS);
 
+    // ★ 管理者向けメッセージ
     const adminMsg =
       `🧾【Stripe決済 新規注文】\n` +
-      (order.lineUserId ? `ユーザーID：${order.lineUserId}\n` : "") +
+      (lineUserId   ? `ユーザーID：${lineUserId}\n` : "") +
       (order.orderNumber ? `注文番号：${order.orderNumber}\n` : "") +
       `\n【内容】\n${itemsText}\n` +
       `\n商品合計：${yen(itemsTotal)}\n` +
@@ -1360,6 +1369,7 @@ app.post("/api/order/complete", async (req, res) => {
       `合計：${yen(finalTotal)}\n` +
       `\n${addrText}`;
 
+    // 管理者 & マルチキャスト
     try {
       if (ADMIN_USER_ID) {
         await client.pushMessage(ADMIN_USER_ID, {
@@ -1378,8 +1388,9 @@ app.post("/api/order/complete", async (req, res) => {
       console.error("admin push error:", e?.response?.data || e);
     }
 
+    // ★ 購入者への明細送信
     try {
-      if (order.lineUserId) {
+      if (lineUserId) {
         const userMsg =
           "ご注文ありがとうございます！\n\n" +
           "【ご注文内容】\n" +
@@ -1391,11 +1402,13 @@ app.post("/api/order/complete", async (req, res) => {
           `合計：${yen(finalTotal)}\n\n` +
           addrText;
 
-        await client.pushMessage(order.lineUserId, {
+        await client.pushMessage(lineUserId, {
           type: "text",
           text: userMsg,
         });
-        console.log("user receipt push OK:", order.lineUserId);
+        console.log("user receipt push OK:", lineUserId);
+      } else {
+        console.log("[order-complete] lineUserId is empty – skip user push");
       }
     } catch (e) {
       console.error("user receipt push error:", e?.response?.data || e);

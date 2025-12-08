@@ -2413,6 +2413,57 @@ async function handleEvent(ev) {
   try {
     // ===== message =====
     if (ev.type === "message" && ev.message?.type === "text") {
+      // ===== message =====
+if (ev.type === "message" && ev.message?.type === "text") {
+  try {
+    const rec = {
+      ts: new Date().toISOString(),
+      userId: ev.source?.userId || "",
+      type: "text",
+      len: (ev.message.text || "").length,
+    };
+    fs.appendFileSync(
+      MESSAGES_LOG,
+      JSON.stringify(rec) + "\n",
+      "utf8"
+    );
+  } catch {}
+
+  const sessions = readSessions();
+  const uid = ev.source?.userId || "";
+  const text = (ev.message.text || "").trim();
+  const t = text.replace(/\s+/g, " ").trim();
+
+  // ★ ここから「管理者への通知」追加
+  const isAdmin = ADMIN_USER_ID && uid === ADMIN_USER_ID;
+
+  if (!isAdmin && ADMIN_USER_ID && text) {
+    try {
+      const notice = [
+        "📩【お客さまからのメッセージ】",
+        "",
+        `ユーザーID：${uid || "(不明)"}`,
+        `本文：${text}`,
+        "",
+        "※このメッセージにはここから返信してください。"
+      ].join("\n");
+
+      await client.pushMessage(ADMIN_USER_ID, {
+        type: "text",
+        text: notice,
+      });
+    } catch (e) {
+      console.error("admin notify error:", e?.response?.data || e);
+    }
+  }
+  // ★ ここまで追加
+
+  // （この下にすでにある「問い合わせ」「会員コード」「久助」などのロジックが続く）
+  // 例：
+  // if (t === "問い合わせ") { ... }
+  // if (t === "会員コード") { ... }
+  // ...
+
       try {
         const rec = {
           ts: new Date().toISOString(),

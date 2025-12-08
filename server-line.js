@@ -2415,13 +2415,28 @@ async function handleEvent(ev) {
    
       
 if (ev.type === "message" && ev.message?.type === "text") {
-  // 共通で使う基本情報を最初に1回だけ定義
-  const uid  = ev.source?.userId || "";
+  try {
+    const rec = {
+      ts: new Date().toISOString(),
+      userId: ev.source?.userId || "",
+      type: "text",
+      len: (ev.message.text || "").length,
+    };
+    fs.appendFileSync(
+      MESSAGES_LOG,
+      JSON.stringify(rec) + "\n",
+      "utf8"
+    );
+  } catch {}
+
+  const sessions = readSessions();
+  const uid = ev.source?.userId || "";
   const text = (ev.message.text || "").trim();
-  const t    = text.replace(/\s+/g, " ").trim();
+  const t = text.replace(/\s+/g, " ").trim();
+
+  // ★ ここから「管理者への通知」追加
   const isAdmin = ADMIN_USER_ID && uid === ADMIN_USER_ID;
 
-  // ★ お客さんからのメッセージを管理者へ転送（管理者自身の発言は除外）
   if (!isAdmin && ADMIN_USER_ID && text) {
     try {
       const notice = [
@@ -2430,7 +2445,7 @@ if (ev.type === "message" && ev.message?.type === "text") {
         `ユーザーID：${uid || "(不明)"}`,
         `本文：${text}`,
         "",
-        "※このメッセージには管理者用アカウントから返信してください。"
+        "※このメッセージにはここから返信してください。"
       ].join("\n");
 
       await client.pushMessage(ADMIN_USER_ID, {
@@ -2441,79 +2456,7 @@ if (ev.type === "message" && ev.message?.type === "text") {
       console.error("admin notify error:", e?.response?.data || e);
     }
   }
-
-  // ★ メッセージログに記録（元の処理）
-  try {
-    const rec = {
-      ts: new Date().toISOString(),
-      userId: uid,
-      type: "text",
-      len: text.length,
-    };
-    fs.appendFileSync(
-      MESSAGES_LOG,
-      JSON.stringify(rec) + "\n",
-      "utf8"
-    );
-  } catch {}
-
-  // ★ セッションはここで1回だけ取得（重複宣言しない）
-  const sessions = readSessions();
-  const sess = sessions[uid] || null;
-
-  // ===== ここから下は、元の分岐ロジックをそのまま使う =====
-
-  // 「問い合わせ」
-  if (t === "問い合わせ") {
-    await client.replyMessage(ev.replyToken, {
-      type: "text",
-      text:
-        "お問い合わせありがとうございます。\n" +
-        "このままトークにご質問内容を送ってください。\n" +
-        "スタッフが確認して返信します。",
-    });
-    return;
-  }
-
-  // 「会員コード」
-  if (t === "会員コード") {
-    if (!uid) {
-      await client.replyMessage(ev.replyToken, {
-        type: "text",
-        text: "会員コードは1対1トークでのみ確認できます。",
-      });
-      return;
-    }
-
-    const code = getOrCreateMemberCode(uid);
-    if (!code) {
-      await client.replyMessage(ev.replyToken, {
-        type: "text",
-        text:
-          "まだ会員登録（住所登録）が完了していません。\n" +
-          "リッチメニューの「住所登録」ボタンから一度ご登録ください。",
-      });
-      return;
-    }
-
-    await client.replyMessage(ev.replyToken, {
-      type: "text",
-      text:
-        "磯屋 会員コード\n" +
-        "----------------------\n" +
-        `${code}\n\n` +
-        "ご注文やお問い合わせの際に、この会員コードをお知らせください。",
-    });
-    return;
-  }
-
-  // ===== ここから先も、あなたの元の分岐（久助テキスト注文 / その他フロー / 管理者コマンド etc.）を
-  // そのまま下に続けてください。
-  //
-  // 例：
-  // const kusukeRe = /^久助(?:\s+(\d+))?$/i;
-  // ...
-}
+  // ★ ここまで追加
 
   // （この下にすでにある「問い合わせ」「会員コード」「久助」などのロジックが続く）
   // 例：

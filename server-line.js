@@ -217,6 +217,7 @@ const parse = (data) => {
 };
 const uniq = (arr) => Array.from(new Set((arr || []).filter(Boolean)));
 // ===== 会員コードユーティリティ =====
+// 会員コード：数字4桁で統一（LINEと電話で共通利用）
 function getOrCreateMemberCode(userId) {
   const uid = String(userId || "").trim();
   if (!uid) return null;
@@ -228,13 +229,26 @@ function getOrCreateMemberCode(userId) {
     return null;
   }
 
-  // すでにコードがあればそれを返す（電話側で発行した4桁もそのまま使う）
+  // 1) すでに memberCode があればそれを使う
   if (entry.memberCode && typeof entry.memberCode === "string") {
     const existing = entry.memberCode.trim();
     if (existing) return existing;
   }
 
-  // 既存のコード一覧を作成
+  // 2) もし電話用などで別フィールドに 4桁コードを持っているなら、
+  //    それを memberCode にコピーして使う（例：phoneMemberCode 等）
+  //    ※ 今後フィールド名を決めて使うならここを合わせる
+  if (entry.phoneMemberCode && typeof entry.phoneMemberCode === "string") {
+    const fromPhone = entry.phoneMemberCode.trim();
+    if (/^\d{4}$/.test(fromPhone)) {
+      entry.memberCode = fromPhone;
+      book[uid] = entry;
+      writeAddresses(book);
+      return fromPhone;
+    }
+  }
+
+  // 3) 既存の 4桁コード一覧を作る（数字4桁だけ対象）
   const existingCodes = new Set(
     Object.values(book)
       .map((a) =>
@@ -242,22 +256,28 @@ function getOrCreateMemberCode(userId) {
           ? a.memberCode.trim()
           : ""
       )
-      .filter(Boolean)
+      .filter((c) => /^\d{4}$/.test(c))
   );
 
-  // ★ 新しいコードを発行（4桁数字） ※重複しないように
+  // 4) 新しい 4桁コードを発行（0001〜9999）※重複しないように
   let newCode = "";
-  for (let i = 0; i < 20000; i++) {
+  let safety = 0;
+  do {
     const rand = Math.floor(Math.random() * 10000); // 0〜9999
-    newCode = String(rand).padStart(4, "0");
-    if (!existingCodes.has(newCode)) break;
-  }
+    newCode = rand.toString().padStart(4, "0");     // "0000" 形式
+    safety++;
+    if (safety > 20000) {
+      // 異常系（ほぼ無いはず）
+      throw new Error("memberCode_exhausted");
+    }
+  } while (existingCodes.has(newCode));
 
   entry.memberCode = newCode;
   book[uid] = entry;
   writeAddresses(book);
   return newCode;
 }
+
 
 // ====== 在庫ユーティリティ ======
 const LOW_STOCK_THRESHOLD = 5; // しきい値

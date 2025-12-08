@@ -2412,8 +2412,8 @@ app.post(
 async function handleEvent(ev) {
   try {
     // ===== message =====
-    if (ev.type === "message" && ev.message?.type === "text") {
-      // ===== message =====
+   
+      
 if (ev.type === "message" && ev.message?.type === "text") {
   try {
     const rec = {

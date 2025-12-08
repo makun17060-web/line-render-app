@@ -216,7 +216,6 @@ const parse = (data) => {
   return o;
 };
 const uniq = (arr) => Array.from(new Set((arr || []).filter(Boolean)));
-
 // ===== 会員コードユーティリティ =====
 function getOrCreateMemberCode(userId) {
   const uid = String(userId || "").trim();
@@ -229,7 +228,7 @@ function getOrCreateMemberCode(userId) {
     return null;
   }
 
-  // すでにコードがあればそれを返す
+  // すでにコードがあればそれを返す（電話側で発行した4桁もそのまま使う）
   if (entry.memberCode && typeof entry.memberCode === "string") {
     const existing = entry.memberCode.trim();
     if (existing) return existing;
@@ -246,12 +245,13 @@ function getOrCreateMemberCode(userId) {
       .filter(Boolean)
   );
 
-  // 新しいコードを発行（IS + 6桁数字） ※重複しないように
+  // ★ 新しいコードを発行（4桁数字） ※重複しないように
   let newCode = "";
-  do {
-    const rand = Math.floor(100000 + Math.random() * 900000); // 6桁
-    newCode = `IS${rand}`;
-  } while (existingCodes.has(newCode));
+  for (let i = 0; i < 20000; i++) {
+    const rand = Math.floor(Math.random() * 10000); // 0〜9999
+    newCode = String(rand).padStart(4, "0");
+    if (!existingCodes.has(newCode)) break;
+  }
 
   entry.memberCode = newCode;
   book[uid] = entry;
@@ -1189,6 +1189,50 @@ app.get("/api/liff/config", (req, res) => {
   }
   // 想定外の値でも一応 order を返す
   return res.json({ liffId: LIFF_ID });
+});
+// ===== 会員コードから住所を取得（電話サーバー等から利用） =====
+// GET /api/public/address-by-code?code=1234
+app.get("/api/public/address-by-code", (req, res) => {
+  try {
+    const code = String(req.query.code || "").trim();
+    if (!code) {
+      return res.status(400).json({ ok: false, error: "code_required" });
+    }
+
+    const book = readAddresses();
+
+    // memberCode が一致するレコードを探す
+    let found = null;
+    for (const entry of Object.values(book)) {
+      if (!entry) continue;
+      const mc = String(entry.memberCode || "").trim();
+      if (mc && mc === code) {
+        found = entry;
+        break;
+      }
+    }
+
+    if (!found) {
+      return res.status(404).json({ ok: false, error: "not_found" });
+    }
+
+    return res.json({
+      ok: true,
+      address: {
+        name:       found.name       || "",
+        phone:      found.phone      || "",
+        postal:     found.postal     || "",
+        prefecture: found.prefecture || "",
+        city:       found.city       || "",
+        address1:   found.address1   || "",
+        address2:   found.address2   || "",
+        memberCode: found.memberCode || "",
+      },
+    });
+  } catch (e) {
+    console.error("/api/public/address-by-code error:", e);
+    return res.status(500).json({ ok: false, error: "server_error" });
+  }
 });
 
 // ====== Stripe 決済（Checkout Session） ======

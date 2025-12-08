@@ -2413,58 +2413,35 @@ async function handleEvent(ev) {
   try {
     // ===== message =====
    
-   if (ev.type === "message" && ev.message?.type === "text") {
-  try {
-    const rec = {
-      ts: new Date().toISOString(),
-      userId: ev.source?.userId || "",
-      type: "text",
-      len: (ev.message.text || "").length,
-    };
-    fs.appendFileSync(
-      MESSAGES_LOG,
-      JSON.stringify(rec) + "\n",
-      "utf8"
-    );
-  } catch {}
-
-  const sessions = readSessions();
-  const uid = ev.source?.userId || "";
-  const sess = sessions[uid] || null;
+      
+if (ev.type === "message" && ev.message?.type === "text") {
+  // 共通で使う基本情報を最初に1回だけ定義
+  const uid  = ev.source?.userId || "";
   const text = (ev.message.text || "").trim();
-  const t = text.replace(/\s+/g, " ").trim();
+  const t    = text.replace(/\s+/g, " ").trim();
+  const isAdmin = ADMIN_USER_ID && uid === ADMIN_USER_ID;
 
-  // ★ ここから 管理者への通知ブロック
-  const isAdmin =
-    ADMIN_USER_ID && ev.source?.userId === ADMIN_USER_ID;
-
-  if (!isAdmin && ADMIN_USER_ID && t) {
-    const notice =
-      "【お客さまからのメッセージ】\n" +
-      `ユーザーID：${ev.source?.userId || ""}\n` +
-      `メッセージ：${t}`;
-
+  // ★ お客さんからのメッセージを管理者へ転送（管理者自身の発言は除外）
+  if (!isAdmin && ADMIN_USER_ID && text) {
     try {
+      const notice = [
+        "📩【お客さまからのメッセージ】",
+        "",
+        `ユーザーID：${uid || "(不明)"}`,
+        `本文：${text}`,
+        "",
+        "※このメッセージには管理者用アカウントから返信してください。"
+      ].join("\n");
+
       await client.pushMessage(ADMIN_USER_ID, {
         type: "text",
         text: notice,
       });
     } catch (e) {
-      console.error(
-        "admin notify error:",
-        e?.response?.data || e
-      );
+      console.error("admin notify error:", e?.response?.data || e);
     }
-    // ❌ ここには return; を書かない（そのまま下のロジックも動かしたい）
   }
-  // ★ 管理者通知ここまで
 
-  // ↓ この下に「問い合わせ」「会員コード」など元々の処理が続く
-  // if (t === "問い合わせ") { ... }
-  // if (t === "会員コード") { ... }
-  // ...
-}
-   
   // ★ メッセージログに記録（元の処理）
   try {
     const rec = {

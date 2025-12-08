@@ -1137,7 +1137,7 @@ function labelOf(q, code) {
   return code;
 }
 
-// ====== LIFF API ======
+// ====== LIFF API 
 // 住所保存（LIFF）
 app.post("/api/liff/address", async (req, res) => {
   try {
@@ -1163,8 +1163,14 @@ app.post("/api/liff/address", async (req, res) => {
       ts:         new Date().toISOString(),
     };
 
+    // 住所を書き込む
     writeAddresses(book);
-    res.json({ ok: true });
+
+    // ⭐ 会員コードを必ず発行して保存（4桁 or 6桁など、getOrCreateMemberCode の仕様で決定）
+    const memberCode = getOrCreateMemberCode(userId);
+
+    // フロント側で確認したければレスポンスにも返しておく
+    res.json({ ok: true, memberCode });
   } catch (e) {
     console.error("/api/liff/address error:", e);
     res.status(500).json({ ok: false, error: "server_error" });

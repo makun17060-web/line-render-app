@@ -2364,7 +2364,7 @@ async function handleEvent(ev) {
   try {
     // ===== message =====
     if (ev.type === "message" && ev.message?.type === "text") {
-      // ログ
+      // 受信ログ
       try {
         const rec = {
           ts: new Date().toISOString(),
@@ -2372,45 +2372,40 @@ async function handleEvent(ev) {
           type: "text",
           len: (ev.message.text || "").length,
         };
-        fs.appendFileSync(
-          MESSAGES_LOG,
-          JSON.stringify(rec) + "\n",
-          "utf8"
-        );
+        fs.appendFileSync(MESSAGES_LOG, JSON.stringify(rec) + "\n", "utf8");
       } catch {}
 
-      const sessions = readSessions();
       const uid = ev.source?.userId || "";
-      const sess = sessions[uid] || null;
       const text = (ev.message.text || "").trim();
       const t = text.replace(/\s+/g, " ").trim();
+      const sessions = readSessions();
+      const sess = sessions[uid] || null;
 
-      // 管理者への転送通知
+      // ★ 管理者かどうか
       const isAdmin = ADMIN_USER_ID && uid === ADMIN_USER_ID;
-      if (!isAdmin && ADMIN_USER_ID && t) {
-        const notice = [
-          "📩【お客さまからのメッセージ】",
-          "",
-          `ユーザーID：${uid || "(不明)"}`,
-          `本文：${t}`,
-          "",
-          "※このメッセージには公式アカウントから返信してください。`,
-        ].join("\n");
 
+      // ★ 管理者への転送（一般ユーザーからのメッセージのみ）
+      if (!isAdmin && ADMIN_USER_ID && text) {
         try {
+          const notice = [
+            "📩【お客さまからのメッセージ】",
+            "",
+            `ユーザーID：${uid || "(不明)"}`,
+            `本文：${text}`,
+            "",
+            "※このメッセージにはここから返信してください。"
+          ].join("\n");
+
           await client.pushMessage(ADMIN_USER_ID, {
             type: "text",
             text: notice,
           });
         } catch (e) {
-          console.error(
-            "admin notify error:",
-            e?.response?.data || e
-          );
+          console.error("admin notify error:", e?.response?.data || e);
         }
       }
 
-      // 「問い合わせ」
+      // ★「問い合わせ」最優先
       if (t === "問い合わせ") {
         await client.replyMessage(ev.replyToken, {
           type: "text",
@@ -2422,7 +2417,7 @@ async function handleEvent(ev) {
         return;
       }
 
-      // 「会員コード」
+      // ★「会員コード」と送られたら自分の会員コードを返信
       if (t === "会員コード") {
         const userId = ev.source?.userId || "";
         if (!userId) {
@@ -2455,7 +2450,7 @@ async function handleEvent(ev) {
         return;
       }
 
-      // 久助テキスト注文
+      // ★ 久助テキスト注文
       const kusukeRe = /^久助(?:\s+(\d+))?$/i;
       const km = kusukeRe.exec(text);
       if (km) {
@@ -2465,19 +2460,12 @@ async function handleEvent(ev) {
           writeSessions(sessions);
           await client.replyMessage(ev.replyToken, {
             type: "text",
-            text:
-              "久助の個数を半角数字で入力してください（例：2）",
+            text: "久助の個数を半角数字で入力してください（例：2）",
           });
           return;
         }
-        const qty = Math.max(
-          1,
-          Math.min(99, Number(qtyStr))
-        );
-        await client.replyMessage(
-          ev.replyToken,
-          methodFlex("kusuke-250", qty)
-        );
+        const qty = Math.max(1, Math.min(99, Number(qtyStr)));
+        await client.replyMessage(ev.replyToken, methodFlex("kusuke-250", qty));
         return;
       }
 
@@ -2486,22 +2474,18 @@ async function handleEvent(ev) {
         if (!/^\d+$/.test(n)) {
           await client.replyMessage(ev.replyToken, {
             type: "text",
-            text:
-              "半角数字で入力してください（例：2）",
+            text: "半角数字で入力してください（例：2）",
           });
           return;
         }
         const qty = Math.max(1, Math.min(99, Number(n)));
         delete sessions[uid];
         writeSessions(sessions);
-        await client.replyMessage(
-          ev.replyToken,
-          methodFlex("kusuke-250", qty)
-        );
+        await client.replyMessage(ev.replyToken, methodFlex("kusuke-250", qty));
         return;
       }
 
-      // その他フロー
+      // ★ その他フロー：商品名入力待ち
       if (sess?.await === "otherName") {
         const name = (text || "").slice(0, 50).trim();
         if (!name) {
@@ -2523,6 +2507,7 @@ async function handleEvent(ev) {
         return;
       }
 
+      // ★ 店頭受取：名前入力中
       if (sess?.await === "pickupName") {
         const nameText = (text || "").trim();
         if (!nameText) {
@@ -2535,14 +2520,13 @@ async function handleEvent(ev) {
 
         const temp = sess.temp || {};
         const id = temp.id;
-        const qty = Math.max(
-          1,
-          Math.min(99, Number(temp.qty) || 1)
-        );
+        const qty = Math.max(1, Math.min(99, Number(temp.qty) || 1));
 
+        // セッションはここで終了
         delete sessions[uid];
         writeSessions(sessions);
 
+        // 商品取得
         let product;
         if (String(id).startsWith("other:")) {
           const parts = String(id).split(":");
@@ -2566,28 +2550,23 @@ async function handleEvent(ev) {
           return;
         }
 
+        // ★ 店頭受取・現金のみで最終確認画面を表示（お名前付き）
         await client.replyMessage(
           ev.replyToken,
-          confirmFlex(
-            product,
-            qty,
-            "pickup",
-            "",
-            "cash",
-            LIFF_ID,
-            { pickupName: nameText }
-          )
+          confirmFlex(product, qty, "pickup", "", "cash", LIFF_ID, {
+            pickupName: nameText,
+          })
         );
         return;
       }
 
+      // ★ その他フロー：個数入力中
       if (sess?.await === "otherQty") {
         const n = (text || "").trim();
         if (!/^\d+$/.test(n)) {
           await client.replyMessage(ev.replyToken, {
             type: "text",
-            text:
-              "個数は半角数字で入力してください。例：2",
+            text: "個数は半角数字で入力してください。例：2",
           });
           return;
         }
@@ -2595,29 +2574,16 @@ async function handleEvent(ev) {
         const name = sess.temp?.name || "その他";
         delete sessions[uid];
         writeSessions(sessions);
-        const id = `other:${encodeURIComponent(
-          name
-        )}:0`;
-        await client.replyMessage(
-          ev.replyToken,
-          methodFlex(id, qty)
-        );
+        const id = `other:${encodeURIComponent(name)}:0`;
+        await client.replyMessage(ev.replyToken, methodFlex(id, qty));
         return;
       }
 
-      // 管理者コマンド
-      if (
-        ev.source?.userId &&
-        ADMIN_USER_ID &&
-        ev.source.userId === ADMIN_USER_ID
-      ) {
-        // 在庫一覧
+      // ★ 管理者コマンド（在庫・予約連絡）
+      if (ev.source?.userId && ADMIN_USER_ID && ev.source.userId === ADMIN_USER_ID) {
         if (t === "在庫一覧") {
           const items = readProducts()
-            .map(
-              (p) =>
-                `・${p.name}（${p.id}）：${Number(p.stock || 0)}個`
-            )
+            .map((p) => `・${p.name}（${p.id}）：${Number(p.stock || 0)}個`)
             .join("\n");
           await client.replyMessage(ev.replyToken, {
             type: "text",
@@ -2626,145 +2592,89 @@ async function handleEvent(ev) {
           return;
         }
 
-        // 在庫 コマンド
         if (t.startsWith("在庫 ")) {
           const parts = t.split(" ");
 
-          // 「在庫 久助」
           if (parts.length === 2) {
             const pid = resolveProductId(parts[1]);
             const { product } = findProductById(pid);
-            if (!product)
+            if (!product) {
               await client.replyMessage(ev.replyToken, {
                 type: "text",
                 text: "商品が見つかりません。",
               });
-            else
+            } else {
               await client.replyMessage(ev.replyToken, {
                 type: "text",
-                text: `${product.name}：${Number(
-                  product.stock || 0
-                )}個`,
+                text: `${product.name}：${Number(product.stock || 0)}個`,
               });
+            }
             return;
           }
 
-          // 「在庫 設定 久助 50」など
           if (parts.length === 4) {
             const op = parts[1];
             const pid = resolveProductId(parts[2]);
             const val = Number(parts[3]);
             try {
               if (op === "設定" || op.toLowerCase() === "set") {
-                const r = setStock(
-                  pid,
-                  val,
-                  "admin-text"
-                );
+                const r = setStock(pid, val, "admin-text");
                 const { product } = findProductById(pid);
                 await client.replyMessage(ev.replyToken, {
                   type: "text",
-                  text: `[設定] ${
-                    product?.name || pid
-                  }\n${r.before} → ${r.after} 個`,
+                  text: `[設定] ${product?.name || pid}\n${r.before} → ${r.after} 個`,
                 });
-                await maybeLowStockAlert(
-                  pid,
-                  product?.name || pid,
-                  r.after
-                );
+                await maybeLowStockAlert(pid, product?.name || pid, r.after);
                 return;
               }
-              if (
-                op === "追加" ||
-                op === "+" ||
-                op.toLowerCase() === "add"
-              ) {
-                const r = addStock(
-                  pid,
-                  Math.abs(val),
-                  "admin-text"
-                );
+              if (op === "追加" || op === "+" || op.toLowerCase() === "add") {
+                const r = addStock(pid, Math.abs(val), "admin-text");
                 const { product } = findProductById(pid);
                 await client.replyMessage(ev.replyToken, {
                   type: "text",
-                  text: `[追加] ${
-                    product?.name || pid
-                  }\n${r.before} → ${r.after} 個（+${Math.abs(
+                  text: `[追加] ${product?.name || pid}\n${r.before} → ${r.after} 個（+${Math.abs(
                     val
                   )}）`,
                 });
                 return;
               }
-              if (
-                op === "減少" ||
-                op === "-" ||
-                op.toLowerCase() === "sub"
-              ) {
-                const r = addStock(
-                  pid,
-                  -Math.abs(val),
-                  "admin-text"
-                );
+              if (op === "減少" || op === "-" || op.toLowerCase() === "sub") {
+                const r = addStock(pid, -Math.abs(val), "admin-text");
                 const { product } = findProductById(pid);
                 await client.replyMessage(ev.replyToken, {
                   type: "text",
-                  text: `[減少] ${
-                    product?.name || pid
-                  }\n${r.before} → ${r.after} 個（-${Math.abs(
+                  text: `[減少] ${product?.name || pid}\n${r.before} → ${r.after} 個（-${Math.abs(
                     val
                   )}）`,
                 });
-                await maybeLowStockAlert(
-                  pid,
-                  product?.name || pid,
-                  r.after
-                );
+                await maybeLowStockAlert(pid, product?.name || pid, r.after);
                 return;
               }
             } catch (e) {
               await client.replyMessage(ev.replyToken, {
                 type: "text",
-                text: `在庫コマンドエラー：${
-                  e.message || e
-                }`,
+                text: `在庫コマンドエラー：${e.message || e}`,
               });
               return;
             }
           }
 
-          // 「在庫 久助 +5 / -2」
-          if (
-            parts.length === 3 &&
-            /^[+-]\d+$/.test(parts[2])
-          ) {
+          if (parts.length === 3 && /^[+-]\d+$/.test(parts[2])) {
             const pid = resolveProductId(parts[1]);
             const delta = Number(parts[2]);
             try {
-              const r = addStock(
-                pid,
-                delta,
-                "admin-text"
-              );
+              const r = addStock(pid, delta, "admin-text");
               const { product } = findProductById(pid);
               const sign = delta >= 0 ? "+" : "";
               await client.replyMessage(ev.replyToken, {
                 type: "text",
-                text: `[調整] ${
-                  product?.name || pid
-                }\n${r.before} → ${r.after} 個（${sign}${delta}）`,
+                text: `[調整] ${product?.name || pid}\n${r.before} → ${r.after} 個（${sign}${delta}）`,
               });
-              await maybeLowStockAlert(
-                pid,
-                product?.name || pid,
-                r.after
-              );
+              await maybeLowStockAlert(pid, product?.name || pid, r.after);
             } catch (e) {
               await client.replyMessage(ev.replyToken, {
                 type: "text",
-                text: `在庫コマンドエラー：${
-                  e.message || e
-                }`,
+                text: `在庫コマンドエラー：${e.message || e}`,
               });
             }
             return;
@@ -2784,29 +2694,21 @@ async function handleEvent(ev) {
           return;
         }
 
-        // 予約連絡***
         if (t.startsWith("予約連絡 ")) {
-          const m =
-            /^予約連絡\s+(\S+)\s+([\s\S]+)$/.exec(t);
+          const m = /^予約連絡\s+(\S+)\s+([\s\S]+)$/.exec(t);
           if (!m) {
             await client.replyMessage(ev.replyToken, {
               type: "text",
-              text:
-                "使い方：予約連絡 {商品名またはID} {本文}",
+              text: "使い方：予約連絡 {商品名またはID} {本文}",
             });
             return;
           }
           const pid = resolveProductId(m[1]);
           const message = m[2].trim();
-          const items = readLogLines(
-            RESERVATIONS_LOG,
-            100000
-          ).filter(
+          const items = readLogLines(RESERVATIONS_LOG, 100000).filter(
             (r) => r && r.productId === pid && r.userId
           );
-          const userIds = Array.from(
-            new Set(items.map((r) => r.userId))
-          );
+          const userIds = Array.from(new Set(items.map((r) => r.userId)));
           if (userIds.length === 0) {
             await client.replyMessage(ev.replyToken, {
               type: "text",
@@ -2816,11 +2718,7 @@ async function handleEvent(ev) {
           }
           try {
             const chunk = 500;
-            for (
-              let i = 0;
-              i < userIds.length;
-              i += chunk
-            ) {
+            for (let i = 0; i < userIds.length; i += chunk) {
               await client.multicast(
                 userIds.slice(i, i + chunk),
                 [{ type: "text", text: message }]
@@ -2834,9 +2732,7 @@ async function handleEvent(ev) {
             await client.replyMessage(ev.replyToken, {
               type: "text",
               text: `送信エラー：${
-                e?.response?.data?.message ||
-                e.message ||
-                e
+                e?.response?.data?.message || e.message || e
               }`,
             });
           }
@@ -2844,13 +2740,11 @@ async function handleEvent(ev) {
         }
 
         if (t.startsWith("予約連絡開始 ")) {
-          const m =
-            /^予約連絡開始\s+(\S+)\s+([\s\S]+)$/.exec(t);
+          const m = /^予約連絡開始\s+(\S+)\s+([\s\S]+)$/.exec(t);
           if (!m) {
             await client.replyMessage(ev.replyToken, {
               type: "text",
-              text:
-                "使い方：予約連絡開始 {商品名/ID} {本文}",
+              text: "使い方：予約連絡開始 {商品名/ID} {本文}",
             });
             return;
           }
@@ -2890,35 +2784,23 @@ async function handleEvent(ev) {
             await client.replyMessage(ev.replyToken, {
               type: "text",
               text: `送信エラー：${
-                e?.response?.data?.message ||
-                e.message ||
-                e
+                e?.response?.data?.message || e.message || e
               }`,
             });
           }
           return;
         }
 
-        if (
-          t === "予約連絡次" ||
-          t.startsWith("予約連絡次 ")
-        ) {
-          const m =
-            /^予約連絡次(?:\s+(\S+))?(?:\s+(\d+))?$/.exec(t);
-          const pid = resolveProductId(
-            m?.[1] || readNotifyState().__lastPid || ""
-          );
-          const count = Math.max(
-            1,
-            Number(m?.[2] || 1)
-          );
+        if (t === "予約連絡次" || t.startsWith("予約連絡次 ")) {
+          const m = /^予約連絡次(?:\s+(\S+))?(?:\s+(\d+))?$/.exec(t);
+          const pid = resolveProductId(m?.[1] || readNotifyState().__lastPid || "");
+          const count = Math.max(1, Number(m?.[2] || 1));
           const state = readNotifyState();
           const st = state[pid];
           if (!pid || !st) {
             await client.replyMessage(ev.replyToken, {
               type: "text",
-              text:
-                "先に「予約連絡開始 {商品} {本文}」を実行してください。",
+              text: "先に「予約連絡開始 {商品} {本文}」を実行してください。",
             });
             return;
           }
@@ -2935,11 +2817,7 @@ async function handleEvent(ev) {
           }
 
           let sent = 0;
-          for (
-            let i = 0;
-            i < count && idx < total;
-            i++, idx++
-          ) {
+          for (let i = 0; i < count && idx < total; i++, idx++) {
             try {
               await client.pushMessage(userIds[idx], {
                 type: "text",
@@ -2959,11 +2837,8 @@ async function handleEvent(ev) {
         }
 
         if (t.startsWith("予約連絡停止")) {
-          const m =
-            /^予約連絡停止(?:\s+(\S+))?$/.exec(t);
-          const pid = resolveProductId(
-            m?.[1] || readNotifyState().__lastPid || ""
-          );
+          const m = /^予約連絡停止(?:\s+(\S+))?$/.exec(t);
+          const pid = resolveProductId(m?.[1] || readNotifyState().__lastPid || "");
           const state = readNotifyState();
           if (pid && state[pid]) delete state[pid];
           if (state.__lastPid === pid) delete state.__lastPid;
@@ -2976,16 +2851,13 @@ async function handleEvent(ev) {
         }
       }
 
-      // 一般ユーザー：直接注文
+      // ★ 一般ユーザー
       if (text === "直接注文") {
-        await client.replyMessage(
-          ev.replyToken,
-          productsFlex(readProducts())
-        );
+        await client.replyMessage(ev.replyToken, productsFlex(readProducts()));
         return;
       }
 
-      // それ以外のテキストは返信なし
+      // 久助は上で処理済み。それ以外のテキストは返信なし。
       return;
     }
 
@@ -3006,20 +2878,13 @@ async function handleEvent(ev) {
       }
 
       if (d.startsWith("order_qty?")) {
-        const { id, qty } = parse(
-          d.replace("order_qty?", "")
-        );
-        await client.replyMessage(
-          ev.replyToken,
-          qtyFlex(id, qty)
-        );
+        const { id, qty } = parse(d.replace("order_qty?", ""));
+        await client.replyMessage(ev.replyToken, qtyFlex(id, qty));
         return;
       }
 
       if (d.startsWith("order_pickup_name?")) {
-        const { id, qty } = parse(
-          d.replace("order_pickup_name?", "")
-        );
+        const { id, qty } = parse(d.replace("order_pickup_name?", ""));
         const sessions = readSessions();
         const uid = ev.source?.userId || "";
         sessions[uid] = {
@@ -3036,67 +2901,40 @@ async function handleEvent(ev) {
       }
 
       if (d.startsWith("order_method?")) {
-        const { id, qty } = parse(
-          d.replace("order_method?", "")
-        );
-        await client.replyMessage(
-          ev.replyToken,
-          methodFlex(id, qty)
-        );
+        const { id, qty } = parse(d.replace("order_method?", ""));
+        await client.replyMessage(ev.replyToken, methodFlex(id, qty));
         return;
       }
 
       if (d.startsWith("order_region?")) {
-        const { id, qty, method } = parse(
-          d.replace("order_region?", "")
-        );
+        const { id, qty, method } = parse(d.replace("order_region?", ""));
         if (method === "delivery") {
-          await client.replyMessage(
-            ev.replyToken,
-            regionFlex(id, qty)
-          );
+          await client.replyMessage(ev.replyToken, regionFlex(id, qty));
         } else {
-          await client.replyMessage(
-            ev.replyToken,
-            paymentFlex(id, qty, "pickup", "")
-          );
+          await client.replyMessage(ev.replyToken, paymentFlex(id, qty, "pickup", ""));
         }
         return;
       }
 
       if (d.startsWith("order_payment?")) {
-        let { id, qty, method, region } = parse(
-          d.replace("order_payment?", "")
-        );
+        let { id, qty, method, region } = parse(d.replace("order_payment?", ""));
         method = (method || "").trim();
         region = (region || "").trim();
         if (region === "-") region = "";
 
         if (method === "pickup") {
-          await client.replyMessage(
-            ev.replyToken,
-            paymentFlex(id, qty, "pickup", "")
-          );
+          await client.replyMessage(ev.replyToken, paymentFlex(id, qty, "pickup", ""));
           return;
         }
         if (method === "delivery") {
           if (!region) {
-            await client.replyMessage(
-              ev.replyToken,
-              regionFlex(id, qty)
-            );
+            await client.replyMessage(ev.replyToken, regionFlex(id, qty));
             return;
           }
-          await client.replyMessage(
-            ev.replyToken,
-            paymentFlex(id, qty, "delivery", region)
-          );
+          await client.replyMessage(ev.replyToken, paymentFlex(id, qty, "delivery", region));
           return;
         }
-        await client.replyMessage(
-          ev.replyToken,
-          methodFlex(id, qty)
-        );
+        await client.replyMessage(ev.replyToken, methodFlex(id, qty));
         return;
       }
 
@@ -3126,25 +2964,16 @@ async function handleEvent(ev) {
           }
         }
 
+        // ★ 直接注文の住所入力は LIFF_ID_DIRECT_ADDRESS を使用
         await client.replyMessage(
           ev.replyToken,
-          confirmFlex(
-            product,
-            qty,
-            method,
-            region,
-            payment,
-            LIFF_ID_DIRECT_ADDRESS
-          )
+          confirmFlex(product, qty, method, region, payment, LIFF_ID_DIRECT_ADDRESS)
         );
         return;
       }
 
       if (d === "order_back") {
-        await client.replyMessage(
-          ev.replyToken,
-          productsFlex(readProducts())
-        );
+        await client.replyMessage(ev.replyToken, productsFlex(readProducts()));
         return;
       }
 
@@ -3155,7 +2984,7 @@ async function handleEvent(ev) {
         let method = parsed.method;
         let region = parsed.region;
         const payment = parsed.payment;
-        const pickupName = (parsed.pickupName || "").trim();
+        const pickupName = (parsed.pickupName || "").trim(); // ★ 追加
 
         const need = Math.max(1, Number(qty) || 1);
 
@@ -3184,19 +3013,12 @@ async function handleEvent(ev) {
           }
           product = products[idx];
           if (!product.stock || product.stock < need) {
-            await client.replyMessage(
-              ev.replyToken,
-              reserveOffer(product, need, product.stock || 0)
-            );
+            await client.replyMessage(ev.replyToken, reserveOffer(product, need, product.stock || 0));
             return;
           }
           products[idx].stock = Number(product.stock) - need;
           writeProducts(products);
-          await maybeLowStockAlert(
-            product.id,
-            product.name,
-            products[idx].stock
-          );
+          await maybeLowStockAlert(product.id, product.name, products[idx].stock);
         }
 
         const regionFee =
@@ -3224,7 +3046,7 @@ async function handleEvent(ev) {
           method,
           address: addr,
           image: product.image || "",
-          pickupName,
+          pickupName, // ★ ログにも残す
         };
         fs.appendFileSync(ORDERS_LOG, JSON.stringify(order) + "\n", "utf8");
 
@@ -3251,6 +3073,7 @@ async function handleEvent(ev) {
           `合計：${yen(total)}`,
         ];
 
+        // ★ ユーザー向けメッセージにも名前を表示
         if (method === "pickup" && pickupName) {
           userLines.push("", `お名前：${pickupName}`);
         }
@@ -3263,16 +3086,11 @@ async function handleEvent(ev) {
                   addr.prefecture || ""
                 }${addr.city || ""}${addr.address1 || ""}${
                   addr.address2 ? " " + addr.address2 : ""
-                }\n氏名：${addr.name || ""}\n電話：${
-                  addr.phone || ""
-                }`
+                }\n氏名：${addr.name || ""}\n電話：${addr.phone || ""}`
               : "住所未登録です。メニューの「住所を入力（LIFF）」から登録してください。"
           );
         } else {
-          userLines.push(
-            "",
-            "店頭でのお受け取りをお待ちしています。"
-          );
+          userLines.push("", "店頭でのお受け取りをお待ちしています。");
         }
 
         await client.replyMessage(ev.replyToken, {
@@ -3280,6 +3098,7 @@ async function handleEvent(ev) {
           text: userLines.join("\n"),
         });
 
+        // ★ 管理者向けメッセージにも名前を追加
         const adminMsg = [
           "🧾 新規注文",
           `ユーザーID：${ev.source?.userId || ""}`,
@@ -3288,18 +3107,14 @@ async function handleEvent(ev) {
           `小計：${yen(subtotal)} / 送料：${yen(
             regionFee
           )} / 代引：${yen(codFee)} / 合計：${yen(total)}`,
-          `受取：${method}${
-            method === "delivery" ? `（${region}）` : ""
-          } / 支払：${payment}`,
+          `受取：${method}${method === "delivery" ? `（${region}）` : ""} / 支払：${payment}`,
           pickupName ? `店頭お呼び出し名：${pickupName}` : "",
           addr
             ? `住所：${addr.postal || ""} ${
                 addr.prefecture || ""
               }${addr.city || ""}${addr.address1 || ""}${
                 addr.address2 ? " " + addr.address2 : ""
-              }\n氏名：${addr.name || ""} / TEL：${
-                addr.phone || ""
-              }`
+              }\n氏名：${addr.name || ""} / TEL：${addr.phone || ""}`
             : method === "delivery"
             ? "住所：未登録"
             : "",
@@ -3325,9 +3140,7 @@ async function handleEvent(ev) {
       }
 
       if (d.startsWith("order_reserve?")) {
-        const { id, qty } = parse(
-          d.replace("order_reserve?", "")
-        );
+        const { id, qty } = parse(d.replace("order_reserve?", ""));
         const products = readProducts();
         const product = products.find((p) => p.id === id);
         if (!product) {
@@ -3346,11 +3159,7 @@ async function handleEvent(ev) {
           qty: Math.max(1, Number(qty) || 1),
           status: "reserved",
         };
-        fs.appendFileSync(
-          RESERVATIONS_LOG,
-          JSON.stringify(r) + "\n",
-          "utf8"
-        );
+        fs.appendFileSync(RESERVATIONS_LOG, JSON.stringify(r) + "\n", "utf8");
 
         await client.replyMessage(ev.replyToken, {
           type: "text",
@@ -3374,15 +3183,13 @@ async function handleEvent(ev) {
               text: adminReserve,
             });
           if (MULTICAST_USER_IDS.length > 0)
-            await client.multicast(
-              MULTICAST_USER_IDS,
-              { type: "text", text: adminReserve }
-            );
+            await client.multicast(MULTICAST_USER_IDS, {
+              type: "text",
+              text: adminReserve,
+            });
         } catch {}
         return;
       }
-
-      return;
     }
   } catch (err) {
     console.error(
@@ -3393,8 +3200,7 @@ async function handleEvent(ev) {
       try {
         await client.replyMessage(ev.replyToken, {
           type: "text",
-          text:
-            "エラーが発生しました。もう一度お試しください。",
+          text: "エラーが発生しました。もう一度お試しください。",
         });
       } catch {}
     }

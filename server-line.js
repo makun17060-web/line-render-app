@@ -45,7 +45,9 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const LIFF_ID = (process.env.LIFF_ID || "2008406620-4QJ06JLv").trim();
 // ★ 直接注文の住所入力専用 LIFF（未設定なら LIFF_ID を流用）
-const LIFF_ID_DIRECT_ADDRESS = (process.env.LIFF_ID_DIRECT_ADDRESS || LIFF_ID).trim();
+const LIFF_ID_DIRECT_ADDRESS = (
+  process.env.LIFF_ID_DIRECT_ADDRESS || LIFF_ID
+).trim();
 
 const ADMIN_USER_ID = (process.env.ADMIN_USER_ID || "").trim();
 const MULTICAST_USER_IDS = (process.env.MULTICAST_USER_IDS || "")
@@ -123,8 +125,6 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use("/api", express.json(), express.urlencoded({ extended: true }));
-app.use("/public", express.static(PUBLIC_DIR));
 // 決済完了/失敗ページ
 app.all("/public/confirm-card-success.html", (req, res) => {
   return res.sendFile(path.join(PUBLIC_DIR, "confirm-card-success.html"));
@@ -216,6 +216,7 @@ const parse = (data) => {
   return o;
 };
 const uniq = (arr) => Array.from(new Set((arr || []).filter(Boolean)));
+
 // ===== 会員コードユーティリティ =====
 // 会員コード：数字4桁で統一（LINEと電話で共通利用）
 function getOrCreateMemberCode(userId) {
@@ -237,7 +238,6 @@ function getOrCreateMemberCode(userId) {
 
   // 2) もし電話用などで別フィールドに 4桁コードを持っているなら、
   //    それを memberCode にコピーして使う（例：phoneMemberCode 等）
-  //    ※ 今後フィールド名を決めて使うならここを合わせる
   if (entry.phoneMemberCode && typeof entry.phoneMemberCode === "string") {
     const fromPhone = entry.phoneMemberCode.trim();
     if (/^\d{4}$/.test(fromPhone)) {
@@ -259,7 +259,7 @@ function getOrCreateMemberCode(userId) {
       .filter((c) => /^\d{4}$/.test(c))
   );
 
-  // 4) 新しい 4桁コードを発行（0001〜9999）※重複しないように
+  // 4) 新しい 4桁コードを発行（0000〜9999）※重複しないように
   let newCode = "";
   let safety = 0;
   do {
@@ -267,7 +267,6 @@ function getOrCreateMemberCode(userId) {
     newCode = rand.toString().padStart(4, "0");     // "0000" 形式
     safety++;
     if (safety > 20000) {
-      // 異常系（ほぼ無いはず）
       throw new Error("memberCode_exhausted");
     }
   } while (existingCodes.has(newCode));
@@ -277,7 +276,6 @@ function getOrCreateMemberCode(userId) {
   writeAddresses(book);
   return newCode;
 }
-
 
 // ====== 在庫ユーティリティ ======
 const LOW_STOCK_THRESHOLD = 5; // しきい値
@@ -508,8 +506,6 @@ function productsFlex(allProducts) {
             size: "sm",
             wrap: true,
           },
-
-          // ★ 内容量（volume）があれば表示
           p.volume
             ? {
                 type: "text",
@@ -518,8 +514,6 @@ function productsFlex(allProducts) {
                 wrap: true,
               }
             : null,
-
-          // 説明文
           p.desc
             ? {
                 type: "text",
@@ -530,7 +524,6 @@ function productsFlex(allProducts) {
             : null,
         ].filter(Boolean),
       },
-
       footer: {
         type: "box",
         layout: "horizontal",
@@ -669,7 +662,7 @@ function qtyFlex(id, qty = 1) {
                     id,
                     qty: Math.min(99, q + 1),
                   })}`,
-                },
+
               },
             ],
           },
@@ -687,7 +680,6 @@ function qtyFlex(id, qty = 1) {
               },
             })),
           },
-          // ★ 店頭受取用：先に名前を聞くステップへ
           {
             type: "button",
             style: "primary",
@@ -962,7 +954,6 @@ function paymentFlex(id, qty, method, region) {
 }
 
 function confirmFlex(product, qty, method, region, payment, liffIdForBtn, options = {}) {
-  // options.pickupName を追加で受け取る
   const pickupName = (options.pickupName || "").trim();
 
   if (typeof product?.id === "string" && product.id.startsWith("other:")) {
@@ -1004,7 +995,6 @@ function confirmFlex(product, qty, method, region, payment, liffIdForBtn, option
     `合計：${yen(total)}`,
   ];
 
-  // ★ 店頭受取の場合、入力されたお名前も表示
   if (method === "pickup" && pickupName) {
     lines.push(`お名前：${pickupName}`);
   }
@@ -1039,7 +1029,6 @@ function confirmFlex(product, qty, method, region, payment, liffIdForBtn, option
       action: {
         type: "postback",
         label: "この内容で確定",
-        // ★ 名前も postback に載せる
         data: `order_confirm?${qstr({
           id: product.id,
           qty,
@@ -1137,39 +1126,36 @@ function labelOf(q, code) {
   return code;
 }
 
-// ====== LIFF API 
+// ====== LIFF API ======
+
 // 住所保存（LIFF）
 app.post("/api/liff/address", async (req, res) => {
   try {
     const userId = String(req.body?.userId || "").trim();
-    const addr = req.body?.address || {}; // ★ address を受け取る
+    const addr = req.body?.address || {};
 
     if (!userId) {
       return res.status(400).json({ ok: false, error: "userId required" });
     }
 
     const book = readAddresses();
-    const prev = book[userId] || {}; // ★ 既存のmemberCodeなどは残す
+    const prev = book[userId] || {};
 
     book[userId] = {
       ...prev,
-      name:       String(addr.name || "").trim(),
-      phone:      String(addr.phone || "").trim(),
-      postal:     String(addr.postal || "").trim(),
+      name: String(addr.name || "").trim(),
+      phone: String(addr.phone || "").trim(),
+      postal: String(addr.postal || "").trim(),
       prefecture: String(addr.prefecture || "").trim(),
-      city:       String(addr.city || "").trim(),
-      address1:   String(addr.address1 || "").trim(),
-      address2:   String(addr.address2 || "").trim(),
-      ts:         new Date().toISOString(),
+      city: String(addr.city || "").trim(),
+      address1: String(addr.address1 || "").trim(),
+      address2: String(addr.address2 || "").trim(),
+      ts: new Date().toISOString(),
     };
 
-    // 住所を書き込む
     writeAddresses(book);
 
-    // ⭐ 会員コードを必ず発行して保存（4桁 or 6桁など、getOrCreateMemberCode の仕様で決定）
     const memberCode = getOrCreateMemberCode(userId);
-
-    // フロント側で確認したければレスポンスにも返しておく
     res.json({ ok: true, memberCode });
   } catch (e) {
     console.error("/api/liff/address error:", e);
@@ -1202,8 +1188,6 @@ app.get("/api/liff/address/me", (req, res) => {
 });
 
 // LIFF 設定（★ kind=order / kind=cod で切替）
-//   /api/liff/config?kind=order → LIFF_ID（ミニアプリ / オンライン注文）
-//   /api/liff/config?kind=cod   → LIFF_ID_DIRECT_ADDRESS（代引き住所登録）
 app.get("/api/liff/config", (req, res) => {
   const kind = (req.query.kind || "order").trim();
 
@@ -1213,9 +1197,9 @@ app.get("/api/liff/config", (req, res) => {
   if (kind === "cod") {
     return res.json({ liffId: LIFF_ID_DIRECT_ADDRESS });
   }
-  // 想定外の値でも一応 order を返す
   return res.json({ liffId: LIFF_ID });
 });
+
 // ===== 会員コードから住所を取得（電話サーバー等から利用） =====
 // GET /api/public/address-by-code?code=1234
 app.get("/api/public/address-by-code", (req, res) => {
@@ -1226,8 +1210,6 @@ app.get("/api/public/address-by-code", (req, res) => {
     }
 
     const book = readAddresses();
-
-    // memberCode が一致するレコードを探す
     let found = null;
     for (const entry of Object.values(book)) {
       if (!entry) continue;
@@ -1245,13 +1227,13 @@ app.get("/api/public/address-by-code", (req, res) => {
     return res.json({
       ok: true,
       address: {
-        name:       found.name       || "",
-        phone:      found.phone      || "",
-        postal:     found.postal     || "",
+        name: found.name || "",
+        phone: found.phone || "",
+        postal: found.postal || "",
         prefecture: found.prefecture || "",
-        city:       found.city       || "",
-        address1:   found.address1   || "",
-        address2:   found.address2   || "",
+        city: found.city || "",
+        address1: found.address1 || "",
+        address2: found.address2 || "",
         memberCode: found.memberCode || "",
       },
     });
@@ -1264,7 +1246,6 @@ app.get("/api/public/address-by-code", (req, res) => {
 // ====== Stripe 決済（Checkout Session） ======
 app.post("/api/pay-stripe", async (req, res) => {
   try {
-    // 先頭で初期化した stripe を使う想定
     if (!stripe) {
       console.error("STRIPE_SECRET_KEY が設定されていません");
       return res
@@ -1279,29 +1260,31 @@ app.post("/api/pay-stripe", async (req, res) => {
       return res.status(400).json({ ok: false, error: "no_items" });
     }
 
-    // フロントから送られてきた合計（confirm.js/pay.js 側）
     const itemsTotal = Number(order.itemsTotal || 0);
-    const shipping   = Number(order.shipping   || 0);
-    const codFee     = Number(order.codFee     || 0); // 今は 0 想定
+    const shipping = Number(order.shipping || 0);
+    const codFee = Number(order.codFee || 0);
     const finalTotal = Number(
       order.finalTotal || (itemsTotal + shipping + codFee)
     );
 
     console.log("[pay-stripe] items:", items);
     console.log(
-      "[pay-stripe] itemsTotal:", itemsTotal,
-      "shipping:", shipping,
-      "codFee:", codFee,
-      "finalTotal:", finalTotal
+      "[pay-stripe] itemsTotal:",
+      itemsTotal,
+      "shipping:",
+      shipping,
+      "codFee:",
+      codFee,
+      "finalTotal:",
+      finalTotal
     );
 
-    // ===== Stripe に渡す line_items を作成 =====
     const line_items = [];
 
     // 商品行
     for (const it of items) {
       const unit = Number(it.price) || 0;
-      const qty  = Number(it.qty)   || 0;
+      const qty = Number(it.qty) || 0;
       if (!qty || unit < 0) continue;
 
       line_items.push({
@@ -1310,13 +1293,12 @@ app.post("/api/pay-stripe", async (req, res) => {
           product_data: {
             name: String(it.name || it.id || "商品"),
           },
-          unit_amount: unit, // 例: 300 → 300円
+          unit_amount: unit,
         },
         quantity: qty,
       });
     }
 
-    // 送料行（あれば）
     if (shipping > 0) {
       line_items.push({
         price_data: {
@@ -1328,7 +1310,6 @@ app.post("/api/pay-stripe", async (req, res) => {
       });
     }
 
-    // 代引き手数料行（将来使う場合）
     if (codFee > 0) {
       line_items.push({
         price_data: {
@@ -1346,15 +1327,14 @@ app.post("/api/pay-stripe", async (req, res) => {
         .json({ ok: false, error: "no_valid_line_items" });
     }
 
-    // ベースURL (PUBLIC_BASE_URL優先)
     const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
-    const host  = req.headers.host;
+    const host = req.headers.host;
     const base =
       (process.env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "") ||
       `${proto}://${host}`;
 
     const successUrl = `${base}/public/confirm-card-success.html`;
-    const cancelUrl  = `${base}/public/confirm-fail.html`;
+    const cancelUrl = `${base}/public/confirm-fail.html`;
 
     console.log("[pay-stripe] success_url:", successUrl);
     console.log("[pay-stripe] cancel_url :", cancelUrl);
@@ -1366,7 +1346,7 @@ app.post("/api/pay-stripe", async (req, res) => {
       success_url: successUrl,
       cancel_url: cancelUrl,
       metadata: {
-        lineUserId:   order.lineUserId   || "",
+        lineUserId: order.lineUserId || "",
         lineUserName: order.lineUserName || "",
       },
     });
@@ -1387,7 +1367,6 @@ app.post("/api/order/complete", async (req, res) => {
 
     const items = Array.isArray(order.items) ? order.items : [];
     if (items.length === 0) {
-      // 二度目以降など、注文データが無いときはエラーにせずスキップ
       console.log("[order-complete] no_items – skip notify");
       return res.json({ ok: false, error: "no_items" });
     }
@@ -1434,9 +1413,6 @@ app.post("/api/order/complete", async (req, res) => {
     } catch (e) {
       console.error("orders.log write error:", e);
     }
-
-    console.log("[order-complete] ADMIN_USER_ID:", ADMIN_USER_ID);
-    console.log("[order-complete] MULTICAST_USER_IDS:", MULTICAST_USER_IDS);
 
     const adminMsg =
       `🧾【Stripe決済 新規注文】\n` +
@@ -1496,7 +1472,6 @@ app.post("/api/order/complete", async (req, res) => {
     return res.status(500).json({ ok: false, error: "server_error" });
   }
 });
-
 
 // ====== 管理API（要トークン） ======
 app.get("/api/admin/ping", (req, res) => {
@@ -1827,15 +1802,15 @@ app.post("/api/admin/stock/add", (req, res) => {
 app.get("/api/products", (req, res) => {
   try {
     const items = readProducts()
-      .filter((p) => p.id !== "kusuke-250") // ★ 久助を除外
+      .filter((p) => p.id !== "kusuke-250")
       .map((p) => ({
         id: p.id,
         name: p.name,
         price: p.price,
         stock: p.stock ?? 0,
         desc: p.desc || "",
-        volume: p.volume || "",                     // ★ 内容量（volume）
-        image: toPublicImageUrl(p.image || ""),     // ★ 画像URL
+        volume: p.volume || "",
+        image: toPublicImageUrl(p.image || ""),
       }));
 
     res.json({ ok: true, products: items });
@@ -1846,13 +1821,6 @@ app.get("/api/products", (req, res) => {
 });
 
 // ====== ミニアプリ用：送料計算 API ======
-// 受け取り例:
-// {
-//   items: [{ id, price, qty }],
-//   address: { zip, prefecture, addr1 }
-// }
-// 返す例: { ok:true, itemsTotal, shipping, finalTotal }
-
 function detectRegionFromAddress(address = {}) {
   const pref = String(
     address.prefecture || address.pref || ""
@@ -1864,31 +1832,15 @@ function detectRegionFromAddress(address = {}) {
 
   if (/北海道/.test(hay)) return "北海道";
   if (/(青森|岩手|宮城|秋田|山形|福島|東北)/.test(hay)) return "東北";
-  if (
-    /(茨城|栃木|群馬|埼玉|千葉|東京|神奈川|山梨|関東)/.test(
-      hay
-    )
-  )
+  if (/(茨城|栃木|群馬|埼玉|千葉|東京|神奈川|山梨|関東)/.test(hay))
     return "関東";
-  if (
-    /(新潟|富山|石川|福井|長野|岐阜|静岡|愛知|三重|中部)/.test(
-      hay
-    )
-  )
+  if (/(新潟|富山|石川|福井|長野|岐阜|静岡|愛知|三重|中部)/.test(hay))
     return "中部";
-  if (
-    /(滋賀|京都|大阪|兵庫|奈良|和歌山|近畿)/.test(
-      hay
-    )
-  )
+  if (/(滋賀|京都|大阪|兵庫|奈良|和歌山|近畿)/.test(hay))
     return "近畿";
   if (/(鳥取|島根|岡山|広島|山口|中国)/.test(hay)) return "中国";
   if (/(徳島|香川|愛媛|高知|四国)/.test(hay)) return "四国";
-  if (
-    /(福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|九州)/.test(
-      hay
-    )
-  )
+  if (/(福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|九州)/.test(hay))
     return "九州";
   if (/(沖縄)/.test(hay)) return "沖縄";
 
@@ -2383,7 +2335,6 @@ app.post("/api/admin/products/set-image", (req, res) => {
   }
 });
 
-
 // ====== Webhook ======
 app.post(
   "/webhook",
@@ -2412,58 +2363,8 @@ app.post(
 async function handleEvent(ev) {
   try {
     // ===== message =====
-   
-      
-if (ev.type === "message" && ev.message?.type === "text") {
-  try {
-    const rec = {
-      ts: new Date().toISOString(),
-      userId: ev.source?.userId || "",
-      type: "text",
-      len: (ev.message.text || "").length,
-    };
-    fs.appendFileSync(
-      MESSAGES_LOG,
-      JSON.stringify(rec) + "\n",
-      "utf8"
-    );
-  } catch {}
-
-  const sessions = readSessions();
-  const uid = ev.source?.userId || "";
-  const text = (ev.message.text || "").trim();
-  const t = text.replace(/\s+/g, " ").trim();
-
-  // ★ ここから「管理者への通知」追加
-  const isAdmin = ADMIN_USER_ID && uid === ADMIN_USER_ID;
-
-  if (!isAdmin && ADMIN_USER_ID && text) {
-    try {
-      const notice = [
-        "📩【お客さまからのメッセージ】",
-        "",
-        `ユーザーID：${uid || "(不明)"}`,
-        `本文：${text}`,
-        "",
-        "※このメッセージにはここから返信してください。"
-      ].join("\n");
-
-      await client.pushMessage(ADMIN_USER_ID, {
-        type: "text",
-        text: notice,
-      });
-    } catch (e) {
-      console.error("admin notify error:", e?.response?.data || e);
-    }
-  }
-  // ★ ここまで追加
-
-  // （この下にすでにある「問い合わせ」「会員コード」「久助」などのロジックが続く）
-  // 例：
-  // if (t === "問い合わせ") { ... }
-  // if (t === "会員コード") { ... }
-  // ...
-
+    if (ev.type === "message" && ev.message?.type === "text") {
+      // ログ
       try {
         const rec = {
           ts: new Date().toISOString(),
@@ -2484,7 +2385,32 @@ if (ev.type === "message" && ev.message?.type === "text") {
       const text = (ev.message.text || "").trim();
       const t = text.replace(/\s+/g, " ").trim();
 
-      // ★「問い合わせ」最優先
+      // 管理者への転送通知
+      const isAdmin = ADMIN_USER_ID && uid === ADMIN_USER_ID;
+      if (!isAdmin && ADMIN_USER_ID && t) {
+        const notice = [
+          "📩【お客さまからのメッセージ】",
+          "",
+          `ユーザーID：${uid || "(不明)"}`,
+          `本文：${t}`,
+          "",
+          "※このメッセージには公式アカウントから返信してください。`,
+        ].join("\n");
+
+        try {
+          await client.pushMessage(ADMIN_USER_ID, {
+            type: "text",
+            text: notice,
+          });
+        } catch (e) {
+          console.error(
+            "admin notify error:",
+            e?.response?.data || e
+          );
+        }
+      }
+
+      // 「問い合わせ」
       if (t === "問い合わせ") {
         await client.replyMessage(ev.replyToken, {
           type: "text",
@@ -2496,7 +2422,7 @@ if (ev.type === "message" && ev.message?.type === "text") {
         return;
       }
 
-      // ★「会員コード」と送られたら自分の会員コードを返信
+      // 「会員コード」
       if (t === "会員コード") {
         const userId = ev.source?.userId || "";
         if (!userId) {
@@ -2529,7 +2455,7 @@ if (ev.type === "message" && ev.message?.type === "text") {
         return;
       }
 
-      // ★ 久助テキスト注文
+      // 久助テキスト注文
       const kusukeRe = /^久助(?:\s+(\d+))?$/i;
       const km = kusukeRe.exec(text);
       if (km) {
@@ -2575,7 +2501,7 @@ if (ev.type === "message" && ev.message?.type === "text") {
         return;
       }
 
-      // ★ その他フロー
+      // その他フロー
       if (sess?.await === "otherName") {
         const name = (text || "").slice(0, 50).trim();
         if (!name) {
@@ -2609,13 +2535,14 @@ if (ev.type === "message" && ev.message?.type === "text") {
 
         const temp = sess.temp || {};
         const id = temp.id;
-        const qty = Math.max(1, Math.min(99, Number(temp.qty) || 1));
+        const qty = Math.max(
+          1,
+          Math.min(99, Number(temp.qty) || 1)
+        );
 
-        // セッションはここで終了
         delete sessions[uid];
         writeSessions(sessions);
 
-        // 商品取得
         let product;
         if (String(id).startsWith("other:")) {
           const parts = String(id).split(":");
@@ -2639,12 +2566,17 @@ if (ev.type === "message" && ev.message?.type === "text") {
           return;
         }
 
-        // ★ 店頭受取・現金のみで最終確認画面を表示（お名前付き）
         await client.replyMessage(
           ev.replyToken,
-          confirmFlex(product, qty, "pickup", "", "cash", LIFF_ID, {
-            pickupName: nameText,
-          })
+          confirmFlex(
+            product,
+            qty,
+            "pickup",
+            "",
+            "cash",
+            LIFF_ID,
+            { pickupName: nameText }
+          )
         );
         return;
       }
@@ -2673,12 +2605,13 @@ if (ev.type === "message" && ev.message?.type === "text") {
         return;
       }
 
-      // ★ 管理者コマンド
+      // 管理者コマンド
       if (
         ev.source?.userId &&
         ADMIN_USER_ID &&
         ev.source.userId === ADMIN_USER_ID
       ) {
+        // 在庫一覧
         if (t === "在庫一覧") {
           const items = readProducts()
             .map(
@@ -2693,8 +2626,11 @@ if (ev.type === "message" && ev.message?.type === "text") {
           return;
         }
 
+        // 在庫 コマンド
         if (t.startsWith("在庫 ")) {
           const parts = t.split(" ");
+
+          // 「在庫 久助」
           if (parts.length === 2) {
             const pid = resolveProductId(parts[1]);
             const { product } = findProductById(pid);
@@ -2713,6 +2649,7 @@ if (ev.type === "message" && ev.message?.type === "text") {
             return;
           }
 
+          // 「在庫 設定 久助 50」など
           if (parts.length === 4) {
             const op = parts[1];
             const pid = resolveProductId(parts[2]);
@@ -2796,6 +2733,7 @@ if (ev.type === "message" && ev.message?.type === "text") {
             }
           }
 
+          // 「在庫 久助 +5 / -2」
           if (
             parts.length === 3 &&
             /^[+-]\d+$/.test(parts[2])
@@ -2846,6 +2784,7 @@ if (ev.type === "message" && ev.message?.type === "text") {
           return;
         }
 
+        // 予約連絡***
         if (t.startsWith("予約連絡 ")) {
           const m =
             /^予約連絡\s+(\S+)\s+([\s\S]+)$/.exec(t);
@@ -3037,7 +2976,7 @@ if (ev.type === "message" && ev.message?.type === "text") {
         }
       }
 
-      // ★ 一般ユーザー
+      // 一般ユーザー：直接注文
       if (text === "直接注文") {
         await client.replyMessage(
           ev.replyToken,
@@ -3046,7 +2985,7 @@ if (ev.type === "message" && ev.message?.type === "text") {
         return;
       }
 
-      // 久助は上で処理済み。それ以外のテキストは返信なし。
+      // それ以外のテキストは返信なし
       return;
     }
 
@@ -3078,7 +3017,9 @@ if (ev.type === "message" && ev.message?.type === "text") {
       }
 
       if (d.startsWith("order_pickup_name?")) {
-        const { id, qty } = parse(d.replace("order_pickup_name?", ""));
+        const { id, qty } = parse(
+          d.replace("order_pickup_name?", "")
+        );
         const sessions = readSessions();
         const uid = ev.source?.userId || "";
         sessions[uid] = {
@@ -3185,7 +3126,6 @@ if (ev.type === "message" && ev.message?.type === "text") {
           }
         }
 
-        // ★ 直接注文の住所入力は LIFF_ID_DIRECT_ADDRESS を使用
         await client.replyMessage(
           ev.replyToken,
           confirmFlex(
@@ -3215,7 +3155,7 @@ if (ev.type === "message" && ev.message?.type === "text") {
         let method = parsed.method;
         let region = parsed.region;
         const payment = parsed.payment;
-        const pickupName = (parsed.pickupName || "").trim(); // ★ 追加
+        const pickupName = (parsed.pickupName || "").trim();
 
         const need = Math.max(1, Number(qty) || 1);
 
@@ -3284,7 +3224,7 @@ if (ev.type === "message" && ev.message?.type === "text") {
           method,
           address: addr,
           image: product.image || "",
-          pickupName, // ★ ログにも残す
+          pickupName,
         };
         fs.appendFileSync(ORDERS_LOG, JSON.stringify(order) + "\n", "utf8");
 
@@ -3311,7 +3251,6 @@ if (ev.type === "message" && ev.message?.type === "text") {
           `合計：${yen(total)}`,
         ];
 
-        // ★ ユーザー向けメッセージにも名前を表示
         if (method === "pickup" && pickupName) {
           userLines.push("", `お名前：${pickupName}`);
         }
@@ -3324,7 +3263,7 @@ if (ev.type === "message" && ev.message?.type === "text") {
                   addr.prefecture || ""
                 }${addr.city || ""}${addr.address1 || ""}${
                   addr.address2 ? " " + addr.address2 : ""
-                }\n氏名：${addr.name || ""}\n電話：{
+                }\n氏名：${addr.name || ""}\n電話：${
                   addr.phone || ""
                 }`
               : "住所未登録です。メニューの「住所を入力（LIFF）」から登録してください。"
@@ -3341,7 +3280,6 @@ if (ev.type === "message" && ev.message?.type === "text") {
           text: userLines.join("\n"),
         });
 
-        // ★ 管理者向けメッセージにも名前を追加
         const adminMsg = [
           "🧾 新規注文",
           `ユーザーID：${ev.source?.userId || ""}`,
@@ -3443,6 +3381,8 @@ if (ev.type === "message" && ev.message?.type === "text") {
         } catch {}
         return;
       }
+
+      return;
     }
   } catch (err) {
     console.error(

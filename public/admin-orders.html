@@ -346,6 +346,20 @@
           });
 
           tdNotify.appendChild(btn);
+          // === 明細印字ボタン ===
+const printBtn = document.createElement("button");
+printBtn.type = "button";
+printBtn.textContent = "明細印字";
+printBtn.className = "btn btn-sm btn-secondary";
+printBtn.style.display = "block";
+printBtn.style.marginTop = "4px";
+
+printBtn.addEventListener("click", () => {
+  printOrderDetail(order);
+});
+
+tdNotify.appendChild(printBtn);
+
           tr.appendChild(tdNotify);
 
           tbody.appendChild(tr);
@@ -387,6 +401,71 @@
       }
 
       async function onClickNotifyShipped(order, ctx, btn) {
+        // === 明細 印字用 ===
+function printOrderDetail(order) {
+  const win = window.open("", "_blank");
+  if (!win) {
+    alert("ポップアップがブロックされました。");
+    return;
+  }
+
+  const ts = formatTs(order.ts || order.timestamp);
+
+  const itemsHtml = (order.items || []).map(it => {
+    const name = it.name || it.productName || "商品";
+    const qty = it.qty || it.quantity || 1;
+    const price = Number(it.price || 0);
+    const total = qty * price;
+    return `<tr>
+      <td>${escapeHtml(name)}</td>
+      <td style="text-align:right;">${qty}</td>
+      <td style="text-align:right;">${price.toLocaleString()}円</td>
+      <td style="text-align:right;">${total.toLocaleString()}円</td>
+    </tr>`;
+  }).join("");
+
+  const html = `
+  <html>
+  <head>
+    <title>注文明細</title>
+    <style>
+      body { font-family: sans-serif; padding: 20px; }
+      h2 { text-align: center; }
+      table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+      th, td { border: 1px solid #000; padding: 6px; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h2>注文明細</h2>
+    <div>日時：${escapeHtml(ts)}</div>
+    ${order.orderNumber ? `<div>注文番号：${escapeHtml(order.orderNumber)}</div>` : ""}
+    <table>
+      <tr>
+        <th>商品名</th>
+        <th>数量</th>
+        <th>単価</th>
+        <th>小計</th>
+      </tr>
+      ${itemsHtml || `<tr><td colspan="4">商品なし</td></tr>`}
+    </table>
+    <div style="margin-top:20px; text-align:right;">
+      合計：${Number(order.finalTotal || order.total || 0).toLocaleString()} 円
+    </div>
+
+    <script>
+      window.onload = function () {
+        window.print();
+      };
+    <\/script>
+  </body>
+  </html>
+  `;
+
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+}
+
         const token = (tokenInput.value || "").trim();
         if (!token) {
           setStatus("管理APIトークンを入力してください。", "err");

@@ -116,7 +116,7 @@ const PHONE_ORDER_TEL = "tel:+17479467151"; // +1 747-946-7151
           action: {
             type: "uri",
             label: "ECショップ",
-            uri: ecShopUrl,
+            uri: "https://isoya-shop.com",
           },
         },
 

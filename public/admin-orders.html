@@ -151,7 +151,8 @@
   <div class="card">
     <div style="font-size: 12px; margin-bottom: 4px;">
       ※発送通知ボタンを押すと、その注文のLINEユーザーに「発送しました」メッセージを送信します。<br>
-      ※ボタンを押した行は「通知済み」に変わり、2回目以降は押せません（再読み込みするとリセットされます）。
+      ※ボタンを押した行は「通知済み」に変わり、2回目以降は押せません。<br>
+      ※通知済み情報はサーバーの Disk（notify_state.json）に保存され、再読み込みしても維持されます。
     </div>
   </div>
 
@@ -185,6 +186,9 @@
       const statusEl   = document.getElementById("status");
       const tbody      = document.getElementById("ordersTbody");
 
+      // サーバー側に保存されている「発送済み」情報（orderKey => info）
+      let shippedMap = {};
+
       function setStatus(msg, kind) {
         statusEl.textContent = msg || "";
         statusEl.classList.remove("err", "ok");
@@ -213,8 +217,22 @@
         return `${y}/${m}/${da} ${h}:${mi}`;
       }
 
-      function renderOrders(items) {
+      // 1つの注文に対して一意になるキーを作る
+      function makeOrderKey(order) {
+        const ts = order.ts || order.timestamp || "";
+        const uid = order.userId || order.lineUserId || "";
+        const pid =
+          order.productId ||
+          (Array.isArray(order.items) && order.items[0] && (order.items[0].id || order.items[0].productId)) ||
+          "";
+        const total = Number(order.finalTotal ?? order.total ?? 0) || 0;
+        return [ts, uid, pid, total].join("|");
+      }
+
+      function renderOrders(items, shipped) {
         tbody.innerHTML = "";
+        shipped = shipped || {};
+
         if (!items || items.length === 0) {
           const tr = document.createElement("tr");
           const td = document.createElement("td");
@@ -229,6 +247,7 @@
 
         items.forEach((order, idx) => {
           const tr = document.createElement("tr");
+          const orderKey = makeOrderKey(order);
 
           // 日時
           const tdTs = document.createElement("td");
@@ -332,7 +351,18 @@
           btn.setAttribute("data-user-id", uid);
           btn.setAttribute("data-product-name", (order.productName || (Array.isArray(order.items) && order.items[0]?.name) || ""));
           btn.setAttribute("data-order-number", order.orderNumber || "");
-          btn.setAttribute("data-notified", "0"); // ★ 最初は未通知
+          btn.setAttribute("data-order-key", orderKey);
+
+          // すでに発送済みとして保存されている注文なら disable にする
+          if (shipped[orderKey]) {
+            btn.textContent = "通知済み";
+            btn.disabled = true;
+            btn.classList.remove("btn-primary");
+            btn.classList.add("btn-secondary");
+            btn.setAttribute("data-notified", "1");
+          } else {
+            btn.setAttribute("data-notified", "0");
+          }
 
           btn.addEventListener("click", () => {
             // すでに通知済みなら何もしない
@@ -343,8 +373,13 @@
             const userId = btn.getAttribute("data-user-id") || "";
             const productName = btn.getAttribute("data-product-name") || "";
             const orderNumber = btn.getAttribute("data-order-number") || "";
+            const key = btn.getAttribute("data-order-key") || makeOrderKey(items[idxNum]);
 
-            onClickNotifyShipped(items[idxNum], { userId, productName, orderNumber }, btn);
+            onClickNotifyShipped(
+              items[idxNum],
+              { userId, productName, orderNumber, orderKey: key },
+              btn
+            );
           });
 
           tdNotify.appendChild(btn);
@@ -381,8 +416,25 @@
             return;
           }
           const items = Array.isArray(data.items) ? data.items : [];
+
+          // 発送済み状態も取得
+          let shipped = {};
+          try {
+            const res2 = await fetch(`/api/admin/orders/shipped?token=${encodeURIComponent(token)}`);
+            const data2 = await res2.json().catch(() => ({}));
+            if (res2.ok && data2 && data2.ok && data2.shipped) {
+              shipped = data2.shipped;
+              shippedMap = shipped;
+            } else {
+              shippedMap = {};
+            }
+          } catch (e) {
+            console.error("/api/admin/orders/shipped error:", e);
+            shippedMap = {};
+          }
+
           setStatus(`注文を ${items.length} 件読み込みました。`, "ok");
-          renderOrders(items);
+          renderOrders(items, shippedMap);
         } catch (e) {
           console.error("loadOrders error:", e);
           setStatus("通信エラーで注文を取得できませんでした。", "err");
@@ -399,6 +451,7 @@
         const userId      = ctx.userId      || order.userId || order.lineUserId || "";
         const productName = ctx.productName || order.productName || (Array.isArray(order.items) && order.items[0]?.name) || "";
         const orderNumber = ctx.orderNumber || order.orderNumber || "";
+        const orderKey    = ctx.orderKey    || makeOrderKey(order);
 
         if (!userId) {
           alert("ユーザーIDが不明なため、発送通知を送れません。");
@@ -411,6 +464,8 @@
 
         try {
           setStatus("発送通知を送信中です…", "");
+
+          // ① LINE へ発送通知メッセージ
           const res = await fetch("/api/admin/orders/notify-shipped", {
             method: "POST",
             headers: {
@@ -431,7 +486,37 @@
             return;
           }
 
-          // ★ 通知成功 → ボタンを通知済みに変更
+          // ② 発送済みとして Disk 側に記録
+          try {
+            const res2 = await fetch("/api/admin/orders/mark-shipped", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                orderKey,
+                userId,
+                productName,
+                orderNumber,
+              }),
+            });
+            const data2 = await res2.json().catch(() => ({}));
+            if (res2.ok && data2 && data2.ok) {
+              shippedMap[orderKey] = {
+                ts: new Date().toISOString(),
+                userId,
+                productName,
+                orderNumber,
+              };
+            } else {
+              console.error("mark-shipped error:", data2);
+            }
+          } catch (e) {
+            console.error("mark-shipped error:", e);
+          }
+
+          // フロント側のボタン状態を更新
           btn.textContent = "通知済み";
           btn.disabled = true;
           btn.classList.remove("btn-primary");

@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <title>注文管理（発送通知付き）</title>
+  <title>注文管理（発送通知・納品書印刷付き）</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     body {
@@ -151,8 +151,8 @@
   <div class="card">
     <div style="font-size: 12px; margin-bottom: 4px;">
       ※発送通知ボタンを押すと、その注文のLINEユーザーに「発送しました」メッセージを送信します。<br>
-      ※ボタンを押した行は「通知済み」に変わり、2回目以降は押せません。<br>
-      ※通知済み情報はサーバーの Disk（notify_state.json）に保存され、再読み込みしても維持されます。
+      ※ボタンを押した行は「通知済み」に変わり、2回目以降は押せません（再読み込みするとリセットされます）。<br>
+      ※「納品書印刷」ボタンから、ロゴ入りの納品書をA4で印刷できます。
     </div>
   </div>
 
@@ -186,9 +186,6 @@
       const statusEl   = document.getElementById("status");
       const tbody      = document.getElementById("ordersTbody");
 
-      // サーバー側に保存されている「発送済み」情報（orderKey => info）
-      let shippedMap = {};
-
       function setStatus(msg, kind) {
         statusEl.textContent = msg || "";
         statusEl.classList.remove("err", "ok");
@@ -217,22 +214,38 @@
         return `${y}/${m}/${da} ${h}:${mi}`;
       }
 
-      // 1つの注文に対して一意になるキーを作る
-      function makeOrderKey(order) {
-        const ts = order.ts || order.timestamp || "";
-        const uid = order.userId || order.lineUserId || "";
-        const pid =
-          order.productId ||
-          (Array.isArray(order.items) && order.items[0] && (order.items[0].id || order.items[0].productId)) ||
-          "";
-        const total = Number(order.finalTotal ?? order.total ?? 0) || 0;
-        return [ts, uid, pid, total].join("|");
+      // 金額計算を共通化（管理画面表示 / 納品書で使用）
+      function calcAmounts(order) {
+        const itemsTotal = Number(order.itemsTotal ?? order.subtotal ?? order.total ?? 0);
+        const shipping   = Number(order.shipping ?? 0);
+        const codFee     = Number(order.codFee ?? 0);
+        const finalTotal = Number(order.finalTotal ?? order.total ?? (itemsTotal + shipping + codFee));
+        return { itemsTotal, shipping, codFee, finalTotal };
       }
 
-      function renderOrders(items, shipped) {
-        tbody.innerHTML = "";
-        shipped = shipped || {};
+      // 商品明細を文字列配列に整形（管理画面表示 / 納品書で使用）
+      function buildItemLines(order) {
+        const lines = [];
+        if (Array.isArray(order.items) && order.items.length > 0) {
+          order.items.forEach((it) => {
+            const name  = it.name || it.productName || it.id || "商品";
+            const qty   = it.qty || it.quantity || 1;
+            const price = Number(it.price || 0);
+            const lineTotal = price * qty;
+            lines.push({ name, qty, price, lineTotal });
+          });
+        } else {
+          const name  = order.productName || order.productId || "商品";
+          const qty   = order.qty || 1;
+          const price = Number(order.price || 0);
+          const lineTotal = price * qty;
+          lines.push({ name, qty, price, lineTotal });
+        }
+        return lines;
+      }
 
+      function renderOrders(items) {
+        tbody.innerHTML = "";
         if (!items || items.length === 0) {
           const tr = document.createElement("tr");
           const td = document.createElement("td");
@@ -247,7 +260,6 @@
 
         items.forEach((order, idx) => {
           const tr = document.createElement("tr");
-          const orderKey = makeOrderKey(order);
 
           // 日時
           const tdTs = document.createElement("td");
@@ -266,39 +278,21 @@
 
           // 内容（商品一覧）
           const tdItems = document.createElement("td");
-          let lines = [];
+          const itemLines = buildItemLines(order);
+          const linesStr = itemLines.map((it) => {
+            return `・${it.name} x ${it.qty} = ${it.price.toLocaleString("ja-JP")}円`;
+          });
 
-          // Stripe方式: items 配列
-          if (Array.isArray(order.items) && order.items.length > 0) {
-            order.items.forEach((it) => {
-              const name = it.name || it.productName || it.id || "商品";
-              const qty  = it.qty || it.quantity || 1;
-              const price = Number(it.price || 0);
-              lines.push(`・${name} x ${qty} = ${price.toLocaleString("ja-JP")}円`);
-            });
-          } else {
-            // 単品注文ログ
-            const name = order.productName || order.productId || "商品";
-            const qty  = order.qty || 1;
-            const price = Number(order.price || 0);
-            lines.push(`・${name} x ${qty} = ${price.toLocaleString("ja-JP")}円`);
-          }
-
-          // orderNumber
           if (order.orderNumber) {
-            lines.push(`注文番号：${order.orderNumber}`);
+            linesStr.push(`注文番号：${order.orderNumber}`);
           }
 
-          tdItems.innerHTML = lines.map(escapeHtml).join("<br>");
+          tdItems.innerHTML = linesStr.map(escapeHtml).join("<br>");
           tr.appendChild(tdItems);
 
           // 金額
           const tdAmount = document.createElement("td");
-          const itemsTotal = Number(order.itemsTotal ?? order.subtotal ?? order.total ?? 0);
-          const shipping   = Number(order.shipping ?? 0);
-          const codFee     = Number(order.codFee ?? 0);
-          const finalTotal = Number(order.finalTotal ?? order.total ?? (itemsTotal + shipping + codFee));
-
+          const { itemsTotal, shipping, codFee, finalTotal } = calcAmounts(order);
           tdAmount.innerHTML =
             `商品：${itemsTotal.toLocaleString("ja-JP")}円<br>` +
             `送料：${shipping.toLocaleString("ja-JP")}円<br>` +
@@ -341,8 +335,10 @@
           tdMeta.innerHTML = tags.map((t) => `<div class="badge">${escapeHtml(t)}</div>`).join("<br>");
           tr.appendChild(tdMeta);
 
-          // 発送通知
+          // 発送・印刷
           const tdNotify = document.createElement("td");
+
+          // 発送通知ボタン
           const btn = document.createElement("button");
           btn.type = "button";
           btn.textContent = "発送通知";
@@ -351,40 +347,35 @@
           btn.setAttribute("data-user-id", uid);
           btn.setAttribute("data-product-name", (order.productName || (Array.isArray(order.items) && order.items[0]?.name) || ""));
           btn.setAttribute("data-order-number", order.orderNumber || "");
-          btn.setAttribute("data-order-key", orderKey);
-
-          // すでに発送済みとして保存されている注文なら disable にする
-          if (shipped[orderKey]) {
-            btn.textContent = "通知済み";
-            btn.disabled = true;
-            btn.classList.remove("btn-primary");
-            btn.classList.add("btn-secondary");
-            btn.setAttribute("data-notified", "1");
-          } else {
-            btn.setAttribute("data-notified", "0");
-          }
+          btn.setAttribute("data-notified", "0"); // ★ 最初は未通知
 
           btn.addEventListener("click", () => {
-            // すでに通知済みなら何もしない
-            if (btn.disabled || btn.getAttribute("data-notified") === "1") {
-              return;
-            }
+            if (btn.disabled || btn.getAttribute("data-notified") === "1") return;
             const idxNum = Number(btn.getAttribute("data-idx") || "0");
             const userId = btn.getAttribute("data-user-id") || "";
             const productName = btn.getAttribute("data-product-name") || "";
             const orderNumber = btn.getAttribute("data-order-number") || "";
-            const key = btn.getAttribute("data-order-key") || makeOrderKey(items[idxNum]);
 
-            onClickNotifyShipped(
-              items[idxNum],
-              { userId, productName, orderNumber, orderKey: key },
-              btn
-            );
+            onClickNotifyShipped(items[idxNum], { userId, productName, orderNumber }, btn);
           });
 
           tdNotify.appendChild(btn);
-          tr.appendChild(tdNotify);
 
+          // 納品書印刷ボタン
+          const printBtn = document.createElement("button");
+          printBtn.type = "button";
+          printBtn.textContent = "納品書印刷";
+          printBtn.className = "btn btn-sm btn-secondary";
+          printBtn.style.display = "block";
+          printBtn.style.marginTop = "4px";
+
+          printBtn.addEventListener("click", () => {
+            printInvoice(order);
+          });
+
+          tdNotify.appendChild(printBtn);
+
+          tr.appendChild(tdNotify);
           tbody.appendChild(tr);
         });
       }
@@ -403,7 +394,6 @@
         if (date) {
           url += `&date=${encodeURIComponent(date)}`;
         }
-        // requireAdmin は ?token= も許可している想定
         url += `&token=${encodeURIComponent(token)}`;
 
         try {
@@ -416,25 +406,8 @@
             return;
           }
           const items = Array.isArray(data.items) ? data.items : [];
-
-          // 発送済み状態も取得
-          let shipped = {};
-          try {
-            const res2 = await fetch(`/api/admin/orders/shipped?token=${encodeURIComponent(token)}`);
-            const data2 = await res2.json().catch(() => ({}));
-            if (res2.ok && data2 && data2.ok && data2.shipped) {
-              shipped = data2.shipped;
-              shippedMap = shipped;
-            } else {
-              shippedMap = {};
-            }
-          } catch (e) {
-            console.error("/api/admin/orders/shipped error:", e);
-            shippedMap = {};
-          }
-
           setStatus(`注文を ${items.length} 件読み込みました。`, "ok");
-          renderOrders(items, shippedMap);
+          renderOrders(items);
         } catch (e) {
           console.error("loadOrders error:", e);
           setStatus("通信エラーで注文を取得できませんでした。", "err");
@@ -451,7 +424,6 @@
         const userId      = ctx.userId      || order.userId || order.lineUserId || "";
         const productName = ctx.productName || order.productName || (Array.isArray(order.items) && order.items[0]?.name) || "";
         const orderNumber = ctx.orderNumber || order.orderNumber || "";
-        const orderKey    = ctx.orderKey    || makeOrderKey(order);
 
         if (!userId) {
           alert("ユーザーIDが不明なため、発送通知を送れません。");
@@ -464,8 +436,6 @@
 
         try {
           setStatus("発送通知を送信中です…", "");
-
-          // ① LINE へ発送通知メッセージ
           const res = await fetch("/api/admin/orders/notify-shipped", {
             method: "POST",
             headers: {
@@ -486,37 +456,6 @@
             return;
           }
 
-          // ② 発送済みとして Disk 側に記録
-          try {
-            const res2 = await fetch("/api/admin/orders/mark-shipped", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${token}`,
-              },
-              body: JSON.stringify({
-                orderKey,
-                userId,
-                productName,
-                orderNumber,
-              }),
-            });
-            const data2 = await res2.json().catch(() => ({}));
-            if (res2.ok && data2 && data2.ok) {
-              shippedMap[orderKey] = {
-                ts: new Date().toISOString(),
-                userId,
-                productName,
-                orderNumber,
-              };
-            } else {
-              console.error("mark-shipped error:", data2);
-            }
-          } catch (e) {
-            console.error("mark-shipped error:", e);
-          }
-
-          // フロント側のボタン状態を更新
           btn.textContent = "通知済み";
           btn.disabled = true;
           btn.classList.remove("btn-primary");
@@ -529,6 +468,290 @@
           setStatus("通信エラーにより発送通知を送信できませんでした。", "err");
           alert("通信エラーにより発送通知を送信できませんでした。");
         }
+      }
+
+      // ★ 納品書専用レイアウト（ロゴ付き）印刷
+      function printInvoice(order) {
+        const ts  = formatTs(order.ts || order.timestamp);
+        const no  = order.orderNumber || "";
+        const uid = order.userId || order.lineUserId || "";
+        const uname = order.lineUserName || "";
+
+        const { itemsTotal, shipping, codFee, finalTotal } = calcAmounts(order);
+        const itemLines = buildItemLines(order);
+
+        const a = order.address || {};
+        const postal = a.postal || a.zip || "";
+        const pref   = a.prefecture || a.pref || "";
+        const city   = a.city || "";
+        const addr1  = a.address1 || a.addr1 || "";
+        const addr2  = a.address2 || a.addr2 || "";
+        const name   = (a.lastName || "") + (a.firstName || "") || a.name || "";
+        const tel    = a.tel || a.phone || "";
+
+        let methodText = "";
+        if (order.method === "pickup") {
+          methodText = "店頭受取（送料 0円）";
+        } else if (order.method === "delivery") {
+          methodText = `宅配（${order.region || ""}）`;
+        } else {
+          methodText = order.method || "";
+        }
+
+        let paymentText = "";
+        if (order.payment === "cod") {
+          paymentText = "代金引換";
+        } else if (order.payment === "bank") {
+          paymentText = "銀行振込";
+        } else if (order.payment === "cash") {
+          paymentText = "現金";
+        } else {
+          paymentText = order.payment || "";
+        }
+
+        const win = window.open("", "_blank");
+        if (!win) {
+          alert("ポップアップがブロックされました。ブラウザの設定を確認してください。");
+          return;
+        }
+
+        // ここを書き換えれば店名・住所などを変更できます
+        const shopName = "手造りえびせんべい 磯屋";
+        const shopInfoLines = [
+          "〒000-0000 ○○県○○市○○町0-0-0",
+          "TEL: 000-000-0000",
+          "営業時間: 10:00〜18:00（火曜定休）"
+        ];
+
+        const itemRowsHtml = itemLines.map((it) => {
+          return `
+            <tr>
+              <td>${escapeHtml(it.name)}</td>
+              <td class="num">${it.qty}</td>
+              <td class="num">${it.price.toLocaleString("ja-JP")}円</td>
+              <td class="num">${it.lineTotal.toLocaleString("ja-JP")}円</td>
+            </tr>
+          `;
+        }).join("");
+
+        const invoiceHtml = `
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>納品書</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 15mm;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #333;
+      margin: 0;
+      padding: 0;
+    }
+    .invoice {
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .invoice-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 16px;
+    }
+    .invoice-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .invoice-logo img {
+      height: 40px;
+    }
+    .invoice-logo-text {
+      font-size: 20px;
+      font-weight: bold;
+    }
+    .invoice-shop {
+      text-align: right;
+      font-size: 11px;
+      line-height: 1.6;
+    }
+    .invoice-title {
+      text-align: center;
+      font-size: 18px;
+      font-weight: bold;
+      margin: 12px 0 16px;
+      letter-spacing: 0.2em;
+    }
+    .invoice-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      margin-bottom: 8px;
+    }
+    .invoice-meta div {
+      margin-bottom: 2px;
+    }
+    .address-block {
+      border: 1px solid #000;
+      padding: 8px 10px;
+      font-size: 12px;
+      margin-bottom: 16px;
+    }
+    .address-label {
+      font-size: 11px;
+      margin-bottom: 4px;
+    }
+    .address-main {
+      font-size: 14px;
+      font-weight: bold;
+      margin-bottom: 4px;
+    }
+    .address-sub {
+      font-size: 13px;
+    }
+    .items-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin-bottom: 12px;
+    }
+    .items-table th,
+    .items-table td {
+      border: 1px solid #000;
+      padding: 4px 6px;
+    }
+    .items-table th {
+      background: #f0f0f0;
+    }
+    .items-table .num {
+      text-align: right;
+      white-space: nowrap;
+    }
+    .amounts {
+      width: 50%;
+      margin-left: auto;
+      font-size: 12px;
+      border-collapse: collapse;
+    }
+    .amounts td {
+      padding: 2px 4px;
+    }
+    .amounts .label {
+      text-align: right;
+      width: 50%;
+    }
+    .amounts .value {
+      text-align: right;
+      width: 50%;
+      white-space: nowrap;
+    }
+    .amounts .total {
+      font-weight: bold;
+      border-top: 1px solid #000;
+      padding-top: 4px;
+      margin-top: 4px;
+    }
+    .footer-note {
+      font-size: 11px;
+      margin-top: 18px;
+      border-top: 1px dashed #999;
+      padding-top: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="invoice">
+    <div class="invoice-header">
+      <div class="invoice-logo">
+        <!-- ロゴ画像のパスは環境に合わせて変更してください -->
+        <img src="/public/logo-isoya.png" alt="磯屋ロゴ" onerror="this.style.display='none'">
+        <div class="invoice-logo-text">${escapeHtml(shopName)}</div>
+      </div>
+      <div class="invoice-shop">
+        ${shopInfoLines.map(l => escapeHtml(l)).join("<br>")}
+      </div>
+    </div>
+
+    <div class="invoice-title">納　品　書</div>
+
+    <div class="invoice-meta">
+      <div>
+        <div>ご注文日時：${escapeHtml(ts)}</div>
+        ${no ? `<div>注文番号：${escapeHtml(no)}</div>` : ""}
+      </div>
+      <div style="text-align:right;">
+        <div>お客様ID：${escapeHtml(uid || "(不明)")}</div>
+        ${uname ? `<div>お名前（LINE）：${escapeHtml(uname)}</div>` : ""}
+      </div>
+    </div>
+
+    <div class="address-block">
+      <div class="address-label">お届け先</div>
+      <div class="address-main">
+        ${name ? escapeHtml(name) + " 様" : "（お名前未登録）"}
+      </div>
+      <div class="address-sub">
+        ${postal ? "〒" + escapeHtml(postal) + "<br>" : ""}
+        ${escapeHtml(pref + city + addr1)}${addr2 ? "<br>" + escapeHtml(addr2) : ""}<br>
+        ${tel ? "TEL：" + escapeHtml(tel) : ""}
+      </div>
+    </div>
+
+    <table class="items-table">
+      <thead>
+        <tr>
+          <th>商品名</th>
+          <th style="width:60px;">数量</th>
+          <th style="width:80px;">単価</th>
+          <th style="width:90px;">金額</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${itemRowsHtml || `<tr><td colspan="4" style="text-align:center;">商品情報なし</td></tr>`}
+      </tbody>
+    </table>
+
+    <table class="amounts">
+      <tr>
+        <td class="label">商品合計</td>
+        <td class="value">${itemsTotal.toLocaleString("ja-JP")}円</td>
+      </tr>
+      <tr>
+        <td class="label">送料</td>
+        <td class="value">${shipping.toLocaleString("ja-JP")}円</td>
+      </tr>
+      <tr>
+        <td class="label">代引き手数料</td>
+        <td class="value">${codFee.toLocaleString("ja-JP")}円</td>
+      </tr>
+      <tr>
+        <td class="label total">総合計</td>
+        <td class="value total">${finalTotal.toLocaleString("ja-JP")}円</td>
+      </tr>
+    </table>
+
+    <div class="footer-note">
+      受取方法：${escapeHtml(methodText)}／お支払い：${escapeHtml(paymentText)}<br>
+      本書はお客様控えとして大切に保管してください。
+    </div>
+  </div>
+
+  <script>
+    // 自動で印刷ダイアログを開く
+    window.onload = function () {
+      window.print();
+    };
+  </script>
+</body>
+</html>
+        `;
+
+        win.document.open();
+        win.document.write(invoiceHtml);
+        win.document.close();
       }
 
       loadBtn.addEventListener("click", (e) => {

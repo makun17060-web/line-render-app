@@ -173,7 +173,8 @@
       </tbody>
     </table>
   </div>
-
+</body>
+</html>
   <script>
     (function () {
       "use strict";
@@ -188,15 +189,18 @@
       // ★ 店舗情報（必要に応じて書き換えてください）
       const SHOP_INFO = {
         name: "手造りえびせんべい 磯屋",
-        postal: "〒470-3412",
-        address: "愛知県知多郡南知多町豊浜字清水谷25-5",
-        tel: "TEL: 0569-656-0955",
+        postal: "〒000-0000",
+        address: "愛知県〇〇市〇〇町1-2-3",
+        tel: "TEL: 000-000-0000",
         fax: "",
-        url: "https://isoya-shop.com",
-        note: "いつもご利用ありがとうございます。"
+        url: "https://example.com",
+        note: "下記の通り納品いたしました。ご確認ください。"
       };
       // ★ ロゴ画像パス（public からのパスに合わせて変更）
-      const SHOP_LOGO_SRC = "/public/isoya_logo.png";
+      const SHOP_LOGO_SRC = "/public/logo-isoya.png";
+
+      // ★ 発送通知済みを保持する localStorage キー
+      const NOTIFIED_KEY = "admin_notified_orders_v1";
 
       function setStatus(msg, kind) {
         statusEl.textContent = msg || "";
@@ -224,6 +228,41 @@
         const h = String(d.getHours()).padStart(2, "0");
         const mi = String(d.getMinutes()).padStart(2, "0");
         return `${y}/${m}/${da} ${h}:${mi}`;
+      }
+
+      // ================================
+      // 発送通知済み管理（localStorage）
+      // ================================
+      function getNotifiedMap() {
+        try {
+          const raw = localStorage.getItem(NOTIFIED_KEY);
+          if (!raw) return {};
+          const obj = JSON.parse(raw);
+          return obj && typeof obj === "object" ? obj : {};
+        } catch (e) {
+          console.warn("notified map load error:", e);
+          return {};
+        }
+      }
+
+      function saveNotifiedMap(map) {
+        try {
+          localStorage.setItem(NOTIFIED_KEY, JSON.stringify(map || {}));
+        } catch (e) {
+          console.warn("notified map save error:", e);
+        }
+      }
+
+      function makeOrderKey(order) {
+        return (
+          order.id ||
+          order.orderId ||
+          order.orderID ||
+          order.orderNumber ||
+          `${order.ts || order.timestamp || ""}_${
+            order.userId || order.lineUserId || ""
+          }_${order.finalTotal || order.total || ""}`
+        );
       }
 
       // ================================
@@ -448,8 +487,13 @@
         win.document.close();
       }
 
+      // ================================
+      // 注文一覧描画
+      // ================================
       function renderOrders(items) {
         tbody.innerHTML = "";
+        const notifiedMap = getNotifiedMap();
+
         if (!items || items.length === 0) {
           const tr = document.createElement("tr");
           const td = document.createElement("td");
@@ -464,6 +508,7 @@
 
         items.forEach((order, idx) => {
           const tr = document.createElement("tr");
+          const orderKey = makeOrderKey(order);
 
           // 日時
           const tdTs = document.createElement("td");
@@ -566,6 +611,18 @@
           btn.setAttribute("data-product-name", (order.productName || (Array.isArray(order.items) && order.items[0]?.name) || ""));
           btn.setAttribute("data-order-number", order.orderNumber || "");
           btn.setAttribute("data-notified", "0");
+          if (orderKey) {
+            btn.setAttribute("data-order-key", orderKey);
+          }
+
+          // ★ すでに通知済みならボタンを無効化
+          if (orderKey && notifiedMap[orderKey]) {
+            btn.textContent = "通知済み";
+            btn.disabled = true;
+            btn.classList.remove("btn-primary");
+            btn.classList.add("btn-secondary");
+            btn.setAttribute("data-notified", "1");
+          }
 
           btn.addEventListener("click", () => {
             if (btn.disabled || btn.getAttribute("data-notified") === "1") {
@@ -600,6 +657,9 @@
         });
       }
 
+      // ================================
+      // 注文読み込み
+      // ================================
       async function loadOrders() {
         const token = (tokenInput.value || "").trim();
         if (!token) {
@@ -634,6 +694,9 @@
         }
       }
 
+      // ================================
+      // 発送通知API呼び出し
+      // ================================
       async function onClickNotifyShipped(order, ctx, btn) {
         const token = (tokenInput.value || "").trim();
         if (!token) {
@@ -676,11 +739,20 @@
             return;
           }
 
+          // ボタン見た目を「通知済み」に変更
           btn.textContent = "通知済み";
           btn.disabled = true;
           btn.classList.remove("btn-primary");
           btn.classList.add("btn-secondary");
           btn.setAttribute("data-notified", "1");
+
+          // ★ localStorage にも保存（再読み込みしても無効のまま）
+          const k = btn.getAttribute("data-order-key") || makeOrderKey(order);
+          if (k) {
+            const map = getNotifiedMap();
+            map[k] = true;
+            saveNotifiedMap(map);
+          }
 
           setStatus("発送通知を送信しました。", "ok");
         } catch (e) {
@@ -696,5 +768,3 @@
       });
     })();
   </script>
-</body>
-</html>

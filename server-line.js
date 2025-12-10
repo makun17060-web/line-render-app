@@ -14,6 +14,7 @@
 // + 会員コード発行/参照（4桁数字、LINEと電話共通）
 // + 会員コード→住所取得API（/api/public/address-by-code）
 // + 汎用 Health チェック
+// + 発送通知履歴保存（notify_state.json：shippedOrders）
 
 "use strict";
 
@@ -1520,6 +1521,51 @@ app.get("/api/admin/orders", (req, res) => {
     items = filterByIsoRange(items, (x) => x.ts, range.from, range.to);
   res.json({ ok: true, items });
 });
+
+// ★ 発送済み一覧取得（notify_state.json → shippedOrders）
+// GET /api/admin/orders/shipped
+// 返り値: { ok:true, shipped: { [orderKey]: { ts, userId, productName, orderNumber } } }
+app.get("/api/admin/orders/shipped", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const state = readNotifyState();
+    const shipped = state.shippedOrders || {};
+    res.json({ ok: true, shipped });
+  } catch (e) {
+    console.error("/api/admin/orders/shipped error:", e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+// ★ 発送済みとしてマーク（管理画面から呼び出し）
+// POST /api/admin/orders/mark-shipped
+// body: { orderKey, userId, productName, orderNumber }
+app.post("/api/admin/orders/mark-shipped", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const orderKey = String(req.body?.orderKey || "").trim();
+    if (!orderKey) {
+      return res.status(400).json({ ok: false, error: "orderKey required" });
+    }
+
+    const state = readNotifyState();
+    if (!state.shippedOrders) state.shippedOrders = {};
+
+    state.shippedOrders[orderKey] = {
+      ts: new Date().toISOString(),
+      userId: String(req.body?.userId || "").trim(),
+      productName: String(req.body?.productName || "").trim(),
+      orderNumber: String(req.body?.orderNumber || "").trim(),
+    };
+
+    writeNotifyState(state);
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("/api/admin/orders/mark-shipped error:", e);
+    return res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
 // 注文者への発送通知（管理画面から呼び出し）
 app.post("/api/admin/orders/notify-shipped", async (req, res) => {
   if (!requireAdmin(req, res)) return;

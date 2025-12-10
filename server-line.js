@@ -1520,6 +1520,39 @@ app.get("/api/admin/orders", (req, res) => {
     items = filterByIsoRange(items, (x) => x.ts, range.from, range.to);
   res.json({ ok: true, items });
 });
+// 注文者への発送通知（管理画面から呼び出し）
+app.post("/api/admin/orders/notify-shipped", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const userId      = String(req.body?.userId || "").trim();
+    const orderNumber = String(req.body?.orderNumber || "").trim();
+    const productName = String(req.body?.productName || "").trim();
+    const message     = String(req.body?.message || "").trim();
+
+    if (!userId) {
+      return res.status(400).json({ ok: false, error: "userId required" });
+    }
+
+    // デフォルトメッセージ（必要に応じてカスタマイズOK）
+    const baseMsg = message || [
+      "ご注文いただいた商品を発送いたしました。",
+      productName ? `商品：${productName}` : "",
+      orderNumber ? `注文番号：${orderNumber}` : "",
+      "",
+      "お受け取りまで今しばらくお待ちください。"
+    ].filter(Boolean).join("\n");
+
+    await client.pushMessage(userId, {
+      type: "text",
+      text: baseMsg,
+    });
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("/api/admin/orders/notify-shipped error:", e?.response?.data || e);
+    return res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
 
 app.get("/api/admin/reservations", (req, res) => {
   if (!requireAdmin(req, res)) return;

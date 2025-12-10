@@ -185,6 +185,19 @@
       const statusEl   = document.getElementById("status");
       const tbody      = document.getElementById("ordersTbody");
 
+      // ★ 店舗情報（必要に応じて書き換えてください）
+      const SHOP_INFO = {
+        name: "手造りえびせんべい 磯屋",
+        postal: "〒470-3412",
+        address: "愛知県知多郡南知多町豊浜字清水谷25-5",
+        tel: "TEL: 0569-656-0955",
+        fax: "",
+        url: "https://isoya-shop.com",
+        note: "いつもご利用ありがとうございます。"
+      };
+      // ★ ロゴ画像パス（public からのパスに合わせて変更）
+      const SHOP_LOGO_SRC = "/public/logo-isoya.png";
+
       function setStatus(msg, kind) {
         statusEl.textContent = msg || "";
         statusEl.classList.remove("err", "ok");
@@ -214,7 +227,7 @@
       }
 
       // ================================
-      // 明細 印字用（IIFE内に1回だけ定義）
+      // ロゴ入り 正式納品書レイアウト
       // ================================
       function printOrderDetail(order) {
         if (!order) {
@@ -228,7 +241,16 @@
           return;
         }
 
-        const ts = order.ts || order.timestamp || "";
+        const ts = formatTs(order.ts || order.timestamp || "");
+
+        const a = order.address || {};
+        const zip  = a.postal || a.zip || "";
+        const pref = a.prefecture || a.pref || "";
+        const city = a.city || "";
+        const addr1 = a.address1 || a.addr1 || "";
+        const addr2 = a.address2 || a.addr2 || "";
+        const name = (a.lastName || "") + (a.firstName || "") || a.name || "";
+        const tel  = a.tel || a.phone || "";
 
         const items = Array.isArray(order.items)
           ? order.items
@@ -242,39 +264,151 @@
 
         const itemsHtml = items
           .map((it) => {
-            const name = it.name || "商品";
-            const qty = it.qty || 1;
+            const name = it.name || it.productName || "商品";
+            const qty = it.qty || it.quantity || 1;
             const price = Number(it.price || 0);
             const total = qty * price;
 
             return `
               <tr>
                 <td>${escapeHtml(name)}</td>
-                <td style="text-align:right;">${qty}</td>
-                <td style="text-align:right;">${price.toLocaleString()}円</td>
-                <td style="text-align:right;">${total.toLocaleString()}円</td>
+                <td class="right">${qty}</td>
+                <td class="right">${price.toLocaleString()} 円</td>
+                <td class="right">${total.toLocaleString()} 円</td>
               </tr>
             `;
           })
           .join("");
 
+        const itemsTotal = Number(order.itemsTotal ?? order.subtotal ?? order.total ?? 0);
+        const shipping   = Number(order.shipping ?? 0);
+        const codFee     = Number(order.codFee ?? 0);
+        const finalTotal = Number(order.finalTotal ?? order.total ?? (itemsTotal + shipping + codFee));
+
         const html = `
         <html>
         <head>
-          <title>注文明細</title>
+          <meta charset="UTF-8" />
+          <title>納品書</title>
           <style>
-            body { font-family: sans-serif; padding: 20px; }
-            h2 { text-align: center; margin-bottom: 10px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-            th, td { border: 1px solid #000; padding: 6px; font-size: 12px; }
-            .right { text-align: right; }
+            body {
+              font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+              padding: 24px;
+              font-size: 12px;
+            }
+            .header {
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-start;
+              margin-bottom: 16px;
+            }
+            .logo {
+              max-width: 160px;
+              max-height: 80px;
+            }
+            .shop-info {
+              text-align: right;
+              font-size: 11px;
+              line-height: 1.4;
+            }
+            h1 {
+              text-align: center;
+              margin: 8px 0 16px;
+              font-size: 18px;
+            }
+            .meta {
+              display: flex;
+              justify-content: space-between;
+              margin-bottom: 16px;
+            }
+            .box {
+              border: 1px solid #000;
+              padding: 8px;
+              box-sizing: border-box;
+            }
+            .to {
+              width: 58%;
+            }
+            .info {
+              width: 38%;
+            }
+            .label {
+              font-size: 11px;
+              margin-bottom: 2px;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-top: 12px;
+            }
+            th, td {
+              border: 1px solid #000;
+              padding: 6px;
+              font-size: 12px;
+            }
+            th {
+              background: #f5f5f5;
+            }
+            .right {
+              text-align: right;
+            }
+            .total-area {
+              margin-top: 12px;
+              display: flex;
+              justify-content: flex-end;
+            }
+            .total-box {
+              border: 1px solid #000;
+              padding: 8px 12px;
+              min-width: 220px;
+              font-size: 12px;
+            }
+            .total-box div {
+              display: flex;
+              justify-content: space-between;
+            }
+            .note {
+              margin-top: 16px;
+              font-size: 11px;
+            }
           </style>
         </head>
         <body>
-          <h2>納品書</h2>
+          <div class="header">
+            <div>
+              <img src="${escapeHtml(SHOP_LOGO_SRC)}" alt="logo" class="logo" />
+            </div>
+            <div class="shop-info">
+              <div>${escapeHtml(SHOP_INFO.name)}</div>
+              <div>${escapeHtml(SHOP_INFO.postal)}</div>
+              <div>${escapeHtml(SHOP_INFO.address)}</div>
+              ${SHOP_INFO.tel ? `<div>${escapeHtml(SHOP_INFO.tel)}</div>` : ""}
+              ${SHOP_INFO.fax ? `<div>${escapeHtml(SHOP_INFO.fax)}</div>` : ""}
+              ${SHOP_INFO.url ? `<div>${escapeHtml(SHOP_INFO.url)}</div>` : ""}
+            </div>
+          </div>
 
-          <div>日時：${escapeHtml(ts)}</div>
-          ${order.orderNumber ? `<div>注文番号：${escapeHtml(order.orderNumber)}</div>` : ""}
+          <h1>納　品　書</h1>
+
+          <div class="meta">
+            <div class="box to">
+              <div class="label">納品先</div>
+              ${zip ? `<div>${escapeHtml(zip)}</div>` : ""}
+              <div>${escapeHtml(pref + city + addr1)}</div>
+              ${addr2 ? `<div>${escapeHtml(addr2)}</div>` : ""}
+              ${name ? `<div style="margin-top:4px;">${escapeHtml(name)}　様</div>` : ""}
+              ${tel ? `<div style="margin-top:2px;">TEL：${escapeHtml(tel)}</div>` : ""}
+            </div>
+            <div class="box info">
+              <div class="label">伝票情報</div>
+              <div>発行日：${escapeHtml(ts)}</div>
+              ${order.orderNumber ? `<div>注文番号：${escapeHtml(order.orderNumber)}</div>` : ""}
+            </div>
+          </div>
+
+          <div class="box">
+            ${escapeHtml(SHOP_INFO.note || "下記の通り納品いたしました。ご確認ください。")}
+          </div>
 
           <table>
             <tr>
@@ -283,15 +417,25 @@
               <th>単価</th>
               <th>小計</th>
             </tr>
-            ${itemsHtml}
+            ${itemsHtml || `<tr><td colspan="4">商品情報がありません</td></tr>`}
           </table>
 
-          <div class="right" style="margin-top:20px;">
-            合計：${Number(order.finalTotal || order.total || 0).toLocaleString()} 円
+          <div class="total-area">
+            <div class="total-box">
+              <div><span>商品合計</span><span>${itemsTotal.toLocaleString()} 円</span></div>
+              <div><span>送料</span><span>${shipping.toLocaleString()} 円</span></div>
+              <div><span>代引手数料</span><span>${codFee.toLocaleString()} 円</span></div>
+              <hr>
+              <div><strong>合計金額</strong><strong>${finalTotal.toLocaleString()} 円</strong></div>
+            </div>
+          </div>
+
+          <div class="note">
+            ※本書は納品書です。領収書が必要な場合は別途お申し付けください。
           </div>
 
           <script>
-            window.onload = function () {
+            window.onload = function() {
               window.print();
             };
           <\/script>
@@ -341,7 +485,6 @@
           let lines = [];
 
           if (Array.isArray(order.items) && order.items.length > 0) {
-            // Stripe方式: items 配列
             order.items.forEach((it) => {
               const name  = it.name || it.productName || it.id || "商品";
               const qty   = it.qty || it.quantity || 1;
@@ -349,7 +492,6 @@
               lines.push(`・${name} x ${qty} = ${price.toLocaleString("ja-JP")}円`);
             });
           } else {
-            // 単品注文ログ
             const name  = order.productName || order.productId || "商品";
             const qty   = order.qty || 1;
             const price = Number(order.price || 0);

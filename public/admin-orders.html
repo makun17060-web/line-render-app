@@ -526,6 +526,97 @@ function printOrderDetail(order) {
         loadOrders();
       });
     })();
+    // ================================
+// 明細 印字用（グローバル定義）
+// ================================
+function printOrderDetail(order) {
+  if (!order) {
+    alert("注文データがありません");
+    return;
+  }
+
+  const win = window.open("", "_blank");
+  if (!win) {
+    alert("ポップアップがブロックされました。");
+    return;
+  }
+
+  const ts = order.ts || order.timestamp || "";
+
+  const items = Array.isArray(order.items)
+    ? order.items
+    : [
+        {
+          name: order.productName || "商品",
+          qty: order.qty || 1,
+          price: Number(order.price || 0),
+        },
+      ];
+
+  const itemsHtml = items
+    .map((it) => {
+      const name = it.name || "商品";
+      const qty = it.qty || 1;
+      const price = Number(it.price || 0);
+      const total = qty * price;
+
+      return `
+        <tr>
+          <td>${escapeHtml(name)}</td>
+          <td style="text-align:right;">${qty}</td>
+          <td style="text-align:right;">${price.toLocaleString()}円</td>
+          <td style="text-align:right;">${total.toLocaleString()}円</td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  const html = `
+  <html>
+  <head>
+    <title>注文明細</title>
+    <style>
+      body { font-family: sans-serif; padding: 20px; }
+      h2 { text-align: center; margin-bottom: 10px; }
+      table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+      th, td { border: 1px solid #000; padding: 6px; font-size: 12px; }
+      .right { text-align: right; }
+    </style>
+  </head>
+  <body>
+    <h2>納品書</h2>
+
+    <div>日時：${escapeHtml(ts)}</div>
+    ${order.orderNumber ? `<div>注文番号：${escapeHtml(order.orderNumber)}</div>` : ""}
+
+    <table>
+      <tr>
+        <th>商品名</th>
+        <th>数量</th>
+        <th>単価</th>
+        <th>小計</th>
+      </tr>
+      ${itemsHtml}
+    </table>
+
+    <div class="right" style="margin-top:20px;">
+      合計：${Number(order.finalTotal || order.total || 0).toLocaleString()} 円
+    </div>
+
+    <script>
+      window.onload = function () {
+        window.print();
+      };
+    <\/script>
+  </body>
+  </html>
+  `;
+
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+}
+
   </script>
 </body>
 </html>

@@ -2,214 +2,194 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <title>注文者管理画面</title>
+  <title>注文管理（発送通知付き）</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       margin: 0;
       padding: 16px;
-      background: #f7f7f7;
+      background: #f5f5f5;
       color: #333;
     }
     h1 {
+      margin: 0 0 8px;
       font-size: 20px;
-      margin-bottom: 8px;
-    }
-    p {
-      font-size: 13px;
-      margin: 4px 0 10px;
     }
     .card {
       background: #fff;
-      border-radius: 10px;
+      border-radius: 8px;
       padding: 12px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
       margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
     .row {
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
-      align-items: center;
+      margin-bottom: 8px;
+    }
+    .row > div {
+      flex: 1;
+      min-width: 140px;
     }
     label {
       font-size: 12px;
+      display: block;
+      margin-bottom: 2px;
     }
     input[type="text"],
-    input[type="password"],
     input[type="number"] {
-      padding: 6px 8px;
-      font-size: 13px;
-      border-radius: 6px;
-      border: 1px solid #ccc;
+      width: 100%;
       box-sizing: border-box;
-    }
-    input.token-input {
-      width: 260px;
-      max-width: 100%;
-    }
-    button {
-      padding: 6px 12px;
-      border-radius: 999px;
-      border: none;
+      padding: 6px 8px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
       font-size: 13px;
-      font-weight: 600;
+    }
+    .btn {
+      display: inline-block;
+      padding: 6px 10px;
+      font-size: 13px;
+      border-radius: 4px;
+      border: none;
       cursor: pointer;
     }
     .btn-primary {
-      background: #00b900;
+      background: #1976d2;
       color: #fff;
     }
     .btn-secondary {
-      background: #fff;
+      background: #e0e0e0;
       color: #333;
-      border: 1px solid #ccc;
     }
-    .btn-danger {
-      background: #d7263d;
-      color: #fff;
-    }
-    .status {
+    .btn-sm {
       font-size: 12px;
-      margin-top: 6px;
-      white-space: pre-line;
+      padding: 4px 8px;
     }
-    .status.ok {
-      color: #0a7b19;
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: default;
     }
-    .status.err {
-      color: #d00;
+    #status {
+      font-size: 12px;
+      margin-top: 4px;
+      min-height: 16px;
     }
-
+    #status.err {
+      color: #d32f2f;
+    }
+    #status.ok {
+      color: #2e7d32;
+    }
     table {
       width: 100%;
       border-collapse: collapse;
       font-size: 12px;
-      margin-top: 8px;
-      background: #fff;
-      border-radius: 10px;
-      overflow: hidden;
-    }
-    thead {
-      background: #eee;
     }
     th, td {
-      padding: 6px 8px;
-      border-bottom: 1px solid #eee;
+      border: 1px solid #ddd;
+      padding: 4px 6px;
       vertical-align: top;
     }
     th {
-      text-align: left;
-      white-space: nowrap;
-    }
-    tr:nth-child(even) td {
       background: #fafafa;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    .table-wrap {
+      max-height: 70vh;
+      overflow: auto;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      background: #fff;
+    }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 11px;
     }
     .nowrap {
       white-space: nowrap;
     }
-    .small {
-      font-size: 11px;
-      color: #666;
-    }
-    .tag {
+    .badge {
       display: inline-block;
-      padding: 2px 6px;
-      border-radius: 999px;
+      padding: 1px 4px;
+      border-radius: 3px;
       font-size: 10px;
       background: #eee;
       margin-right: 4px;
     }
-    .tag.method {
-      background: #e3f2fd;
-    }
-    .tag.payment {
-      background: #fff3cd;
-    }
-    .tag.source {
-      background: #e8f5e9;
-    }
-    .btn-sm {
-      font-size: 11px;
-      padding: 4px 8px;
-    }
   </style>
 </head>
 <body>
-  <h1>注文者管理画面</h1>
-  <p>オンライン注文・電話注文のログ（<code>orders.log</code>）を一覧し、注文者に「発送しました」通知を送るための画面です。</p>
+  <h1>注文管理（Stripe / 直接注文 共通）</h1>
 
   <div class="card">
     <div class="row">
       <div>
-        <label>管理APIトークン（ADMIN_API_TOKEN / ADMIN_CODE）</label><br />
-        <input id="tokenInput" class="token-input" type="text" placeholder="例）1234567890abcdef..." />
+        <label>管理APIトークン（ADMIN_API_TOKEN または ADMIN_CODE）</label>
+        <input id="token" type="text" placeholder="例）abcdef123..." />
       </div>
       <div>
-        <label>取得件数</label><br />
-        <input id="limitInput" type="number" min="1" max="5000" value="200" style="width:80px;" />
+        <label>日付（任意・YYYYMMDD）</label>
+        <input id="date" type="text" placeholder="例）20251210" />
       </div>
-      <div style="margin-top: 18px;">
-        <button id="loadBtn" class="btn-primary">注文一覧を読み込む</button>
-        <button id="clearTokenBtn" class="btn-secondary">トークンをクリア</button>
+      <div>
+        <label>最大件数</label>
+        <input id="limit" type="number" value="200" min="1" max="5000" />
       </div>
     </div>
-    <div id="status" class="status"></div>
+    <div class="row">
+      <div>
+        <button id="loadBtn" class="btn btn-primary">注文を読み込む</button>
+      </div>
+    </div>
+    <div id="status"></div>
   </div>
 
-  <div id="tableWrap"></div>
+  <div class="card">
+    <div style="font-size: 12px; margin-bottom: 4px;">
+      ※発送通知ボタンを押すと、その注文のLINEユーザーに「発送しました」メッセージを送信します。<br>
+      ※ボタンを押した行は「通知済み」に変わり、2回目以降は押せません（再読み込みするとリセットされます）。
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table id="ordersTable">
+      <thead>
+        <tr>
+          <th>日時</th>
+          <th>ユーザー</th>
+          <th>内容</th>
+          <th>金額</th>
+          <th>住所</th>
+          <th>受取/支払</th>
+          <th>発送</th>
+        </tr>
+      </thead>
+      <tbody id="ordersTbody">
+        <tr><td colspan="7" style="text-align:center; padding:8px;">注文を読み込んでください</td></tr>
+      </tbody>
+    </table>
+  </div>
 
   <script>
     (function () {
       "use strict";
 
-      const tokenInput      = document.getElementById("tokenInput");
-      const limitInput      = document.getElementById("limitInput");
-      const loadBtn         = document.getElementById("loadBtn");
-      const clearTokenBtn   = document.getElementById("clearTokenBtn");
-      const statusEl        = document.getElementById("status");
-      const tableWrap       = document.getElementById("tableWrap");
+      const tokenInput = document.getElementById("token");
+      const dateInput  = document.getElementById("date");
+      const limitInput = document.getElementById("limit");
+      const loadBtn    = document.getElementById("loadBtn");
+      const statusEl   = document.getElementById("status");
+      const tbody      = document.getElementById("ordersTbody");
 
       function setStatus(msg, kind) {
         statusEl.textContent = msg || "";
-        statusEl.classList.remove("ok", "err");
-        if (kind === "ok")  statusEl.classList.add("ok");
+        statusEl.classList.remove("err", "ok");
         if (kind === "err") statusEl.classList.add("err");
-      }
-
-      function loadToken() {
-        const saved = localStorage.getItem("iso_admin_token") || "";
-        if (saved) tokenInput.value = saved;
-      }
-
-      function saveToken() {
-        const tok = (tokenInput.value || "").trim();
-        if (tok) {
-          localStorage.setItem("iso_admin_token", tok);
-        }
-      }
-
-      function clearToken() {
-        localStorage.removeItem("iso_admin_token");
-        tokenInput.value = "";
-        setStatus("保存していたトークンを削除しました。", "ok");
-      }
-
-      function formatDate(ts) {
-        if (!ts) return "";
-        try {
-          const d = new Date(ts);
-          if (!isFinite(d.getTime())) return ts;
-          const y = d.getFullYear();
-          const m = String(d.getMonth() + 1).padStart(2, "0");
-          const day = String(d.getDate()).padStart(2, "0");
-          const hh = String(d.getHours()).padStart(2, "0");
-          const mm = String(d.getMinutes()).padStart(2, "0");
-          return `${y}/${m}/${day} ${hh}:${mm}`;
-        } catch {
-          return ts;
-        }
+        if (kind === "ok")  statusEl.classList.add("ok");
       }
 
       function escapeHtml(str) {
@@ -221,142 +201,195 @@
           .replace(/'/g, "&#39;");
       }
 
-      function buildTable(items) {
+      function formatTs(ts) {
+        if (!ts) return "";
+        const d = new Date(ts);
+        if (isNaN(d.getTime())) return ts;
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const da = String(d.getDate()).padStart(2, "0");
+        const h = String(d.getHours()).padStart(2, "0");
+        const mi = String(d.getMinutes()).padStart(2, "0");
+        return `${y}/${m}/${da} ${h}:${mi}`;
+      }
+
+      function renderOrders(items) {
+        tbody.innerHTML = "";
         if (!items || items.length === 0) {
-          tableWrap.innerHTML = "<p>注文データが見つかりませんでした。</p>";
+          const tr = document.createElement("tr");
+          const td = document.createElement("td");
+          td.colSpan = 7;
+          td.style.textAlign = "center";
+          td.style.padding = "8px";
+          td.textContent = "該当する注文はありません。";
+          tr.appendChild(td);
+          tbody.appendChild(tr);
           return;
         }
 
-        let html = "";
-        html += "<table>";
-        html += "<thead><tr>";
-        html += "<th class='nowrap'>日時</th>";
-        html += "<th class='nowrap'>ユーザーID</th>";
-        html += "<th>注文内容</th>";
-        html += "<th class='nowrap'>合計</th>";
-        html += "<th class='nowrap'>区分</th>";
-        html += "<th>住所情報</th>";
-        html += "<th class='nowrap'>操作</th>";
-        html += "</tr></thead><tbody>";
+        items.forEach((order, idx) => {
+          const tr = document.createElement("tr");
 
-        items.forEach((it, idx) => {
-          const ts     = formatDate(it.ts || "");
-          const userId = it.userId || it.lineUserId || "";
+          // 日時
+          const tdTs = document.createElement("td");
+          tdTs.className = "nowrap";
+          tdTs.textContent = formatTs(order.ts || order.timestamp);
+          tr.appendChild(tdTs);
 
-          // 支払方法・受取方法・ソース
-          const method  = it.method  || "";
-          const payment = it.payment || (it.codFee ? "cod" : (it.source === "liff-stripe" ? "card" : ""));
-          const source  = it.source  || (it.items ? "stripe" : "direct");
+          // ユーザー
+          const tdUser = document.createElement("td");
+          const uid = order.userId || order.lineUserId || "";
+          const uname = order.lineUserName || "";
+          tdUser.innerHTML =
+            `<div class="mono">${escapeHtml(uid || "(不明)")}</div>` +
+            (uname ? `<div>${escapeHtml(uname)}</div>` : "");
+          tr.appendChild(tdUser);
 
-          // 注文内容
-          let summary = "";
-          if (Array.isArray(it.items) && it.items.length > 0) {
-            summary = it.items.map(x => `${x.name || x.id || "商品"} x${x.qty || 1}`).join(" / ");
+          // 内容（商品一覧）
+          const tdItems = document.createElement("td");
+          let lines = [];
+
+          // Stripe方式: items 配列
+          if (Array.isArray(order.items) && order.items.length > 0) {
+            order.items.forEach((it) => {
+              const name = it.name || it.productName || it.id || "商品";
+              const qty  = it.qty || it.quantity || 1;
+              const price = Number(it.price || 0);
+              lines.push(`・${name} x ${qty} = ${price.toLocaleString("ja-JP")}円`);
+            });
           } else {
-            const name = it.productName || it.productId || "商品";
-            const qty  = it.qty || 1;
-            summary = `${name} x${qty}`;
+            // 単品注文ログ
+            const name = order.productName || order.productId || "商品";
+            const qty  = order.qty || 1;
+            const price = Number(order.price || 0);
+            lines.push(`・${name} x ${qty} = ${price.toLocaleString("ja-JP")}円`);
           }
 
-          // 合計金額
-          const total = it.finalTotal ?? it.total ?? it.subtotal ?? 0;
-          const shipping = it.shipping ?? 0;
-          const codFee   = it.codFee ?? 0;
+          // orderNumber
+          if (order.orderNumber) {
+            lines.push(`注文番号：${order.orderNumber}`);
+          }
+
+          tdItems.innerHTML = lines.map(escapeHtml).join("<br>");
+          tr.appendChild(tdItems);
+
+          // 金額
+          const tdAmount = document.createElement("td");
+          const itemsTotal = Number(order.itemsTotal ?? order.subtotal ?? order.total ?? 0);
+          const shipping   = Number(order.shipping ?? 0);
+          const codFee     = Number(order.codFee ?? 0);
+          const finalTotal = Number(order.finalTotal ?? order.total ?? (itemsTotal + shipping + codFee));
+
+          tdAmount.innerHTML =
+            `商品：${itemsTotal.toLocaleString("ja-JP")}円<br>` +
+            `送料：${shipping.toLocaleString("ja-JP")}円<br>` +
+            `代引：${codFee.toLocaleString("ja-JP")}円<br>` +
+            `<strong>合計：${finalTotal.toLocaleString("ja-JP")}円</strong>`;
+          tr.appendChild(tdAmount);
 
           // 住所
-          const addr = it.address || {};
-          const name = addr.name || ((addr.lastName || "") + (addr.firstName || ""));
-          const tel  = addr.tel || addr.phone || "";
-          const zip  = addr.zip || addr.postal || "";
-          const fullAddr =
-            (addr.prefecture || addr.pref || "") +
-            (addr.city || "") +
-            (addr.addr1 || addr.address1 || "") +
-            (addr.addr2 ? " " + addr.addr2 : addr.address2 ? " " + addr.address2 : "");
+          const tdAddr = document.createElement("td");
+          const a = order.address || {};
+          if (a && (a.postal || a.zip || a.prefecture || a.pref || a.address1 || a.addr1)) {
+            const zip = a.postal || a.zip || "";
+            const pref = a.prefecture || a.pref || "";
+            const city = a.city || "";
+            const addr1 = a.address1 || a.addr1 || "";
+            const addr2 = a.address2 || a.addr2 || "";
+            const name = (a.lastName || "") + (a.firstName || "") || a.name || "";
+            const tel  = a.tel || a.phone || "";
 
-          const productName = (it.productName || (Array.isArray(it.items) && it.items[0]?.name) || "");
-          const orderNumber = it.orderNumber || "";
+            tdAddr.innerHTML =
+              `${escapeHtml(zip)}<br>` +
+              `${escapeHtml(pref + city + addr1)}<br>` +
+              (addr2 ? `${escapeHtml(addr2)}<br>` : "") +
+              (name ? `氏名：${escapeHtml(name)}<br>` : "") +
+              (tel ? `TEL：${escapeHtml(tel)}` : "");
+          } else {
+            tdAddr.textContent = "（住所情報なし）";
+          }
+          tr.appendChild(tdAddr);
 
-          html += "<tr>";
-          html += `<td class="nowrap small">${escapeHtml(ts)}</td>`;
-          html += `<td class="small">${escapeHtml(userId)}</td>`;
-          html += `<td class="small">${escapeHtml(summary)}</td>`;
-          html += `<td class="nowrap small">商品:${(it.itemsTotal ?? it.subtotal ?? 0).toLocaleString("ja-JP")}円<br>送料:${shipping.toLocaleString("ja-JP")}円<br>代引:${codFee.toLocaleString("ja-JP")}円<br><strong>合計:${total.toLocaleString("ja-JP")}円</strong></td>`;
-          html += `<td class="small">
-                     <span class="tag method">${escapeHtml(method || "-")}</span><br>
-                     <span class="tag payment">${escapeHtml(payment || "-")}</span><br>
-                     <span class="tag source">${escapeHtml(source)}</span>
-                   </td>`;
-          html += `<td class="small">
-                     氏名：${escapeHtml(name || "-")}<br>
-                     TEL：${escapeHtml(tel || "-")}<br>
-                     〒${escapeHtml(zip || "-")}<br>
-                     ${escapeHtml(fullAddr || "-")}
-                   </td>`;
-          html += `<td class="nowrap">
-                     <button
-                       class="btn-sm btn-primary"
-                       data-idx="${idx}"
-                       data-user-id="${escapeHtml(userId)}"
-                       data-product-name="${escapeHtml(productName)}"
-                       data-order-number="${escapeHtml(orderNumber)}"
-                     >発送通知</button>
-                   </td>`;
-          html += "</tr>";
-        });
+          // 受取/支払
+          const tdMeta = document.createElement("td");
+          const method  = order.method || "";
+          const payment = order.payment || "";
+          const region  = order.region || "";
+          const tags = [];
+          if (method) tags.push(`受取：${method}${region ? "（" + region + "）" : ""}`);
+          if (payment) tags.push(`支払：${payment}`);
+          if (order.source) tags.push(`src：${order.source}`);
+          tdMeta.innerHTML = tags.map((t) => `<div class="badge">${escapeHtml(t)}</div>`).join("<br>");
+          tr.appendChild(tdMeta);
 
-        html += "</tbody></table>";
-        tableWrap.innerHTML = html;
+          // 発送通知
+          const tdNotify = document.createElement("td");
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.textContent = "発送通知";
+          btn.className = "btn btn-sm btn-primary";
+          btn.setAttribute("data-idx", String(idx));
+          btn.setAttribute("data-user-id", uid);
+          btn.setAttribute("data-product-name", (order.productName || (Array.isArray(order.items) && order.items[0]?.name) || ""));
+          btn.setAttribute("data-order-number", order.orderNumber || "");
+          btn.setAttribute("data-notified", "0"); // ★ 最初は未通知
 
-        // ボタンイベント
-        tableWrap.querySelectorAll("button[data-user-id]").forEach(btn => {
           btn.addEventListener("click", () => {
-            const idx         = Number(btn.getAttribute("data-idx") || "0");
-            const userId      = btn.getAttribute("data-user-id") || "";
+            // すでに通知済みなら何もしない
+            if (btn.disabled || btn.getAttribute("data-notified") === "1") {
+              return;
+            }
+            const idxNum = Number(btn.getAttribute("data-idx") || "0");
+            const userId = btn.getAttribute("data-user-id") || "";
             const productName = btn.getAttribute("data-product-name") || "";
             const orderNumber = btn.getAttribute("data-order-number") || "";
-            onClickNotifyShipped(items[idx], { userId, productName, orderNumber });
+
+            onClickNotifyShipped(items[idxNum], { userId, productName, orderNumber }, btn);
           });
+
+          tdNotify.appendChild(btn);
+          tr.appendChild(tdNotify);
+
+          tbody.appendChild(tr);
         });
       }
 
-      async function fetchOrders() {
+      async function loadOrders() {
         const token = (tokenInput.value || "").trim();
-        const limit = Math.min(5000, Math.max(1, Number(limitInput.value) || 200));
-
         if (!token) {
           setStatus("管理APIトークンを入力してください。", "err");
           return;
         }
 
-        saveToken();
-        setStatus("注文一覧を取得中です…", "");
+        const date = (dateInput.value || "").trim();
+        const limit = Number(limitInput.value || 200) || 200;
+
+        let url = `/api/admin/orders?limit=${encodeURIComponent(limit)}`;
+        if (date) {
+          url += `&date=${encodeURIComponent(date)}`;
+        }
+        // requireAdmin は ?token= も許可している想定
+        url += `&token=${encodeURIComponent(token)}`;
 
         try {
-          const res = await fetch(`/api/admin/orders?limit=${encodeURIComponent(limit)}`, {
-            headers: {
-              "Authorization": `Bearer ${token}`,
-            },
-          });
-          const data = await res.json();
+          setStatus("読み込み中です…", "");
+          const res = await fetch(url);
+          const data = await res.json().catch(() => ({}));
           if (!res.ok || !data.ok) {
             console.error("/api/admin/orders error:", data);
-            setStatus("注文一覧の取得に失敗しました。トークンや権限を確認してください。", "err");
-            tableWrap.innerHTML = "";
+            setStatus("注文の取得に失敗しました。トークンやURLを確認してください。", "err");
             return;
           }
-
           const items = Array.isArray(data.items) ? data.items : [];
-          setStatus(`注文データを ${items.length} 件読み込みました。`, "ok");
-          buildTable(items);
+          setStatus(`注文を ${items.length} 件読み込みました。`, "ok");
+          renderOrders(items);
         } catch (e) {
-          console.error("fetchOrders error:", e);
-          setStatus("通信エラーが発生しました。ネットワークをご確認ください。", "err");
-          tableWrap.innerHTML = "";
+          console.error("loadOrders error:", e);
+          setStatus("通信エラーで注文を取得できませんでした。", "err");
         }
       }
 
-      async function onClickNotifyShipped(order, ctx) {
+      async function onClickNotifyShipped(order, ctx, btn) {
         const token = (tokenInput.value || "").trim();
         if (!token) {
           setStatus("管理APIトークンを入力してください。", "err");
@@ -390,13 +423,21 @@
               orderNumber,
             }),
           });
-          const data = await res.json();
+          const data = await res.json().catch(() => ({}));
           if (!res.ok || !data.ok) {
             console.error("notify-shipped error:", data);
             setStatus("発送通知の送信に失敗しました。", "err");
             alert("発送通知の送信に失敗しました。");
             return;
           }
+
+          // ★ 通知成功 → ボタンを通知済みに変更
+          btn.textContent = "通知済み";
+          btn.disabled = true;
+          btn.classList.remove("btn-primary");
+          btn.classList.add("btn-secondary");
+          btn.setAttribute("data-notified", "1");
+
           setStatus("発送通知を送信しました。", "ok");
         } catch (e) {
           console.error("notify-shipped error:", e);
@@ -405,18 +446,9 @@
         }
       }
 
-      document.addEventListener("DOMContentLoaded", () => {
-        loadToken();
-        loadBtn.addEventListener("click", fetchOrders);
-        clearTokenBtn.addEventListener("click", clearToken);
-
-        // Enterキーで読み込み
-        tokenInput.addEventListener("keydown", (ev) => {
-          if (ev.key === "Enter") {
-            ev.preventDefault();
-            fetchOrders();
-          }
-        });
+      loadBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        loadOrders();
       });
     })();
   </script>

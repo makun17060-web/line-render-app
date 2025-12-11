@@ -405,18 +405,7 @@ function filterByIsoRange(items, getTs, fromIso, toIso) {
   });
 }
 
-// ====== 配送料 & 代引き ======
-const SHIPPING_BY_REGION = {
-  北海道: 1560,
-  東北: 1070,
-  関東: 960,
-  中部: 960,
-  近畿: 960,
-  中国: 1070,
-  四国: 1180,
-  九州: 1190,
-  沖縄: 1840,
-};
+
 // ====== 配送料 & 代引き ======
 // ★ 通常サイズ用（今まで通り）
 const SHIPPING_BY_REGION = {

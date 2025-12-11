@@ -232,7 +232,7 @@
             <th>内容</th>
             <th>金額</th>
             <th>住所</th>
-            <th>発送通知</th>
+            <th>発送通知 / 明細印字</th>
           </tr>
         </thead>
         <tbody id="ordersTbody">
@@ -242,6 +242,7 @@
     </div>
     <div class="info">
       ・「発送通知」ボタンは1回押すと「通知済み」になり、再読み込みしても有効です（同じブラウザでのみ有効）。<br/>
+      ・「明細印字」ボタンで1件ずつ A4 縦の簡易納品書（印刷ダイアログ）が開きます。<br/>
       ・複数PCで管理する場合は、サーバー側に発送済みフラグを保存するAPIも用意すると安全です。
     </div>
   </div>
@@ -306,6 +307,9 @@
       const segmentResultEl = document.getElementById("segmentResult");
       const segmentMessageEl = document.getElementById("segmentMessage");
       const segmentSendBtn = document.getElementById("segmentSendBtn");
+
+      // 共通：金額フォーマット
+      const yen = (n) => Number(n || 0).toLocaleString("ja-JP") + "円";
 
       // ===== localStorage helpers =====
       function loadAdminToken() {
@@ -381,19 +385,14 @@
       }
 
       function orderItemsText(o) {
-        if (Array.isArray(o.items) && o.items.length > 0) {
-          return o.items
-            .map((it) => `・${it.name || it.id || "商品"} x ${it.qty || 0}`)
-            .join("\n");
-        }
-        if (o.productName || o.productId) {
-          return `・${o.productName || o.productId} x ${o.qty || 1}`;
-        }
-        return "（内容不明）";
+        const items = buildItemsArray(o);
+        if (!items.length) return "（内容不明）";
+        return items
+          .map((it) => `・${it.name} x ${it.qty}`)
+          .join("\n");
       }
 
       function orderTotalText(o) {
-        const yen = (n) => Number(n || 0).toLocaleString("ja-JP") + "円";
         const itemsTotal = o.itemsTotal ?? o.subtotal ?? o.total ?? 0;
         const shipping = o.shipping ?? 0;
         const codFee = o.codFee ?? 0;
@@ -423,6 +422,251 @@
         ]
           .filter(Boolean)
           .join("\n");
+      }
+
+      // 明細印字用：アイテム配列を統一的に作る
+      function buildItemsArray(o) {
+        if (Array.isArray(o.items) && o.items.length > 0) {
+          return o.items.map((it) => ({
+            name: it.name || it.id || "商品",
+            unitPrice: Number(it.price || 0),
+            qty: Number(it.qty || 0) || 0,
+          }));
+        }
+        if (o.productName || o.productId) {
+          return [
+            {
+              name: o.productName || o.productId,
+              unitPrice: Number(o.price || o.unitPrice || 0),
+              qty: Number(o.qty || 1),
+            },
+          ];
+        }
+        return [];
+      }
+
+      // HTMLエスケープ
+      function escapeHtml(str) {
+        return String(str || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      // ===== 明細印字 =====
+      function printOrderDetail(o) {
+        const w = window.open("", "_blank");
+        if (!w) {
+          alert("ポップアップがブロックされました。ブラウザの設定を確認してください。");
+          return;
+        }
+
+        const items = buildItemsArray(o);
+        const itemsTotal = o.itemsTotal ?? o.subtotal ?? o.total ?? 0;
+        const shipping = o.shipping ?? 0;
+        const codFee = o.codFee ?? 0;
+        const finalTotal = o.finalTotal ?? (Number(itemsTotal) + Number(shipping) + Number(codFee));
+
+        const a = o.address || o.addr || {};
+        const name = a.name || (a.lastName || "") + (a.firstName || "");
+        const tel = a.phone || a.tel || "";
+        const zip = a.postal || a.zip || "";
+        const line1 = (a.prefecture || a.pref || "") + (a.city || "") + (a.address1 || a.addr1 || "");
+        const line2 = a.address2 || a.addr2 || "";
+
+        const payment = o.payment || "";
+        const method = o.method || "";
+        const region = o.region || "";
+
+        const paymentText =
+          payment === "cod"
+            ? "代金引換"
+            : payment === "bank"
+            ? "銀行振込"
+            : payment === "cash"
+            ? "現金"
+            : payment || "";
+
+        const methodText =
+          method === "pickup"
+            ? "店頭受取"
+            : method === "delivery"
+            ? (region ? `宅配（${region}）` : "宅配")
+            : method || "";
+
+        const orderTs = formatYmd(o.ts);
+        const orderNo = o.orderNumber || "";
+
+        const itemRows = items.length
+          ? items
+              .map((it) => {
+                const lineTotal = it.unitPrice * it.qty;
+                return `
+              <tr>
+                <td>${escapeHtml(it.name)}</td>
+                <td class="num">${it.unitPrice ? yen(it.unitPrice) : ""}</td>
+                <td class="num">${it.qty}</td>
+                <td class="num">${lineTotal ? yen(lineTotal) : ""}</td>
+              </tr>`;
+              })
+              .join("")
+          : `
+            <tr>
+              <td colspan="4" style="text-align:center;">商品情報がありません</td>
+            </tr>`;
+
+        const shippingRow =
+          shipping || codFee
+            ? `
+            <tr>
+              <td colspan="3" class="label">送料・手数料</td>
+              <td class="num">
+                ${shipping ? "送料 " + yen(shipping) : ""}
+                ${codFee ? "<br>代引手数料 " + yen(codFee) : ""}
+              </td>
+            </tr>`
+            : "";
+
+        const html = `
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<title>注文明細書 - 手造りえびせんべい 磯屋</title>
+<style>
+  body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 20px;
+    color: #333;
+  }
+  h1 {
+    font-size: 20px;
+    margin: 0 0 8px;
+  }
+  .shop-name {
+    font-size: 14px;
+    margin-bottom: 16px;
+  }
+  .header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 16px;
+    font-size: 12px;
+  }
+  .order-info, .customer-info {
+    width: 48%;
+  }
+  .section-title {
+    font-weight: 600;
+    border-bottom: 1px solid #000;
+    margin-bottom: 4px;
+    padding-bottom: 2px;
+    font-size: 13px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    margin-top: 8px;
+  }
+  th, td {
+    border: 1px solid #000;
+    padding: 4px 6px;
+  }
+  th {
+    background: #f5f5f5;
+  }
+  td.num {
+    text-align: right;
+  }
+  td.label {
+    text-align: right;
+    font-weight: 600;
+  }
+  .totals {
+    margin-top: 10px;
+    width: 50%;
+    margin-left: auto;
+  }
+  .note {
+    margin-top: 16px;
+    font-size: 11px;
+  }
+
+  @media print {
+    body {
+      margin: 10mm;
+    }
+  }
+</style>
+</head>
+<body>
+  <h1>注文明細書</h1>
+  <div class="shop-name">手造りえびせんべい 磯屋</div>
+
+  <div class="header-row">
+    <div class="order-info">
+      <div class="section-title">注文情報</div>
+      <div>注文日時：${escapeHtml(orderTs)}</div>
+      <div>注文番号：${escapeHtml(orderNo)}</div>
+      <div>受取方法：${escapeHtml(methodText)}</div>
+      <div>お支払い方法：${escapeHtml(paymentText)}</div>
+    </div>
+    <div class="customer-info">
+      <div class="section-title">お客様情報</div>
+      <div>${zip ? "〒" + escapeHtml(zip) : ""}</div>
+      <div>${escapeHtml(line1)}</div>
+      <div>${escapeHtml(line2)}</div>
+      <div>${name ? "氏名：" + escapeHtml(name) : ""}</div>
+      <div>${tel ? "TEL：" + escapeHtml(tel) : ""}</div>
+    </div>
+  </div>
+
+  <div class="section-title">ご注文内容</div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:50%;">商品名</th>
+        <th style="width:15%;">単価</th>
+        <th style="width:10%;">数量</th>
+        <th style="width:25%;">金額</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${itemRows}
+    </tbody>
+  </table>
+
+  <table class="totals">
+    <tbody>
+      <tr>
+        <td class="label">商品合計</td>
+        <td class="num">${yen(itemsTotal)}</td>
+      </tr>
+      ${shippingRow}
+      <tr>
+        <td class="label">お支払合計</td>
+        <td class="num">${yen(finalTotal)}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    ※この明細書はお客様へのお渡し用、またはお店での控えとしてご利用ください。
+  </div>
+</body>
+</html>`;
+
+        const doc = w.document;
+        doc.open();
+        doc.write(html);
+        doc.close();
+        w.focus();
+        // 自動で印刷ダイアログを開く（不要ならコメントアウト）
+        w.print();
       }
 
       async function loadOrders() {
@@ -486,7 +730,8 @@
           // ユーザー
           const tdUser = document.createElement("td");
           const uid = o.userId || o.lineUserId || "";
-          const name = (o.address && (o.address.name || ((o.address.lastName || "") + (o.address.firstName || "")))) || "";
+          const addrObj = o.address || o.addr || {};
+          const name = addrObj.name || (addrObj.lastName || "") + (addrObj.firstName || "");
           tdUser.innerHTML =
             (name ? `<div>${escapeHtml(name)}</div>` : "") +
             (uid ? `<div class="mono muted">${escapeHtml(uid)}</div>` : "");
@@ -510,8 +755,21 @@
           tdAddr.textContent = orderAddressText(o);
           tr.appendChild(tdAddr);
 
-          // 発送通知
+          // 発送通知 / 明細印字
           const tdNotify = document.createElement("td");
+
+          // 明細印字ボタン
+          const printBtn = document.createElement("button");
+          printBtn.className = "btn btn-secondary";
+          printBtn.textContent = "明細印字";
+          printBtn.style.display = "block";
+          printBtn.style.marginBottom = "4px";
+          printBtn.addEventListener("click", () => {
+            printOrderDetail(o);
+          });
+          tdNotify.appendChild(printBtn);
+
+          // 発送通知ボタン
           const btn = document.createElement("button");
           btn.className = "btn btn-primary";
           btn.textContent = state && state.status === "ok" ? "通知済み" : "発送通知を送る";
@@ -587,24 +845,16 @@
           });
 
           tdNotify.appendChild(btn);
+
           const keyDiv = document.createElement("div");
           keyDiv.className = "mono muted small";
           keyDiv.textContent = key;
           tdNotify.appendChild(keyDiv);
+
           tr.appendChild(tdNotify);
 
           ordersTbody.appendChild(tr);
         });
-      }
-
-      // HTMLエスケープ
-      function escapeHtml(str) {
-        return String(str || "")
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;")
-          .replace(/'/g, "&#39;");
       }
 
       // ===== セグメント配信ロジック =====
@@ -615,7 +865,6 @@
         const body = { type };
         if (date) body.date = date;
 
-        // typeごとにAPIパラメータを合わせる
         let badgeClass = "badge";
         let badgeLabel = "";
         if (type === "orders") {

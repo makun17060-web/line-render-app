@@ -421,7 +421,6 @@ const SHIPPING_BY_REGION = {
 };
 
 // ★ ヤマト運輸 宅急便 100サイズ（中部発）の税込料金
-//   出典：ヤマト運輸「宅急便運賃一覧表：全国一覧（現金でのお支払い）」中部ブロックの100サイズ行:contentReference[oaicite:1]{index=1}
 const SHIPPING_BY_REGION_100 = {
   北海道: 2200,
   東北: 1790, // 北東北(1790) / 南東北(1650) のうち高い方
@@ -433,6 +432,27 @@ const SHIPPING_BY_REGION_100 = {
   九州: 1790,
   沖縄: 2710,
 };
+
+// ★ ヤマト運輸 宅急便 120サイズ（中部発）の税込料金
+//   例：公式表(2023.10)の120サイズ行から、エリアをまとめたもの
+//   北海道, 北東北/南東北, 関東/信越/中部/北陸, 関西, 中国, 四国, 九州, 沖縄
+const SHIPPING_BY_REGION_120 = {
+  北海道: 1480,
+  東北: 1150,
+  関東: 1050,
+  中部: 1050,
+  近畿: 1150,
+  中国: 1260,
+  四国: 1260,
+  九州: 1480,
+  沖縄: 3030,
+};
+
+// ★「磯屋オリジナルセット」の product.id をここに入れる
+//   例：products.json の id が "original-set" なら "original-set" に変更してください
+const ORIGINAL_SET_PRODUCT_ID = "original-set-2000";
+
+const COD_FEE = 330;
 
 // ★「磯屋オリジナルセット」の product.id をここに入れる
 //   例：products.json の id が "original-set" なら "original-set" に変更してください
@@ -1977,6 +1997,9 @@ function detectRegionFromAddress(address = {}) {
 function calcShippingFee(region, size) {
   if (!region) return 0;
 
+  if (size === "120") {
+    return SHIPPING_BY_REGION_120[region] || 0;
+  }
   if (size === "100") {
     return SHIPPING_BY_REGION_100[region] || 0;
   }
@@ -1995,8 +2018,9 @@ app.post("/api/shipping", (req, res) => {
       0
     );
 
-    // ★「磯屋オリジナルセット」が 2個以上入っていたら 100サイズ判定
-    const isOriginalSet100 = items.some((it) => {
+    // ★ 「磯屋オリジナルセット」が何個入っているか合計
+    let originalSetQty = 0;
+    for (const it of items) {
       const id = String(it.id || "").trim();
       const name = String(it.name || "").trim();
       const qty = Number(it.qty) || 0;
@@ -2004,11 +2028,23 @@ app.post("/api/shipping", (req, res) => {
       const matchId = id === ORIGINAL_SET_PRODUCT_ID;
       const matchName = /磯屋.?オリジナルセ/.test(name); // 名前での保険
 
-      return qty >= 2 && (matchId || matchName);
-    });
+      if (matchId || matchName) {
+        originalSetQty += qty;
+      }
+    }
+
+    // ★ サイズ判定
+    //   2個 → 100サイズ
+    //   3〜4個 → 120サイズ
+    //   それ以外 → 通常サイズ（"normal"）
+    let size = "normal";
+    if (originalSetQty >= 3 && originalSetQty <= 4) {
+      size = "120";
+    } else if (originalSetQty >= 2) {
+      size = "100";
+    }
 
     const region = detectRegionFromAddress(address);
-    const size = isOriginalSet100 ? "100" : "normal";
     const shipping = calcShippingFee(region, size);
     const finalTotal = itemsTotal + shipping;
 

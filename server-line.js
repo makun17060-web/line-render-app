@@ -417,6 +417,20 @@ const SHIPPING_BY_REGION = {
   九州: 1190,
   沖縄: 1840,
 };
+// ====== 配送料 & 代引き ======
+const SHIPPING_BY_REGION = {
+  北海道: 1560,
+  東北: 1070,
+  関東: 960,
+  中部: 960,
+  近畿: 960,
+  中国: 1070,
+  四国: 1180,
+  九州: 1190,
+  沖縄: 1840,
+};
+const COD_FEE = 330;
+
 const COD_FEE = 330;
 
 // ====== LINE client ======
@@ -1926,73 +1940,69 @@ app.get("/api/products", (req, res) => {
     res.status(500).json({ ok: false, error: "server_error" });
   }
 });
-
 // ====== ミニアプリ用：送料計算 API ======
 // 受け取り例:
 // {
-//   items: [{ id, price, qty }],
+//   items: [{ id, name, price, qty }],
 //   address: { zip, prefecture, addr1 }
 // }
-// 返す例: { ok:true, itemsTotal, shipping, finalTotal }
+// 返す例: { ok:true, itemsTotal, shipping, finalTotal, size }
 
 function detectRegionFromAddress(address = {}) {
-  const pref = String(
-    address.prefecture || address.pref || ""
-  ).trim();
-  const addr1 = String(
-    address.addr1 || address.address1 || ""
-  ).trim();
+  const pref = String(address.prefecture || address.pref || "").trim();
+  const addr1 = String(address.addr1 || address.address1 || "").trim();
   const hay = pref || addr1;
 
   if (/北海道/.test(hay)) return "北海道";
   if (/(青森|岩手|宮城|秋田|山形|福島|東北)/.test(hay)) return "東北";
-  if (
-    /(茨城|栃木|群馬|埼玉|千葉|東京|神奈川|山梨|関東)/.test(
-      hay
-    )
-  )
-    return "関東";
-  if (
-    /(新潟|富山|石川|福井|長野|岐阜|静岡|愛知|三重|中部)/.test(
-      hay
-    )
-  )
-    return "中部";
-  if (
-    /(滋賀|京都|大阪|兵庫|奈良|和歌山|近畿)/.test(
-      hay
-    )
-  )
-    return "近畿";
+  if (/(茨城|栃木|群馬|埼玉|千葉|東京|神奈川|山梨|関東)/.test(hay)) return "関東";
+  if (/(新潟|富山|石川|福井|長野|岐阜|静岡|愛知|三重|中部)/.test(hay)) return "中部";
+  if (/(滋賀|京都|大阪|兵庫|奈良|和歌山|近畿|関西)/.test(hay)) return "近畿";
   if (/(鳥取|島根|岡山|広島|山口|中国)/.test(hay)) return "中国";
   if (/(徳島|香川|愛媛|高知|四国)/.test(hay)) return "四国";
-  if (
-    /(福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|九州)/.test(
-      hay
-    )
-  )
-    return "九州";
+  if (/(福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|九州)/.test(hay)) return "九州";
   if (/(沖縄)/.test(hay)) return "沖縄";
 
   return "";
 }
 
+// region と サイズから送料テーブルを選ぶヘルパー
+function calcShippingFee(region, size) {
+  if (!region) return 0;
+
+  if (size === "100") {
+    return SHIPPING_BY_REGION_100[region] || 0;
+  }
+  // それ以外は従来のテーブル（通常サイズ）を使用
+  return SHIPPING_BY_REGION[region] || 0;
+}
+
 app.post("/api/shipping", (req, res) => {
   try {
-    const items = Array.isArray(req.body?.items)
-      ? req.body.items
-      : [];
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
     const address = req.body?.address || {};
 
     const itemsTotal = items.reduce(
       (sum, it) =>
-        sum +
-        (Number(it.price) || 0) * (Number(it.qty) || 0),
+        sum + (Number(it.price) || 0) * (Number(it.qty) || 0),
       0
     );
 
+    // ★「磯屋オリジナルセット」が 2個以上入っていたら 100サイズ判定
+    const isOriginalSet100 = items.some((it) => {
+      const id = String(it.id || "").trim();
+      const name = String(it.name || "").trim();
+      const qty = Number(it.qty) || 0;
+
+      const matchId = id === ORIGINAL_SET_PRODUCT_ID;
+      const matchName = /磯屋.?オリジナルセ/.test(name); // 名前での保険
+
+      return qty >= 2 && (matchId || matchName);
+    });
+
     const region = detectRegionFromAddress(address);
-    const shipping = region ? SHIPPING_BY_REGION[region] || 0 : 0;
+    const size = isOriginalSet100 ? "100" : "normal";
+    const shipping = calcShippingFee(region, size);
     const finalTotal = itemsTotal + shipping;
 
     res.json({
@@ -2001,6 +2011,7 @@ app.post("/api/shipping", (req, res) => {
       region,
       shipping,
       finalTotal,
+      size, // どのサイズで計算したかも返しておくとデバッグしやすい
     });
   } catch (e) {
     res.status(400).json({

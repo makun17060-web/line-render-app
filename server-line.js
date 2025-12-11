@@ -418,6 +418,7 @@ const SHIPPING_BY_REGION = {
   沖縄: 1840,
 };
 // ====== 配送料 & 代引き ======
+// ★ 通常サイズ用（今まで通り）
 const SHIPPING_BY_REGION = {
   北海道: 1560,
   東北: 1070,
@@ -429,7 +430,24 @@ const SHIPPING_BY_REGION = {
   九州: 1190,
   沖縄: 1840,
 };
-const COD_FEE = 330;
+
+// ★ ヤマト運輸 宅急便 100サイズ（中部発）の税込料金
+//   出典：ヤマト運輸「宅急便運賃一覧表：全国一覧（現金でのお支払い）」中部ブロックの100サイズ行:contentReference[oaicite:1]{index=1}
+const SHIPPING_BY_REGION_100 = {
+  北海道: 2200,
+  東北: 1790, // 北東北(1790) / 南東北(1650) のうち高い方
+  関東: 1530,
+  中部: 1530,
+  近畿: 1530,
+  中国: 1650,
+  四国: 1650,
+  九州: 1790,
+  沖縄: 2710,
+};
+
+// ★「磯屋オリジナルセット」の product.id をここに入れる
+//   例：products.json の id が "original-set" なら "original-set" に変更してください
+const ORIGINAL_SET_PRODUCT_ID = "original-set-2000";
 
 const COD_FEE = 330;
 

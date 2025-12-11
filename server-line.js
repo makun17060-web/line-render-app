@@ -448,11 +448,6 @@ const SHIPPING_BY_REGION_120 = {
   沖縄: 3030,
 };
 
-// ★「磯屋オリジナルセット」の product.id をここに入れる
-//   例：products.json の id が "original-set" なら "original-set" に変更してください
-const ORIGINAL_SET_PRODUCT_ID = "original-set-2000";
-
-const COD_FEE = 330;
 
 // ★「磯屋オリジナルセット」の product.id をここに入れる
 //   例：products.json の id が "original-set" なら "original-set" に変更してください

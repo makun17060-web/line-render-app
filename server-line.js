@@ -420,40 +420,40 @@ const SHIPPING_BY_REGION = {
   沖縄: 1840,
 };
 
-// ★ ヤマト運輸 宅急便 100サイズ（中部発）の税込料金
+// ★ ヤマト運輸 宅急便 100サイズ（中部発・キャッシュレス）の税込料金
+//   地帯：北海道 / 北東北 / 南東北 / 関東 / 信越 / 北陸 / 中部 / 関西 / 中国 / 四国 / 九州 / 沖縄
+//   → 当サーバでは 東北 = 北東北 の金額、近畿 = 関西 を採用しています
 const SHIPPING_BY_REGION_100 = {
-  北海道: 2200,
-  東北: 1790, // 北東北(1790) / 南東北(1650) のうち高い方
-  関東: 1530,
-  中部: 1530,
-  近畿: 1530,
-  中国: 1650,
-  四国: 1650,
-  九州: 1790,
-  沖縄: 2710,
+  北海道: 2200, // 中部→北海道
+  東北: 1782,   // 中部→北東北（青森・秋田・岩手）
+  関東: 1529,   // 中部→関東
+  中部: 1529,   // 中部→中部
+  近畿: 1529,   // 中部→関西
+  中国: 1650,   // 中部→中国
+  四国: 1650,   // 中部→四国
+  九州: 1782,   // 中部→九州
+  沖縄: 2706,   // 中部→沖縄
 };
 
-// ★ ヤマト運輸 宅急便 120サイズ（中部発）の税込料金
-//   例：公式表(2023.10)の120サイズ行から、エリアをまとめたもの
-//   北海道, 北東北/南東北, 関東/信越/中部/北陸, 関西, 中国, 四国, 九州, 沖縄
+// ★ ヤマト運輸 宅急便 120サイズ（中部発・キャッシュレス）の税込料金
 const SHIPPING_BY_REGION_120 = {
-  北海道: 1480,
-  東北: 1150,
-  関東: 1050,
-  中部: 1050,
-  近畿: 1150,
-  中国: 1260,
-  四国: 1260,
-  九州: 1480,
-  沖縄: 3030,
+  北海道: 2772, // 中部→北海道
+  東北: 2310,   // 中部→北東北
+  関東: 2035,   // 中部→関東
+  中部: 2035,   // 中部→中部
+  近畿: 2035,   // 中部→関西
+  中国: 2167,   // 中部→中国
+  四国: 2167,   // 中部→四国
+  九州: 2310,   // 中部→九州
+  沖縄: 3355,   // 中部→沖縄
 };
-
 
 // ★「磯屋オリジナルセット」の product.id をここに入れる
 //   例：products.json の id が "original-set" なら "original-set" に変更してください
 const ORIGINAL_SET_PRODUCT_ID = "original-set-2000";
 
 const COD_FEE = 330;
+
 
 // ====== LINE client ======
 const client = new line.Client(config);
@@ -1992,11 +1992,11 @@ function detectRegionFromAddress(address = {}) {
 function calcShippingFee(region, size) {
   if (!region) return 0;
 
-  if (size === "120") {
-    return SHIPPING_BY_REGION_120[region] || 0;
-  }
   if (size === "100") {
     return SHIPPING_BY_REGION_100[region] || 0;
+  }
+  if (size === "120") {
+    return SHIPPING_BY_REGION_120[region] || 0;
   }
   // それ以外は従来のテーブル（通常サイズ）を使用
   return SHIPPING_BY_REGION[region] || 0;
@@ -2013,7 +2013,7 @@ app.post("/api/shipping", (req, res) => {
       0
     );
 
-    // ★ 「磯屋オリジナルセット」が何個入っているか合計
+    // ★ 磯屋オリジナルセットの合計個数をカウント
     let originalSetQty = 0;
     for (const it of items) {
       const id = String(it.id || "").trim();
@@ -2028,12 +2028,11 @@ app.post("/api/shipping", (req, res) => {
       }
     }
 
-    // ★ サイズ判定
+    // ★ 個数でサイズ判定
     //   2個 → 100サイズ
-    //   3〜4個 → 120サイズ
-    //   それ以外 → 通常サイズ（"normal"）
+    //   3個以上 → 120サイズ
     let size = "normal";
-    if (originalSetQty >= 3 && originalSetQty <= 4) {
+    if (originalSetQty >= 3) {
       size = "120";
     } else if (originalSetQty >= 2) {
       size = "100";
@@ -2049,7 +2048,7 @@ app.post("/api/shipping", (req, res) => {
       region,
       shipping,
       finalTotal,
-      size, // どのサイズで計算したかも返しておくとデバッグしやすい
+      size, // どのサイズで計算したか。デバッグ用
     });
   } catch (e) {
     res.status(400).json({

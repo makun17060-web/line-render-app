@@ -406,54 +406,196 @@ function filterByIsoRange(items, getTs, fromIso, toIso) {
 }
 
 
-// ====== 配送料 & 代引き ======
-// ★ 通常サイズ用（今まで通り）
-const SHIPPING_BY_REGION = {
-  北海道: 1560,
-  東北: 1070,
-  関東: 960,
-  中部: 960,
-  近畿: 960,
-  中国: 1070,
-  四国: 1180,
-  九州: 1190,
-  沖縄: 1840,
+// ====== ヤマト送料（中部発・税込） & サイズ自動判定 ======
+// 運賃表（2025/10/1〜・現金決済）から転記：中部発 → 各地域（列）
+// ※「東北」は 北東北/南東北 の高い方でまとめています
+// ※「中部」は 信越/北陸/中部 の高い方でまとめ（同額なので実質同じ）
+const YAMATO_CHUBU_TAXED = {
+  "60": {
+    北海道: 1610,
+    東北: 1190,     // 北東北1190 / 南東北1060 → 高い方
+    関東: 940,
+    中部: 940,      // 信越940 / 北陸940 / 中部940
+    近畿: 940,      // 関西940
+    中国: 1060,
+    四国: 1060,
+    九州: 1190,
+    沖縄: 1460,
+  },
+  "80": {
+    北海道: 1900,
+    東北: 1480,     // 北東北1480 / 南東北1350 → 高い方
+    関東: 1230,
+    中部: 1230,     // 信越1230 / 北陸1230 / 中部1230
+    近畿: 1230,     // 関西1230
+    中国: 1350,
+    四国: 1350,
+    九州: 1480,
+    沖縄: 2070,
+  },
+  "100": {
+    北海道: 2200,
+    東北: 1790,     // 北東北1790 / 南東北1650 → 高い方
+    関東: 1530,
+    中部: 1530,     // 信越1530 / 北陸1530 / 中部1530
+    近畿: 1530,     // 関西1530
+    中国: 1650,
+    四国: 1650,
+    九州: 1790,
+    沖縄: 2710,
+  },
+  "120": {
+    北海道: 2780,
+    東北: 2310,     // 北東北2310 / 南東北2170 → 高い方
+    関東: 2040,
+    中部: 2040,     // 信越2040 / 北陸2040 / 中部2040
+    近畿: 2040,     // 関西2040
+    中国: 2170,
+    四国: 2170,
+    九州: 2310,
+    沖縄: 3360,
+  },
+  "140": {
+    北海道: 3440,
+    東北: 2930,     // 北東北2930 / 南東北2780 → 高い方
+    関東: 2630,
+    中部: 2630,     // 信越2630 / 北陸2630 / 中部2630
+    近畿: 2630,     // 関西2630
+    中国: 2780,
+    四国: 2780,
+    九州: 2930,
+    沖縄: 4030,
+  },
+  "160": {
+    北海道: 3820,
+    東北: 3320,     // 北東北3320 / 南東北3160 → 高い方
+    関東: 3020,
+    中部: 3020,     // 信越3020 / 北陸3020 / 中部3020
+    近畿: 3020,     // 関西3020
+    中国: 3160,
+    四国: 3160,
+    九州: 3320,
+    沖縄: 4680,
+  },
 };
 
-// ★ ヤマト運輸 宅急便 100サイズ（中部発・キャッシュレス）の税込料金
-//   地帯：北海道 / 北東北 / 南東北 / 関東 / 信越 / 北陸 / 中部 / 関西 / 中国 / 四国 / 九州 / 沖縄
-//   → 当サーバでは 東北 = 北東北 の金額、近畿 = 関西 を採用しています
-const SHIPPING_BY_REGION_100 = {
-  北海道: 2200, // 中部→北海道
-  東北: 1782,   // 中部→北東北（青森・秋田・岩手）
-  関東: 1529,   // 中部→関東
-  中部: 1529,   // 中部→中部
-  近畿: 1529,   // 中部→関西
-  中国: 1650,   // 中部→中国
-  四国: 1650,   // 中部→四国
-  九州: 1782,   // 中部→九州
-  沖縄: 2706,   // 中部→沖縄
-};
-
-// ★ ヤマト運輸 宅急便 120サイズ（中部発・キャッシュレス）の税込料金
-const SHIPPING_BY_REGION_120 = {
-  北海道: 2772, // 中部→北海道
-  東北: 2310,   // 中部→北東北
-  関東: 2035,   // 中部→関東
-  中部: 2035,   // 中部→中部
-  近畿: 2035,   // 中部→関西
-  中国: 2167,   // 中部→中国
-  四国: 2167,   // 中部→四国
-  九州: 2310,   // 中部→九州
-  沖縄: 3355,   // 中部→沖縄
-};
-
-// ★「磯屋オリジナルセット」の product.id をここに入れる
-//   例：products.json の id が "original-set" なら "original-set" に変更してください
+// ★「磯屋オリジナルセット」の product.id（あなたの products.json に合わせてください）
 const ORIGINAL_SET_PRODUCT_ID = "original-set-2000";
 
-const COD_FEE = 330;
+// 住所→地域（あなたの既存分類：北海道/東北/関東/中部/近畿/中国/四国/九州/沖縄）
+function detectRegionFromAddress(address = {}) {
+  const pref = String(address.prefecture || address.pref || "").trim();
+  const addr1 = String(address.addr1 || address.address1 || "").trim();
+  const hay = pref || addr1;
 
+  if (/北海道/.test(hay)) return "北海道";
+  if (/(青森|岩手|宮城|秋田|山形|福島|東北)/.test(hay)) return "東北";
+  if (/(茨城|栃木|群馬|埼玉|千葉|東京|神奈川|山梨|関東)/.test(hay)) return "関東";
+
+  // 信越/北陸/東海をまとめて「中部」扱い（あなたの従来ロジック踏襲）
+  if (/(新潟|富山|石川|福井|長野|岐阜|静岡|愛知|三重|中部)/.test(hay)) return "中部";
+
+  if (/(滋賀|京都|大阪|兵庫|奈良|和歌山|近畿|関西)/.test(hay)) return "近畿";
+  if (/(鳥取|島根|岡山|広島|山口|中国)/.test(hay)) return "中国";
+  if (/(徳島|香川|愛媛|高知|四国)/.test(hay)) return "四国";
+  if (/(福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|九州)/.test(hay)) return "九州";
+  if (/(沖縄)/.test(hay)) return "沖縄";
+  return "";
+}
+
+// ---- サイズ自動判定 ----
+// 要件：オリジナルセット
+// 1個=80 / 2個=100 / 3-4個=120 / 5-6個=140 / それ以上=160
+function sizeFromOriginalSetQty(qty) {
+  const q = Number(qty) || 0;
+  if (q <= 0) return null;
+  if (q === 1) return "80";
+  if (q === 2) return "100";
+  if (q <= 4) return "120";
+  if (q <= 6) return "140";
+  return "160";
+}
+
+// 他商品が混ざったとき用：ざっくり保守的に「個数」で大きめを選ぶ（必要なら後で商品別に改善可能）
+function sizeFromTotalQty(totalQty) {
+  const q = Number(totalQty) || 0;
+  if (q <= 1) return "60";
+  if (q === 2) return "80";
+  if (q === 3) return "100";
+  if (q <= 4) return "120";
+  if (q <= 6) return "140";
+  return "160";
+}
+
+// サイズ比較（60<80<100<120<140<160）
+const SIZE_ORDER = ["60", "80", "100", "120", "140", "160"];
+function maxSize(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return SIZE_ORDER.indexOf(a) >= SIZE_ORDER.indexOf(b) ? a : b;
+}
+
+function calcYamatoShipping(region, size) {
+  if (!region) return 0;
+  const table = YAMATO_CHUBU_TAXED[String(size)] || null;
+  if (!table) return 0;
+  return Number(table[region] || 0);
+}
+
+// ====== ミニアプリ用：送料計算 API（60/80/100/120/140/160 自動） ======
+// 受け取り例:
+// {
+//   items: [{ id, name, price, qty }],
+//   address: { prefecture, address1, ... }
+// }
+app.post("/api/shipping", (req, res) => {
+  try {
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    const address = req.body?.address || {};
+
+    const itemsTotal = items.reduce(
+      (sum, it) => sum + (Number(it.price) || 0) * (Number(it.qty) || 0),
+      0
+    );
+
+    // 合計個数
+    const totalQty = items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
+
+    // オリジナルセット個数
+    const originalQty = items.reduce((s, it) => {
+      const id = String(it.id || "").trim();
+      const name = String(it.name || "").trim();
+      const qty = Number(it.qty) || 0;
+
+      const matchId = id === ORIGINAL_SET_PRODUCT_ID;
+      const matchName = /磯屋.?オリジナルセ/.test(name); // 保険
+
+      return s + (matchId || matchName ? qty : 0);
+    }, 0);
+
+    // サイズ決定：オリジナルセット規則 vs 全体個数規則 の「大きい方」を採用（混載でも安全側）
+    const sizeA = sizeFromOriginalSetQty(originalQty); // null のことあり
+    const sizeB = sizeFromTotalQty(totalQty);
+    const size = maxSize(sizeA, sizeB);
+
+    const region = detectRegionFromAddress(address);
+    const shipping = calcYamatoShipping(region, size);
+    const finalTotal = itemsTotal + shipping;
+
+    res.json({
+      ok: true,
+      itemsTotal,
+      region,
+      size,
+      shipping,
+      finalTotal,
+      debug: { totalQty, originalQty, sizeA, sizeB },
+    });
+  } catch (e) {
+    console.error("/api/shipping error:", e);
+    res.status(400).json({ ok: false, error: e.message || "shipping_error" });
+  }
+});
 
 // ====== LINE client ======
 const client = new line.Client(config);
@@ -1987,76 +2129,6 @@ function detectRegionFromAddress(address = {}) {
 
   return "";
 }
-
-// region と サイズから送料テーブルを選ぶヘルパー
-function calcShippingFee(region, size) {
-  if (!region) return 0;
-
-  if (size === "100") {
-    return SHIPPING_BY_REGION_100[region] || 0;
-  }
-  if (size === "120") {
-    return SHIPPING_BY_REGION_120[region] || 0;
-  }
-  // それ以外は従来のテーブル（通常サイズ）を使用
-  return SHIPPING_BY_REGION[region] || 0;
-}
-
-app.post("/api/shipping", (req, res) => {
-  try {
-    const items = Array.isArray(req.body?.items) ? req.body.items : [];
-    const address = req.body?.address || {};
-
-    const itemsTotal = items.reduce(
-      (sum, it) =>
-        sum + (Number(it.price) || 0) * (Number(it.qty) || 0),
-      0
-    );
-
-    // ★ 磯屋オリジナルセットの合計個数をカウント
-    let originalSetQty = 0;
-    for (const it of items) {
-      const id = String(it.id || "").trim();
-      const name = String(it.name || "").trim();
-      const qty = Number(it.qty) || 0;
-
-      const matchId = id === ORIGINAL_SET_PRODUCT_ID;
-      const matchName = /磯屋.?オリジナルセ/.test(name); // 名前での保険
-
-      if (matchId || matchName) {
-        originalSetQty += qty;
-      }
-    }
-
-    // ★ 個数でサイズ判定
-    //   2個 → 100サイズ
-    //   3個以上 → 120サイズ
-    let size = "normal";
-    if (originalSetQty >= 3) {
-      size = "120";
-    } else if (originalSetQty >= 2) {
-      size = "100";
-    }
-
-    const region = detectRegionFromAddress(address);
-    const shipping = calcShippingFee(region, size);
-    const finalTotal = itemsTotal + shipping;
-
-    res.json({
-      ok: true,
-      itemsTotal,
-      region,
-      shipping,
-      finalTotal,
-      size, // どのサイズで計算したか。デバッグ用
-    });
-  } catch (e) {
-    res.status(400).json({
-      ok: false,
-      error: e.message || "shipping_error",
-    });
-  }
-});
 
 // ====== 予約者一括連絡（旧スタイル） ======
 app.post("/api/admin/reservations/notify", async (req, res) => {

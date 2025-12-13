@@ -1424,23 +1424,35 @@ app.post("/api/admin/products/update", (req, res) => {
     return res.status(500).json({ ok: false, error: "update_error" });
   }
 });
-
+// 在庫ログ一覧
 app.get("/api/admin/stock/logs", (req, res) => {
   if (!requireAdmin(req, res)) return;
   const limit = Math.min(10000, Number(req.query.limit || 200));
   const items = readLogLines(STOCK_LOG, limit);
-  res.json({ ok: true, items });
+  return res.json({ ok: true, items });
 });
 
 app.post("/api/admin/stock/set", (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
-    const pid = resolveProductId((req.body?.productId || "").trim());
+    const pid = resolveProductId(String(req.body?.productId || "").trim());
     const qty = Number(req.body?.qty);
     const r = setStock(pid, qty, "api");
-    res.json({ ok: true, productId: pid, ...r });
+    return res.json({ ok: true, productId: pid, ...r });
   } catch (e) {
-    res.status(400).json({ ok: false, error: String(e.message || e) });
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+app.post("/api/admin/stock/add", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const pid = resolveProductId(String(req.body?.productId || "").trim());
+    const delta = Number(req.body?.delta);
+    const r = addStock(pid, delta, "api");
+    return res.json({ ok: true, productId: pid, ...r });
+  } catch (e) {
+    return res.status(400).json({ ok: false, error: String(e?.message || e) });
   }
 });
 

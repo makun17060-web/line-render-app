@@ -1,4 +1,4 @@
-// server.js — フル機能版（Stripe + ミニアプリ + 画像管理）【修正版・丸ごと】
+// server-line.js — フル機能版（Stripe + ミニアプリ + 画像管理）【修正版・丸ごと】
 // + Flex配信
 // + 「その他＝価格入力なし」
 // + 久助専用テキスト購入フロー
@@ -11,13 +11,12 @@
 // + LIFF 住所保存/取得 API（/api/liff/address, /api/liff/address/me, /api/liff/config）
 // + Stripe決済 /api/pay-stripe（Checkout Session）
 // + 決済完了通知 /api/order/complete（★ 管理者 & 注文者 両方へ通知）
-// + 会員コード発行/参照（4桁数字、LINEと電話共通）
+// + 会員コード発行/参照（4桁数字）
+// + 住所コード発行/参照（4桁数字）
 // + 会員コード→住所取得API（/api/public/address-by-code）
 // + 汎用 Health チェック
 // + 発送通知履歴保存（notify_state.json：shippedOrders）
-// ★ 修正点：
-//   - 送料の重複関数/旧SHIPPING_BY_REGION依存を撤去
-//   - 直接注文（LINEチャット）側も「住所→地域判定 + サイズ自動判定 + ヤマト表」で送料自動計算
+// + ★電話サーバー通知受け口（/api/phone/hook）→ phone-addresses.json に保存（オンラインと別DISK前提）
 
 "use strict";
 
@@ -30,7 +29,7 @@ const line = require("@line/bot-sdk");
 const multer = require("multer");
 const stripeLib = require("stripe");
 
-// ★ STRIPE_SECRET_KEY があれば優先、なければ STRIPE_SECRET を使う
+// ===== Stripe =====
 const stripeSecretKey = (
   process.env.STRIPE_SECRET_KEY ||
   process.env.STRIPE_SECRET ||
@@ -38,7 +37,6 @@ const stripeSecretKey = (
 ).trim();
 
 const stripe = stripeSecretKey ? stripeLib(stripeSecretKey) : null;
-
 if (!stripe) {
   console.warn(
     "⚠️ STRIPE_SECRET_KEY / STRIPE_SECRET が設定されていません。/api/pay-stripe はエラーになります。"
@@ -50,7 +48,6 @@ const app = express();
 // ====== 環境変数 ======
 const PORT = process.env.PORT || 3000;
 const LIFF_ID = (process.env.LIFF_ID || "2008406620-4QJ06JLv").trim();
-// ★ 直接注文の住所入力専用 LIFF（未設定なら LIFF_ID を流用）
 const LIFF_ID_DIRECT_ADDRESS = (process.env.LIFF_ID_DIRECT_ADDRESS || LIFF_ID).trim();
 
 const ADMIN_USER_ID = (process.env.ADMIN_USER_ID || "").trim();
@@ -62,17 +59,17 @@ const MULTICAST_USER_IDS = (process.env.MULTICAST_USER_IDS || "")
 const ADMIN_API_TOKEN_ENV = (process.env.ADMIN_API_TOKEN || "").trim(); // 推奨
 const ADMIN_CODE_ENV = (process.env.ADMIN_CODE || "").trim(); // 互換（クエリ ?code= でも可）
 
-// ★ 銀行振込案内（任意）
 const BANK_INFO = (process.env.BANK_INFO || "").trim();
 const BANK_NOTE = (process.env.BANK_NOTE || "").trim();
 
-// ★ 公開URL（Renderのhttpsドメインを .env で指定推奨）
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "")
   .trim()
   .replace(/\/+$/, "");
 
-// ★ 代引き手数料（必要なら .env で上書き）
 const COD_FEE = Number(process.env.COD_FEE || 330);
+
+// ★電話→オンライン hook（任意）
+const PHONE_HOOK_TOKEN = (process.env.PHONE_HOOK_TOKEN || "").trim();
 
 // LINE config
 const config = {
@@ -99,53 +96,48 @@ if (
 // ====== パス定義 ======
 const DATA_DIR = path.join(__dirname, "data");
 
-// ログ/JSON
 const PRODUCTS_PATH = path.join(DATA_DIR, "products.json");
 const ORDERS_LOG = path.join(DATA_DIR, "orders.log");
 const RESERVATIONS_LOG = path.join(DATA_DIR, "reservations.log");
 const ADDRESSES_PATH = path.join(DATA_DIR, "addresses.json");
+const PHONE_ADDRESSES_PATH = path.join(DATA_DIR, "phone-addresses.json"); // ★電話住所（別DISK前提なのでオンライン側に保存）
 const SURVEYS_LOG = path.join(DATA_DIR, "surveys.log");
 const MESSAGES_LOG = path.join(DATA_DIR, "messages.log");
 const SESSIONS_PATH = path.join(DATA_DIR, "sessions.json");
 const NOTIFY_STATE_PATH = path.join(DATA_DIR, "notify_state.json");
 const STOCK_LOG = path.join(DATA_DIR, "stock.log");
 
-// 公開静的/アップロード
 const PUBLIC_DIR = path.join(__dirname, "public");
 const UPLOAD_DIR = path.join(PUBLIC_DIR, "uploads");
 
 // ====== ディレクトリ自動作成 ======
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-  console.log(`📁 Created: ${UPLOAD_DIR}`);
-}
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 // ====== ミドルウェア ======
 app.use("/api", express.json(), express.urlencoded({ extended: true }));
 app.use("/public", express.static(PUBLIC_DIR));
-app.use((req, res, next) => {
+
+app.use((req, _res, next) => {
   console.log(`[REQ] ${new Date().toISOString()} ${req.method} ${req.url}`);
   next();
 });
 
-// 決済完了/失敗ページ
-app.all("/public/confirm-card-success.html", (req, res) => {
+// ページ
+app.all("/public/confirm-card-success.html", (_req, res) => {
   return res.sendFile(path.join(PUBLIC_DIR, "confirm-card-success.html"));
 });
-app.all("/public/confirm-fail.html", (req, res) => {
+app.all("/public/confirm-fail.html", (_req, res) => {
   return res.sendFile(path.join(PUBLIC_DIR, "confirm-fail.html"));
 });
 
-// ルート
 app.get("/", (_req, res) => res.status(200).send("OK"));
 
 // ====== データ初期化 ======
 if (!fs.existsSync(PRODUCTS_PATH)) {
   const sample = [
     { id: "kusuke-250", name: "久助（えびせん）", price: 250, stock: 20, desc: "お得な割れせん。", image: "" },
-    // ★ オリジナルセット（初期サンプル。既にproducts.jsonがあれば上書きしません）
     { id: "original-set-2100", name: "磯屋オリジナルセット", price: 2100, stock: 10, desc: "人気の詰め合わせ。", image: "" },
     { id: "nori-square-300", name: "四角のりせん", price: 300, stock: 10, desc: "のり香る角せん。", image: "" },
     { id: "premium-ebi-400", name: "プレミアムえびせん", price: 400, stock: 5, desc: "贅沢な旨み。", image: "" },
@@ -154,6 +146,7 @@ if (!fs.existsSync(PRODUCTS_PATH)) {
   console.log(`ℹ️ ${PRODUCTS_PATH} を自動作成しました。`);
 }
 if (!fs.existsSync(ADDRESSES_PATH)) fs.writeFileSync(ADDRESSES_PATH, JSON.stringify({}, null, 2), "utf8");
+if (!fs.existsSync(PHONE_ADDRESSES_PATH)) fs.writeFileSync(PHONE_ADDRESSES_PATH, JSON.stringify({}, null, 2), "utf8");
 if (!fs.existsSync(SESSIONS_PATH)) fs.writeFileSync(SESSIONS_PATH, JSON.stringify({}, null, 2), "utf8");
 if (!fs.existsSync(NOTIFY_STATE_PATH)) fs.writeFileSync(NOTIFY_STATE_PATH, JSON.stringify({}, null, 2), "utf8");
 
@@ -161,16 +154,24 @@ if (!fs.existsSync(NOTIFY_STATE_PATH)) fs.writeFileSync(NOTIFY_STATE_PATH, JSON.
 const safeReadJSON = (p, fb) => {
   try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return fb; }
 };
+
 const readProducts = () => safeReadJSON(PRODUCTS_PATH, []);
 const writeProducts = (data) => fs.writeFileSync(PRODUCTS_PATH, JSON.stringify(data, null, 2), "utf8");
+
 const readAddresses = () => safeReadJSON(ADDRESSES_PATH, {});
 const writeAddresses = (data) => fs.writeFileSync(ADDRESSES_PATH, JSON.stringify(data, null, 2), "utf8");
+
+const readPhoneAddresses = () => safeReadJSON(PHONE_ADDRESSES_PATH, {});
+const writePhoneAddresses = (data) => fs.writeFileSync(PHONE_ADDRESSES_PATH, JSON.stringify(data, null, 2), "utf8");
+
 const readSessions = () => safeReadJSON(SESSIONS_PATH, {});
 const writeSessions = (s) => fs.writeFileSync(SESSIONS_PATH, JSON.stringify(s, null, 2), "utf8");
+
 const readNotifyState = () => safeReadJSON(NOTIFY_STATE_PATH, {});
 const writeNotifyState = (s) => fs.writeFileSync(NOTIFY_STATE_PATH, JSON.stringify(s, null, 2), "utf8");
 
 const yen = (n) => `${Number(n || 0).toLocaleString("ja-JP")}円`;
+
 const qstr = (obj) =>
   Object.entries(obj)
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v === undefined || v === null ? "" : v)}`)
@@ -185,11 +186,61 @@ const parse = (data) => {
   });
   return o;
 };
+
 const uniq = (arr) => Array.from(new Set((arr || []).filter(Boolean)));
 
-// ===== 会員コードユーティリティ =====
-// 会員コード：数字4桁で統一（LINEと電話で共通利用）
-function getOrCreateMemberCode(userId) {
+// ===== 認可 =====
+function bearerToken(req) {
+  const h = req.headers?.authorization || req.headers?.Authorization || "";
+  const m = /^Bearer\s+(.+)$/i.exec(h);
+  return m ? m[1].trim() : null;
+}
+function requireAdmin(req, res) {
+  const headerTok = bearerToken(req);
+  const queryTok = (req.query?.token || req.query?.code || "").trim();
+  const tok = headerTok || queryTok;
+  if (ADMIN_API_TOKEN_ENV && tok === ADMIN_API_TOKEN_ENV) return true;
+  if (ADMIN_CODE_ENV && tok === ADMIN_CODE_ENV) return true;
+
+  res.status(401).json({
+    ok: false,
+    error: "unauthorized",
+    hint: {
+      need: { bearer_header: !!ADMIN_API_TOKEN_ENV, token_query: !!ADMIN_API_TOKEN_ENV, code_query: !!ADMIN_CODE_ENV },
+      got: { header: headerTok ? "present" : "missing", query: queryTok ? "present" : "missing" },
+    },
+  });
+  return false;
+}
+
+// ===== ログ読み込み =====
+function readLogLines(filePath, limit = 100) {
+  if (!fs.existsSync(filePath)) return [];
+  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/).filter(Boolean);
+  const tail = lines.slice(-Math.min(Number(limit) || 100, lines.length));
+  return tail.map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+}
+function jstRangeFromYmd(ymd) {
+  const s = String(ymd || "");
+  const y = Number(s.slice(0, 4));
+  const m = Number(s.slice(4, 6)) - 1;
+  const d = Number(s.slice(6, 8));
+  const startJST = new Date(Date.UTC(y, m, d, -9, 0, 0));
+  const endJST = new Date(Date.UTC(y, m, d + 1, -9, 0, 0));
+  return { from: startJST.toISOString(), to: endJST.toISOString() };
+}
+function filterByIsoRange(items, getTs, fromIso, toIso) {
+  if (!fromIso && !toIso) return items;
+  const from = fromIso ? new Date(fromIso).getTime() : -Infinity;
+  const to = toIso ? new Date(toIso).getTime() : Infinity;
+  return items.filter((it) => {
+    const t = new Date(getTs(it)).getTime();
+    return t >= from && t < to;
+  });
+}
+
+// ===== 会員コード/住所コード =====
+function getOrCreateCode(userId, fieldName) {
   const uid = String(userId || "").trim();
   if (!uid) return null;
 
@@ -197,28 +248,13 @@ function getOrCreateMemberCode(userId) {
   const entry = book[uid];
   if (!entry) return null; // 住所登録がまだ
 
-  if (entry.memberCode && typeof entry.memberCode === "string") {
-    const existing = entry.memberCode.trim();
-    if (existing) return existing;
-  }
-function getOrCreateCode(userId, fieldName) {
-  const uid = String(userId || "").trim();
-  if (!uid) return null;
-
-  const book = readAddresses();
-  const entry = book[uid];
-  if (!entry) {
-    // 住所登録がまだ（住所コードも会員コードも出せない）
-    return null;
-  }
-
-  // 既にあればそれを返す
+  // 既存があれば返す
   if (entry[fieldName] && typeof entry[fieldName] === "string") {
     const existing = entry[fieldName].trim();
-    if (existing) return existing;
+    if (/^\d{4}$/.test(existing)) return existing;
   }
 
-  // 既存コード一覧（その fieldName の4桁だけ収集）
+  // 既存コード一覧
   const existingCodes = new Set(
     Object.values(book)
       .map((a) => (a && typeof a[fieldName] === "string" ? a[fieldName].trim() : ""))
@@ -242,48 +278,14 @@ function getOrCreateCode(userId, fieldName) {
   return newCode;
 }
 
-// 互換：既存の呼び出しを壊さないため残す（今まで通り会員コード）
 function getOrCreateMemberCode(userId) {
   return getOrCreateCode(userId, "memberCode");
 }
-
-// 新規：住所コード
 function getOrCreateAddressCode(userId) {
   return getOrCreateCode(userId, "addressCode");
 }
 
-  if (entry.phoneMemberCode && typeof entry.phoneMemberCode === "string") {
-    const fromPhone = entry.phoneMemberCode.trim();
-    if (/^\d{4}$/.test(fromPhone)) {
-      entry.memberCode = fromPhone;
-      book[uid] = entry;
-      writeAddresses(book);
-      return fromPhone;
-    }
-  }
-
-  const existingCodes = new Set(
-    Object.values(book)
-      .map((a) => (a && typeof a.memberCode === "string" ? a.memberCode.trim() : ""))
-      .filter((c) => /^\d{4}$/.test(c))
-  );
-
-  let newCode = "";
-  let safety = 0;
-  do {
-    const rand = Math.floor(Math.random() * 10000);
-    newCode = rand.toString().padStart(4, "0");
-    safety++;
-    if (safety > 20000) throw new Error("memberCode_exhausted");
-  } while (existingCodes.has(newCode));
-
-  entry.memberCode = newCode;
-  book[uid] = entry;
-  writeAddresses(book);
-  return newCode;
-}
-
-// ====== 在庫ユーティリティ ======
+// ===== 在庫 =====
 const LOW_STOCK_THRESHOLD = 5;
 const PRODUCT_ALIASES = {
   久助: "kusuke-250",
@@ -291,15 +293,15 @@ const PRODUCT_ALIASES = {
   kusuke: "kusuke-250",
   "kusuke-250": "kusuke-250",
 };
-const HIDE_PRODUCT_IDS = new Set(["kusuke-250"]); // 直接注文の一覧から隠す商品（久助だけ非表示）
+const HIDE_PRODUCT_IDS = new Set(["kusuke-250"]); // ミニアプリ側で非表示
 
+function resolveProductId(token) {
+  return PRODUCT_ALIASES[token] || token;
+}
 function findProductById(pid) {
   const products = readProducts();
   const idx = products.findIndex((p) => p.id === pid);
   return { products, idx, product: idx >= 0 ? products[idx] : null };
-}
-function resolveProductId(token) {
-  return PRODUCT_ALIASES[token] || token;
 }
 function writeStockLog(entry) {
   try {
@@ -335,57 +337,7 @@ async function maybeLowStockAlert(productId, productName, stockNow) {
   }
 }
 
-// ====== 認可 ======
-function bearerToken(req) {
-  const h = req.headers?.authorization || req.headers?.Authorization || "";
-  const m = /^Bearer\s+(.+)$/i.exec(h);
-  return m ? m[1].trim() : null;
-}
-function requireAdmin(req, res) {
-  const headerTok = bearerToken(req);
-  const queryTok = (req.query?.token || req.query?.code || "").trim();
-  const tok = headerTok || queryTok;
-  if (ADMIN_API_TOKEN_ENV && tok === ADMIN_API_TOKEN_ENV) return true;
-  if (ADMIN_CODE_ENV && tok === ADMIN_CODE_ENV) return true;
-  res.status(401).json({
-    ok: false,
-    error: "unauthorized",
-    hint: {
-      need: { bearer_header: !!ADMIN_API_TOKEN_ENV, token_query: !!ADMIN_API_TOKEN_ENV, code_query: !!ADMIN_CODE_ENV },
-      got: { header: headerTok ? "present" : "missing", query: queryTok ? "present" : "missing" },
-    },
-  });
-  return false;
-}
-
-// ====== ログ読み込みユーティリティ ======
-function readLogLines(filePath, limit = 100) {
-  if (!fs.existsSync(filePath)) return [];
-  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/).filter(Boolean);
-  const tail = lines.slice(-Math.min(Number(limit) || 100, lines.length));
-  return tail.map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-}
-function jstRangeFromYmd(ymd) {
-  const s = String(ymd || "");
-  const y = Number(s.slice(0, 4));
-  const m = Number(s.slice(4, 6)) - 1;
-  const d = Number(s.slice(6, 8));
-  const startJST = new Date(Date.UTC(y, m, d, -9, 0, 0));
-  const endJST = new Date(Date.UTC(y, m, d + 1, -9, 0, 0));
-  return { from: startJST.toISOString(), to: endJST.toISOString() };
-}
-function filterByIsoRange(items, getTs, fromIso, toIso) {
-  if (!fromIso && !toIso) return items;
-  const from = fromIso ? new Date(fromIso).getTime() : -Infinity;
-  const to = toIso ? new Date(toIso).getTime() : Infinity;
-  return items.filter((it) => {
-    const t = new Date(getTs(it)).getTime();
-    return t >= from && t < to;
-  });
-}
-
 // ====== ヤマト送料（中部発・税込） & サイズ自動判定 ======
-// 運賃表（2025/10/1〜・現金決済）から転記：中部発 → 各地域（列）
 const YAMATO_CHUBU_TAXED = {
   "60":  { 北海道:1610, 東北:1190, 関東: 940, 中部: 940, 近畿: 940, 中国:1060, 四国:1060, 九州:1190, 沖縄:1460 },
   "80":  { 北海道:1900, 東北:1480, 関東:1230, 中部:1230, 近畿:1230, 中国:1350, 四国:1350, 九州:1480, 沖縄:2070 },
@@ -395,10 +347,8 @@ const YAMATO_CHUBU_TAXED = {
   "160": { 北海道:3820, 東北:3320, 関東:3020, 中部:3020, 近畿:3020, 中国:3160, 四国:3160, 九州:3320, 沖縄:4680 },
 };
 
-// ★ オリジナルセットのID（.envで上書きできるように）
 const ORIGINAL_SET_PRODUCT_ID = (process.env.ORIGINAL_SET_PRODUCT_ID || "original-set-2100").trim();
 
-// 住所→地域（北海道/東北/関東/中部/近畿/中国/四国/九州/沖縄）
 function detectRegionFromAddress(address = {}) {
   const pref = String(address.prefecture || address.pref || "").trim();
   const addr1 = String(address.addr1 || address.address1 || "").trim();
@@ -416,8 +366,6 @@ function detectRegionFromAddress(address = {}) {
   return "";
 }
 
-// ---- サイズ自動判定 ----
-// オリジナルセット：1=80 / 2=100 / 3-4=120 / 5-6=140 / それ以上=160
 function sizeFromOriginalSetQty(qty) {
   const q = Number(qty) || 0;
   if (q <= 0) return null;
@@ -427,7 +375,6 @@ function sizeFromOriginalSetQty(qty) {
   if (q <= 6) return "140";
   return "160";
 }
-// 他商品：保守的に「個数」で大きめ
 function sizeFromTotalQty(totalQty) {
   const q = Number(totalQty) || 0;
   if (q <= 1) return "60";
@@ -449,8 +396,6 @@ function calcYamatoShipping(region, size) {
   if (!table) return 0;
   return Number(table[region] || 0);
 }
-
-// 直接注文（単品）用：サイズ/送料を計算
 function calcDeliveryForSingleItem(product, qty, address) {
   const region = detectRegionFromAddress(address || {});
   const name = String(product?.name || "");
@@ -469,7 +414,7 @@ function calcDeliveryForSingleItem(product, qty, address) {
   return { region, size, shipping, isOriginal };
 }
 
-// ====== ミニアプリ用：送料計算 API（60/80/100/120/140/160 自動） ======
+// ====== ミニアプリ用：送料計算 API ======
 app.post("/api/shipping", (req, res) => {
   try {
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
@@ -517,21 +462,7 @@ app.post("/api/shipping", (req, res) => {
 // ====== LINE client ======
 const client = new line.Client(config);
 
-// ====== Flex送信ユーティリティ ======
-function ensureAltText(altText) {
-  const s = String(altText || "").trim();
-  if (!s) throw new Error("altText is required");
-  if (s.length > 400) throw new Error("altText too long (<=400)");
-  return s;
-}
-function validateFlexContents(contents) {
-  if (!contents || typeof contents !== "object") throw new Error("contents must be object");
-  const t = contents.type;
-  if (t !== "bubble" && t !== "carousel") throw new Error('contents.type must be "bubble" or "carousel"');
-  return contents;
-}
-
-// ===== 画像URL整形（Flex用） =====
+// ===== 画像URL整形 =====
 function toPublicImageUrl(raw) {
   if (!raw) return "";
   let s = String(raw).trim();
@@ -556,7 +487,7 @@ function toPublicImageUrl(raw) {
   return pathPart;
 }
 
-// ===== 商品UI（Flex） ======
+// ====== Flex（商品一覧） ======
 function productsFlex(allProducts) {
   const products = (allProducts || []).filter((p) => !HIDE_PRODUCT_IDS.has(p.id));
 
@@ -666,7 +597,6 @@ function qtyFlex(id, qty = 1) {
               action: { type: "postback", label: `${n}個`, data: `order_qty?${qstr({ id, qty: n })}` },
             })),
           },
-          // ★ 店頭受取用：先に名前を聞くステップへ
           { type: "button", style: "primary", action: { type: "postback", label: "店頭での受取名前を入力", data: `order_pickup_name?${qstr({ id, qty: q })}` } },
           { type: "button", style: "secondary", action: { type: "postback", label: "← 商品一覧", data: "order_back" } },
         ],
@@ -711,7 +641,6 @@ function methodFlex(id, qty) {
   };
 }
 
-// ★ 店頭受取＝現金のみ / 宅配＝代引 or 銀行振込（送料は住所から自動計算）
 function paymentFlex(id, qty, method) {
   if (method === "pickup") {
     return {
@@ -773,7 +702,6 @@ function confirmFlex(product, qty, method, payment, liffIdForBtn, options = {}) 
   const pickupName = (options.pickupName || "").trim();
   const address = options.address || null;
 
-  // other:* の補正
   if (typeof product?.id === "string" && product.id.startsWith("other:")) {
     const parts = product.id.split(":");
     const encName = parts[1] || "";
@@ -786,9 +714,8 @@ function confirmFlex(product, qty, method, payment, liffIdForBtn, options = {}) 
   let region = "";
   let size = "";
   let shipping = 0;
-
-  // 宅配の場合は住所が必要（送料自動計算）
   let addressOk = true;
+
   if (method === "delivery") {
     if (!address) addressOk = false;
     else {
@@ -830,13 +757,11 @@ function confirmFlex(product, qty, method, payment, liffIdForBtn, options = {}) 
 
   lines.push(`代引き手数料：${yen(codFee)}`);
   lines.push(`合計：${yen(total)}`);
-
   if (method === "pickup" && pickupName) lines.push(`お名前：${pickupName}`);
 
   const imgUrl = toPublicImageUrl(product.image);
 
   const footerButtons = [];
-
   if (method === "delivery" && !addressOk) {
     footerButtons.push({
       type: "button",
@@ -853,7 +778,6 @@ function confirmFlex(product, qty, method, payment, liffIdForBtn, options = {}) 
       action: { type: "postback", label: "← 商品一覧へ", data: "order_back" },
     });
   } else {
-    // 通常：確定ボタンあり
     footerButtons.push({
       type: "button",
       style: "secondary",
@@ -862,11 +786,7 @@ function confirmFlex(product, qty, method, payment, liffIdForBtn, options = {}) 
     footerButtons.push({
       type: "button",
       style: "primary",
-      action: {
-        type: "postback",
-        label: "この内容で確定",
-        data: `order_confirm?${qstr({ id: product.id, qty, method, payment, pickupName })}`,
-      },
+      action: { type: "postback", label: "この内容で確定", data: `order_confirm?${qstr({ id: product.id, qty, method, payment, pickupName })}` },
     });
   }
 
@@ -920,17 +840,11 @@ function reserveOffer(product, needQty, stock) {
   ];
 }
 
-// ====== アンケート簡易スタブ ======
-const SURVEY_VERSION = 2;
-const SURVEY_SCHEMA = { q1: { options: [] }, q2: { options: [] }, q3: { options: [] } };
-function labelOf(q, code) { return code; }
-
 // ====== LIFF API ======
 app.post("/api/liff/address", async (req, res) => {
   try {
     const userId = String(req.body?.userId || "").trim();
     const addr = req.body?.address || {};
-
     if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
 
     const book = readAddresses();
@@ -947,14 +861,12 @@ app.post("/api/liff/address", async (req, res) => {
       address2:   String(addr.address2 || "").trim(),
       ts:         new Date().toISOString(),
     };
-
     writeAddresses(book);
 
-   const memberCode  = getOrCreateMemberCode(userId);
-const addressCode = getOrCreateAddressCode(userId);
+    const memberCode  = getOrCreateMemberCode(userId);
+    const addressCode = getOrCreateAddressCode(userId);
 
-res.json({ ok: true, memberCode, addressCode });
- 
+    res.json({ ok: true, memberCode, addressCode });
   } catch (e) {
     console.error("/api/liff/address error:", e);
     res.status(500).json({ ok: false, error: "server_error" });
@@ -975,7 +887,7 @@ app.get("/api/liff/address/me", (req, res) => {
       last = vals[0];
     }
     return res.json({ ok: true, address: last });
-  } catch (e) {
+  } catch (_e) {
     res.json({ ok: false, address: null });
   }
 });
@@ -1013,6 +925,7 @@ app.get("/api/public/address-by-code", (req, res) => {
         address1:   found.address1   || "",
         address2:   found.address2   || "",
         memberCode: found.memberCode || "",
+        addressCode: found.addressCode || "",
       },
     });
   } catch (e) {
@@ -1021,13 +934,87 @@ app.get("/api/public/address-by-code", (req, res) => {
   }
 });
 
+// ===== ★電話サーバー -> オンライン通知 受け口 =====
+// 電話住所は別DISKなので、オンライン側に phone-addresses.json として保存
+app.post("/api/phone/hook", async (req, res) => {
+  try {
+    if (PHONE_HOOK_TOKEN) {
+      const token = (req.headers["x-hook-token"] || "").toString().trim();
+      if (token !== PHONE_HOOK_TOKEN) {
+        return res.status(401).json({ ok: false, error: "unauthorized" });
+      }
+    }
+
+    const { event, ts, payload } = req.body || {};
+    if (!event) return res.status(400).json({ ok: false, error: "missing_event" });
+
+    // event: address_registered / order_created 想定
+    if (event === "address_registered") {
+      const memberCode = String(payload?.memberCode || "").trim();
+      const a = payload?.address || {};
+
+      if (memberCode) {
+        const book = readPhoneAddresses();
+        book[memberCode] = {
+          memberCode,
+          name: String(a.name || "").trim(),
+          phone: String(a.phone || "").trim(),
+          postal: String(a.postal || "").trim(),
+          prefecture: String(a.prefecture || "").trim(),
+          city: String(a.city || "").trim(),
+          address1: String(a.address1 || "").trim(),
+          address2: String(a.address2 || "").trim(),
+          ts: ts || new Date().toISOString(),
+          source: "phone",
+        };
+        writePhoneAddresses(book);
+      }
+
+      const addrText =
+        `${a.postal || ""} ${a.prefecture || ""}${a.city || ""}${a.address1 || ""}` +
+        (a.address2 ? ` ${a.address2}` : "");
+
+      if (ADMIN_USER_ID) {
+        const msg =
+          "🔔【電話→オンライン 住所登録】\n" +
+          `会員コード：${memberCode || "(不明)"}\n` +
+          `氏名：${a.name || ""}\n` +
+          `電話：${a.phone || ""}\n` +
+          `住所：${addrText}`;
+        try { await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg }); } catch {}
+      }
+
+      return res.json({ ok: true, handled: event });
+    }
+
+    if (event === "order_created") {
+      const type = payload?.type || "";
+      const o = payload?.order || {};
+      if (ADMIN_USER_ID) {
+        const msg =
+          "🔔【電話→オンライン 注文通知】\n" +
+          `種別：${type}\n` +
+          `会員コード：${o.memberCode || ""}\n` +
+          `お名前：${o.customerName || ""}\n` +
+          `商品：${o.productName || ""}\n` +
+          `数量：${o.qty || ""}\n` +
+          `合計：${(o.total ?? "").toString()}円`;
+        try { await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg }); } catch {}
+      }
+      return res.json({ ok: true, handled: event });
+    }
+
+    return res.json({ ok: true, handled: "ignored", event });
+  } catch (e) {
+    console.error("/api/phone/hook error:", e);
+    return res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
 // ====== Stripe 決済（Checkout Session） ======
 app.post("/api/pay-stripe", async (req, res) => {
   try {
-    if (!stripe) {
-      console.error("STRIPE_SECRET_KEY が設定されていません");
-      return res.status(500).json({ ok: false, error: "stripe_not_configured" });
-    }
+    if (!stripe) return res.status(500).json({ ok: false, error: "stripe_not_configured" });
 
     const order = req.body || {};
     const items = Array.isArray(order.items) ? order.items : [];
@@ -1036,7 +1023,6 @@ app.post("/api/pay-stripe", async (req, res) => {
     const itemsTotal = Number(order.itemsTotal || 0);
     const shipping   = Number(order.shipping   || 0);
     const codFee     = Number(order.codFee     || 0);
-    const finalTotal = Number(order.finalTotal || (itemsTotal + shipping + codFee));
 
     const line_items = [];
 
@@ -1103,10 +1089,7 @@ app.post("/api/order/complete", async (req, res) => {
   try {
     const order = req.body || {};
     const items = Array.isArray(order.items) ? order.items : [];
-    if (items.length === 0) {
-      console.log("[order-complete] no_items – skip notify");
-      return res.json({ ok: false, error: "no_items" });
-    }
+    if (items.length === 0) return res.json({ ok: false, error: "no_items" });
 
     const itemsText = items
       .map((it) => `・${it.name} x ${it.qty} = ${yen((it.price || 0) * (it.qty || 0))}`)
@@ -1179,11 +1162,8 @@ app.post("/api/order/complete", async (req, res) => {
   }
 });
 
-// ====== 管理API（要トークン） ======
-app.get("/api/admin/ping", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  res.json({ ok: true, ping: "pong" });
-});
+// ====== 管理API ======
+app.get("/api/admin/ping", (req, res) => { if (!requireAdmin(req, res)) return; res.json({ ok: true, ping: "pong" }); });
 
 app.get("/api/admin/orders", (req, res) => {
   if (!requireAdmin(req, res)) return;
@@ -1196,7 +1176,6 @@ app.get("/api/admin/orders", (req, res) => {
   res.json({ ok: true, items });
 });
 
-// ★ 発送済み一覧
 app.get("/api/admin/orders/shipped", (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
@@ -1209,7 +1188,6 @@ app.get("/api/admin/orders/shipped", (req, res) => {
   }
 });
 
-// ★ 発送済みとしてマーク
 app.post("/api/admin/orders/mark-shipped", (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
@@ -1218,14 +1196,12 @@ app.post("/api/admin/orders/mark-shipped", (req, res) => {
 
     const state = readNotifyState();
     if (!state.shippedOrders) state.shippedOrders = {};
-
     state.shippedOrders[orderKey] = {
       ts: new Date().toISOString(),
       userId: String(req.body?.userId || "").trim(),
       productName: String(req.body?.productName || "").trim(),
       orderNumber: String(req.body?.orderNumber || "").trim(),
     };
-
     writeNotifyState(state);
     return res.json({ ok: true });
   } catch (e) {
@@ -1234,7 +1210,6 @@ app.post("/api/admin/orders/mark-shipped", (req, res) => {
   }
 });
 
-// 注文者への発送通知
 app.post("/api/admin/orders/notify-shipped", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
@@ -1242,7 +1217,6 @@ app.post("/api/admin/orders/notify-shipped", async (req, res) => {
     const orderNumber = String(req.body?.orderNumber || "").trim();
     const productName = String(req.body?.productName || "").trim();
     const message     = String(req.body?.message || "").trim();
-
     if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
 
     const baseMsg = message || [
@@ -1272,107 +1246,9 @@ app.get("/api/admin/reservations", (req, res) => {
   res.json({ ok: true, items });
 });
 
-app.get("/api/admin/addresses", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  res.json({ ok: true, items: readAddresses() });
-});
+app.get("/api/admin/addresses", (req, res) => { if (!requireAdmin(req, res)) return; res.json({ ok: true, items: readAddresses() }); });
+app.get("/api/admin/phone-addresses", (req, res) => { if (!requireAdmin(req, res)) return; res.json({ ok: true, items: readPhoneAddresses() }); });
 
-app.get("/api/admin/surveys", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  const limit = Math.min(5000, Number(req.query.limit || 2000));
-  let items = readLogLines(SURVEYS_LOG, limit);
-  let range = {};
-  if (req.query.date) range = jstRangeFromYmd(String(req.query.date));
-  if (req.query.from || req.query.to) range = { from: req.query.from, to: req.query.to };
-  if (range.from || range.to) items = filterByIsoRange(items, (x) => x.ts, range.from, range.to);
-  res.json({ ok: true, items });
-});
-
-app.get("/api/admin/surveys/summary", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  res.json({ ok: true, version: SURVEY_VERSION, total: 0, summary: { q1: [], q2: [], q3: [] } });
-});
-
-// ====== 順次通知（予約者）API ======
-function buildReservationQueue(productId) {
-  const all = readLogLines(RESERVATIONS_LOG, 200000)
-    .filter((r) => r && r.productId === productId && r.userId && r.ts)
-    .sort((a, b) => new Date(a.ts) - new Date(b.ts));
-  const seen = new Set();
-  const ids = [];
-  for (const r of all) {
-    if (!seen.has(r.userId)) { seen.add(r.userId); ids.push(r.userId); }
-  }
-  return ids;
-}
-
-app.post("/api/admin/reservations/notify-start", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    const pid = resolveProductId(String(req.body?.productId || "").trim());
-    const message = String(req.body?.message || "").trim();
-    if (!pid) return res.status(400).json({ ok: false, error: "productId required" });
-    if (!message) return res.status(400).json({ ok: false, error: "message required" });
-
-    const userIds = buildReservationQueue(pid);
-    const state = readNotifyState();
-    state[pid] = { idx: 0, userIds, message, updatedAt: new Date().toISOString() };
-    state.__lastPid = pid;
-    writeNotifyState(state);
-
-    if (userIds.length === 0) return res.json({ ok: true, info: "no_reservers", sent: false });
-
-    await client.pushMessage(userIds[0], { type: "text", text: message });
-    state[pid].idx = 1;
-    state[pid].updatedAt = new Date().toISOString();
-    writeNotifyState(state);
-    return res.json({ ok: true, productId: pid, sentTo: userIds[0], index: 1, total: userIds.length });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e) });
-  }
-});
-
-app.post("/api/admin/reservations/notify-next", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    const pidRaw = (req.body?.productId ?? readNotifyState().__lastPid ?? "").toString();
-    const pid = resolveProductId(pidRaw.trim());
-    const n = Math.max(1, Math.min(100, Number(req.body?.count || 1)));
-    const state = readNotifyState();
-    const st = state[pid];
-    if (!pid || !st) return res.status(400).json({ ok: false, error: "not_started" });
-
-    const { userIds, message } = st;
-    let { idx } = st;
-    const total = userIds.length;
-    if (idx >= total) return res.json({ ok: true, done: true, index: idx, total });
-
-    const sentTo = [];
-    for (let i = 0; i < n && idx < total; i++, idx++) {
-      const uid = userIds[idx];
-      try { await client.pushMessage(uid, { type: "text", text: message }); sentTo.push(uid); } catch {}
-    }
-    state[pid].idx = idx;
-    state[pid].updatedAt = new Date().toISOString();
-    writeNotifyState(state);
-
-    return res.json({ ok: true, productId: pid, sent: sentTo.length, sentTo, index: idx, total });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e) });
-  }
-});
-
-app.post("/api/admin/reservations/notify-stop", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  const pid = resolveProductId(String(req.body?.productId || "").trim());
-  const state = readNotifyState();
-  if (pid && state[pid]) delete state[pid];
-  if (state.__lastPid === pid) delete state.__lastPid;
-  writeNotifyState(state);
-  res.json({ ok: true, stopped: pid || true });
-});
-
-// ====== 在庫管理 API ======
 app.get("/api/admin/products", (req, res) => {
   if (!requireAdmin(req, res)) return;
   const items = readProducts().map((p) => ({
@@ -1385,51 +1261,6 @@ app.get("/api/admin/products", (req, res) => {
     image: p.image || "",
   }));
   res.json({ ok: true, items });
-});
-
-app.post("/api/admin/products/update", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-
-  try {
-    const pid = String(req.body?.productId || "").trim();
-    if (!pid) return res.status(400).json({ ok: false, error: "productId required" });
-
-    const products = readProducts();
-    const idx = products.findIndex((p) => p.id === pid);
-    if (idx < 0) return res.status(404).json({ ok: false, error: "product_not_found" });
-
-    const p = products[idx];
-    const beforeStock = Number(p.stock || 0);
-
-    if (typeof req.body.name === "string") p.name = req.body.name.trim().slice(0, 50);
-    if (req.body.price !== undefined) {
-      const v = Number(req.body.price);
-      if (!Number.isNaN(v) && v >= 0) p.price = v;
-    }
-    if (req.body.stock !== undefined) {
-      const v = Number(req.body.stock);
-      if (!Number.isNaN(v) && v >= 0) {
-        p.stock = v;
-        writeStockLog({ action: "set", productId: pid, before: beforeStock, after: v, delta: v - beforeStock, actor: "api-update" });
-      }
-    }
-    if (typeof req.body.desc === "string") p.desc = req.body.desc.trim().slice(0, 200);
-    if (typeof req.body.volume === "string") p.volume = req.body.volume.trim().slice(0, 50);
-    if (typeof req.body.image === "string") p.image = req.body.image.trim();
-
-    writeProducts(products);
-    return res.json({ ok: true, product: p });
-  } catch (e) {
-    console.error("products/update error:", e);
-    return res.status(500).json({ ok: false, error: "update_error" });
-  }
-});
-// 在庫ログ一覧
-app.get("/api/admin/stock/logs", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  const limit = Math.min(10000, Number(req.query.limit || 200));
-  const items = readLogLines(STOCK_LOG, limit);
-  return res.json({ ok: true, items });
 });
 
 app.post("/api/admin/stock/set", (req, res) => {
@@ -1456,20 +1287,8 @@ app.post("/api/admin/stock/add", (req, res) => {
   }
 });
 
-app.post("/api/admin/stock/add", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    const pid = resolveProductId((req.body?.productId || "").trim());
-    const delta = Number(req.body?.delta);
-    const r = addStock(pid, delta, "api");
-    res.json({ ok: true, productId: pid, ...r });
-  } catch (e) {
-    res.status(400).json({ ok: false, error: String(e.message || e) });
-  }
-});
-
 // ====== ミニアプリ用：商品一覧 API（久助除外） ======
-app.get("/api/products", (req, res) => {
+app.get("/api/products", (_req, res) => {
   try {
     const items = readProducts()
       .filter((p) => p.id !== "kusuke-250")
@@ -1490,176 +1309,7 @@ app.get("/api/products", (req, res) => {
   }
 });
 
-// ====== 予約者一括連絡（旧スタイル） ======
-app.post("/api/admin/reservations/notify", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    const pid = resolveProductId(String(req.body?.productId || "").trim());
-    const msg = String(req.body?.message || "").trim();
-    if (!pid) return res.status(400).json({ ok: false, error: "productId required" });
-    if (!msg) return res.status(400).json({ ok: false, error: "message required" });
-
-    const items = readLogLines(RESERVATIONS_LOG, 100000).filter((r) => r && r.productId === pid && r.userId);
-    const userIds = Array.from(new Set(items.map((r) => r.userId)));
-    if (userIds.length === 0) return res.json({ ok: true, sent: 0, users: [] });
-
-    const chunkSize = 500;
-    let sent = 0;
-    for (let i = 0; i < userIds.length; i += chunkSize) {
-      const ids = userIds.slice(i, i + chunkSize);
-      try { await client.multicast(ids, [{ type: "text", text: msg }]); sent += ids.length; } catch {}
-    }
-    return res.json({ ok: true, productId: pid, requested: userIds.length, sent });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: String(e.message || e) });
-  }
-});
-
-// ====== セグメント配信（テキスト/Flex） ======
-app.post("/api/admin/segment/preview", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    const t = (req.body?.type || "").trim();
-    const uniqIds = (arr) => Array.from(new Set(arr.filter(Boolean)));
-
-    if (t === "activeChatters" || t === "textSenders") {
-      const limit = Math.min(200000, Number(req.body?.limit || 50000));
-      let items = readLogLines(MESSAGES_LOG, limit);
-      if (req.body?.date) {
-        const r = jstRangeFromYmd(String(req.body.date));
-        items = filterByIsoRange(items, (x) => x.ts, r.from, r.to);
-      }
-      const ids = uniqIds(items.filter((x) => x && x.type === "text" && x.userId).map((x) => x.userId));
-      return res.json({ ok: true, type: t, total: ids.length, userIds: ids });
-    }
-
-    if (t === "survey") {
-      const limit = Math.min(200000, Number(req.body?.limit || 50000));
-      let items = readLogLines(SURVEYS_LOG, limit);
-      if (req.body?.date) {
-        const r = jstRangeFromYmd(String(req.body.date));
-        items = filterByIsoRange(items, (x) => x.ts, r.from, r.to);
-      }
-      const q1 = Array.isArray(req.body?.q1codes) ? req.body.q1codes : null;
-      const q2 = Array.isArray(req.body?.q2codes) ? req.body.q2codes : null;
-      const q3 = Array.isArray(req.body?.q3codes) ? req.body.q3codes : null;
-
-      const ids = uniqIds(
-        items
-          .filter((it) => {
-            const a = it?.answers || {};
-            return (
-              (!q1 || q1.includes(a?.q1?.code || "")) &&
-              (!q2 || q2.includes(a?.q2?.code || "")) &&
-              (!q3 || q3.includes(a?.q3?.code || ""))
-            );
-          })
-          .map((it) => it.userId)
-      );
-      return res.json({ ok: true, type: t, total: ids.length, userIds: ids });
-    }
-
-    if (t === "orders") {
-      const limit = Math.min(200000, Number(req.body?.limit || 50000));
-      let items = readLogLines(ORDERS_LOG, limit);
-      if (req.body?.date) {
-        const r = jstRangeFromYmd(String(req.body.date));
-        items = filterByIsoRange(items, (x) => x.ts, r.from, r.to);
-      }
-      const pids = Array.isArray(req.body?.productIds) ? req.body.productIds : null;
-      const method = (req.body?.method || "").trim();
-      const payment = (req.body?.payment || "").trim();
-
-      const ids = uniqIds(
-        items
-          .filter((o) => {
-            if (pids && pids.length > 0 && !pids.includes(o.productId)) return false;
-            if (method && o.method !== method) return false;
-            if (payment && o.payment !== payment) return false;
-            return !!o.userId;
-          })
-          .map((o) => o.userId)
-      );
-      return res.json({ ok: true, type: t, total: ids.length, userIds: ids });
-    }
-
-    if (t === "addresses") {
-      const book = readAddresses();
-      const ids = uniqIds(Object.keys(book || {}));
-      return res.json({ ok: true, type: t, total: ids.length, userIds: ids });
-    }
-
-    return res.status(400).json({ ok: false, error: "unknown_type" });
-  } catch (e) {
-    console.error("segment preview error:", e);
-    return res.status(500).json({ ok: false, error: "server_error" });
-  }
-});
-
-app.post("/api/admin/segment/send", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  const userIds = Array.isArray(req.body?.userIds) ? uniq(req.body.userIds) : [];
-  const message = (req.body?.message || "").trim();
-  if (userIds.length === 0) return res.status(400).json({ ok: false, error: "no_users" });
-  if (!message) return res.status(400).json({ ok: false, error: "no_message" });
-
-  const chunkSize = 500;
-  const results = [];
-  let okCount = 0, ngCount = 0, batches = 0;
-
-  for (let i = 0; i < userIds.length; i += chunkSize) {
-    const ids = userIds.slice(i, i + chunkSize);
-    try {
-      await client.multicast(ids, [{ type: "text", text: message }]);
-      results.push({ size: ids.length, ok: true });
-      okCount += ids.length;
-      batches++;
-    } catch (e) {
-      results.push({ size: ids.length, ok: false, error: e?.response?.data || String(e) });
-      ngCount += ids.length;
-      batches++;
-    }
-  }
-  return res.json({ ok: true, requested: userIds.length, sent: okCount, failed: ngCount, batches, results });
-});
-
-app.post("/api/admin/segment/send-flex", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    const userIds = Array.isArray(req.body?.userIds) ? Array.from(new Set(req.body.userIds.filter(Boolean))) : [];
-    const altText = ensureAltText(req.body?.altText);
-    const contents = validateFlexContents(req.body?.contents);
-    if (userIds.length === 0) return res.status(400).json({ ok: false, error: "no_users" });
-
-    const msg = [{ type: "flex", altText, contents }];
-    const chunkSize = 500;
-    let sent = 0, failed = 0, batches = 0, results = [];
-
-    for (let i = 0; i < userIds.length; i += chunkSize) {
-      const ids = userIds.slice(i, i + chunkSize);
-      try { await client.multicast(ids, msg); results.push({ ok: true, size: ids.length }); sent += ids.length; batches++; }
-      catch (e) { results.push({ ok: false, size: ids.length, error: e?.response?.data || String(e) }); failed += ids.length; batches++; }
-    }
-    return res.json({ ok: true, requested: userIds.length, sent, failed, batches, results });
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err.message || "bad_request" });
-  }
-});
-
-app.post("/api/admin/broadcast-flex", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    const altText = ensureAltText(req.body?.altText);
-    const contents = validateFlexContents(req.body?.contents);
-    await client.broadcast([{ type: "flex", altText, contents }]);
-    return res.json({ ok: true });
-  } catch (e) {
-    const detail = e?.response?.data || e.message || String(e);
-    return res.status(400).json({ ok: false, error: detail });
-  }
-});
-
-// ====== 画像アップロード & 管理 API（管理者のみ） ======
+// ====== 画像アップロード & 管理 ======
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
   filename: (_req, file, cb) => {
@@ -1677,18 +1327,12 @@ const upload = multer({
   },
 });
 
-app.get("/api/admin/connection-test", (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  res.json({ ok: true, uploads: true, uploadDir: "/public/uploads" });
-});
+app.get("/api/admin/connection-test", (req, res) => { if (!requireAdmin(req, res)) return; res.json({ ok: true, uploads: true, uploadDir: "/public/uploads" }); });
 
 app.post("/api/admin/upload-image", (req, res) => {
   if (!requireAdmin(req, res)) return;
   upload.single("image")(req, res, (err) => {
-    if (err) {
-      const msg = err?.message === "File too large" ? "file_too_large" : err?.message || "upload_error";
-      return res.status(400).json({ ok: false, error: msg });
-    }
+    if (err) return res.status(400).json({ ok: false, error: err?.message || "upload_error" });
     if (!req.file) return res.status(400).json({ ok: false, error: "no_file" });
 
     const filename = req.file.filename;
@@ -1793,12 +1437,12 @@ async function handleEvent(ev) {
       const text = (ev.message.text || "").trim();
       const t = text.replace(/\s+/g, " ").trim();
 
-      // 管理者通知（問い合わせ以外も通知）
-      const isAdmin = ADMIN_USER_ID && ev.source?.userId === ADMIN_USER_ID;
+      // 管理者へ通知（管理者本人は除外）
+      const isAdmin = ADMIN_USER_ID && uid === ADMIN_USER_ID;
       if (!isAdmin && ADMIN_USER_ID && t) {
         const notice =
           "📩【お客さまからのメッセージ】\n" +
-          `ユーザーID：${ev.source?.userId || ""}\n` +
+          `ユーザーID：${uid}\n` +
           `メッセージ：${t}`;
         try { await client.pushMessage(ADMIN_USER_ID, { type: "text", text: notice }); } catch {}
       }
@@ -1810,46 +1454,32 @@ async function handleEvent(ev) {
         });
         return;
       }
-// ★「会員コード」と送られたら会員コード（memberCode）を返信
-if (t === "会員コード") {
-  const userId = ev.source?.userId || "";
-  const code = getOrCreateMemberCode(userId);
-  if (!code) {
-    await client.replyMessage(ev.replyToken, {
-      type: "text",
-      text: "まだ住所登録が完了していません。リッチメニューの「住所登録」からご登録ください。",
-    });
-    return;
-  }
-  await client.replyMessage(ev.replyToken, {
-    type: "text",
-    text: `磯屋 会員コード\n----------------------\n${code}`,
-  });
-  return;
-}
 
-// ★「住所コード」または「住所番号」と送られたら住所コード（addressCode）を返信
-if (t === "住所コード" || t === "住所番号") {
-  const userId = ev.source?.userId || "";
-  const code = getOrCreateAddressCode(userId);
-  if (!code) {
-    await client.replyMessage(ev.replyToken, {
-      type: "text",
-      text: "まだ住所登録が完了していません。リッチメニューの「住所登録」からご登録ください。",
-    });
-    return;
-  }
-  await client.replyMessage(ev.replyToken, {
-    type: "text",
-    text: `磯屋 住所コード\n----------------------\n${code}`,
-  });
-  return;
-}
+      // ★ 会員コード
+      if (t === "会員コード") {
+        const code = getOrCreateMemberCode(uid);
+        if (!code) {
+          await client.replyMessage(ev.replyToken, {
+            type: "text",
+            text: "まだ住所登録が完了していません。リッチメニューの「住所登録」からご登録ください。",
+          });
+          return;
+        }
+        await client.replyMessage(ev.replyToken, { type: "text", text: `磯屋 会員コード\n----------------------\n${code}` });
+        return;
+      }
 
-        await client.replyMessage(ev.replyToken, {
-          type: "text",
-          text: "磯屋 会員コード\n----------------------\n" + `${code}\n\n` + "ご注文やお問い合わせの際に、この会員コードをお知らせください。",
-        });
+      // ★ 住所コード
+      if (t === "住所コード" || t === "住所番号") {
+        const code = getOrCreateAddressCode(uid);
+        if (!code) {
+          await client.replyMessage(ev.replyToken, {
+            type: "text",
+            text: "まだ住所登録が完了していません。リッチメニューの「住所登録」からご登録ください。",
+          });
+          return;
+        }
+        await client.replyMessage(ev.replyToken, { type: "text", text: `磯屋 住所コード\n----------------------\n${code}` });
         return;
       }
 
@@ -1945,112 +1575,7 @@ if (t === "住所コード" || t === "住所番号") {
         return;
       }
 
-      // ★ 管理者コマンド（在庫/予約連絡など）…（ここは元コードを維持）
-      if (ev.source?.userId && ADMIN_USER_ID && ev.source.userId === ADMIN_USER_ID) {
-        if (t === "在庫一覧") {
-          const items = readProducts().map((p) => `・${p.name}（${p.id}）：${Number(p.stock || 0)}個`).join("\n");
-          await client.replyMessage(ev.replyToken, { type: "text", text: items || "商品がありません。" });
-          return;
-        }
-
-        if (t.startsWith("在庫 ")) {
-          const parts = t.split(" ");
-          if (parts.length === 2) {
-            const pid = resolveProductId(parts[1]);
-            const { product } = findProductById(pid);
-            await client.replyMessage(ev.replyToken, { type: "text", text: product ? `${product.name}：${Number(product.stock || 0)}個` : "商品が見つかりません。" });
-            return;
-          }
-
-          if (parts.length === 4) {
-            const op = parts[1];
-            const pid = resolveProductId(parts[2]);
-            const val = Number(parts[3]);
-            try {
-              if (op === "設定" || op.toLowerCase() === "set") {
-                const r = setStock(pid, val, "admin-text");
-                const { product } = findProductById(pid);
-                await client.replyMessage(ev.replyToken, { type: "text", text: `[設定] ${product?.name || pid}\n${r.before} → ${r.after} 個` });
-                await maybeLowStockAlert(pid, product?.name || pid, r.after);
-                return;
-              }
-              if (op === "追加" || op === "+" || op.toLowerCase() === "add") {
-                const r = addStock(pid, Math.abs(val), "admin-text");
-                const { product } = findProductById(pid);
-                await client.replyMessage(ev.replyToken, { type: "text", text: `[追加] ${product?.name || pid}\n${r.before} → ${r.after} 個（+${Math.abs(val)}）` });
-                return;
-              }
-              if (op === "減少" || op === "-" || op.toLowerCase() === "sub") {
-                const r = addStock(pid, -Math.abs(val), "admin-text");
-                const { product } = findProductById(pid);
-                await client.replyMessage(ev.replyToken, { type: "text", text: `[減少] ${product?.name || pid}\n${r.before} → ${r.after} 個（-${Math.abs(val)}）` });
-                await maybeLowStockAlert(pid, product?.name || pid, r.after);
-                return;
-              }
-            } catch (e) {
-              await client.replyMessage(ev.replyToken, { type: "text", text: `在庫コマンドエラー：${e.message || e}` });
-              return;
-            }
-          }
-
-          if (parts.length === 3 && /^[+-]\d+$/.test(parts[2])) {
-            const pid = resolveProductId(parts[1]);
-            const delta = Number(parts[2]);
-            try {
-              const r = addStock(pid, delta, "admin-text");
-              const { product } = findProductById(pid);
-              const sign = delta >= 0 ? "+" : "";
-              await client.replyMessage(ev.replyToken, { type: "text", text: `[調整] ${product?.name || pid}\n${r.before} → ${r.after} 個（${sign}${delta}）` });
-              await maybeLowStockAlert(pid, product?.name || pid, r.after);
-            } catch (e) {
-              await client.replyMessage(ev.replyToken, { type: "text", text: `在庫コマンドエラー：${e.message || e}` });
-            }
-            return;
-          }
-
-          await client.replyMessage(ev.replyToken, {
-            type: "text",
-            text:
-              "在庫コマンド使い方：\n" +
-              "・在庫一覧\n" +
-              "・在庫 久助\n" +
-              "・在庫 設定 久助 50\n" +
-              "・在庫 追加 久助 10\n" +
-              "・在庫 減少 久助 3\n" +
-              "・在庫 久助 +5 / 在庫 久助 -2",
-          });
-          return;
-        }
-
-        // 予約連絡（短縮：旧/新 両方維持）
-        if (t.startsWith("予約連絡 ")) {
-          const m = /^予約連絡\s+(\S+)\s+([\s\S]+)$/.exec(t);
-          if (!m) {
-            await client.replyMessage(ev.replyToken, { type: "text", text: "使い方：予約連絡 {商品名またはID} {本文}" });
-            return;
-          }
-          const pid = resolveProductId(m[1]);
-          const message = m[2].trim();
-          const items = readLogLines(RESERVATIONS_LOG, 100000).filter((r) => r && r.productId === pid && r.userId);
-          const userIds = Array.from(new Set(items.map((r) => r.userId)));
-          if (userIds.length === 0) {
-            await client.replyMessage(ev.replyToken, { type: "text", text: `予約者が見つかりませんでした。（${pid}）` });
-            return;
-          }
-          try {
-            const chunk = 500;
-            for (let i = 0; i < userIds.length; i += chunk) {
-              await client.multicast(userIds.slice(i, i + chunk), [{ type: "text", text: message }]);
-            }
-            await client.replyMessage(ev.replyToken, { type: "text", text: `予約者 ${userIds.length}名に送信しました。` });
-          } catch (e) {
-            await client.replyMessage(ev.replyToken, { type: "text", text: `送信エラー：${e?.response?.data?.message || e.message || e}` });
-          }
-          return;
-        }
-      }
-
-      // ★ 一般ユーザー
+      // 一般ユーザー：直接注文
       if (text === "直接注文") {
         await client.replyMessage(ev.replyToken, productsFlex(readProducts()));
         return;
@@ -2137,14 +1662,11 @@ if (t === "住所コード" || t === "住所番号") {
       if (d.startsWith("order_confirm?")) {
         const parsed = parse(d.replace("order_confirm?", ""));
         const id = parsed.id;
-        const qty = parsed.qty;
+        const need = Math.max(1, Number(parsed.qty) || 1);
         const method = (parsed.method || "").trim();
         const payment = (parsed.payment || "").trim();
         const pickupName = (parsed.pickupName || "").trim();
 
-        const need = Math.max(1, Number(qty) || 1);
-
-        // 商品確定
         let product = null;
         let products = readProducts();
         let idx = products.findIndex((p) => p.id === id);
@@ -2167,7 +1689,6 @@ if (t === "住所コード" || t === "住所番号") {
           }
         }
 
-        // 宅配は住所必須
         const uid = ev.source?.userId || "";
         const addrBook = readAddresses();
         const addr = addrBook[uid] || null;
@@ -2191,7 +1712,6 @@ if (t === "住所コード" || t === "住所番号") {
           }
         }
 
-        // 在庫減算（ここで確定したので減らす）
         if (idx >= 0) {
           products[idx].stock = Number(product.stock) - need;
           writeProducts(products);
@@ -2212,7 +1732,6 @@ if (t === "住所コード" || t === "住所番号") {
           subtotal,
           method,
           payment,
-          // 送料まわり（新）
           region,
           size,
           shipping,
@@ -2248,7 +1767,6 @@ if (t === "住所コード" || t === "住所番号") {
 
         userLines.push(`代引き手数料：${yen(codFee)}`);
         userLines.push(`合計：${yen(total)}`);
-
         if (method === "pickup" && pickupName) userLines.push("", `お名前：${pickupName}`);
 
         if (method === "delivery") {
@@ -2262,7 +1780,6 @@ if (t === "住所コード" || t === "住所番号") {
           userLines.push("", "店頭でのお受け取りをお待ちしています。");
         }
 
-        // 銀行振込案内（任意）
         if (payment === "bank" && (BANK_INFO || BANK_NOTE)) {
           userLines.push("");
           if (BANK_INFO) userLines.push("【銀行振込先】", BANK_INFO);
@@ -2283,7 +1800,6 @@ if (t === "住所コード" || t === "住所番号") {
           addr
             ? `住所：${addr.postal || ""} ${addr.prefecture || ""}${addr.city || ""}${addr.address1 || ""}${addr.address2 ? " " + addr.address2 : ""}\n氏名：${addr.name || ""} / TEL：${addr.phone || ""}`
             : method === "delivery" ? "住所：未登録" : "",
-          product.image ? `画像：${product.image}` : "",
         ].filter(Boolean).join("\n");
 
         try {
@@ -2334,10 +1850,11 @@ if (t === "住所コード" || t === "住所番号") {
   }
 }
 
-// ====== Health checks ======
+// ====== Health ======
 app.get("/health", (_req, res) => res.status(200).type("text/plain").send("OK"));
 app.get("/healthz", (_req, res) => res.status(200).type("text/plain").send("OK"));
 app.head("/health", (_req, res) => res.status(200).end());
+
 app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
@@ -2354,9 +1871,9 @@ app.get("/api/health", (_req, res) => {
       BANK_NOTE: !!BANK_NOTE,
       PUBLIC_BASE_URL: !!PUBLIC_BASE_URL,
       STRIPE_SECRET_KEY: !!process.env.STRIPE_SECRET_KEY,
-      STRIPE_PUBLISHABLE_KEY: !!process.env.STRIPE_PUBLISHABLE_KEY,
       ORIGINAL_SET_PRODUCT_ID: !!process.env.ORIGINAL_SET_PRODUCT_ID,
       COD_FEE: COD_FEE,
+      PHONE_HOOK_TOKEN: !!PHONE_HOOK_TOKEN,
     },
   });
 });
@@ -2366,4 +1883,5 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server started on port ${PORT}`);
   console.log("   Webhook: POST /webhook");
   console.log("   Public: /public/*");
+  console.log("   Phone hook: POST /api/phone/hook");
 });

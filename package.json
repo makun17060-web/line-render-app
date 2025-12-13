@@ -4,8 +4,8 @@
   "description": "LINE Bot 管理画面＋Flex配信＋画像アップロード＋リサイズ機能＋Twilio電話AI＋代引き注文",
   "main": "server-line.js",
   "scripts": {
-    "start": "node server-line.js",       
-    "start-line": "node server-line.js",  
+    "start": "node server-line.js",
+    "start-line": "node server-line.js",
     "start-phone": "node server-phone.js",
     "start-phone-cod": "node server-phone-cod.js"
   },
@@ -16,10 +16,11 @@
     "express": "^4.19.2",
     "fs-extra": "^11.2.0",
     "multer": "^1.4.5-lts.1",
+    "path": "^0.12.7",
+    "pg": "^8.16.3",
     "sharp": "^0.33.4",
     "stripe": "^16.0.0",
-    "twilio": "^5.10.6",
-    "path": "^0.12.7"
+    "twilio": "^5.10.6"
   },
   "engines": {
     "node": ">=18.x"

@@ -134,9 +134,9 @@ const PHONE_ORDER_TEL = "tel:+17479467151"; // +1 747-946-7151
         {
           bounds: { x: 833, y: 843, width: 834, height: 843 },
           action: {
-            type: "message",
-            label: "ただいま準備中です",
-            text: "ただいま準備中です",
+            type: "uri",
+            label: "住所登録",
+            uri: "https://liff.line.me/2008406620-4kyQVyqe",
           },
         },
         // 右下：直接注文（メッセージ）

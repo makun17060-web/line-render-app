@@ -201,6 +201,56 @@ function getOrCreateMemberCode(userId) {
     const existing = entry.memberCode.trim();
     if (existing) return existing;
   }
+function getOrCreateCode(userId, fieldName) {
+  const uid = String(userId || "").trim();
+  if (!uid) return null;
+
+  const book = readAddresses();
+  const entry = book[uid];
+  if (!entry) {
+    // 住所登録がまだ（住所コードも会員コードも出せない）
+    return null;
+  }
+
+  // 既にあればそれを返す
+  if (entry[fieldName] && typeof entry[fieldName] === "string") {
+    const existing = entry[fieldName].trim();
+    if (existing) return existing;
+  }
+
+  // 既存コード一覧（その fieldName の4桁だけ収集）
+  const existingCodes = new Set(
+    Object.values(book)
+      .map((a) => (a && typeof a[fieldName] === "string" ? a[fieldName].trim() : ""))
+      .filter((c) => /^\d{4}$/.test(c))
+  );
+
+  // 新規発行（4桁、重複なし）
+  let newCode = "";
+  let safety = 0;
+  do {
+    const rand = Math.floor(Math.random() * 10000);
+    newCode = rand.toString().padStart(4, "0");
+    safety++;
+    if (safety > 20000) throw new Error(`${fieldName}_exhausted`);
+  } while (existingCodes.has(newCode));
+
+  entry[fieldName] = newCode;
+  book[uid] = entry;
+  writeAddresses(book);
+
+  return newCode;
+}
+
+// 互換：既存の呼び出しを壊さないため残す（今まで通り会員コード）
+function getOrCreateMemberCode(userId) {
+  return getOrCreateCode(userId, "memberCode");
+}
+
+// 新規：住所コード
+function getOrCreateAddressCode(userId) {
+  return getOrCreateCode(userId, "addressCode");
+}
 
   if (entry.phoneMemberCode && typeof entry.phoneMemberCode === "string") {
     const fromPhone = entry.phoneMemberCode.trim();
@@ -900,8 +950,11 @@ app.post("/api/liff/address", async (req, res) => {
 
     writeAddresses(book);
 
-    const memberCode = getOrCreateMemberCode(userId);
-    res.json({ ok: true, memberCode });
+   const memberCode  = getOrCreateMemberCode(userId);
+const addressCode = getOrCreateAddressCode(userId);
+
+res.json({ ok: true, memberCode, addressCode });
+ 
   } catch (e) {
     console.error("/api/liff/address error:", e);
     res.status(500).json({ ok: false, error: "server_error" });
@@ -1745,21 +1798,42 @@ async function handleEvent(ev) {
         });
         return;
       }
+// ★「会員コード」と送られたら会員コード（memberCode）を返信
+if (t === "会員コード") {
+  const userId = ev.source?.userId || "";
+  const code = getOrCreateMemberCode(userId);
+  if (!code) {
+    await client.replyMessage(ev.replyToken, {
+      type: "text",
+      text: "まだ住所登録が完了していません。リッチメニューの「住所登録」からご登録ください。",
+    });
+    return;
+  }
+  await client.replyMessage(ev.replyToken, {
+    type: "text",
+    text: `磯屋 会員コード\n----------------------\n${code}`,
+  });
+  return;
+}
 
-      if (t === "会員コード") {
-        const userId = ev.source?.userId || "";
-        if (!userId) {
-          await client.replyMessage(ev.replyToken, { type: "text", text: "会員コードは1対1トークでのみ確認できます。" });
-          return;
-        }
-        const code = getOrCreateMemberCode(userId);
-        if (!code) {
-          await client.replyMessage(ev.replyToken, {
-            type: "text",
-            text: "まだ会員登録（住所登録）が完了していません。\nリッチメニューの「住所登録」ボタンから一度ご登録ください。",
-          });
-          return;
-        }
+// ★「住所コード」または「住所番号」と送られたら住所コード（addressCode）を返信
+if (t === "住所コード" || t === "住所番号") {
+  const userId = ev.source?.userId || "";
+  const code = getOrCreateAddressCode(userId);
+  if (!code) {
+    await client.replyMessage(ev.replyToken, {
+      type: "text",
+      text: "まだ住所登録が完了していません。リッチメニューの「住所登録」からご登録ください。",
+    });
+    return;
+  }
+  await client.replyMessage(ev.replyToken, {
+    type: "text",
+    text: `磯屋 住所コード\n----------------------\n${code}`,
+  });
+  return;
+}
+
         await client.replyMessage(ev.replyToken, {
           type: "text",
           text: "磯屋 会員コード\n----------------------\n" + `${code}\n\n` + "ご注文やお問い合わせの際に、この会員コードをお知らせください。",

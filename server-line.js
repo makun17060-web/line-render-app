@@ -338,6 +338,26 @@ function addStock(productId, delta, actor = "system") {
 }
 async function maybeLowStockAlert(productId, productName, stockNow) {
   const client = new line.Client(config);
+  // ★★★★★ ここに追加 ★★★★★
+app.get("/api/line/ping", async (req, res) => {
+  try {
+    if (!ADMIN_USER_ID) {
+      return res.status(400).json({ ok: false, error: "ADMIN_USER_ID not set" });
+    }
+    await client.pushMessage(ADMIN_USER_ID, {
+      type: "text",
+      text: "✅ LINEサーバー疎通テストOK",
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    // line sdk は e.response.data を持つことが多い
+    res.status(500).json({
+      ok: false,
+      error: e?.response?.data || e?.message || String(e),
+    });
+  }
+});
+// ★★★★★ 追加ここまで ★★★★★
   if (stockNow < LOW_STOCK_THRESHOLD && ADMIN_USER_ID) {
     const msg = `⚠️ 在庫僅少アラート\n商品：${productName}（${productId}）\n残り：${stockNow}個\nしきい値：${LOW_STOCK_THRESHOLD}個`;
     try { await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg }); } catch {}

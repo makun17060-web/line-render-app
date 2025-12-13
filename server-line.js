@@ -17,17 +17,15 @@
 // + 汎用 Health チェック
 // + 発送通知履歴保存（notify_state.json：shippedOrders）
 // + ★電話サーバー通知受け口（/api/phone/hook）→ phone-addresses.json に保存（オンラインと別DISK前提）
+//
+// ★FIX（超重要）
+// - /api/line/ping はトップレベルで定義（関数内に置かない）
+// - LINE client は1回だけ生成して使い回す
+// - JSON middleware を /api 限定にしない（webhook/phone hook のため）
 
 "use strict";
 
 require("dotenv").config();
-const { Pool } = require("pg");
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === "production"
-    ? { rejectUnauthorized: false }
-    : false,
-});
 
 const fs = require("fs");
 const path = require("path");
@@ -35,6 +33,31 @@ const express = require("express");
 const line = require("@line/bot-sdk");
 const multer = require("multer");
 const stripeLib = require("stripe");
+const { Pool } = require("pg");
+
+// ===== Express =====
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// ★ middleware（/apiに限定しない）
+app.use(express.json({ limit: "2mb" }));
+app.use(express.urlencoded({ extended: true }));
+
+app.use((req, _res, next) => {
+  console.log(`[REQ] ${new Date().toISOString()} ${req.method} ${req.url}`);
+  next();
+});
+
+// ===== PostgreSQL（任意）=====
+const pool = process.env.DATABASE_URL
+  ? new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl:
+        process.env.NODE_ENV === "production"
+          ? { rejectUnauthorized: false }
+          : false,
+    })
+  : null;
 
 // ===== Stripe =====
 const stripeSecretKey = (
@@ -45,26 +68,22 @@ const stripeSecretKey = (
 
 const stripe = stripeSecretKey ? stripeLib(stripeSecretKey) : null;
 if (!stripe) {
-  console.warn(
-    "⚠️ STRIPE_SECRET_KEY / STRIPE_SECRET が設定されていません。/api/pay-stripe はエラーになります。"
-  );
+  console.warn("⚠️ STRIPE_SECRET_KEY / STRIPE_SECRET が設定されていません。/api/pay-stripe はエラーになります。");
 }
 
-const app = express();
-
 // ====== 環境変数 ======
-const PORT = process.env.PORT || 3000;
 const LIFF_ID = (process.env.LIFF_ID || "2008406620-4QJ06JLv").trim();
 const LIFF_ID_DIRECT_ADDRESS = (process.env.LIFF_ID_DIRECT_ADDRESS || LIFF_ID).trim();
 
 const ADMIN_USER_ID = (process.env.ADMIN_USER_ID || "").trim();
+
 const MULTICAST_USER_IDS = (process.env.MULTICAST_USER_IDS || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
 
-const ADMIN_API_TOKEN_ENV = (process.env.ADMIN_API_TOKEN || "").trim(); // 推奨
-const ADMIN_CODE_ENV = (process.env.ADMIN_CODE || "").trim(); // 互換（クエリ ?code= でも可）
+const ADMIN_API_TOKEN_ENV = (process.env.ADMIN_API_TOKEN || "").trim();
+const ADMIN_CODE_ENV = (process.env.ADMIN_CODE || "").trim();
 
 const BANK_INFO = (process.env.BANK_INFO || "").trim();
 const BANK_NOTE = (process.env.BANK_NOTE || "").trim();
@@ -92,10 +111,10 @@ if (
 ) {
   console.error(
     `ERROR: .env の必須値が不足しています。
-  - LINE_CHANNEL_ACCESS_TOKEN
-  - LINE_CHANNEL_SECRET
-  - LIFF_ID
-  - （ADMIN_API_TOKEN または ADMIN_CODE のどちらか）`
+- LINE_CHANNEL_ACCESS_TOKEN
+- LINE_CHANNEL_SECRET
+- LIFF_ID
+- （ADMIN_API_TOKEN または ADMIN_CODE のどちらか）`
   );
   process.exit(1);
 }
@@ -107,7 +126,7 @@ const PRODUCTS_PATH = path.join(DATA_DIR, "products.json");
 const ORDERS_LOG = path.join(DATA_DIR, "orders.log");
 const RESERVATIONS_LOG = path.join(DATA_DIR, "reservations.log");
 const ADDRESSES_PATH = path.join(DATA_DIR, "addresses.json");
-const PHONE_ADDRESSES_PATH = path.join(DATA_DIR, "phone-addresses.json"); // ★電話住所（別DISK前提なのでオンライン側に保存）
+const PHONE_ADDRESSES_PATH = path.join(DATA_DIR, "phone-addresses.json"); // 電話住所をオンライン側に保存
 const SURVEYS_LOG = path.join(DATA_DIR, "surveys.log");
 const MESSAGES_LOG = path.join(DATA_DIR, "messages.log");
 const SESSIONS_PATH = path.join(DATA_DIR, "sessions.json");
@@ -117,21 +136,15 @@ const STOCK_LOG = path.join(DATA_DIR, "stock.log");
 const PUBLIC_DIR = path.join(__dirname, "public");
 const UPLOAD_DIR = path.join(PUBLIC_DIR, "uploads");
 
+// static
+app.use("/public", express.static(PUBLIC_DIR));
+
 // ====== ディレクトリ自動作成 ======
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-// ====== ミドルウェア ======
-app.use("/api", express.json(), express.urlencoded({ extended: true }));
-app.use("/public", express.static(PUBLIC_DIR));
-
-app.use((req, _res, next) => {
-  console.log(`[REQ] ${new Date().toISOString()} ${req.method} ${req.url}`);
-  next();
-});
-
-// ページ
+// ====== ページ ======
 app.all("/public/confirm-card-success.html", (_req, res) => {
   return res.sendFile(path.join(PUBLIC_DIR, "confirm-card-success.html"));
 });
@@ -246,29 +259,48 @@ function filterByIsoRange(items, getTs, fromIso, toIso) {
   });
 }
 
-// ===== 会員コード/住所コード =====
+// ====== LINE client（★FIX：ここで1回だけ生成） ======
+const client = new line.Client(config);
+
+// ====== ★ LINE 疎通確認 API（★FIX：トップレベル） ======
+app.get("/api/line/ping", async (_req, res) => {
+  try {
+    if (!ADMIN_USER_ID) {
+      return res.status(400).json({ ok: false, error: "ADMIN_USER_ID not set" });
+    }
+    await client.pushMessage(ADMIN_USER_ID, {
+      type: "text",
+      text: "✅ LINEサーバー疎通テストOK",
+    });
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({
+      ok: false,
+      error: e?.response?.data || e?.message || String(e),
+    });
+  }
+});
+
+// ====== 会員コード/住所コード =====
 function getOrCreateCode(userId, fieldName) {
   const uid = String(userId || "").trim();
   if (!uid) return null;
 
   const book = readAddresses();
   const entry = book[uid];
-  if (!entry) return null; // 住所登録がまだ
+  if (!entry) return null;
 
-  // 既存があれば返す
   if (entry[fieldName] && typeof entry[fieldName] === "string") {
     const existing = entry[fieldName].trim();
     if (/^\d{4}$/.test(existing)) return existing;
   }
 
-  // 既存コード一覧
   const existingCodes = new Set(
     Object.values(book)
       .map((a) => (a && typeof a[fieldName] === "string" ? a[fieldName].trim() : ""))
       .filter((c) => /^\d{4}$/.test(c))
   );
 
-  // 新規発行（4桁、重複なし）
   let newCode = "";
   let safety = 0;
   do {
@@ -284,7 +316,6 @@ function getOrCreateCode(userId, fieldName) {
 
   return newCode;
 }
-
 function getOrCreateMemberCode(userId) {
   return getOrCreateCode(userId, "memberCode");
 }
@@ -300,7 +331,7 @@ const PRODUCT_ALIASES = {
   kusuke: "kusuke-250",
   "kusuke-250": "kusuke-250",
 };
-const HIDE_PRODUCT_IDS = new Set(["kusuke-250"]); // ミニアプリ側で非表示
+const HIDE_PRODUCT_IDS = new Set(["kusuke-250"]);
 
 function resolveProductId(token) {
   return PRODUCT_ALIASES[token] || token;
@@ -337,29 +368,11 @@ function addStock(productId, delta, actor = "system") {
   return { before, after };
 }
 async function maybeLowStockAlert(productId, productName, stockNow) {
-  const client = new line.Client(config);
-  // ★★★★★ ここに追加 ★★★★★
-app.get("/api/line/ping", async (req, res) => {
-  try {
-    if (!ADMIN_USER_ID) {
-      return res.status(400).json({ ok: false, error: "ADMIN_USER_ID not set" });
-    }
-    await client.pushMessage(ADMIN_USER_ID, {
-      type: "text",
-      text: "✅ LINEサーバー疎通テストOK",
-    });
-    res.json({ ok: true });
-  } catch (e) {
-    // line sdk は e.response.data を持つことが多い
-    res.status(500).json({
-      ok: false,
-      error: e?.response?.data || e?.message || String(e),
-    });
-  }
-});
-// ★★★★★ 追加ここまで ★★★★★
+  // ★FIX：ここで client を作り直さない（トップの client を使う）
   if (stockNow < LOW_STOCK_THRESHOLD && ADMIN_USER_ID) {
-    const msg = `⚠️ 在庫僅少アラート\n商品：${productName}（${productId}）\n残り：${stockNow}個\nしきい値：${LOW_STOCK_THRESHOLD}個`;
+    const msg =
+      `⚠️ 在庫僅少アラート\n商品：${productName}（${productId}）\n` +
+      `残り：${stockNow}個\nしきい値：${LOW_STOCK_THRESHOLD}個`;
     try { await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg }); } catch {}
   }
 }
@@ -485,9 +498,6 @@ app.post("/api/shipping", (req, res) => {
     res.status(400).json({ ok: false, error: e.message || "shipping_error" });
   }
 });
-
-// ====== LINE client ======
-const client = new line.Client(config);
 
 // ===== 画像URL整形 =====
 function toPublicImageUrl(raw) {
@@ -962,7 +972,6 @@ app.get("/api/public/address-by-code", (req, res) => {
 });
 
 // ===== ★電話サーバー -> オンライン通知 受け口 =====
-// 電話住所は別DISKなので、オンライン側に phone-addresses.json として保存
 app.post("/api/phone/hook", async (req, res) => {
   try {
     if (PHONE_HOOK_TOKEN) {
@@ -975,7 +984,6 @@ app.post("/api/phone/hook", async (req, res) => {
     const { event, ts, payload } = req.body || {};
     if (!event) return res.status(400).json({ ok: false, error: "missing_event" });
 
-    // event: address_registered / order_created 想定
     if (event === "address_registered") {
       const memberCode = String(payload?.memberCode || "").trim();
       const a = payload?.address || {};
@@ -1189,7 +1197,7 @@ app.post("/api/order/complete", async (req, res) => {
   }
 });
 
-// ====== 管理API ======
+// ====== 管理API（最小） ======
 app.get("/api/admin/ping", (req, res) => { if (!requireAdmin(req, res)) return; res.json({ ok: true, ping: "pong" }); });
 
 app.get("/api/admin/orders", (req, res) => {
@@ -1447,7 +1455,6 @@ app.post("/webhook", line.middleware(config), async (req, res) => {
 // ====== イベント処理 ======
 async function handleEvent(ev) {
   try {
-    // ===== message =====
     if (ev.type === "message" && ev.message?.type === "text") {
       // テキストログ
       try {
@@ -1482,7 +1489,7 @@ async function handleEvent(ev) {
         return;
       }
 
-      // ★ 会員コード
+      // 会員コード
       if (t === "会員コード") {
         const code = getOrCreateMemberCode(uid);
         if (!code) {
@@ -1496,7 +1503,7 @@ async function handleEvent(ev) {
         return;
       }
 
-      // ★ 住所コード
+      // 住所コード
       if (t === "住所コード" || t === "住所番号") {
         const code = getOrCreateAddressCode(uid);
         if (!code) {
@@ -1611,7 +1618,6 @@ async function handleEvent(ev) {
       return;
     }
 
-    // ===== postback =====
     if (ev.type === "postback") {
       const d = ev.postback?.data || "";
 
@@ -1882,11 +1888,22 @@ app.get("/health", (_req, res) => res.status(200).type("text/plain").send("OK"))
 app.get("/healthz", (_req, res) => res.status(200).type("text/plain").send("OK"));
 app.head("/health", (_req, res) => res.status(200).end());
 
-app.get("/api/health", (_req, res) => {
+app.get("/api/health", async (_req, res) => {
+  let pg = null;
+  if (pool) {
+    try {
+      const r = await pool.query("SELECT NOW() as now");
+      pg = { ok: true, now: r.rows?.[0]?.now || null };
+    } catch (e) {
+      pg = { ok: false, error: e?.message || String(e) };
+    }
+  }
+
   res.json({
     ok: true,
     time: new Date().toISOString(),
     node: process.version,
+    pg,
     env: {
       PORT: !!process.env.PORT,
       LINE_CHANNEL_ACCESS_TOKEN: !!process.env.LINE_CHANNEL_ACCESS_TOKEN,
@@ -1901,6 +1918,7 @@ app.get("/api/health", (_req, res) => {
       ORIGINAL_SET_PRODUCT_ID: !!process.env.ORIGINAL_SET_PRODUCT_ID,
       COD_FEE: COD_FEE,
       PHONE_HOOK_TOKEN: !!PHONE_HOOK_TOKEN,
+      DATABASE_URL: !!process.env.DATABASE_URL,
     },
   });
 });
@@ -1911,4 +1929,5 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log("   Webhook: POST /webhook");
   console.log("   Public: /public/*");
   console.log("   Phone hook: POST /api/phone/hook");
+  console.log("   Ping: GET /api/line/ping");
 });

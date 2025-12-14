@@ -74,8 +74,9 @@
   </div>
 
   <div class="btn-row">
-    <button id="saveBtn" class="btn btn-primary" disabled>住所を保存する</button>
-    <button id="closeBtn" class="btn btn-secondary">この画面を閉じる</button>
+    <!-- ✅ form誤爆防止 -->
+    <button id="saveBtn" type="button" class="btn btn-primary" disabled>住所を保存する</button>
+    <button id="closeBtn" type="button" class="btn btn-secondary">この画面を閉じる</button>
   </div>
 
   <div id="statusMsg"></div>
@@ -89,11 +90,13 @@
     (function () {
       "use strict";
 
-      // ✅同一ドメイン配信なら空でOK（CORSなし）
-      // ✅別ドメイン配信なら ?api=https://line-render-app-1.onrender.com を付ける
+      /**
+       * ✅同一ドメインで配信しているなら API_BASE は "" のままでOK（CORSなし）
+       * ✅別ドメインなら ?api=https://line-render-app-1.onrender.com を付ける
+       */
       const qs = new URLSearchParams(location.search);
       const API_BASE_RAW = (qs.get("api") || "").trim().replace(/\/+$/, "");
-      const API_BASE = API_BASE_RAW || "";  // ←ここがポイント
+      const API_BASE = API_BASE_RAW || "";
 
       const statusEl = document.getElementById("statusMsg");
       const saveBtn  = document.getElementById("saveBtn");
@@ -143,12 +146,12 @@
         setStatus("LIFF 初期化中…", "");
         saveBtn.disabled = true;
 
-        // ✅リッチメニュー用途ならまず order を推奨（電話用と混ざりにくい）
+        // リッチメニュー側は order を使う（電話用codと混ざりにくい）
         const { res: cfgRes, data: cfg } =
           await fetchJson(apiUrl("/api/liff/config?kind=order"), { cache: "no-store" });
 
         if (!cfgRes.ok || !cfg?.liffId) {
-          throw new Error("LIFF ID 取得失敗（/api/liff/config）");
+          throw new Error("LIFF ID 取得失敗（/api/liff/config?kind=order）");
         }
 
         await liff.init({ liffId: cfg.liffId });
@@ -159,11 +162,18 @@
           return;
         }
 
-        const profile = await liff.getProfile();
-        lineUserId = profile?.userId || "";
+        // userId取得
+        try {
+          const profile = await liff.getProfile();
+          lineUserId = profile?.userId || "";
+        } catch (e) {
+          // まれに getProfile が落ちる場合の保険（IDトークンsub）
+          const idt = liff.getDecodedIDToken?.();
+          lineUserId = (idt && idt.sub) ? String(idt.sub) : "";
+        }
 
         if (!lineUserId) {
-          setStatus("userId取得に失敗しました。LINEアプリ内（LIFF）で開けていない可能性があります。", "err");
+          setStatus("userId取得に失敗しました。LINEアプリ内（LIFF）で開いているか確認してください。", "err");
           return;
         }
 
@@ -172,7 +182,8 @@
 
         // 既存住所の読み込み（任意）
         try {
-          const { data: me } = await fetchJson(apiUrl(`/api/liff/address/me?userId=${encodeURIComponent(lineUserId)}`), { cache: "no-store" });
+          const { data: me } =
+            await fetchJson(apiUrl(`/api/liff/address/me?userId=${encodeURIComponent(lineUserId)}`), { cache: "no-store" });
           if (me?.ok && me?.address) {
             const a = me.address;
             setVal("postal", a.postal);
@@ -195,51 +206,59 @@
           return;
         }
 
+        saveBtn.disabled = true;
         try {
-          saveBtn.disabled = true;
           setStatus("住所を保存しています…", "");
           codeBox.style.display = "none";
           codeBox.textContent = "";
 
-         const { res, data } = await fetchJson(apiUrl("/api/liff/address"), {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ userId: lineUserId, address: addr }),
-});
+          const { res, data } = await fetchJson(apiUrl("/api/liff/address"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId: lineUserId, address: addr }),
+          });
 
-console.log("SAVE RESPONSE:", res.status, data);
+          console.log("SAVE RESPONSE:", res.status, data);
 
-// ✅ どのキーでも拾えるようにする
-const memberCode =
-  (data && (data.memberCode || data.member_code || data.code || data.member)) ? String(data.memberCode || data.member_code || data.code || data.member) : "";
+          // ✅ どのキーでも拾えるようにする
+          const memberCode = (data && (data.memberCode || data.member_code || data.code || data.member))
+            ? String(data.memberCode || data.member_code || data.code || data.member)
+            : "";
 
-const addressCode =
-  (data && (data.addressCode || data.address_code)) ? String(data.addressCode || data.address_code) : "";
+          const addressCode = (data && (data.addressCode || data.address_code))
+            ? String(data.addressCode || data.address_code)
+            : "";
 
-// 成功判定も少し柔らかく
-if (!res.ok || !data?.ok || !memberCode) {
-  setStatus(
-    "住所の保存に失敗しました（コードが取得できません）。\n" +
-    `status=${res.status}\n` +
-    `response=${JSON.stringify(data)}`,
-    "err"
-  );
-  saveBtn.disabled = false;
-  return;
-}
+          if (!res.ok || !data?.ok || !memberCode) {
+            setStatus(
+              "住所の保存に失敗しました（コードが取得できません）。\n" +
+              `status=${res.status}\n` +
+              `response=${JSON.stringify(data)}`,
+              "err"
+            );
+            return;
+          }
 
-// ✅ 表示
-codeBox.style.display = "block";
-codeBox.innerHTML =
-  `✅ 住所を保存しました。\n` +
-  `会員コード：\n<strong>${memberCode}</strong>\n` +
-  (addressCode ? `\n住所コード：${addressCode}\n` : "") +
-  `\n（この数字を控えてください）`;
+          codeBox.style.display = "block";
+          codeBox.innerHTML =
+            `✅ 住所を保存しました。\n` +
+            `会員コード：\n<strong>${memberCode}</strong>\n` +
+            (addressCode ? `\n住所コード：${addressCode}\n` : "") +
+            `\n（この数字を控えてください）`;
 
-codeBox.scrollIntoView({ behavior: "smooth", block: "start" });
-setStatus("保存完了。会員コードを控えてください。", "ok");
-saveBtn.disabled = false;
-
+          codeBox.scrollIntoView({ behavior: "smooth", block: "start" });
+          setStatus("保存完了。会員コードを控えてください。", "ok");
+        } catch (e) {
+          console.error("save failed:", e);
+          setStatus(
+            "通信に失敗しました。\n" +
+            (e?.message || String(e)) + "\n\n" +
+            "・同一ドメイン配信ならOK\n" +
+            "・別ドメインなら URL に ?api=https://xxxx.onrender.com を付けてください",
+            "err"
+          );
+        } finally {
+          saveBtn.disabled = false;
         }
       }
 

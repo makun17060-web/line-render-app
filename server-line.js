@@ -23,6 +23,11 @@
 // - LINE client は1回だけ生成して使い回す
 // - JSON middleware を /api 限定にしない（webhook/phone hook のため）
 // - ★さらに重要：/webhook は express.json を先に通すと署名検証が壊れることがあるので除外する
+//
+// ★今回の修正（3点）
+// 1) order_confirm_view? 内で uid を定義する前に参照していたのを修正
+// 2) rand4() / dbGetCodesByUserId() 未定義を追加
+// 3) 「会員コード/住所コード」返信文言をロジックに合わせて修正（住所未登録でもコードは発行される）
 
 "use strict";
 
@@ -54,6 +59,24 @@ const pool = process.env.DATABASE_URL
 function mustPool() {
   if (!pool) throw new Error("DATABASE_URL not set");
   return pool;
+}
+
+// ====== ★追加FIX：4桁コード生成 ======
+function rand4() {
+  return String(Math.floor(Math.random() * 10000)).padStart(4, "0");
+}
+
+// ====== ★追加FIX：codes取得 ======
+async function dbGetCodesByUserId(userId) {
+  const p = mustPool();
+  const uid = String(userId || "").trim();
+  if (!uid) return null;
+
+  const r = await p.query(
+    `SELECT user_id, member_code, address_code FROM codes WHERE user_id=$1 LIMIT 1`,
+    [uid]
+  );
+  return r.rows[0] || null;
 }
 
 // ---- 住所(DB) : addresses は member_code 主キー ----
@@ -516,6 +539,7 @@ app.post("/api/phone/address-registered", async (req, res) => {
     return res.status(500).json({ ok: false });
   }
 });
+
 // ====== 会員コード/住所コード（Postgres版：重複防止はDBで担保）=====
 //
 // codes テーブル前提：
@@ -1127,6 +1151,7 @@ function reserveOffer(product, needQty, stock) {
     },
   ];
 }
+
 // ====== LIFF API（住所：DB版） ======
 app.post("/api/liff/address", async (req, res) => {
   try {
@@ -1135,7 +1160,7 @@ app.post("/api/liff/address", async (req, res) => {
     if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
 
     // DBへ保存（member_code は内部で確保）
-    const saved = await dbUpsertAddressByUserId(userId, addr);
+    await dbUpsertAddressByUserId(userId, addr);
 
     // コード返す（UI用）
     const codes = await dbEnsureCodes(userId);
@@ -1151,6 +1176,7 @@ app.post("/api/liff/address", async (req, res) => {
     res.status(500).json({ ok: false, error: e?.message || "server_error" });
   }
 });
+
 app.get("/api/liff/address/me", async (req, res) => {
   try {
     const userId = String(req.query.userId || req.headers["x-line-userid"] || "").trim();
@@ -1184,6 +1210,7 @@ app.get("/api/liff/config", (req, res) => {
   if (kind === "cod") return res.json({ liffId: LIFF_ID_DIRECT_ADDRESS });
   return res.json({ liffId: LIFF_ID });
 });
+
 app.get("/api/public/address-by-code", async (req, res) => {
   try {
     const code = String(req.query.code || "").trim();
@@ -1306,7 +1333,6 @@ app.post("/api/pay-stripe", async (req, res) => {
     const items = Array.isArray(order.items) ? order.items : [];
     if (!items.length) return res.status(400).json({ ok: false, error: "no_items" });
 
-    const itemsTotal = Number(order.itemsTotal || 0);
     const shipping   = Number(order.shipping   || 0);
     const codFee     = Number(order.codFee     || 0);
 
@@ -1738,29 +1764,26 @@ async function handleEvent(ev) {
         return;
       }
 
+      // ★FIX(3)：コードは住所未登録でも発行され得るので文言を修正
       if (t === "会員コード") {
         const code = await getOrCreateMemberCode(uid);
-        if (!code) {
-          await client.replyMessage(ev.replyToken, {
-            type: "text",
-            text: "まだ住所登録が完了していません。リッチメニューの「住所登録」からご登録ください。",
-          });
-          return;
-        }
-        await client.replyMessage(ev.replyToken, { type: "text", text: `磯屋 会員コード\n----------------------\n${code}` });
+        await client.replyMessage(ev.replyToken, {
+          type: "text",
+          text:
+            `磯屋 会員コード\n----------------------\n${code}\n\n` +
+            `※住所が未登録の場合は、リッチメニューの「住所登録」から登録してください。`,
+        });
         return;
       }
 
       if (t === "住所コード" || t === "住所番号") {
         const code = await getOrCreateAddressCode(uid);
-        if (!code) {
-          await client.replyMessage(ev.replyToken, {
-            type: "text",
-            text: "まだ住所登録が完了していません。リッチメニューの「住所登録」からご登録ください。",
-          });
-          return;
-        }
-        await client.replyMessage(ev.replyToken, { type: "text", text: `磯屋 住所コード\n----------------------\n${code}` });
+        await client.replyMessage(ev.replyToken, {
+          type: "text",
+          text:
+            `磯屋 住所コード\n----------------------\n${code}\n\n` +
+            `※住所が未登録の場合は、リッチメニューの「住所登録」から登録してください。`,
+        });
         return;
       }
 
@@ -1904,6 +1927,9 @@ async function handleEvent(ev) {
       if (d.startsWith("order_confirm_view?")) {
         const { id, qty, method, payment } = parse(d.replace("order_confirm_view?", ""));
 
+        // ★FIX(1)：uid は先に確保
+        const uid = ev.source?.userId || "";
+
         let product;
         if (String(id).startsWith("other:")) {
           const parts = String(id).split(":");
@@ -1918,19 +1944,18 @@ async function handleEvent(ev) {
             return;
           }
         }
-const row = await dbGetAddressByUserId(uid);
-const addr = row ? {
-  name: row.name || "",
-  phone: row.phone || "",
-  postal: row.postal || "",
-  prefecture: row.prefecture || "",
-  city: row.city || "",
-  address1: row.address1 || "",
-  address2: row.address2 || "",
-} : null;
 
-        const uid = ev.source?.userId || "";
-       
+        const row = await dbGetAddressByUserId(uid);
+        const addr = row ? {
+          name: row.name || "",
+          phone: row.phone || "",
+          postal: row.postal || "",
+          prefecture: row.prefecture || "",
+          city: row.city || "",
+          address1: row.address1 || "",
+          address2: row.address2 || "",
+        } : null;
+
         await client.replyMessage(
           ev.replyToken,
           confirmFlex(product, qty, (method || "").trim(), (payment || "").trim(), LIFF_ID_DIRECT_ADDRESS, { address: addr })
@@ -1975,16 +2000,15 @@ const addr = row ? {
 
         const uid = ev.source?.userId || "";
         const row = await dbGetAddressByUserId(uid);
-const addr = row ? {
-  name: row.name || "",
-  phone: row.phone || "",
-  postal: row.postal || "",
-  prefecture: row.prefecture || "",
-  city: row.city || "",
-  address1: row.address1 || "",
-  address2: row.address2 || "",
-} : null;
-
+        const addr = row ? {
+          name: row.name || "",
+          phone: row.phone || "",
+          postal: row.postal || "",
+          prefecture: row.prefecture || "",
+          city: row.city || "",
+          address1: row.address1 || "",
+          address2: row.address2 || "",
+        } : null;
 
         let region = "";
         let size = "";

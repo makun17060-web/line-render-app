@@ -340,47 +340,59 @@ app.post("/api/phone/address-registered", async (req, res) => {
     return res.status(500).json({ ok: false });
   }
 });
-
-// ====== 会員コード/住所コード =====
-function getOrCreateCode(userId, fieldName) {
+// ====== 会員コード/住所コード（Postgres版：重複防止はDBで担保）=====
+//
+// codes テーブル前提：
+// user_id TEXT PRIMARY KEY
+// member_code CHAR(4) UNIQUE
+// address_code CHAR(4) UNIQUE
+//
+async function getOrCreateCodeDB(userId, kind /* "member" | "address" */) {
   const uid = String(userId || "").trim();
   if (!uid) return null;
 
-  const book = readAddresses();
-  const entry = book[uid];
-  if (!entry) return null;
+  // DB未設定なら従来JSON運用にフォールバックしたい場合はここで分岐できるが、
+  // 今回は「DB化」が目的なので、DBなしはエラーにして気づけるようにする
+  if (!pool) throw new Error("DATABASE_URL not set");
 
-  if (entry[fieldName] && typeof entry[fieldName] === "string") {
-    const existing = entry[fieldName].trim();
-    if (/^\d{4}$/.test(existing)) return existing;
+  const col = kind === "address" ? "address_code" : "member_code";
+
+  // 1) 既存があれば返す（住所登録前でも返せる＝コード台帳は独立）
+  const existing = await pool.query(`SELECT ${col} FROM codes WHERE user_id=$1`, [uid]);
+  const already = String(existing.rows?.[0]?.[col] || "").trim();
+  if (/^\d{4}$/.test(already)) return already;
+
+  // 2) なければ生成してINSERT（ユニーク衝突したらリトライ）
+  for (let i = 0; i < 50; i++) {
+    const code = String(Math.floor(Math.random() * 10000)).padStart(4, "0");
+    try {
+      await pool.query(
+        `
+        INSERT INTO codes (user_id, ${col})
+        VALUES ($1, $2)
+        ON CONFLICT (user_id)
+        DO UPDATE SET ${col} = COALESCE(codes.${col}, EXCLUDED.${col})
+        `,
+        [uid, code]
+      );
+
+      const check = await pool.query(`SELECT ${col} FROM codes WHERE user_id=$1`, [uid]);
+      const got = String(check.rows?.[0]?.[col] || "").trim();
+      if (/^\d{4}$/.test(got)) return got;
+    } catch (e) {
+      // UNIQUE(member_code/address_code) に当たったら別の乱数で作り直す
+      if (e && e.code === "23505") continue;
+      throw e;
+    }
   }
-
-  const existingCodes = new Set(
-    Object.values(book)
-      .map((a) => (a && typeof a[fieldName] === "string" ? a[fieldName].trim() : ""))
-      .filter((c) => /^\d{4}$/.test(c))
-  );
-
-  let newCode = "";
-  let safety = 0;
-  do {
-    const rand = Math.floor(Math.random() * 10000);
-    newCode = rand.toString().padStart(4, "0");
-    safety++;
-    if (safety > 20000) throw new Error(`${fieldName}_exhausted`);
-  } while (existingCodes.has(newCode));
-
-  entry[fieldName] = newCode;
-  book[uid] = entry;
-  writeAddresses(book);
-
-  return newCode;
+  throw new Error("code_generation_failed");
 }
-function getOrCreateMemberCode(userId) {
-  return getOrCreateCode(userId, "memberCode");
+
+async function getOrCreateMemberCode(userId) {
+  return getOrCreateCodeDB(userId, "member");
 }
-function getOrCreateAddressCode(userId) {
-  return getOrCreateCode(userId, "addressCode");
+async function getOrCreateAddressCode(userId) {
+  return getOrCreateCodeDB(userId, "address");
 }
 
 // ===== 在庫 =====
@@ -963,8 +975,8 @@ app.post("/api/liff/address", async (req, res) => {
     };
     writeAddresses(book);
 
-    const memberCode  = getOrCreateMemberCode(userId);
-    const addressCode = getOrCreateAddressCode(userId);
+    const memberCode  = await getOrCreateMemberCode(userId);
+    const addressCode = await getOrCreateAddressCode(userId);
 
     res.json({ ok: true, memberCode, addressCode });
   } catch (e) {
@@ -998,21 +1010,27 @@ app.get("/api/liff/config", (req, res) => {
   if (kind === "cod") return res.json({ liffId: LIFF_ID_DIRECT_ADDRESS });
   return res.json({ liffId: LIFF_ID });
 });
-
 // ===== 会員コードから住所を取得 =====
-app.get("/api/public/address-by-code", (req, res) => {
+app.get("/api/public/address-by-code", async (req, res) => {
   try {
     const code = String(req.query.code || "").trim();
     if (!code) return res.status(400).json({ ok: false, error: "code_required" });
 
+    // まず codes テーブルから user_id を引く
+    if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
+
+    const r = await pool.query(
+      `SELECT user_id, member_code, address_code FROM codes WHERE member_code=$1 LIMIT 1`,
+      [code]
+    );
+    if (!r.rows?.length) return res.status(404).json({ ok: false, error: "not_found" });
+
+    const { user_id, member_code, address_code } = r.rows[0];
+
+    // 住所は当面JSONのままなら、user_id で引く
     const book = readAddresses();
-    let found = null;
-    for (const entry of Object.values(book)) {
-      if (!entry) continue;
-      const mc = String(entry.memberCode || "").trim();
-      if (mc && mc === code) { found = entry; break; }
-    }
-    if (!found) return res.status(404).json({ ok: false, error: "not_found" });
+    const found = book[user_id];
+    if (!found) return res.status(404).json({ ok: false, error: "address_not_registered" });
 
     return res.json({
       ok: true,
@@ -1024,8 +1042,8 @@ app.get("/api/public/address-by-code", (req, res) => {
         city:       found.city       || "",
         address1:   found.address1   || "",
         address2:   found.address2   || "",
-        memberCode: found.memberCode || "",
-        addressCode: found.addressCode || "",
+        memberCode: String(member_code || ""),
+        addressCode: String(address_code || ""),
       },
     });
   } catch (e) {
@@ -1551,7 +1569,7 @@ async function handleEvent(ev) {
       }
 
       if (t === "会員コード") {
-        const code = getOrCreateMemberCode(uid);
+        const code = await getOrCreateMemberCode(uid);
         if (!code) {
           await client.replyMessage(ev.replyToken, {
             type: "text",
@@ -1564,7 +1582,7 @@ async function handleEvent(ev) {
       }
 
       if (t === "住所コード" || t === "住所番号") {
-        const code = getOrCreateAddressCode(uid);
+        const code = await getOrCreateAddressCode(uid);
         if (!code) {
           await client.replyMessage(ev.replyToken, {
             type: "text",

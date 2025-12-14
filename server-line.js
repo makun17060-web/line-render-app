@@ -1262,16 +1262,17 @@ app.get("/api/public/address-by-code", async (req, res) => {
   }
 });
 // ======================================================================
-// phone → online 通知 受信（別口：必要なら使う）
+// phone → online 通知 受信（別口：ONLINE_NOTIFY）
+// 目的：電話側から来た “住所登録” をこのサーバーのDB（codes/addresses/phone_address_events）へ反映する
 // ======================================================================
 app.post("/api/phone/address-registered", async (req, res) => {
   try {
     const got = req.headers["x-hook-token"]; // ヘッダは小文字
     const env = (process.env.ONLINE_NOTIFY_TOKEN || "").trim();
 
+    // ログ（必要な時だけ）
     console.log("[ONLINE_NOTIFY] got=", JSON.stringify(got));
     console.log("[ONLINE_NOTIFY] env=", JSON.stringify(env));
-    console.log("[ONLINE_NOTIFY] headers keys=", Object.keys(req.headers || {}));
     console.log("[ONLINE_NOTIFY] body=", req.body);
 
     // トークン検証（設定がある時だけ厳密チェック）
@@ -1279,11 +1280,75 @@ app.post("/api/phone/address-registered", async (req, res) => {
       return res.status(401).json({ ok: false, error: "invalid token" });
     }
 
-    // ここに必要な処理があれば追加（DB書き込みなど）
-    return res.json({ ok: true });
+    if (!pool) {
+      return res.status(500).json({ ok: false, error: "db_not_configured" });
+    }
+
+    // 受信フォーマットは揺れがちなので両対応
+    // A) { memberCode, isNew, address:{...} }
+    // B) { event:"address_registered", payload:{ memberCode, address:{...}, isNew } }
+    const body = req.body || {};
+    const event = body.event || "address_registered";
+    const payload = body.payload || body;
+
+    if (event !== "address_registered") {
+      return res.json({ ok: true, ignored: true, event });
+    }
+
+    const memberCode = String(payload.memberCode || "").trim();
+    const a = payload.address || {};
+    const isNew = payload.isNew === true;
+
+    if (!/^\d{4}$/.test(memberCode)) {
+      return res.status(400).json({ ok: false, error: "invalid_memberCode" });
+    }
+
+    const addr = {
+      name: String(a.name || "").trim(),
+      phone: String(a.phone || "").trim(),
+      postal: String(a.postal || "").trim(),
+      prefecture: String(a.prefecture || "").trim(),
+      city: String(a.city || "").trim(),
+      address1: String(a.address1 || "").trim(),
+      address2: String(a.address2 || "").trim(),
+    };
+
+    // 1) codes を確保（phone:+81... を user_id にして member_code/address_code を固定）
+    const phoneE164 = addr.phone; // +8190... など想定
+    await dbEnsurePhoneCodesByMemberCode(memberCode, phoneE164);
+
+    // 2) addresses へ反映（memberCode → codes.user_id を引いて user_idで upsert）
+    const reflect = await dbUpsertAddressByMemberCode(memberCode, addr);
+    if (!reflect?.ok) {
+      return res.status(400).json({ ok: false, error: "reflect_failed", detail: reflect });
+    }
+
+    // 3) phone_address_events にログ（任意だけど便利）
+    try {
+      await mustPool().query(
+        `INSERT INTO phone_address_events
+          (member_code, is_new, name, phone, postal, prefecture, city, address1, address2)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [
+          memberCode,
+          !!isNew,
+          addr.name,
+          addr.phone,
+          addr.postal,
+          addr.prefecture,
+          addr.city,
+          addr.address1,
+          addr.address2,
+        ]
+      );
+    } catch (e) {
+      console.warn("phone_address_events insert skipped:", e?.message || e);
+    }
+
+    return res.json({ ok: true, memberCode, userId: reflect.userId });
   } catch (e) {
     console.error("phone notify error:", e);
-    return res.status(500).json({ ok: false });
+    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
   }
 });
 

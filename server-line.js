@@ -38,6 +38,49 @@ const { Pool } = require("pg");
 // ===== Express =====
 const app = express();
 const PORT = process.env.PORT || 3000;
+// ====== phone → online 通知 受信 ======
+app.post("/api/phone/address-registered", express.json(), async (req, res) => {
+  try {
+    // 簡易認証（phone → online のなりすまし防止）
+    const token = req.headers["x-phone-token"];
+    if (
+      process.env.ONLINE_NOTIFY_TOKEN &&
+      token !== process.env.ONLINE_NOTIFY_TOKEN
+    ) {
+      return res.status(401).json({ ok: false, error: "invalid token" });
+    }
+
+    const payload = req.body;
+
+    console.log("📨 phone notify received:", payload);
+
+    /*
+      payload 例:
+      {
+        event: "phone_address_saved",
+        ts: "...",
+        memberCode: "0427",
+        isNew: true,
+        address: {
+          name, phone, postal,
+          prefecture, city, address1, address2
+        }
+      }
+    */
+
+    // まずは受信確認だけでOK
+    // 後でここに：
+    // - DB保存
+    // - 本人へLINE Push
+    // - 管理者通知
+    // を追加できます
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("phone notify error:", e);
+    return res.status(500).json({ ok: false });
+  }
+});
 
 // ★ middleware（/apiに限定しない）
 app.use(express.json({ limit: "2mb" }));

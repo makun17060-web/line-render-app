@@ -53,6 +53,30 @@ app.post("/api/phone/address-registered", express.json(), async (req, res) => {
     const payload = req.body;
 
     console.log("📨 phone notify received:", payload);
+    // ▼▼▼ ここから追加：DBへ保存 ▼▼▼
+    if (pool && payload?.memberCode) {
+      const a = payload.address || {};
+      await pool.query(
+        `
+        INSERT INTO phone_address_events
+          (member_code, is_new, name, phone, postal, prefecture, city, address1, address2)
+        VALUES
+          ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        `,
+        [
+          String(payload.memberCode || ""),
+          !!payload.isNew,
+          String(a.name || ""),
+          String(a.phone || ""),
+          String(a.postal || ""),
+          String(a.prefecture || ""),
+          String(a.city || ""),
+          String(a.address1 || ""),
+          String(a.address2 || ""),
+        ]
+      );
+    }
+    // ▲▲▲ ここまで追加：DBへ保存 ▲▲▲
 
     /*
       payload 例:

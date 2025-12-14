@@ -40,7 +40,7 @@ const { Pool } = require("pg");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ===== PostgreSQL（任意）=====
+// ===== PostgreSQL =====
 const pool = process.env.DATABASE_URL
   ? new Pool({
       connectionString: process.env.DATABASE_URL,
@@ -50,6 +50,151 @@ const pool = process.env.DATABASE_URL
           : false,
     })
   : null;
+
+function mustPool() {
+  if (!pool) throw new Error("DATABASE_URL not set");
+  return pool;
+}
+
+// ---- 住所(DB) ----
+async function dbGetAddressByUserId(userId) {
+  const p = mustPool();
+  const r = await p.query(
+    `SELECT user_id, name, phone, postal, prefecture, city, address1, address2, updated_at
+     FROM addresses WHERE user_id = $1`,
+    [String(userId)]
+  );
+  return r.rows[0] || null;
+}
+
+async function dbUpsertAddress(userId, addr = {}) {
+  const p = mustPool();
+  const uid = String(userId || "").trim();
+  if (!uid) throw new Error("userId required");
+
+  const a = {
+    name:       String(addr.name || "").trim(),
+    phone:      String(addr.phone || "").trim(),
+    postal:     String(addr.postal || "").trim(),
+    prefecture: String(addr.prefecture || "").trim(),
+    city:       String(addr.city || "").trim(),
+    address1:   String(addr.address1 || "").trim(),
+    address2:   String(addr.address2 || "").trim(),
+  };
+
+  await p.query(
+    `
+    INSERT INTO addresses
+      (user_id, name, phone, postal, prefecture, city, address1, address2)
+    VALUES
+      ($1,$2,$3,$4,$5,$6,$7,$8)
+    ON CONFLICT (user_id) DO UPDATE SET
+      name       = EXCLUDED.name,
+      phone      = EXCLUDED.phone,
+      postal     = EXCLUDED.postal,
+      prefecture = EXCLUDED.prefecture,
+      city       = EXCLUDED.city,
+      address1   = EXCLUDED.address1,
+      address2   = EXCLUDED.address2
+    `,
+    [uid, a.name, a.phone, a.postal, a.prefecture, a.city, a.address1, a.address2]
+  );
+
+  return a;
+}
+
+// ---- コード(DB) 4桁重複防止：UNIQUE制約に任せてリトライ ----
+function rand4() {
+  return Math.floor(Math.random() * 10000).toString().padStart(4, "0");
+}
+
+async function dbGetCodesByUserId(userId) {
+  const p = mustPool();
+  const r = await p.query(
+    `SELECT user_id, member_code, address_code FROM codes WHERE user_id = $1`,
+    [String(userId)]
+  );
+  return r.rows[0] || null;
+}
+
+async function dbGetByMemberCode(memberCode) {
+  const p = mustPool();
+  const r = await p.query(
+    `SELECT user_id, member_code, address_code FROM codes WHERE member_code = $1`,
+    [String(memberCode)]
+  );
+  return r.rows[0] || null;
+}
+
+async function dbGetByAddressCode(addressCode) {
+  const p = mustPool();
+  const r = await p.query(
+    `SELECT user_id, member_code, address_code FROM codes WHERE address_code = $1`,
+    [String(addressCode)]
+  );
+  return r.rows[0] || null;
+}
+
+// user_id 1件に対して member_code / address_code を必ず確保して返す
+async function dbEnsureCodes(userId) {
+  const p = mustPool();
+  const uid = String(userId || "").trim();
+  if (!uid) throw new Error("userId required");
+
+  // すでにあれば返す
+  const exist = await dbGetCodesByUserId(uid);
+  if (exist?.member_code && exist?.address_code) return exist;
+
+  // 無い or 片方欠けてる場合：トランザクション + リトライ
+  // UNIQUE違反(23505)が出たらコードを作り直して再試行
+  for (let i = 0; i < 200; i++) {
+    const mc = exist?.member_code?.trim() || rand4();
+    const ac = exist?.address_code?.trim() || rand4();
+
+    const client = await p.connect();
+    try {
+      await client.query("BEGIN");
+
+      // rowが無ければまず作る（member_code/address_codeは後で更新でもOK）
+      await client.query(
+        `INSERT INTO codes (user_id) VALUES ($1)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [uid]
+      );
+
+      // 欠けてるものだけ更新（UNIQUEが効く）
+      const current = await client.query(
+        `SELECT member_code, address_code FROM codes WHERE user_id = $1 FOR UPDATE`,
+        [uid]
+      );
+      const row = current.rows[0] || {};
+
+      const nextMember  = row.member_code  ? row.member_code : mc;
+      const nextAddress = row.address_code ? row.address_code : ac;
+
+      await client.query(
+        `UPDATE codes
+         SET member_code = $2, address_code = $3
+         WHERE user_id = $1`,
+        [uid, nextMember, nextAddress]
+      );
+
+      await client.query("COMMIT");
+
+      const done = await dbGetCodesByUserId(uid);
+      if (done?.member_code && done?.address_code) return done;
+    } catch (e) {
+      await client.query("ROLLBACK");
+      // UNIQUE違反 → その回はハズレ。次のループで別コードを引く
+      if (String(e?.code) === "23505") continue;
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  throw new Error("code_generation_exhausted");
+}
 
 // ===== Stripe =====
 const stripeSecretKey = (

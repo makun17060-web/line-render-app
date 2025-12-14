@@ -1,61 +1,23 @@
+
 // server-line.js — フル機能版（Stripe + ミニアプリ + 画像管理）【修正版・丸ごと】
-// + Flex配信
-// + 「その他＝価格入力なし」
-// + 久助専用テキスト購入フロー
-// + 予約者連絡API/コマンド（テキスト＆管理API）
-// + 店頭受取 Fix（店頭=現金のみ）
-// + 銀行振込案内（コメント対応）
+// + Flex配信 / その他（価格入力なし）/ 久助専用テキスト購入フロー
+// + 予約 / 管理API / 店頭受取 Fix（店頭=現金のみ）/ 銀行振込案内
 // + 画像アップロード/一覧/削除 + 商品へ画像URL紐付け
-// + ミニアプリ用 /api/products（久助除外）
-// + ミニアプリ用 /api/shipping（住所から地域判定して送料：ヤマト中部発・60/80/100/120/140/160）
-// + LIFF 住所保存/取得 API（/api/liff/address, /api/liff/address/me, /api/liff/config）
-// + Stripe決済 /api/pay-stripe（Checkout Session）
-// + 決済完了通知 /api/order/complete（★ 管理者 & 注文者 両方へ通知）
-// + 会員コード発行/参照（4桁数字）
-// + 住所コード発行/参照（4桁数字）
-// + 会員コード→住所取得API（/api/public/address-by-code）
-// + 汎用 Health チェック
-// + 発送通知履歴保存（notify_state.json：shippedOrders）
-// + ★電話サーバー通知受け口（/api/phone/hook）→ phone-addresses.json に保存（オンラインと別DISK前提）
+// + ミニアプリ用 /api/products（久助除外） /api/shipping（ヤマト中部発）
+// + LIFF 住所保存/取得（DB）: /api/liff/address /api/liff/address/me /api/liff/config
+// + Stripe決済 /api/pay-stripe / 決済完了通知 /api/order/complete
+// + 会員コード/住所コード（DB・4桁）
+// + 電話→オンライン hook /api/phone/hook（phone-addresses.json + DB反映）
+// + Health
 //
-// ★FIX（超重要）
-// - /api/line/ping はトップレベルで定義（関数内に置かない）
-// - LINE client は1回だけ生成して使い回す
-// - JSON middleware を /api 限定にしない（webhook/phone hook のため）
-// - ★さらに重要：/webhook は express.json を先に通すと署名検証が壊れることがあるので除外する
+// ★セキュリティFIX（重要）
+// - /api/public/address-by-code は公開しない（トークン必須）
+//   → env: PUBLIC_ADDRESS_LOOKUP_TOKEN を必ず設定して使う
 //
-// ★今回の修正（3点）
-// 1) order_confirm_view? 内で uid を定義する前に参照していたのを修正
-// 2) rand4() / dbGetCodesByUserId() 未定義を追加
-// 3) 「会員コード/住所コード」返信文言をロジックに合わせて修正（住所未登録でもコードは発行される）
-// member_code -> codes（電話住所の紐付け用）
-async function dbGetCodesByMemberCode(memberCode) {
-  const p = mustPool();
-  const mc = String(memberCode || "").trim();
-  if (!/^\d{4}$/.test(mc)) return null;
-
-  const r = await p.query(
-    `SELECT user_id, member_code, address_code FROM codes WHERE member_code=$1 LIMIT 1`,
-    [mc]
-  );
-  return r.rows[0] || null;
-}
-
-// ★電話住所を memberCode で addresses(DB) に反映
-async function dbUpsertAddressByMemberCode(memberCode, addr = {}) {
-  const mc = String(memberCode || "").trim();
-  if (!/^\d{4}$/.test(mc)) throw new Error("invalid_memberCode");
-
-  const codes = await dbGetCodesByMemberCode(mc);
-  if (!codes?.user_id) {
-    // memberCode がDBに存在しない（入力ミス/まだ発行されてない等）
-    return { ok: false, reason: "memberCode_not_found" };
-  }
-
-  // 住所Upsert（既存ロジックを流用）
-  await dbUpsertAddressByUserId(codes.user_id, addr);
-  return { ok: true, userId: codes.user_id };
-}
+// ★DBスキーマ（自動作成）
+// - codes(user_id PK, member_code UNIQUE, address_code UNIQUE)
+// - addresses(member_code PK, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at)
+// - phone_address_events（任意ログ）
 
 "use strict";
 
@@ -89,207 +51,9 @@ function mustPool() {
   return pool;
 }
 
-// ====== ★追加FIX：4桁コード生成 ======
+// ====== 4桁コード生成 ======
 function rand4() {
   return String(Math.floor(Math.random() * 10000)).padStart(4, "0");
-}
-
-// ====== ★追加FIX：codes取得 ======
-async function dbGetCodesByUserId(userId) {
-  const p = mustPool();
-  const uid = String(userId || "").trim();
-  if (!uid) return null;
-
-  const r = await p.query(
-    `SELECT user_id, member_code, address_code FROM codes WHERE user_id=$1 LIMIT 1`,
-    [uid]
-  );
-  return r.rows[0] || null;
-}
-
-// ---- 住所(DB) : addresses は member_code 主キー ----
-
-// user_id から住所を取る（codes.member_code -> addresses）
-async function dbGetAddressByUserId(userId) {
-  const p = mustPool();
-  const uid = String(userId || "").trim();
-  if (!uid) return null;
-
-  const r = await p.query(
-    `
-    SELECT
-      c.user_id,
-      c.member_code,
-      a.name, a.phone, a.postal, a.prefecture, a.city, a.address1, a.address2,
-      a.updated_at
-    FROM codes c
-    LEFT JOIN addresses a
-      ON a.member_code = c.member_code
-    WHERE c.user_id = $1
-    LIMIT 1
-    `,
-    [uid]
-  );
-
-  const row = r.rows[0] || null;
-  if (!row || !row.member_code) return null;
-
-  // 住所が未登録なら null 返し
-  const hasAny =
-    (row.name || row.phone || row.postal || row.prefecture || row.city || row.address1 || row.address2);
-  if (!hasAny) return null;
-
-  return row;
-}
-
-// user_id で住所を upsert（内部で member_code を確保して addresses に保存）
-async function dbUpsertAddressByUserId(userId, addr = {}) {
-  const p = mustPool();
-  const uid = String(userId || "").trim();
-  if (!uid) throw new Error("userId required");
-
-  // まず codes を必ず確保（member_code を発行）
-  const codes = await dbEnsureCodes(uid);
-  const memberCode = String(codes.member_code || "").trim();
-  if (!/^\d{4}$/.test(memberCode)) throw new Error("member_code missing");
-
-  const a = {
-    name:       String(addr.name || "").trim(),
-    phone:      String(addr.phone || "").trim(),
-    postal:     String(addr.postal || "").trim(),
-    prefecture: String(addr.prefecture || "").trim(),
-    city:       String(addr.city || "").trim(),
-    address1:   String(addr.address1 || "").trim(),
-    address2:   String(addr.address2 || "").trim(),
-  };
-
-  await p.query(
-    `
-    INSERT INTO addresses
-      (member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at)
-    VALUES
-      ($1,$2,$3,$4,$5,$6,$7,$8,$9, NOW())
-    ON CONFLICT (member_code) DO UPDATE SET
-      user_id     = EXCLUDED.user_id,
-      name        = EXCLUDED.name,
-      phone       = EXCLUDED.phone,
-      postal      = EXCLUDED.postal,
-      prefecture  = EXCLUDED.prefecture,
-      city        = EXCLUDED.city,
-      address1    = EXCLUDED.address1,
-      address2    = EXCLUDED.address2,
-      updated_at  = NOW()
-    `,
-    [memberCode, uid, a.name, a.phone, a.postal, a.prefecture, a.city, a.address1, a.address2]
-  );
-
-  return { memberCode, ...a };
-}
-
-// member_code から住所を取る（公開API等で使用）
-async function dbGetAddressByMemberCode(memberCode) {
-  const p = mustPool();
-  const mc = String(memberCode || "").trim();
-  if (!/^\d{4}$/.test(mc)) return null;
-
-  const r = await p.query(
-    `
-    SELECT
-      a.member_code,
-      a.user_id,
-      a.name, a.phone, a.postal, a.prefecture, a.city, a.address1, a.address2,
-      a.updated_at
-    FROM addresses a
-    WHERE a.member_code = $1
-    LIMIT 1
-    `,
-    [mc]
-  );
-  return r.rows[0] || null;
-}
-
-async function dbGetByAddressCode(addressCode) {
-  const p = mustPool();
-  const r = await p.query(
-    `SELECT user_id, member_code, address_code FROM codes WHERE address_code = $1`,
-    [String(addressCode)]
-  );
-  return r.rows[0] || null;
-}
-
-// user_id 1件に対して member_code / address_code を必ず確保して返す
-async function dbEnsureCodes(userId) {
-  const p = mustPool();
-  const uid = String(userId || "").trim();
-  if (!uid) throw new Error("userId required");
-
-  // すでにあれば返す
-  const exist = await dbGetCodesByUserId(uid);
-  if (exist?.member_code && exist?.address_code) return exist;
-
-  // 無い or 片方欠けてる場合：トランザクション + リトライ
-  // UNIQUE違反(23505)が出たらコードを作り直して再試行
-  for (let i = 0; i < 200; i++) {
-    const mc = exist?.member_code?.trim() || rand4();
-    const ac = exist?.address_code?.trim() || rand4();
-
-    const client = await p.connect();
-    try {
-      await client.query("BEGIN");
-
-      // rowが無ければまず作る（member_code/address_codeは後で更新でもOK）
-      await client.query(
-        `INSERT INTO codes (user_id) VALUES ($1)
-         ON CONFLICT (user_id) DO NOTHING`,
-        [uid]
-      );
-
-      // 欠けてるものだけ更新（UNIQUEが効く）
-      const current = await client.query(
-        `SELECT member_code, address_code FROM codes WHERE user_id = $1 FOR UPDATE`,
-        [uid]
-      );
-      const row = current.rows[0] || {};
-
-      const nextMember  = row.member_code  ? row.member_code : mc;
-      const nextAddress = row.address_code ? row.address_code : ac;
-
-      await client.query(
-        `UPDATE codes
-         SET member_code = $2, address_code = $3
-         WHERE user_id = $1`,
-        [uid, nextMember, nextAddress]
-      );
-
-      await client.query("COMMIT");
-
-      const done = await dbGetCodesByUserId(uid);
-      if (done?.member_code && done?.address_code) return done;
-    } catch (e) {
-      await client.query("ROLLBACK");
-      // UNIQUE違反 → その回はハズレ。次のループで別コードを引く
-      if (String(e?.code) === "23505") continue;
-      throw e;
-    } finally {
-      client.release();
-    }
-  }
-
-  throw new Error("code_generation_exhausted");
-}
-
-// ===== Stripe =====
-const stripeSecretKey = (
-  process.env.STRIPE_SECRET_KEY ||
-  process.env.STRIPE_SECRET ||
-  ""
-).trim();
-
-const stripe = stripeSecretKey ? stripeLib(stripeSecretKey) : null;
-if (!stripe) {
-  console.warn(
-    "⚠️ STRIPE_SECRET_KEY / STRIPE_SECRET が設定されていません。/api/pay-stripe はエラーになります。"
-  );
 }
 
 // ====== 環境変数 ======
@@ -297,7 +61,6 @@ const LIFF_ID = (process.env.LIFF_ID || "2008406620-4QJ06JLv").trim();
 const LIFF_ID_DIRECT_ADDRESS = (process.env.LIFF_ID_DIRECT_ADDRESS || LIFF_ID).trim();
 
 const ADMIN_USER_ID = (process.env.ADMIN_USER_ID || "").trim();
-
 const MULTICAST_USER_IDS = (process.env.MULTICAST_USER_IDS || "")
   .split(",")
   .map((s) => s.trim())
@@ -318,8 +81,11 @@ const COD_FEE = Number(process.env.COD_FEE || 330);
 // ★電話→オンライン hook（任意）
 const PHONE_HOOK_TOKEN = (process.env.PHONE_HOOK_TOKEN || "").trim();
 
-// ★ phone → online のなりすまし防止（別口の通知受信を使う場合）
+// ★ phone → online 別口通知受信（任意）
 const ONLINE_NOTIFY_TOKEN = (process.env.ONLINE_NOTIFY_TOKEN || "").trim();
+
+// ★ 住所取得公開APIを使うなら必須（超重要）
+const PUBLIC_ADDRESS_LOOKUP_TOKEN = (process.env.PUBLIC_ADDRESS_LOOKUP_TOKEN || "").trim();
 
 // LINE config
 const config = {
@@ -343,13 +109,27 @@ if (
   process.exit(1);
 }
 
+// ===== Stripe =====
+const stripeSecretKey = (
+  process.env.STRIPE_SECRET_KEY ||
+  process.env.STRIPE_SECRET ||
+  ""
+).trim();
+
+const stripe = stripeSecretKey ? stripeLib(stripeSecretKey) : null;
+if (!stripe) {
+  console.warn(
+    "⚠️ STRIPE_SECRET_KEY / STRIPE_SECRET が設定されていません。/api/pay-stripe はエラーになります。"
+  );
+}
+
 // ====== パス定義 ======
 const DATA_DIR = path.join(__dirname, "data");
 
 const PRODUCTS_PATH = path.join(DATA_DIR, "products.json");
 const ORDERS_LOG = path.join(DATA_DIR, "orders.log");
 const RESERVATIONS_LOG = path.join(DATA_DIR, "reservations.log");
-const ADDRESSES_PATH = path.join(DATA_DIR, "addresses.json");
+const ADDRESSES_PATH = path.join(DATA_DIR, "addresses.json"); // (旧) 互換・参考用
 const PHONE_ADDRESSES_PATH = path.join(DATA_DIR, "phone-addresses.json");
 const SURVEYS_LOG = path.join(DATA_DIR, "surveys.log");
 const MESSAGES_LOG = path.join(DATA_DIR, "messages.log");
@@ -375,7 +155,6 @@ app.all("/public/confirm-card-success.html", (_req, res) => {
 app.all("/public/confirm-fail.html", (_req, res) => {
   return res.sendFile(path.join(PUBLIC_DIR, "confirm-fail.html"));
 });
-
 app.get("/", (_req, res) => res.status(200).send("OK"));
 
 // ====== データ初期化 ======
@@ -481,10 +260,10 @@ function filterByIsoRange(items, getTs, fromIso, toIso) {
   });
 }
 
-// ====== LINE client（★FIX：ここで1回だけ生成） ======
+// ====== ★LINE client（1回だけ生成） ======
 const client = new line.Client(config);
 
-// ====== ★ LINE 疎通確認 API（★FIX：トップレベル） ======
+// ====== ★ LINE 疎通確認 API ======
 app.get("/api/line/ping", async (_req, res) => {
   try {
     if (!ADMIN_USER_ID) {
@@ -506,18 +285,18 @@ app.get("/api/line/ping", async (_req, res) => {
 /**
  * ★超重要FIX：
  * express.json が /webhook より先に走ると、LINE署名検証が壊れることがある。
- * → /webhook だけは JSON パーサを通さない（line.middleware に任せる）
+ * → /webhook は JSON パーサを通さない（line.middleware に任せる）
+ * 末尾スラッシュ事故も防ぐため startsWith("/webhook")
  */
 const jsonParser = express.json({ limit: "2mb" });
 const urlParser = express.urlencoded({ extended: true });
 
 app.use((req, res, next) => {
-  // /webhook は line.middleware(config) が body を読むため、先に触らない
-  if (req.path === "/webhook") return next();
+  if (req.path.startsWith("/webhook")) return next();
   return jsonParser(req, res, next);
 });
 app.use((req, res, next) => {
-  if (req.path === "/webhook") return next();
+  if (req.path.startsWith("/webhook")) return next();
   return urlParser(req, res, next);
 });
 
@@ -526,104 +305,267 @@ app.use((req, _res, next) => {
   next();
 });
 
-// ====== phone → online 通知 受信（別口：必要なら使う）======
-app.post("/api/phone/address-registered", async (req, res) => {
-  try {
-    const token = req.headers["x-phone-token"];
-    if (ONLINE_NOTIFY_TOKEN && token !== ONLINE_NOTIFY_TOKEN) {
-      return res.status(401).json({ ok: false, error: "invalid token" });
-    }
+// ======================================================================
+// DB スキーマ自動作成（最重要）
+// ======================================================================
+async function ensureDbSchema() {
+  if (!pool) return;
 
-    const payload = req.body;
-    console.log("📨 phone notify received:", payload);
+  const p = mustPool();
 
-    // DBへ保存（任意）
-    if (pool && payload?.memberCode) {
-      const a = payload.address || {};
-      await pool.query(
-        `
-        INSERT INTO phone_address_events
-          (member_code, is_new, name, phone, postal, prefecture, city, address1, address2)
-        VALUES
-          ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-        `,
-        [
-          String(payload.memberCode || ""),
-          !!payload.isNew,
-          String(a.name || ""),
-          String(a.phone || ""),
-          String(a.postal || ""),
-          String(a.prefecture || ""),
-          String(a.city || ""),
-          String(a.address1 || ""),
-          String(a.address2 || ""),
-        ]
-      );
-    }
+  // codes
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS codes (
+      user_id      TEXT PRIMARY KEY,
+      member_code  CHAR(4) UNIQUE,
+      address_code CHAR(4) UNIQUE
+    );
+  `);
 
-    return res.json({ ok: true });
-  } catch (e) {
-    console.error("phone notify error:", e);
-    return res.status(500).json({ ok: false });
-  }
-});
+  // addresses（member_code 主キー）
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS addresses (
+      member_code CHAR(4) PRIMARY KEY,
+      user_id     TEXT,
+      name        TEXT,
+      phone       TEXT,
+      postal      TEXT,
+      prefecture  TEXT,
+      city        TEXT,
+      address1    TEXT,
+      address2    TEXT,
+      updated_at  TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_addresses_user_id ON addresses(user_id);`);
 
-// ====== 会員コード/住所コード（Postgres版：重複防止はDBで担保）=====
-//
-// codes テーブル前提：
-// user_id TEXT PRIMARY KEY
-// member_code CHAR(4) UNIQUE
-// address_code CHAR(4) UNIQUE
-//
-async function getOrCreateCodeDB(userId, kind /* "member" | "address" */) {
+  // phone_address_events（任意ログ）
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS phone_address_events (
+      id BIGSERIAL PRIMARY KEY,
+      ts TIMESTAMPTZ DEFAULT NOW(),
+      member_code CHAR(4),
+      is_new BOOLEAN,
+      name TEXT,
+      phone TEXT,
+      postal TEXT,
+      prefecture TEXT,
+      city TEXT,
+      address1 TEXT,
+      address2 TEXT
+    );
+  `);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_phone_address_events_member_code ON phone_address_events(member_code);`);
+}
+
+// ======================================================================
+// codes / addresses DB関数（一本化）
+// ======================================================================
+
+async function dbGetCodesByUserId(userId) {
+  const p = mustPool();
   const uid = String(userId || "").trim();
   if (!uid) return null;
 
-  // DB未設定なら従来JSON運用にフォールバックしたい場合はここで分岐できるが、
-  // 今回は「DB化」が目的なので、DBなしはエラーにして気づけるようにする
-  if (!pool) throw new Error("DATABASE_URL not set");
+  const r = await p.query(
+    `SELECT user_id, member_code, address_code FROM codes WHERE user_id=$1 LIMIT 1`,
+    [uid]
+  );
+  return r.rows[0] || null;
+}
 
-  const col = kind === "address" ? "address_code" : "member_code";
+async function dbGetCodesByMemberCode(memberCode) {
+  const p = mustPool();
+  const mc = String(memberCode || "").trim();
+  if (!/^\d{4}$/.test(mc)) return null;
 
-  // 1) 既存があれば返す（住所登録前でも返せる＝コード台帳は独立）
-  const existing = await pool.query(`SELECT ${col} FROM codes WHERE user_id=$1`, [uid]);
-  const already = String(existing.rows?.[0]?.[col] || "").trim();
-  if (/^\d{4}$/.test(already)) return already;
+  const r = await p.query(
+    `SELECT user_id, member_code, address_code FROM codes WHERE member_code=$1 LIMIT 1`,
+    [mc]
+  );
+  return r.rows[0] || null;
+}
 
-  // 2) なければ生成してINSERT（ユニーク衝突したらリトライ）
-  for (let i = 0; i < 50; i++) {
-    const code = String(Math.floor(Math.random() * 10000)).padStart(4, "0");
+// user_id 1件に対して member_code / address_code を必ず確保して返す（これに統一）
+async function dbEnsureCodes(userId) {
+  const p = mustPool();
+  const uid = String(userId || "").trim();
+  if (!uid) throw new Error("userId required");
+
+  const exist = await dbGetCodesByUserId(uid);
+  if (exist?.member_code && exist?.address_code) return exist;
+
+  // リトライ（ユニーク衝突 23505 の場合は引き直し）
+  for (let i = 0; i < 200; i++) {
+    const mc = exist?.member_code?.trim() || rand4();
+    const ac = exist?.address_code?.trim() || rand4();
+
+    const clientDb = await p.connect();
     try {
-      await pool.query(
-        `
-        INSERT INTO codes (user_id, ${col})
-        VALUES ($1, $2)
-        ON CONFLICT (user_id)
-        DO UPDATE SET ${col} = COALESCE(codes.${col}, EXCLUDED.${col})
-        `,
-        [uid, code]
+      await clientDb.query("BEGIN");
+
+      await clientDb.query(
+        `INSERT INTO codes (user_id) VALUES ($1)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [uid]
       );
 
-      const check = await pool.query(`SELECT ${col} FROM codes WHERE user_id=$1`, [uid]);
-      const got = String(check.rows?.[0]?.[col] || "").trim();
-      if (/^\d{4}$/.test(got)) return got;
+      const current = await clientDb.query(
+        `SELECT member_code, address_code FROM codes WHERE user_id = $1 FOR UPDATE`,
+        [uid]
+      );
+      const row = current.rows[0] || {};
+
+      const nextMember  = row.member_code  ? row.member_code : mc;
+      const nextAddress = row.address_code ? row.address_code : ac;
+
+      await clientDb.query(
+        `UPDATE codes
+         SET member_code = $2, address_code = $3
+         WHERE user_id = $1`,
+        [uid, nextMember, nextAddress]
+      );
+
+      await clientDb.query("COMMIT");
+
+      const done = await dbGetCodesByUserId(uid);
+      if (done?.member_code && done?.address_code) return done;
     } catch (e) {
-      // UNIQUE(member_code/address_code) に当たったら別の乱数で作り直す
-      if (e && e.code === "23505") continue;
+      await clientDb.query("ROLLBACK");
+      if (String(e?.code) === "23505") continue;
       throw e;
+    } finally {
+      clientDb.release();
     }
   }
-  throw new Error("code_generation_failed");
+
+  throw new Error("code_generation_exhausted");
 }
 
 async function getOrCreateMemberCode(userId) {
-  return getOrCreateCodeDB(userId, "member");
+  const c = await dbEnsureCodes(userId);
+  return String(c.member_code || "");
 }
 async function getOrCreateAddressCode(userId) {
-  return getOrCreateCodeDB(userId, "address");
+  const c = await dbEnsureCodes(userId);
+  return String(c.address_code || "");
 }
 
-// ===== 在庫 =====
+// user_id から住所を取る（codes.member_code -> addresses）
+async function dbGetAddressByUserId(userId) {
+  const p = mustPool();
+  const uid = String(userId || "").trim();
+  if (!uid) return null;
+
+  const r = await p.query(
+    `
+    SELECT
+      c.user_id,
+      c.member_code,
+      c.address_code,
+      a.name, a.phone, a.postal, a.prefecture, a.city, a.address1, a.address2,
+      a.updated_at
+    FROM codes c
+    LEFT JOIN addresses a
+      ON a.member_code = c.member_code
+    WHERE c.user_id = $1
+    LIMIT 1
+    `,
+    [uid]
+  );
+
+  const row = r.rows[0] || null;
+  if (!row || !row.member_code) return null;
+
+  const hasAny =
+    (row.name || row.phone || row.postal || row.prefecture || row.city || row.address1 || row.address2);
+  if (!hasAny) return null;
+
+  return row;
+}
+
+// user_id で住所を upsert（内部で member_code を確保して addresses に保存）
+async function dbUpsertAddressByUserId(userId, addr = {}) {
+  const p = mustPool();
+  const uid = String(userId || "").trim();
+  if (!uid) throw new Error("userId required");
+
+  const codes = await dbEnsureCodes(uid);
+  const memberCode = String(codes.member_code || "").trim();
+  if (!/^\d{4}$/.test(memberCode)) throw new Error("member_code missing");
+
+  const a = {
+    name:       String(addr.name || "").trim(),
+    phone:      String(addr.phone || "").trim(),
+    postal:     String(addr.postal || "").trim(),
+    prefecture: String(addr.prefecture || "").trim(),
+    city:       String(addr.city || "").trim(),
+    address1:   String(addr.address1 || "").trim(),
+    address2:   String(addr.address2 || "").trim(),
+  };
+
+  await p.query(
+    `
+    INSERT INTO addresses
+      (member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at)
+    VALUES
+      ($1,$2,$3,$4,$5,$6,$7,$8,$9, NOW())
+    ON CONFLICT (member_code) DO UPDATE SET
+      user_id     = EXCLUDED.user_id,
+      name        = EXCLUDED.name,
+      phone       = EXCLUDED.phone,
+      postal      = EXCLUDED.postal,
+      prefecture  = EXCLUDED.prefecture,
+      city        = EXCLUDED.city,
+      address1    = EXCLUDED.address1,
+      address2    = EXCLUDED.address2,
+      updated_at  = NOW()
+    `,
+    [memberCode, uid, a.name, a.phone, a.postal, a.prefecture, a.city, a.address1, a.address2]
+  );
+
+  return { memberCode, ...a };
+}
+
+// member_code から住所を取る
+async function dbGetAddressByMemberCode(memberCode) {
+  const p = mustPool();
+  const mc = String(memberCode || "").trim();
+  if (!/^\d{4}$/.test(mc)) return null;
+
+  const r = await p.query(
+    `
+    SELECT
+      a.member_code,
+      a.user_id,
+      a.name, a.phone, a.postal, a.prefecture, a.city, a.address1, a.address2,
+      a.updated_at
+    FROM addresses a
+    WHERE a.member_code = $1
+    LIMIT 1
+    `,
+    [mc]
+  );
+  return r.rows[0] || null;
+}
+
+// ★電話住所を memberCode で addresses(DB) に反映
+async function dbUpsertAddressByMemberCode(memberCode, addr = {}) {
+  const mc = String(memberCode || "").trim();
+  if (!/^\d{4}$/.test(mc)) throw new Error("invalid_memberCode");
+
+  const codes = await dbGetCodesByMemberCode(mc);
+  if (!codes?.user_id) {
+    return { ok: false, reason: "memberCode_not_found" };
+  }
+
+  await dbUpsertAddressByUserId(codes.user_id, addr);
+  return { ok: true, userId: codes.user_id };
+}
+
+// ======================================================================
+// Flex / 商品 / 在庫
+// ======================================================================
 const LOW_STOCK_THRESHOLD = 5;
 const PRODUCT_ALIASES = {
   久助: "kusuke-250",
@@ -718,6 +660,7 @@ function sizeFromOriginalSetQty(qty) {
   if (q <= 6) return "140";
   return "160";
 }
+// ※この関数は「個数」で判定（名前事故防止のためコメント）
 function sizeFromTotalQty(totalQty) {
   const q = Number(totalQty) || 0;
   if (q <= 1) return "60";
@@ -1180,17 +1123,17 @@ function reserveOffer(product, needQty, stock) {
   ];
 }
 
-// ====== LIFF API（住所：DB版） ======
+// ======================================================================
+// LIFF API（住所：DB版）
+// ======================================================================
 app.post("/api/liff/address", async (req, res) => {
   try {
     const userId = String(req.body?.userId || "").trim();
     const addr = req.body?.address || {};
     if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
+    if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
 
-    // DBへ保存（member_code は内部で確保）
     await dbUpsertAddressByUserId(userId, addr);
-
-    // コード返す（UI用）
     const codes = await dbEnsureCodes(userId);
 
     res.json({
@@ -1209,6 +1152,7 @@ app.get("/api/liff/address/me", async (req, res) => {
   try {
     const userId = String(req.query.userId || req.headers["x-line-userid"] || "").trim();
     if (!userId) return res.json({ ok: true, address: null });
+    if (!pool) return res.json({ ok: true, address: null });
 
     const row = await dbGetAddressByUserId(userId);
     if (!row) return res.json({ ok: true, address: null });
@@ -1224,6 +1168,7 @@ app.get("/api/liff/address/me", async (req, res) => {
         address1: row.address1 || "",
         address2: row.address2 || "",
         memberCode: String(row.member_code || ""),
+        addressCode: String(row.address_code || ""),
       },
     });
   } catch (e) {
@@ -1239,34 +1184,40 @@ app.get("/api/liff/config", (req, res) => {
   return res.json({ liffId: LIFF_ID });
 });
 
+// ★危険：公開住所取得API（トークン必須）
 app.get("/api/public/address-by-code", async (req, res) => {
   try {
+    const token = String(req.query.token || req.headers["x-public-token"] || "").trim();
+    if (!PUBLIC_ADDRESS_LOOKUP_TOKEN) {
+      return res.status(500).json({ ok: false, error: "PUBLIC_ADDRESS_LOOKUP_TOKEN_not_set" });
+    }
+    if (token !== PUBLIC_ADDRESS_LOOKUP_TOKEN) {
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
+
     const code = String(req.query.code || "").trim();
     if (!/^\d{4}$/.test(code)) return res.status(400).json({ ok: false, error: "code_required" });
-
     if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
 
-    // member_code から住所
     const addr = await dbGetAddressByMemberCode(code);
     if (!addr) return res.status(404).json({ ok: false, error: "address_not_registered" });
 
-    // codes も返したい場合（任意）
     const r = await pool.query(
       `SELECT user_id, member_code, address_code FROM codes WHERE member_code=$1 LIMIT 1`,
       [code]
     );
     const row = r.rows[0] || {};
 
+    // 返す情報は必要最低限に（※必要なら増やしてOKだが、公開は危険）
     return res.json({
       ok: true,
       address: {
-        name: addr.name || "",
-        phone: addr.phone || "",
         postal: addr.postal || "",
         prefecture: addr.prefecture || "",
         city: addr.city || "",
         address1: addr.address1 || "",
         address2: addr.address2 || "",
+        // name/phone は公開しない（必要なら管理APIで）
         memberCode: String(row.member_code || addr.member_code || ""),
         addressCode: String(row.address_code || ""),
       },
@@ -1276,6 +1227,53 @@ app.get("/api/public/address-by-code", async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || "server_error" });
   }
 });
+
+// ======================================================================
+// phone → online 通知 受信（別口：必要なら使う）
+// ======================================================================
+app.post("/api/phone/address-registered", async (req, res) => {
+  try {
+    const token = req.headers["x-phone-token"];
+    if (ONLINE_NOTIFY_TOKEN && token !== ONLINE_NOTIFY_TOKEN) {
+      return res.status(401).json({ ok: false, error: "invalid token" });
+    }
+
+    const payload = req.body;
+    console.log("📨 phone notify received:", payload);
+
+    if (pool && payload?.memberCode) {
+      const a = payload.address || {};
+      await pool.query(
+        `
+        INSERT INTO phone_address_events
+          (member_code, is_new, name, phone, postal, prefecture, city, address1, address2)
+        VALUES
+          ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        `,
+        [
+          String(payload.memberCode || ""),
+          !!payload.isNew,
+          String(a.name || ""),
+          String(a.phone || ""),
+          String(a.postal || ""),
+          String(a.prefecture || ""),
+          String(a.city || ""),
+          String(a.address1 || ""),
+          String(a.address2 || ""),
+        ]
+      );
+    }
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("phone notify error:", e);
+    return res.status(500).json({ ok: false });
+  }
+});
+
+// ======================================================================
+// /api/phone/hook（電話サーバーからの通知受け口）
+// ======================================================================
 app.post("/api/phone/hook", async (req, res) => {
   try {
     if (PHONE_HOOK_TOKEN) {
@@ -1292,7 +1290,7 @@ app.post("/api/phone/hook", async (req, res) => {
       const memberCode = String(payload?.memberCode || "").trim();
       const a = payload?.address || {};
 
-      // 1) JSONに保存（現状維持：バックアップ用途）
+      // 1) JSONに保存（バックアップ用途）
       if (/^\d{4}$/.test(memberCode)) {
         const book = readPhoneAddresses();
         book[memberCode] = {
@@ -1310,7 +1308,7 @@ app.post("/api/phone/hook", async (req, res) => {
         writePhoneAddresses(book);
       }
 
-      // 2) DBへ反映（★ここが追加）
+      // 2) DBへ反映
       let dbResult = null;
       if (pool && /^\d{4}$/.test(memberCode)) {
         try {
@@ -1378,7 +1376,53 @@ app.post("/api/phone/hook", async (req, res) => {
   }
 });
 
-// ====== Stripe 決済（Checkout Session） ======
+// ======================================================================
+// ミニアプリ用：商品一覧 API（久助除外）
+// ======================================================================
+app.get("/api/products", (_req, res) => {
+  try {
+    const items = readProducts()
+      .filter((p) => p.id !== "kusuke-250")
+      .map((p) => ({
+        id: p.id,
+        name: p.name,
+        price: p.price,
+        stock: p.stock ?? 0,
+        desc: p.desc || "",
+        volume: p.volume || "",
+        image: toPublicImageUrl(p.image || ""),
+      }));
+
+    res.json({ ok: true, products: items });
+  } catch (e) {
+    console.error("/api/products error:", e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+// ======================================================================
+// 画像アップロード & 管理
+// ======================================================================
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+  filename: (_req, file, cb) => {
+    const ts = Date.now();
+    const safe = (file.originalname || "image").replace(/[^\w.\-]+/g, "_");
+    cb(null, `${ts}_${safe}`);
+  },
+});
+const upload = multer({
+  storage,
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ok = /image\/(png|jpe?g|gif|webp)/i.test(file.mimetype);
+    cb(ok ? null : new Error("invalid_file_type"), ok);
+  },
+});
+
+// ======================================================================
+// Stripe 決済（Checkout Session）
+// ======================================================================
 app.post("/api/pay-stripe", async (req, res) => {
   try {
     if (!stripe) return res.status(500).json({ ok: false, error: "stripe_not_configured" });
@@ -1387,11 +1431,10 @@ app.post("/api/pay-stripe", async (req, res) => {
     const items = Array.isArray(order.items) ? order.items : [];
     if (!items.length) return res.status(400).json({ ok: false, error: "no_items" });
 
-    const shipping   = Number(order.shipping   || 0);
-    const codFee     = Number(order.codFee     || 0);
+    const shipping = Number(order.shipping || 0);
+    const codFee   = Number(order.codFee || 0);
 
     const line_items = [];
-
     for (const it of items) {
       const unit = Number(it.price) || 0;
       const qty  = Number(it.qty)   || 0;
@@ -1528,7 +1571,9 @@ app.post("/api/order/complete", async (req, res) => {
   }
 });
 
-// ====== 管理API（最小） ======
+// ======================================================================
+// 管理API（最小）
+// ======================================================================
 app.get("/api/admin/ping", (req, res) => { if (!requireAdmin(req, res)) return; res.json({ ok: true, ping: "pong" }); });
 
 app.get("/api/admin/orders", (req, res) => {
@@ -1612,7 +1657,38 @@ app.get("/api/admin/reservations", (req, res) => {
   res.json({ ok: true, items });
 });
 
-app.get("/api/admin/addresses", (req, res) => { if (!requireAdmin(req, res)) return; res.json({ ok: true, items: readAddresses() }); });
+// ★管理：住所（DB版に変更）
+app.get("/api/admin/addresses", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    if (!pool) return res.json({ ok: true, items: [] });
+
+    const limit = Math.min(2000, Number(req.query.limit || 500));
+    const r = await pool.query(
+      `
+      SELECT
+        c.user_id,
+        c.member_code,
+        c.address_code,
+        a.name, a.phone, a.postal, a.prefecture, a.city, a.address1, a.address2,
+        a.updated_at
+      FROM codes c
+      LEFT JOIN addresses a
+        ON a.member_code = c.member_code
+      ORDER BY a.updated_at DESC NULLS LAST, c.user_id ASC
+      LIMIT $1
+      `,
+      [limit]
+    );
+
+    res.json({ ok: true, items: r.rows || [] });
+  } catch (e) {
+    console.error("/api/admin/addresses error:", e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+// 参考：電話住所（JSONバックアップ）
 app.get("/api/admin/phone-addresses", (req, res) => { if (!requireAdmin(req, res)) return; res.json({ ok: true, items: readPhoneAddresses() }); });
 
 app.get("/api/admin/products", (req, res) => {
@@ -1653,47 +1729,10 @@ app.post("/api/admin/stock/add", (req, res) => {
   }
 });
 
-// ====== ミニアプリ用：商品一覧 API（久助除外） ======
-app.get("/api/products", (_req, res) => {
-  try {
-    const items = readProducts()
-      .filter((p) => p.id !== "kusuke-250")
-      .map((p) => ({
-        id: p.id,
-        name: p.name,
-        price: p.price,
-        stock: p.stock ?? 0,
-        desc: p.desc || "",
-        volume: p.volume || "",
-        image: toPublicImageUrl(p.image || ""),
-      }));
-
-    res.json({ ok: true, products: items });
-  } catch (e) {
-    console.error("/api/products error:", e);
-    res.status(500).json({ ok: false, error: "server_error" });
-  }
+app.get("/api/admin/connection-test", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  res.json({ ok: true, uploads: true, uploadDir: "/public/uploads" });
 });
-
-// ====== 画像アップロード & 管理 ======
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
-  filename: (_req, file, cb) => {
-    const ts = Date.now();
-    const safe = (file.originalname || "image").replace(/[^\w.\-]+/g, "_");
-    cb(null, `${ts}_${safe}`);
-  },
-});
-const upload = multer({
-  storage,
-  limits: { fileSize: 8 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    const ok = /image\/(png|jpe?g|gif|webp)/i.test(file.mimetype);
-    cb(ok ? null : new Error("invalid_file_type"), ok);
-  },
-});
-
-app.get("/api/admin/connection-test", (req, res) => { if (!requireAdmin(req, res)) return; res.json({ ok: true, uploads: true, uploadDir: "/public/uploads" }); });
 
 app.post("/api/admin/upload-image", (req, res) => {
   if (!requireAdmin(req, res)) return;
@@ -1766,7 +1805,9 @@ app.post("/api/admin/products/set-image", (req, res) => {
   }
 });
 
-// ====== Webhook（ここで line.middleware を通す） ======
+// ======================================================================
+// Webhook（ここで line.middleware を通す）
+// ======================================================================
 app.post("/webhook", line.middleware(config), async (req, res) => {
   try {
     const events = req.body.events || [];
@@ -1783,7 +1824,9 @@ app.post("/webhook", line.middleware(config), async (req, res) => {
   }
 });
 
-// ====== イベント処理 ======
+// ======================================================================
+// イベント処理
+// ======================================================================
 async function handleEvent(ev) {
   try {
     if (ev.type === "message" && ev.message?.type === "text") {
@@ -1818,8 +1861,12 @@ async function handleEvent(ev) {
         return;
       }
 
-      // ★FIX(3)：コードは住所未登録でも発行され得るので文言を修正
+      // ★コードは住所未登録でも発行される → 文言は「未登録なら登録してね」
       if (t === "会員コード") {
+        if (!pool) {
+          await client.replyMessage(ev.replyToken, { type: "text", text: "現在DBが未設定のため会員コードを発行できません（DATABASE_URL未設定）。" });
+          return;
+        }
         const code = await getOrCreateMemberCode(uid);
         await client.replyMessage(ev.replyToken, {
           type: "text",
@@ -1831,6 +1878,10 @@ async function handleEvent(ev) {
       }
 
       if (t === "住所コード" || t === "住所番号") {
+        if (!pool) {
+          await client.replyMessage(ev.replyToken, { type: "text", text: "現在DBが未設定のため住所コードを発行できません（DATABASE_URL未設定）。" });
+          return;
+        }
         const code = await getOrCreateAddressCode(uid);
         await client.replyMessage(ev.replyToken, {
           type: "text",
@@ -1981,7 +2032,6 @@ async function handleEvent(ev) {
       if (d.startsWith("order_confirm_view?")) {
         const { id, qty, method, payment } = parse(d.replace("order_confirm_view?", ""));
 
-        // ★FIX(1)：uid は先に確保
         const uid = ev.source?.userId || "";
 
         let product;
@@ -1999,16 +2049,19 @@ async function handleEvent(ev) {
           }
         }
 
-        const row = await dbGetAddressByUserId(uid);
-        const addr = row ? {
-          name: row.name || "",
-          phone: row.phone || "",
-          postal: row.postal || "",
-          prefecture: row.prefecture || "",
-          city: row.city || "",
-          address1: row.address1 || "",
-          address2: row.address2 || "",
-        } : null;
+        let addr = null;
+        if (pool) {
+          const row = await dbGetAddressByUserId(uid);
+          addr = row ? {
+            name: row.name || "",
+            phone: row.phone || "",
+            postal: row.postal || "",
+            prefecture: row.prefecture || "",
+            city: row.city || "",
+            address1: row.address1 || "",
+            address2: row.address2 || "",
+          } : null;
+        }
 
         await client.replyMessage(
           ev.replyToken,
@@ -2053,16 +2106,20 @@ async function handleEvent(ev) {
         }
 
         const uid = ev.source?.userId || "";
-        const row = await dbGetAddressByUserId(uid);
-        const addr = row ? {
-          name: row.name || "",
-          phone: row.phone || "",
-          postal: row.postal || "",
-          prefecture: row.prefecture || "",
-          city: row.city || "",
-          address1: row.address1 || "",
-          address2: row.address2 || "",
-        } : null;
+
+        let addr = null;
+        if (pool) {
+          const row = await dbGetAddressByUserId(uid);
+          addr = row ? {
+            name: row.name || "",
+            phone: row.phone || "",
+            postal: row.postal || "",
+            prefecture: row.prefecture || "",
+            city: row.city || "",
+            address1: row.address1 || "",
+            address2: row.address2 || "",
+          } : null;
+        }
 
         let region = "";
         let size = "";
@@ -2221,7 +2278,9 @@ async function handleEvent(ev) {
   }
 }
 
-// ====== Health ======
+// ======================================================================
+// Health
+// ======================================================================
 app.get("/health", (_req, res) => res.status(200).type("text/plain").send("OK"));
 app.get("/healthz", (_req, res) => res.status(200).type("text/plain").send("OK"));
 app.head("/health", (_req, res) => res.status(200).end());
@@ -2258,15 +2317,31 @@ app.get("/api/health", async (_req, res) => {
       PHONE_HOOK_TOKEN: !!PHONE_HOOK_TOKEN,
       ONLINE_NOTIFY_TOKEN: !!ONLINE_NOTIFY_TOKEN,
       DATABASE_URL: !!process.env.DATABASE_URL,
+      PUBLIC_ADDRESS_LOOKUP_TOKEN: !!PUBLIC_ADDRESS_LOOKUP_TOKEN,
     },
   });
 });
 
-// ====== 起動 ======
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Server started on port ${PORT}`);
-  console.log("   Webhook: POST /webhook");
-  console.log("   Public: /public/*");
-  console.log("   Phone hook: POST /api/phone/hook");
-  console.log("   Ping: GET /api/line/ping");
-});
+// ======================================================================
+// 起動（DB schema を先に確保してから listen）
+// ======================================================================
+(async () => {
+  try {
+    await ensureDbSchema();
+    console.log("✅ DB schema checked/ensured");
+  } catch (e) {
+    console.error("❌ ensureDbSchema error:", e?.message || e);
+    // DBが必須運用なら exit して気づけるようにする
+    // （現状は “DBなしだと会員コード/住所保存ができない”ので、ここは止めた方が安全）
+    // 必要ならコメントアウトして運用してOK
+    // process.exit(1);
+  }
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`🚀 Server started on port ${PORT}`);
+    console.log("   Webhook: POST /webhook");
+    console.log("   Public: /public/*");
+    console.log("   Phone hook: POST /api/phone/hook");
+    console.log("   Ping: GET /api/line/ping");
+  });
+})();

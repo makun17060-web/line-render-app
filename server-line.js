@@ -1261,26 +1261,26 @@ app.get("/api/public/address-by-code", async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || "server_error" });
   }
 });
-
 // ======================================================================
 // phone → online 通知 受信（別口：必要なら使う）
 // ======================================================================
 app.post("/api/phone/address-registered", async (req, res) => {
-  const got = req.headers["x-phone-token"]; // ヘッダは小文字で来ます
-  const env = process.env.ONLINE_NOTIFY_TOKEN;
+  try {
+    const got = req.headers["x-phone-token"]; // ヘッダは小文字
+    const env = (process.env.ONLINE_NOTIFY_TOKEN || "").trim();
 
-  console.log("[ONLINE_NOTIFY] got=", JSON.stringify(got));
-  console.log("[ONLINE_NOTIFY] env=", JSON.stringify(env));
-  console.log("[ONLINE_NOTIFY] headers keys=", Object.keys(req.headers || {}));
+    console.log("[ONLINE_NOTIFY] got=", JSON.stringify(got));
+    console.log("[ONLINE_NOTIFY] env=", JSON.stringify(env));
+    console.log("[ONLINE_NOTIFY] headers keys=", Object.keys(req.headers || {}));
+    console.log("[ONLINE_NOTIFY] body=", req.body);
 
-  // トークン検証（今のままでOK）
-  if (env && got !== env) {
-    return res.status(401).json({ ok: false, error: "invalid token" });
-  }
+    // トークン検証（設定がある時だけ厳密チェック）
+    if (env && String(got || "").trim() !== env) {
+      return res.status(401).json({ ok: false, error: "invalid token" });
+    }
 
-  return res.json({ ok: true });
-});
-
+    // ここに必要な処理があれば追加（DB書き込みなど）
+    return res.json({ ok: true });
   } catch (e) {
     console.error("phone notify error:", e);
     return res.status(500).json({ ok: false });

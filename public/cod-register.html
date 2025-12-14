@@ -3,104 +3,38 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>電話注文用 住所登録</title>
-  <style>
-    body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      margin: 0;
-      padding: 12px;
-      background: #f7f7f7;
-      color: #333;
-    }
-    h1 {
-      font-size: 18px;
-      margin: 0 0 8px;
-    }
-    p.lead {
-      font-size: 13px;
-      margin: 0 0 12px;
-      line-height: 1.6;
-    }
-    .card {
-      background: #fff;
-      border-radius: 10px;
-      padding: 12px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-      margin-bottom: 8px;
-    }
-    .field {
-      margin-bottom: 8px;
-    }
-    .label {
-      font-size: 12px;
-      margin-bottom: 2px;
-    }
-    input {
-      width: 100%;
-      box-sizing: border-box;
-      padding: 8px;
-      font-size: 14px;
-      border-radius: 6px;
-      border: 1px solid #ccc;
-    }
-    .row {
-      display: flex;
-      gap: 8px;
-    }
-    .row .field {
-      flex: 1;
-    }
-    .btn-row {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      margin-top: 8px;
-    }
-    .btn {
-      padding: 10px;
-      border-radius: 999px;
-      border: none;
-      font-size: 14px;
-      font-weight: 600;
-      width: 100%;
-    }
-    .btn-primary {
-      background: #00b900;
-      color: #fff;
-    }
-    .btn-secondary {
-      background: #fff;
-      border: 1px solid #ccc;
-      color: #333;
-    }
-    #statusMsg {
-      margin-top: 8px;
-      font-size: 11px;
-      color: #555;
-      white-space: pre-line;
-    }
-    #statusMsg.err {
-      color: #d00;
-    }
-    #statusMsg.ok {
-      color: #0a7b19;
-    }
-    small.note {
-      display: block;
-      margin-top: 10px;
-      font-size: 11px;
-      color: #777;
-      line-height: 1.6;
-    }
-  </style>
-  <!-- LIFF SDK -->
+  <title>住所登録（LIFF）</title>
+
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+  <style>
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin:0; padding:12px; background:#f7f7f7; color:#333; }
+    h1 { font-size:18px; margin:0 0 8px; }
+    p.lead { font-size:13px; margin:0 0 12px; line-height:1.6; }
+    .card { background:#fff; border-radius:10px; padding:12px; box-shadow:0 1px 3px rgba(0,0,0,0.08); margin-bottom:8px; }
+    .field { margin-bottom:8px; }
+    .label { font-size:12px; margin-bottom:2px; }
+    input { width:100%; box-sizing:border-box; padding:8px; font-size:14px; border-radius:6px; border:1px solid #ccc; }
+    .row { display:flex; gap:8px; }
+    .row .field { flex:1; }
+    .btn-row { display:flex; flex-direction:column; gap:8px; margin-top:8px; }
+    .btn { padding:10px; border-radius:999px; border:none; font-size:14px; font-weight:600; width:100%; }
+    .btn-primary { background:#00b900; color:#fff; }
+    .btn-secondary { background:#fff; border:1px solid #ccc; color:#333; }
+    #statusMsg { margin-top:8px; font-size:12px; color:#555; white-space:pre-line; }
+    #statusMsg.err { color:#d00; }
+    #statusMsg.ok  { color:#0a7b19; }
+    .codeBox { margin-top:10px; padding:10px; background:#fff8e1; border:1px solid #ffe08a; border-radius:10px; font-size:14px; line-height:1.6; white-space:pre-line; }
+    .codeBox strong { font-size:22px; letter-spacing:2px; display:inline-block; margin-top:4px; }
+    small.note { display:block; margin-top:10px; font-size:11px; color:#777; line-height:1.6; }
+  </style>
 </head>
+
 <body>
-  <h1>電話注文用 住所登録</h1>
+  <h1>住所登録</h1>
   <p class="lead">
-    電話で「代引き注文」をされる際の<br>
-    お届け先情報を登録する画面です。
+    リッチメニュー（LIFF）から開く住所登録です。<br>
+    保存後、会員コード（4桁）が表示されます。
   </p>
 
   <div class="card">
@@ -124,6 +58,7 @@
       <div class="label">建物名・部屋番号など（任意）</div>
       <input id="address2" type="text" placeholder="任意" />
     </div>
+
     <div class="row">
       <div class="field">
         <div class="label">お名前</div>
@@ -134,211 +69,194 @@
         <input id="phone" type="tel" placeholder="例）090-1234-5678" />
       </div>
     </div>
+
+    <div id="codeBox" class="codeBox" style="display:none;"></div>
   </div>
 
   <div class="btn-row">
-    <button id="saveBtn" class="btn btn-primary">住所を保存する</button>
+    <button id="saveBtn" class="btn btn-primary" disabled>住所を保存する</button>
     <button id="closeBtn" class="btn btn-secondary">この画面を閉じる</button>
   </div>
 
   <div id="statusMsg"></div>
 
   <small class="note">
-    ※電話注文の際は、案内にしたがって会員番号やお名前を入力してください。<br>
-    ※会員コード機能と連携している場合は、別途ご案内のコードをお使いください。
+    ※保存後に表示される「会員コード（4桁）」を控えてください。<br>
+    ※LINEアプリ内（LIFF）で開いてください。
   </small>
 
   <script>
     (function () {
       "use strict";
 
-      let currentUserId = "";
+      // ✅同一ドメイン配信なら空でOK（CORSなし）
+      // ✅別ドメイン配信なら ?api=https://line-render-app-1.onrender.com を付ける
+      const qs = new URLSearchParams(location.search);
+      const API_BASE_RAW = (qs.get("api") || "").trim().replace(/\/+$/, "");
+      const API_BASE = API_BASE_RAW || "";  // ←ここがポイント
+
       const statusEl = document.getElementById("statusMsg");
-      const saveBtn   = document.getElementById("saveBtn");
-      const closeBtn  = document.getElementById("closeBtn");
+      const saveBtn  = document.getElementById("saveBtn");
+      const closeBtn = document.getElementById("closeBtn");
+      const codeBox  = document.getElementById("codeBox");
+
+      let lineUserId = "";
+
+      function apiUrl(p) {
+        if (!p.startsWith("/")) p = "/" + p;
+        return API_BASE ? (API_BASE + p) : p;
+      }
 
       function setStatus(msg, kind) {
-        if (!statusEl) return;
         statusEl.textContent = msg || "";
         statusEl.classList.remove("err", "ok");
         if (kind === "err") statusEl.classList.add("err");
         if (kind === "ok")  statusEl.classList.add("ok");
       }
 
-      function getVal(id) {
-        return (document.getElementById(id)?.value || "").trim();
-      }
-
-      function fillFormFromAddress(a) {
-        if (!a) return;
-        if (a.postal)     document.getElementById("postal").value     = a.postal;
-        if (a.prefecture) document.getElementById("prefecture").value = a.prefecture;
-        if (a.city)       document.getElementById("city").value       = a.city;
-        if (a.address1)   document.getElementById("address1").value   = a.address1;
-        if (a.address2)   document.getElementById("address2").value   = a.address2;
-        if (a.name)       document.getElementById("name").value       = a.name;
-        if (a.phone)      document.getElementById("phone").value      = a.phone;
-      }
+      function getVal(id) { return (document.getElementById(id)?.value || "").trim(); }
+      function setVal(id, v) { const el = document.getElementById(id); if (el) el.value = (v || "").toString(); }
 
       function buildAddressFromForm() {
         const postal   = getVal("postal");
-        const pref     = getVal("prefecture");
+        const prefecture = getVal("prefecture");
         const city     = getVal("city");
         const address1 = getVal("address1");
         const address2 = getVal("address2");
         const name     = getVal("name");
         const phone    = getVal("phone");
 
-        if (!postal || !pref || !city || !address1 || !name || !phone) {
-          setStatus(
-            "郵便番号・都道府県・市区町村・番地/建物・お名前・電話番号は必須です。",
-            "err"
-          );
+        if (!postal || !prefecture || !city || !address1 || !name || !phone) {
+          setStatus("郵便番号・都道府県・市区町村・番地/建物・お名前・電話番号は必須です。", "err");
           return null;
         }
+        return { postal, prefecture, city, address1, address2, name, phone };
+      }
 
-        return {
-          postal,
-          prefecture: pref,
-          city,
-          address1,
-          address2,
-          name,
-          phone,
-        };
+      async function fetchJson(url, opts) {
+        const res = await fetch(url, opts);
+        const data = await res.json().catch(() => ({}));
+        return { res, data };
       }
 
       async function initLiff() {
-        try {
-          setStatus("初期化中です…", "");
+        setStatus("LIFF 初期化中…", "");
+        saveBtn.disabled = true;
 
-          // ★ server.js 側の /api/liff/config?kind=cod を同一ホストで呼ぶ
-          const cfgRes = await fetch("/api/liff/config?kind=cod");
-          const cfg = await cfgRes.json().catch(() => null);
-          console.log("LIFF CONFIG RESPONSE:", cfg);
+        // ✅リッチメニュー用途ならまず order を推奨（電話用と混ざりにくい）
+        const { res: cfgRes, data: cfg } =
+          await fetchJson(apiUrl("/api/liff/config?kind=order"), { cache: "no-store" });
 
-          if (!cfg || !cfg.liffId) {
-            setStatus("LIFF設定が取得できませんでした。時間をおいて再度お試しください。", "err");
-            return;
-          }
-
-          await liff.init({ liffId: cfg.liffId });
-
-          if (!liff.isLoggedIn()) {
-            liff.login();
-            return;
-          }
-
-          const prof = await liff.getProfile();
-          currentUserId = prof.userId || "";
-          if (!currentUserId) {
-            setStatus("LINEユーザー情報が取得できませんでした。", "err");
-            return;
-          }
-
-          // 既に登録済みの住所があれば読み込み（server.js の /api/liff/address/me）
-          try {
-            const meRes = await fetch(
-              "/api/liff/address/me?userId=" + encodeURIComponent(currentUserId)
-            );
-            const me = await meRes.json().catch(() => null);
-            console.log("/api/liff/address/me:", me);
-            if (me && me.ok && me.address) {
-              fillFormFromAddress(me.address);
-              setStatus("登録済みの住所を読み込みました。必要に応じて修正して保存してください。", "ok");
-            } else {
-              setStatus("電話注文で使うお届け先を入力して「住所を保存する」を押してください。", "");
-            }
-          } catch (e) {
-            console.warn("/api/liff/address/me error:", e);
-            setStatus("電話注文で使うお届け先を入力して「住所を保存する」を押してください。", "");
-          }
-        } catch (e) {
-          console.error("LIFF init error:", e);
-          setStatus("初期化中にエラーが発生しました。時間をおいて再度お試しください。", "err");
+        if (!cfgRes.ok || !cfg?.liffId) {
+          throw new Error("LIFF ID 取得失敗（/api/liff/config）");
         }
-      }
 
-      async function handleSave() {
-        if (!currentUserId) {
-          setStatus("LINEユーザー情報が取得できていません。画面を閉じてもう一度お試しください。", "err");
+        await liff.init({ liffId: cfg.liffId });
+
+        if (!liff.isLoggedIn()) {
+          setStatus("LINEログインに移動します…", "");
+          liff.login();
           return;
         }
 
+        const profile = await liff.getProfile();
+        lineUserId = profile?.userId || "";
+
+        if (!lineUserId) {
+          setStatus("userId取得に失敗しました。LINEアプリ内（LIFF）で開けていない可能性があります。", "err");
+          return;
+        }
+
+        setStatus("userId取得OK。住所を入力して「住所を保存する」を押してください。", "ok");
+        saveBtn.disabled = false;
+
+        // 既存住所の読み込み（任意）
+        try {
+          const { data: me } = await fetchJson(apiUrl(`/api/liff/address/me?userId=${encodeURIComponent(lineUserId)}`), { cache: "no-store" });
+          if (me?.ok && me?.address) {
+            const a = me.address;
+            setVal("postal", a.postal);
+            setVal("prefecture", a.prefecture);
+            setVal("city", a.city);
+            setVal("address1", a.address1);
+            setVal("address2", a.address2);
+            setVal("name", a.name);
+            setVal("phone", a.phone);
+          }
+        } catch {}
+      }
+
+      async function handleSave() {
         const addr = buildAddressFromForm();
         if (!addr) return;
+
+        if (!lineUserId) {
+          setStatus("LINE userId が取得できていません。", "err");
+          return;
+        }
 
         try {
           saveBtn.disabled = true;
           setStatus("住所を保存しています…", "");
+          codeBox.style.display = "none";
+          codeBox.textContent = "";
 
-          // server.js 側の /api/liff/address へ保存
-          const res = await fetch("/api/liff/address", {
+          const { res, data } = await fetchJson(apiUrl("/api/liff/address"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userId: currentUserId,
-              address: addr,
-            }),
+            body: JSON.stringify({ userId: lineUserId, address: addr }),
           });
 
-          const data = await res.json().catch(() => ({}));
-          console.log("/api/liff/address response:", data);
-
-          if (!res.ok || !data.ok) {
-            setStatus("住所の保存に失敗しました。時間をおいてもう一度お試しください。", "err");
+          if (!res.ok || !data?.ok || !data?.memberCode) {
+            setStatus(
+              "住所の保存に失敗しました。\n" +
+              `POST先: ${apiUrl("/api/liff/address")}\n` +
+              `status=${res.status}\n` +
+              `error=${data?.error || "unknown"}`,
+              "err"
+            );
             saveBtn.disabled = false;
             return;
           }
 
-          setStatus(
-            "住所を保存しました。\n電話の代引き注文でもこの住所が使われます。\nこの画面は閉じても大丈夫です。",
-            "ok"
-          );
+          const code = String(data.memberCode);
+          codeBox.style.display = "block";
+          codeBox.innerHTML =
+            `✅ 住所を保存しました。\n会員コードは：\n<strong>${code}</strong>\n\n（この4桁を控えてください）`;
 
-          // 可能なら LIFF ウィンドウを閉じる
-          try {
-            if (window.liff && typeof liff.closeWindow === "function") {
-              setTimeout(() => liff.closeWindow(), 1200);
-            }
-          } catch (e) {
-            console.warn("liff.closeWindow error:", e);
-          }
+          setStatus("保存完了。会員コードを控えてください。", "ok");
+          saveBtn.disabled = false;
         } catch (e) {
-          console.error("/api/liff/address error:", e);
-          setStatus("通信エラーで住所を保存できませんでした。電波状況をご確認ください。", "err");
+          console.error("save failed:", e);
+          setStatus(
+            "通信に失敗しました（failed to fetch）。\n" +
+            `POST先: ${apiUrl("/api/liff/address")}\n` +
+            "別ドメイン配信なら CORS で止まるので、同一ドメイン配信にするか ?api= を使ってください。",
+            "err"
+          );
           saveBtn.disabled = false;
         }
       }
 
-      async function handleClose() {
+      function handleClose() {
         try {
-          if (window.liff && typeof liff.closeWindow === "function") {
-            liff.closeWindow();
-          } else {
-            window.close();
-          }
-        } catch (e) {
-          console.warn("close error:", e);
-          setStatus("画面が自動で閉じられない場合は、右上の「×」や戻るボタンで閉じてください。", "");
+          if (window.liff && liff.isInClient()) liff.closeWindow();
+          else window.close();
+        } catch {
+          setStatus("閉じられない場合は、戻るボタンで閉じてください。", "");
         }
       }
 
-      document.addEventListener("DOMContentLoaded", () => {
-        if (window.liff) {
-          initLiff();
-        } else {
-          setStatus("LIFF SDK が読み込めませんでした。ネットワーク状況をご確認ください。", "err");
-        }
+      document.addEventListener("DOMContentLoaded", async () => {
+        closeBtn.addEventListener("click", (ev) => { ev.preventDefault(); handleClose(); });
+        saveBtn.addEventListener("click", (ev) => { ev.preventDefault(); handleSave(); });
 
-        saveBtn.addEventListener("click", (ev) => {
-          ev.preventDefault();
-          handleSave();
-        });
-        closeBtn.addEventListener("click", (ev) => {
-          ev.preventDefault();
-          handleClose();
-        });
+        try {
+          await initLiff();
+        } catch (e) {
+          console.error("LIFF init error:", e);
+          setStatus("初期化に失敗しました。\n" + (e?.message || String(e)), "err");
+        }
       });
     })();
   </script>

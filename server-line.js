@@ -1266,39 +1266,21 @@ app.get("/api/public/address-by-code", async (req, res) => {
 // phone → online 通知 受信（別口：必要なら使う）
 // ======================================================================
 app.post("/api/phone/address-registered", async (req, res) => {
-  try {
-    const token = req.headers["x-phone-token"];
-    if (ONLINE_NOTIFY_TOKEN && token !== ONLINE_NOTIFY_TOKEN) {
-      return res.status(401).json({ ok: false, error: "invalid token" });
-    }
+  const got = req.headers["x-phone-token"]; // ヘッダは小文字で来ます
+  const env = process.env.ONLINE_NOTIFY_TOKEN;
 
-    const payload = req.body;
-    console.log("📨 phone notify received:", payload);
+  console.log("[ONLINE_NOTIFY] got=", JSON.stringify(got));
+  console.log("[ONLINE_NOTIFY] env=", JSON.stringify(env));
+  console.log("[ONLINE_NOTIFY] headers keys=", Object.keys(req.headers || {}));
 
-    if (pool && payload?.memberCode) {
-      const a = payload.address || {};
-      await pool.query(
-        `
-        INSERT INTO phone_address_events
-          (member_code, is_new, name, phone, postal, prefecture, city, address1, address2)
-        VALUES
-          ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-        `,
-        [
-          String(payload.memberCode || ""),
-          !!payload.isNew,
-          String(a.name || ""),
-          String(a.phone || ""),
-          String(a.postal || ""),
-          String(a.prefecture || ""),
-          String(a.city || ""),
-          String(a.address1 || ""),
-          String(a.address2 || ""),
-        ]
-      );
-    }
+  // トークン検証（今のままでOK）
+  if (env && got !== env) {
+    return res.status(401).json({ ok: false, error: "invalid token" });
+  }
 
-    return res.json({ ok: true });
+  return res.json({ ok: true });
+});
+
   } catch (e) {
     console.error("phone notify error:", e);
     return res.status(500).json({ ok: false });

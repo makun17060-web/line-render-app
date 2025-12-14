@@ -385,6 +385,40 @@ async function dbGetCodesByMemberCode(memberCode) {
   );
   return r.rows[0] || null;
 }
+async function dbEnsurePhoneCodesByMemberCode(memberCode, phoneE164 = "") {
+  const p = mustPool();
+  const mc = String(memberCode || "").trim();
+  if (!/^\d{4}$/.test(mc)) throw new Error("invalid_memberCode");
+
+  // 既に codes にあるならOK
+  const exist = await dbGetCodesByMemberCode(mc);
+  if (exist?.user_id) return exist;
+
+  const uidBase = phoneE164 ? `phone:${phoneE164}` : `phone:${mc}`;
+
+  // member_code をこの mc で作る（user_id は衝突したら枝番）
+  for (let i = 0; i < 50; i++) {
+    const uid = i === 0 ? uidBase : `${uidBase}:${i}`;
+    try {
+      await p.query(
+        `INSERT INTO codes (user_id, member_code, address_code)
+         VALUES ($1, $2, $3)`,
+        [uid, mc, mc] // address_code も同じにする（まずは簡単に）
+      );
+      return { user_id: uid, member_code: mc, address_code: mc };
+    } catch (e) {
+      // member_code が既に他で使われてる(=誰かが先に作った)なら取り直し
+      if (String(e?.code) === "23505") {
+        const again = await dbGetCodesByMemberCode(mc);
+        if (again?.user_id) return again;
+        continue;
+      }
+      throw e;
+    }
+  }
+
+  throw new Error("ensure_phone_codes_failed");
+}
 
 // user_id 1件に対して member_code / address_code を必ず確保して返す（これに統一）
 async function dbEnsureCodes(userId) {
@@ -1307,25 +1341,27 @@ app.post("/api/phone/hook", async (req, res) => {
         };
         writePhoneAddresses(book);
       }
+// 2) DBへ反映（★電話の memberCode を codes に確保してから addresses に入れる）
+let dbResult = null;
+if (pool && /^\d{4}$/.test(memberCode)) {
+  try {
+    const phoneE164 = String(a.phone || "").trim(); // 例: +8190...
+    await dbEnsurePhoneCodesByMemberCode(memberCode, phoneE164);
 
-      // 2) DBへ反映
-      let dbResult = null;
-      if (pool && /^\d{4}$/.test(memberCode)) {
-        try {
-          dbResult = await dbUpsertAddressByMemberCode(memberCode, {
-            name: String(a.name || "").trim(),
-            phone: String(a.phone || "").trim(),
-            postal: String(a.postal || "").trim(),
-            prefecture: String(a.prefecture || "").trim(),
-            city: String(a.city || "").trim(),
-            address1: String(a.address1 || "").trim(),
-            address2: String(a.address2 || "").trim(),
-          });
-        } catch (e) {
-          console.error("dbUpsertAddressByMemberCode error:", e);
-          dbResult = { ok: false, reason: "db_error", error: e?.message || String(e) };
-        }
-      }
+    dbResult = await dbUpsertAddressByMemberCode(memberCode, {
+      name: String(a.name || "").trim(),
+      phone: String(a.phone || "").trim(),
+      postal: String(a.postal || "").trim(),
+      prefecture: String(a.prefecture || "").trim(),
+      city: String(a.city || "").trim(),
+      address1: String(a.address1 || "").trim(),
+      address2: String(a.address2 || "").trim(),
+    });
+  } catch (e) {
+    console.error("phone hook db reflect error:", e);
+    dbResult = { ok: false, reason: "db_error", error: e?.message || String(e) };
+  }
+}
 
       const addrText =
         `${a.postal || ""} ${a.prefecture || ""}${a.city || ""}${a.address1 || ""}` +

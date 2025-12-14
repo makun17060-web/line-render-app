@@ -56,21 +56,51 @@ function mustPool() {
   return pool;
 }
 
-// ---- 住所(DB) ----
+// ---- 住所(DB) : addresses は member_code 主キー ----
+
+// user_id から住所を取る（codes.member_code -> addresses）
 async function dbGetAddressByUserId(userId) {
   const p = mustPool();
+  const uid = String(userId || "").trim();
+  if (!uid) return null;
+
   const r = await p.query(
-    `SELECT user_id, name, phone, postal, prefecture, city, address1, address2, updated_at
-     FROM addresses WHERE user_id = $1`,
-    [String(userId)]
+    `
+    SELECT
+      c.user_id,
+      c.member_code,
+      a.name, a.phone, a.postal, a.prefecture, a.city, a.address1, a.address2,
+      a.updated_at
+    FROM codes c
+    LEFT JOIN addresses a
+      ON a.member_code = c.member_code
+    WHERE c.user_id = $1
+    LIMIT 1
+    `,
+    [uid]
   );
-  return r.rows[0] || null;
+
+  const row = r.rows[0] || null;
+  if (!row || !row.member_code) return null;
+
+  // 住所が未登録なら null 返し
+  const hasAny =
+    (row.name || row.phone || row.postal || row.prefecture || row.city || row.address1 || row.address2);
+  if (!hasAny) return null;
+
+  return row;
 }
 
-async function dbUpsertAddress(userId, addr = {}) {
+// user_id で住所を upsert（内部で member_code を確保して addresses に保存）
+async function dbUpsertAddressByUserId(userId, addr = {}) {
   const p = mustPool();
   const uid = String(userId || "").trim();
   if (!uid) throw new Error("userId required");
+
+  // まず codes を必ず確保（member_code を発行）
+  const codes = await dbEnsureCodes(uid);
+  const memberCode = String(codes.member_code || "").trim();
+  if (!/^\d{4}$/.test(memberCode)) throw new Error("member_code missing");
 
   const a = {
     name:       String(addr.name || "").trim(),
@@ -85,43 +115,44 @@ async function dbUpsertAddress(userId, addr = {}) {
   await p.query(
     `
     INSERT INTO addresses
-      (user_id, name, phone, postal, prefecture, city, address1, address2)
+      (member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at)
     VALUES
-      ($1,$2,$3,$4,$5,$6,$7,$8)
-    ON CONFLICT (user_id) DO UPDATE SET
-      name       = EXCLUDED.name,
-      phone      = EXCLUDED.phone,
-      postal     = EXCLUDED.postal,
-      prefecture = EXCLUDED.prefecture,
-      city       = EXCLUDED.city,
-      address1   = EXCLUDED.address1,
-      address2   = EXCLUDED.address2
+      ($1,$2,$3,$4,$5,$6,$7,$8,$9, NOW())
+    ON CONFLICT (member_code) DO UPDATE SET
+      user_id     = EXCLUDED.user_id,
+      name        = EXCLUDED.name,
+      phone       = EXCLUDED.phone,
+      postal      = EXCLUDED.postal,
+      prefecture  = EXCLUDED.prefecture,
+      city        = EXCLUDED.city,
+      address1    = EXCLUDED.address1,
+      address2    = EXCLUDED.address2,
+      updated_at  = NOW()
     `,
-    [uid, a.name, a.phone, a.postal, a.prefecture, a.city, a.address1, a.address2]
+    [memberCode, uid, a.name, a.phone, a.postal, a.prefecture, a.city, a.address1, a.address2]
   );
 
-  return a;
+  return { memberCode, ...a };
 }
 
-// ---- コード(DB) 4桁重複防止：UNIQUE制約に任せてリトライ ----
-function rand4() {
-  return Math.floor(Math.random() * 10000).toString().padStart(4, "0");
-}
-
-async function dbGetCodesByUserId(userId) {
+// member_code から住所を取る（公開API等で使用）
+async function dbGetAddressByMemberCode(memberCode) {
   const p = mustPool();
-  const r = await p.query(
-    `SELECT user_id, member_code, address_code FROM codes WHERE user_id = $1`,
-    [String(userId)]
-  );
-  return r.rows[0] || null;
-}
+  const mc = String(memberCode || "").trim();
+  if (!/^\d{4}$/.test(mc)) return null;
 
-async function dbGetByMemberCode(memberCode) {
-  const p = mustPool();
   const r = await p.query(
-    `SELECT user_id, member_code, address_code FROM codes WHERE member_code = $1`,
-    [String(memberCode)]
+    `
+    SELECT
+      a.member_code,
+      a.user_id,
+      a.name, a.phone, a.postal, a.prefecture, a.city, a.address1, a.address2,
+      a.updated_at
+    FROM addresses a
+    WHERE a.member_code = $1
+    LIMIT 1
+    `,
+    [mc]
   );
   return r.rows[0] || null;
 }
@@ -1096,55 +1127,53 @@ function reserveOffer(product, needQty, stock) {
     },
   ];
 }
-
-// ====== LIFF API ======
+// ====== LIFF API（住所：DB版） ======
 app.post("/api/liff/address", async (req, res) => {
   try {
     const userId = String(req.body?.userId || "").trim();
     const addr = req.body?.address || {};
     if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
 
-    const book = readAddresses();
-    const prev = book[userId] || {};
+    // DBへ保存（member_code は内部で確保）
+    const saved = await dbUpsertAddressByUserId(userId, addr);
 
-    book[userId] = {
-      ...prev,
-      name:       String(addr.name || "").trim(),
-      phone:      String(addr.phone || "").trim(),
-      postal:     String(addr.postal || "").trim(),
-      prefecture: String(addr.prefecture || "").trim(),
-      city:       String(addr.city || "").trim(),
-      address1:   String(addr.address1 || "").trim(),
-      address2:   String(addr.address2 || "").trim(),
-      ts:         new Date().toISOString(),
-    };
-    writeAddresses(book);
+    // コード返す（UI用）
+    const codes = await dbEnsureCodes(userId);
 
-    const memberCode  = await getOrCreateMemberCode(userId);
-    const addressCode = await getOrCreateAddressCode(userId);
-
-    res.json({ ok: true, memberCode, addressCode });
+    res.json({
+      ok: true,
+      memberCode: String(codes.member_code || ""),
+      addressCode: String(codes.address_code || ""),
+      saved: true,
+    });
   } catch (e) {
     console.error("/api/liff/address error:", e);
-    res.status(500).json({ ok: false, error: "server_error" });
+    res.status(500).json({ ok: false, error: e?.message || "server_error" });
   }
 });
-
-app.get("/api/liff/address/me", (req, res) => {
+app.get("/api/liff/address/me", async (req, res) => {
   try {
     const userId = String(req.query.userId || req.headers["x-line-userid"] || "").trim();
-    const book = readAddresses();
+    if (!userId) return res.json({ ok: true, address: null });
 
-    if (userId && book[userId]) return res.json({ ok: true, address: book[userId] });
+    const row = await dbGetAddressByUserId(userId);
+    if (!row) return res.json({ ok: true, address: null });
 
-    const vals = Object.values(book || {});
-    let last = null;
-    if (vals.length > 0) {
-      vals.sort((a, b) => new Date(b.ts || 0) - new Date(a.ts || 0));
-      last = vals[0];
-    }
-    return res.json({ ok: true, address: last });
-  } catch (_e) {
+    return res.json({
+      ok: true,
+      address: {
+        name: row.name || "",
+        phone: row.phone || "",
+        postal: row.postal || "",
+        prefecture: row.prefecture || "",
+        city: row.city || "",
+        address1: row.address1 || "",
+        address2: row.address2 || "",
+        memberCode: String(row.member_code || ""),
+      },
+    });
+  } catch (e) {
+    console.error("/api/liff/address/me error:", e);
     res.json({ ok: false, address: null });
   }
 });
@@ -1155,45 +1184,41 @@ app.get("/api/liff/config", (req, res) => {
   if (kind === "cod") return res.json({ liffId: LIFF_ID_DIRECT_ADDRESS });
   return res.json({ liffId: LIFF_ID });
 });
-// ===== 会員コードから住所を取得 =====
 app.get("/api/public/address-by-code", async (req, res) => {
   try {
     const code = String(req.query.code || "").trim();
-    if (!code) return res.status(400).json({ ok: false, error: "code_required" });
+    if (!/^\d{4}$/.test(code)) return res.status(400).json({ ok: false, error: "code_required" });
 
-    // まず codes テーブルから user_id を引く
     if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
 
+    // member_code から住所
+    const addr = await dbGetAddressByMemberCode(code);
+    if (!addr) return res.status(404).json({ ok: false, error: "address_not_registered" });
+
+    // codes も返したい場合（任意）
     const r = await pool.query(
       `SELECT user_id, member_code, address_code FROM codes WHERE member_code=$1 LIMIT 1`,
       [code]
     );
-    if (!r.rows?.length) return res.status(404).json({ ok: false, error: "not_found" });
-
-    const { user_id, member_code, address_code } = r.rows[0];
-
-    // 住所は当面JSONのままなら、user_id で引く
-    const book = readAddresses();
-    const found = book[user_id];
-    if (!found) return res.status(404).json({ ok: false, error: "address_not_registered" });
+    const row = r.rows[0] || {};
 
     return res.json({
       ok: true,
       address: {
-        name:       found.name       || "",
-        phone:      found.phone      || "",
-        postal:     found.postal     || "",
-        prefecture: found.prefecture || "",
-        city:       found.city       || "",
-        address1:   found.address1   || "",
-        address2:   found.address2   || "",
-        memberCode: String(member_code || ""),
-        addressCode: String(address_code || ""),
+        name: addr.name || "",
+        phone: addr.phone || "",
+        postal: addr.postal || "",
+        prefecture: addr.prefecture || "",
+        city: addr.city || "",
+        address1: addr.address1 || "",
+        address2: addr.address2 || "",
+        memberCode: String(row.member_code || addr.member_code || ""),
+        addressCode: String(row.address_code || ""),
       },
     });
   } catch (e) {
     console.error("/api/public/address-by-code error:", e);
-    return res.status(500).json({ ok: false, error: "server_error" });
+    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
   }
 });
 
@@ -1893,11 +1918,19 @@ async function handleEvent(ev) {
             return;
           }
         }
+const row = await dbGetAddressByUserId(uid);
+const addr = row ? {
+  name: row.name || "",
+  phone: row.phone || "",
+  postal: row.postal || "",
+  prefecture: row.prefecture || "",
+  city: row.city || "",
+  address1: row.address1 || "",
+  address2: row.address2 || "",
+} : null;
 
         const uid = ev.source?.userId || "";
-        const addrBook = readAddresses();
-        const addr = addrBook[uid] || null;
-
+       
         await client.replyMessage(
           ev.replyToken,
           confirmFlex(product, qty, (method || "").trim(), (payment || "").trim(), LIFF_ID_DIRECT_ADDRESS, { address: addr })
@@ -1941,8 +1974,17 @@ async function handleEvent(ev) {
         }
 
         const uid = ev.source?.userId || "";
-        const addrBook = readAddresses();
-        const addr = addrBook[uid] || null;
+        const row = await dbGetAddressByUserId(uid);
+const addr = row ? {
+  name: row.name || "",
+  phone: row.phone || "",
+  postal: row.postal || "",
+  prefecture: row.prefecture || "",
+  city: row.city || "",
+  address1: row.address1 || "",
+  address2: row.address2 || "",
+} : null;
+
 
         let region = "";
         let size = "";

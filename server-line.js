@@ -22,6 +22,7 @@
 // - /api/line/ping はトップレベルで定義（関数内に置かない）
 // - LINE client は1回だけ生成して使い回す
 // - JSON middleware を /api 限定にしない（webhook/phone hook のため）
+// - ★さらに重要：/webhook は express.json を先に通すと署名検証が壊れることがあるので除外する
 
 "use strict";
 
@@ -38,82 +39,6 @@ const { Pool } = require("pg");
 // ===== Express =====
 const app = express();
 const PORT = process.env.PORT || 3000;
-// ====== phone → online 通知 受信 ======
-app.post("/api/phone/address-registered", express.json(), async (req, res) => {
-  try {
-    // 簡易認証（phone → online のなりすまし防止）
-    const token = req.headers["x-phone-token"];
-    if (
-      process.env.ONLINE_NOTIFY_TOKEN &&
-      token !== process.env.ONLINE_NOTIFY_TOKEN
-    ) {
-      return res.status(401).json({ ok: false, error: "invalid token" });
-    }
-
-    const payload = req.body;
-
-    console.log("📨 phone notify received:", payload);
-    // ▼▼▼ ここから追加：DBへ保存 ▼▼▼
-    if (pool && payload?.memberCode) {
-      const a = payload.address || {};
-      await pool.query(
-        `
-        INSERT INTO phone_address_events
-          (member_code, is_new, name, phone, postal, prefecture, city, address1, address2)
-        VALUES
-          ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-        `,
-        [
-          String(payload.memberCode || ""),
-          !!payload.isNew,
-          String(a.name || ""),
-          String(a.phone || ""),
-          String(a.postal || ""),
-          String(a.prefecture || ""),
-          String(a.city || ""),
-          String(a.address1 || ""),
-          String(a.address2 || ""),
-        ]
-      );
-    }
-    // ▲▲▲ ここまで追加：DBへ保存 ▲▲▲
-
-    /*
-      payload 例:
-      {
-        event: "phone_address_saved",
-        ts: "...",
-        memberCode: "0427",
-        isNew: true,
-        address: {
-          name, phone, postal,
-          prefecture, city, address1, address2
-        }
-      }
-    */
-
-    // まずは受信確認だけでOK
-    // 後でここに：
-    // - DB保存
-    // - 本人へLINE Push
-    // - 管理者通知
-    // を追加できます
-
-    return res.json({ ok: true });
-  } catch (e) {
-    console.error("phone notify error:", e);
-    return res.status(500).json({ ok: false });
-  }
-});
-
-// ★ middleware（/apiに限定しない）
-app.use(express.json({ limit: "2mb" }));
-app.use(express.urlencoded({ extended: true }));
-
-app.use((req, _res, next) => {
-  console.log(`[REQ] ${new Date().toISOString()} ${req.method} ${req.url}`);
-  next();
-});
 
 // ===== PostgreSQL（任意）=====
 const pool = process.env.DATABASE_URL
@@ -135,7 +60,9 @@ const stripeSecretKey = (
 
 const stripe = stripeSecretKey ? stripeLib(stripeSecretKey) : null;
 if (!stripe) {
-  console.warn("⚠️ STRIPE_SECRET_KEY / STRIPE_SECRET が設定されていません。/api/pay-stripe はエラーになります。");
+  console.warn(
+    "⚠️ STRIPE_SECRET_KEY / STRIPE_SECRET が設定されていません。/api/pay-stripe はエラーになります。"
+  );
 }
 
 // ====== 環境変数 ======
@@ -163,6 +90,9 @@ const COD_FEE = Number(process.env.COD_FEE || 330);
 
 // ★電話→オンライン hook（任意）
 const PHONE_HOOK_TOKEN = (process.env.PHONE_HOOK_TOKEN || "").trim();
+
+// ★ phone → online のなりすまし防止（別口の通知受信を使う場合）
+const ONLINE_NOTIFY_TOKEN = (process.env.ONLINE_NOTIFY_TOKEN || "").trim();
 
 // LINE config
 const config = {
@@ -193,7 +123,7 @@ const PRODUCTS_PATH = path.join(DATA_DIR, "products.json");
 const ORDERS_LOG = path.join(DATA_DIR, "orders.log");
 const RESERVATIONS_LOG = path.join(DATA_DIR, "reservations.log");
 const ADDRESSES_PATH = path.join(DATA_DIR, "addresses.json");
-const PHONE_ADDRESSES_PATH = path.join(DATA_DIR, "phone-addresses.json"); // 電話住所をオンライン側に保存
+const PHONE_ADDRESSES_PATH = path.join(DATA_DIR, "phone-addresses.json");
 const SURVEYS_LOG = path.join(DATA_DIR, "surveys.log");
 const MESSAGES_LOG = path.join(DATA_DIR, "messages.log");
 const SESSIONS_PATH = path.join(DATA_DIR, "sessions.json");
@@ -274,8 +204,6 @@ const parse = (data) => {
   return o;
 };
 
-const uniq = (arr) => Array.from(new Set((arr || []).filter(Boolean)));
-
 // ===== 認可 =====
 function bearerToken(req) {
   const h = req.headers?.authorization || req.headers?.Authorization || "";
@@ -348,6 +276,71 @@ app.get("/api/line/ping", async (_req, res) => {
   }
 });
 
+/**
+ * ★超重要FIX：
+ * express.json が /webhook より先に走ると、LINE署名検証が壊れることがある。
+ * → /webhook だけは JSON パーサを通さない（line.middleware に任せる）
+ */
+const jsonParser = express.json({ limit: "2mb" });
+const urlParser = express.urlencoded({ extended: true });
+
+app.use((req, res, next) => {
+  // /webhook は line.middleware(config) が body を読むため、先に触らない
+  if (req.path === "/webhook") return next();
+  return jsonParser(req, res, next);
+});
+app.use((req, res, next) => {
+  if (req.path === "/webhook") return next();
+  return urlParser(req, res, next);
+});
+
+app.use((req, _res, next) => {
+  console.log(`[REQ] ${new Date().toISOString()} ${req.method} ${req.url}`);
+  next();
+});
+
+// ====== phone → online 通知 受信（別口：必要なら使う）======
+app.post("/api/phone/address-registered", async (req, res) => {
+  try {
+    const token = req.headers["x-phone-token"];
+    if (ONLINE_NOTIFY_TOKEN && token !== ONLINE_NOTIFY_TOKEN) {
+      return res.status(401).json({ ok: false, error: "invalid token" });
+    }
+
+    const payload = req.body;
+    console.log("📨 phone notify received:", payload);
+
+    // DBへ保存（任意）
+    if (pool && payload?.memberCode) {
+      const a = payload.address || {};
+      await pool.query(
+        `
+        INSERT INTO phone_address_events
+          (member_code, is_new, name, phone, postal, prefecture, city, address1, address2)
+        VALUES
+          ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        `,
+        [
+          String(payload.memberCode || ""),
+          !!payload.isNew,
+          String(a.name || ""),
+          String(a.phone || ""),
+          String(a.postal || ""),
+          String(a.prefecture || ""),
+          String(a.city || ""),
+          String(a.address1 || ""),
+          String(a.address2 || ""),
+        ]
+      );
+    }
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("phone notify error:", e);
+    return res.status(500).json({ ok: false });
+  }
+});
+
 // ====== 会員コード/住所コード =====
 function getOrCreateCode(userId, fieldName) {
   const uid = String(userId || "").trim();
@@ -410,7 +403,11 @@ function findProductById(pid) {
 }
 function writeStockLog(entry) {
   try {
-    fs.appendFileSync(STOCK_LOG, JSON.stringify({ ts: new Date().toISOString(), ...entry }) + "\n", "utf8");
+    fs.appendFileSync(
+      STOCK_LOG,
+      JSON.stringify({ ts: new Date().toISOString(), ...entry }) + "\n",
+      "utf8"
+    );
   } catch {}
 }
 function setStock(productId, qty, actor = "system") {
@@ -435,7 +432,6 @@ function addStock(productId, delta, actor = "system") {
   return { before, after };
 }
 async function maybeLowStockAlert(productId, productName, stockNow) {
-  // ★FIX：ここで client を作り直さない（トップの client を使う）
   if (stockNow < LOW_STOCK_THRESHOLD && ADMIN_USER_ID) {
     const msg =
       `⚠️ 在庫僅少アラート\n商品：${productName}（${productId}）\n` +
@@ -1502,7 +1498,7 @@ app.post("/api/admin/products/set-image", (req, res) => {
   }
 });
 
-// ====== Webhook ======
+// ====== Webhook（ここで line.middleware を通す） ======
 app.post("/webhook", line.middleware(config), async (req, res) => {
   try {
     const events = req.body.events || [];
@@ -1523,7 +1519,6 @@ app.post("/webhook", line.middleware(config), async (req, res) => {
 async function handleEvent(ev) {
   try {
     if (ev.type === "message" && ev.message?.type === "text") {
-      // テキストログ
       try {
         fs.appendFileSync(
           MESSAGES_LOG,
@@ -1538,7 +1533,6 @@ async function handleEvent(ev) {
       const text = (ev.message.text || "").trim();
       const t = text.replace(/\s+/g, " ").trim();
 
-      // 管理者へ通知（管理者本人は除外）
       const isAdmin = ADMIN_USER_ID && uid === ADMIN_USER_ID;
       if (!isAdmin && ADMIN_USER_ID && t) {
         const notice =
@@ -1556,7 +1550,6 @@ async function handleEvent(ev) {
         return;
       }
 
-      // 会員コード
       if (t === "会員コード") {
         const code = getOrCreateMemberCode(uid);
         if (!code) {
@@ -1570,7 +1563,6 @@ async function handleEvent(ev) {
         return;
       }
 
-      // 住所コード
       if (t === "住所コード" || t === "住所番号") {
         const code = getOrCreateAddressCode(uid);
         if (!code) {
@@ -1584,7 +1576,6 @@ async function handleEvent(ev) {
         return;
       }
 
-      // 久助テキスト注文（例：久助 2）
       const kusukeRe = /^久助(?:\s+(\d+))?$/i;
       const km = kusukeRe.exec(text);
       if (km) {
@@ -1613,7 +1604,6 @@ async function handleEvent(ev) {
         return;
       }
 
-      // その他フロー
       if (sess?.await === "otherName") {
         const name = (text || "").slice(0, 50).trim();
         if (!name) {
@@ -1641,7 +1631,6 @@ async function handleEvent(ev) {
         return;
       }
 
-      // 店頭受取の「呼び出し名」入力
       if (sess?.await === "pickupName") {
         const nameText = (text || "").trim();
         if (!nameText) {
@@ -1676,7 +1665,6 @@ async function handleEvent(ev) {
         return;
       }
 
-      // 一般ユーザー：直接注文
       if (text === "直接注文") {
         await client.replyMessage(ev.replyToken, productsFlex(readProducts()));
         return;
@@ -1985,6 +1973,7 @@ app.get("/api/health", async (_req, res) => {
       ORIGINAL_SET_PRODUCT_ID: !!process.env.ORIGINAL_SET_PRODUCT_ID,
       COD_FEE: COD_FEE,
       PHONE_HOOK_TOKEN: !!PHONE_HOOK_TOKEN,
+      ONLINE_NOTIFY_TOKEN: !!ONLINE_NOTIFY_TOKEN,
       DATABASE_URL: !!process.env.DATABASE_URL,
     },
   });

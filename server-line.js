@@ -1266,7 +1266,7 @@ app.get("/api/public/address-by-code", async (req, res) => {
 // ======================================================================
 app.post("/api/phone/address-registered", async (req, res) => {
   try {
-    const got = req.headers["x-phone-token"]; // ヘッダは小文字
+    const got = req.headers["x-hook-token"]; // ヘッダは小文字
     const env = (process.env.ONLINE_NOTIFY_TOKEN || "").trim();
 
     console.log("[ONLINE_NOTIFY] got=", JSON.stringify(got));

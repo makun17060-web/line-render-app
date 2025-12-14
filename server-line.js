@@ -28,6 +28,34 @@
 // 1) order_confirm_view? 内で uid を定義する前に参照していたのを修正
 // 2) rand4() / dbGetCodesByUserId() 未定義を追加
 // 3) 「会員コード/住所コード」返信文言をロジックに合わせて修正（住所未登録でもコードは発行される）
+// member_code -> codes（電話住所の紐付け用）
+async function dbGetCodesByMemberCode(memberCode) {
+  const p = mustPool();
+  const mc = String(memberCode || "").trim();
+  if (!/^\d{4}$/.test(mc)) return null;
+
+  const r = await p.query(
+    `SELECT user_id, member_code, address_code FROM codes WHERE member_code=$1 LIMIT 1`,
+    [mc]
+  );
+  return r.rows[0] || null;
+}
+
+// ★電話住所を memberCode で addresses(DB) に反映
+async function dbUpsertAddressByMemberCode(memberCode, addr = {}) {
+  const mc = String(memberCode || "").trim();
+  if (!/^\d{4}$/.test(mc)) throw new Error("invalid_memberCode");
+
+  const codes = await dbGetCodesByMemberCode(mc);
+  if (!codes?.user_id) {
+    // memberCode がDBに存在しない（入力ミス/まだ発行されてない等）
+    return { ok: false, reason: "memberCode_not_found" };
+  }
+
+  // 住所Upsert（既存ロジックを流用）
+  await dbUpsertAddressByUserId(codes.user_id, addr);
+  return { ok: true, userId: codes.user_id };
+}
 
 "use strict";
 
@@ -1248,8 +1276,6 @@ app.get("/api/public/address-by-code", async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || "server_error" });
   }
 });
-
-// ===== ★電話サーバー -> オンライン通知 受け口 =====
 app.post("/api/phone/hook", async (req, res) => {
   try {
     if (PHONE_HOOK_TOKEN) {
@@ -1266,7 +1292,8 @@ app.post("/api/phone/hook", async (req, res) => {
       const memberCode = String(payload?.memberCode || "").trim();
       const a = payload?.address || {};
 
-      if (memberCode) {
+      // 1) JSONに保存（現状維持：バックアップ用途）
+      if (/^\d{4}$/.test(memberCode)) {
         const book = readPhoneAddresses();
         book[memberCode] = {
           memberCode,
@@ -1283,21 +1310,48 @@ app.post("/api/phone/hook", async (req, res) => {
         writePhoneAddresses(book);
       }
 
+      // 2) DBへ反映（★ここが追加）
+      let dbResult = null;
+      if (pool && /^\d{4}$/.test(memberCode)) {
+        try {
+          dbResult = await dbUpsertAddressByMemberCode(memberCode, {
+            name: String(a.name || "").trim(),
+            phone: String(a.phone || "").trim(),
+            postal: String(a.postal || "").trim(),
+            prefecture: String(a.prefecture || "").trim(),
+            city: String(a.city || "").trim(),
+            address1: String(a.address1 || "").trim(),
+            address2: String(a.address2 || "").trim(),
+          });
+        } catch (e) {
+          console.error("dbUpsertAddressByMemberCode error:", e);
+          dbResult = { ok: false, reason: "db_error", error: e?.message || String(e) };
+        }
+      }
+
       const addrText =
         `${a.postal || ""} ${a.prefecture || ""}${a.city || ""}${a.address1 || ""}` +
         (a.address2 ? ` ${a.address2}` : "");
 
       if (ADMIN_USER_ID) {
+        const statusLine =
+          !pool ? "DB：未設定（DATABASE_URLなし）"
+          : !/^\d{4}$/.test(memberCode) ? "DB：memberCode不正"
+          : dbResult?.ok ? `DB：addresses反映OK（userId=${dbResult.userId}）`
+          : `DB：反映NG（${dbResult?.reason || "unknown"}）`;
+
         const msg =
           "🔔【電話→オンライン 住所登録】\n" +
           `会員コード：${memberCode || "(不明)"}\n` +
           `氏名：${a.name || ""}\n` +
           `電話：${a.phone || ""}\n` +
-          `住所：${addrText}`;
+          `住所：${addrText}\n` +
+          `${statusLine}`;
+
         try { await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg }); } catch {}
       }
 
-      return res.json({ ok: true, handled: event });
+      return res.json({ ok: true, handled: event, db: dbResult || null });
     }
 
     if (event === "order_created") {

@@ -201,40 +201,45 @@
           codeBox.style.display = "none";
           codeBox.textContent = "";
 
-          const { res, data } = await fetchJson(apiUrl("/api/liff/address"), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ userId: lineUserId, address: addr }),
-          });
+         const { res, data } = await fetchJson(apiUrl("/api/liff/address"), {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ userId: lineUserId, address: addr }),
+});
 
-          if (!res.ok || !data?.ok || !data?.memberCode) {
-            setStatus(
-              "住所の保存に失敗しました。\n" +
-              `POST先: ${apiUrl("/api/liff/address")}\n` +
-              `status=${res.status}\n` +
-              `error=${data?.error || "unknown"}`,
-              "err"
-            );
-            saveBtn.disabled = false;
-            return;
-          }
+console.log("SAVE RESPONSE:", res.status, data);
 
-          const code = String(data.memberCode);
-          codeBox.style.display = "block";
-          codeBox.innerHTML =
-            `✅ 住所を保存しました。\n会員コードは：\n<strong>${code}</strong>\n\n（この4桁を控えてください）`;
+// ✅ どのキーでも拾えるようにする
+const memberCode =
+  (data && (data.memberCode || data.member_code || data.code || data.member)) ? String(data.memberCode || data.member_code || data.code || data.member) : "";
 
-          setStatus("保存完了。会員コードを控えてください。", "ok");
-          saveBtn.disabled = false;
-        } catch (e) {
-          console.error("save failed:", e);
-          setStatus(
-            "通信に失敗しました（failed to fetch）。\n" +
-            `POST先: ${apiUrl("/api/liff/address")}\n` +
-            "別ドメイン配信なら CORS で止まるので、同一ドメイン配信にするか ?api= を使ってください。",
-            "err"
-          );
-          saveBtn.disabled = false;
+const addressCode =
+  (data && (data.addressCode || data.address_code)) ? String(data.addressCode || data.address_code) : "";
+
+// 成功判定も少し柔らかく
+if (!res.ok || !data?.ok || !memberCode) {
+  setStatus(
+    "住所の保存に失敗しました（コードが取得できません）。\n" +
+    `status=${res.status}\n` +
+    `response=${JSON.stringify(data)}`,
+    "err"
+  );
+  saveBtn.disabled = false;
+  return;
+}
+
+// ✅ 表示
+codeBox.style.display = "block";
+codeBox.innerHTML =
+  `✅ 住所を保存しました。\n` +
+  `会員コード：\n<strong>${memberCode}</strong>\n` +
+  (addressCode ? `\n住所コード：${addressCode}\n` : "") +
+  `\n（この数字を控えてください）`;
+
+codeBox.scrollIntoView({ behavior: "smooth", block: "start" });
+setStatus("保存完了。会員コードを控えてください。", "ok");
+saveBtn.disabled = false;
+
         }
       }
 

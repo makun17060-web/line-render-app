@@ -781,18 +781,18 @@ app.post("/api/shipping", (req, res) => {
       return s + (matchId || matchName ? qty : 0);
     }, 0);
 
-   const { region, size, shipping } = calcShippingUnified(items, address);
-    const finalTotal = itemsTotal + shipping;
+ const { region, size, shipping } = calcShippingUnified(items, address);
+const finalTotal = itemsTotal + shipping;
 
-    res.json({
-      ok: true,
-      itemsTotal,
-      region,
-      size,
-      shipping,
-      finalTotal,
-      debug: { totalQty, originalQty, sizeA, sizeB },
-    });
+res.json({
+  ok: true,
+  itemsTotal,
+  region,
+  size,
+  shipping,
+  finalTotal,
+});
+
   } catch (e) {
     console.error("/api/shipping error:", e);
     res.status(400).json({ ok: false, error: e.message || "shipping_error" });

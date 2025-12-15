@@ -793,6 +793,7 @@ res.json({
   finalTotal,
 });
 
+
   } catch (e) {
     console.error("/api/shipping error:", e);
     res.status(400).json({ ok: false, error: e.message || "shipping_error" });

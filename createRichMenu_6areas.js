@@ -107,7 +107,7 @@ const shippingUrl = (SHIPPING_URL || `${baseUrl}/public/shipping.html`).trim();
     const richMenuId = await client.createRichMenu(richMenu);
     console.log("✅ richMenuId:", richMenuId);
 
-    const imageFile = (RICHMENU_IMAGE || ""createRichMenu_6areas.jpg).trim();
+    const imageFile = (RICHMENU_IMAGE || "createRichMenu_6areas.jpg").trim();
     const imagePath = path.join(__dirname, "public", imageFile);
 
     if (!fs.existsSync(imagePath)) {

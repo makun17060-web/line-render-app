@@ -684,6 +684,31 @@ function detectRegionFromAddress(address = {}) {
   if (/(沖縄)/.test(hay)) return "沖縄";
   return "";
 }
+// =============================================================
+// ★送料計算 一本化（ここが中核）
+// =============================================================
+function calcShippingUnified(items = [], address = {}) {
+  const region = detectRegionFromAddress(address);
+
+  const totalQty = items.reduce((s, it) => s + Number(it.qty || 0), 0);
+
+  const originalQty = items.reduce((s, it) => {
+    return s + (
+      it.id === ORIGINAL_SET_PRODUCT_ID ||
+      /磯屋.?オリジナルセ/.test(it.name || "")
+        ? Number(it.qty || 0)
+        : 0
+    );
+  }, 0);
+
+  const sizeA = sizeFromOriginalSetQty(originalQty);
+  const sizeB = sizeFromTotalQty(totalQty);
+  const size  = maxSize(sizeA, sizeB);
+
+  const shipping = calcYamatoShipping(region, size);
+
+  return { region, size, shipping };
+}
 
 function sizeFromOriginalSetQty(qty) {
   const q = Number(qty) || 0;
@@ -756,12 +781,7 @@ app.post("/api/shipping", (req, res) => {
       return s + (matchId || matchName ? qty : 0);
     }, 0);
 
-    const sizeA = sizeFromOriginalSetQty(originalQty);
-    const sizeB = sizeFromTotalQty(totalQty);
-    const size = maxSize(sizeA, sizeB);
-
-    const region = detectRegionFromAddress(address);
-    const shipping = calcYamatoShipping(region, size);
+   const { region, size, shipping } = calcShippingUnified(items, address);
     const finalTotal = itemsTotal + shipping;
 
     res.json({
@@ -1036,10 +1056,12 @@ function confirmFlex(product, qty, method, payment, liffIdForBtn, options = {}) 
   if (method === "delivery") {
     if (!address) addressOk = false;
     else {
-      const r = calcDeliveryForSingleItem(product, qty, address);
-      region = r.region;
-      size = r.size;
-      shipping = r.shipping;
+     const items = [{ id: product.id, name: product.name, qty }];
+const r = calcShippingUnified(items, address);
+region = r.region;
+size = r.size;
+shipping = r.shipping;
+ 
       if (!region) addressOk = false;
     }
   }
@@ -2213,10 +2235,12 @@ async function handleEvent(ev) {
             await client.replyMessage(ev.replyToken, { type: "text", text: "住所が未登録のため確定できません。リッチメニューの住所登録から登録してください。" });
             return;
           }
-          const r = calcDeliveryForSingleItem(product, need, addr);
-          region = r.region;
-          size = r.size;
-          shipping = r.shipping;
+         const items = [{ id: product.id, name: product.name, qty: need }];
+const r = calcShippingUnified(items, addr);
+region = r.region;
+size = r.size;
+shipping = r.shipping;
+
           if (!region) {
             await client.replyMessage(ev.replyToken, { type: "text", text: "都道府県が判定できず送料計算ができません。住所情報（都道府県）を確認して登録し直してください。" });
             return;

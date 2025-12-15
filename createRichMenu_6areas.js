@@ -45,7 +45,7 @@ const ORDER_LIFF_URL = `https://liff.line.me/${LIFF_ID_MINIAPP}`;
 // 画像 左下：住所登録（住所登録LIFF）
 let addressLiffUrl = (ADDRESS_LIFF_URL || "").trim();
 if (!addressLiffUrl) {
-  if (ADDRESS_LIFF_ID) addressLiffUrl = `https://liff.line.me/${ADDRESS_LIFF_ID}`;
+  if (ADDRESS_LIFF_ID) addressLiffUrl = `https://liff.line.me/${LIFF_ID}`;
   else addressLiffUrl = `${baseUrl}/public/cod-register.html`; // 最終手段
 }
 

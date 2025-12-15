@@ -3,124 +3,197 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>ご注文内容の確認（代金引換）</title>
+  <title>ご注文内容の確認（代引き）</title>
   <style>
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #f5f5f5;
       margin: 0;
       padding: 16px;
-    }
-    .card {
-      max-width: 480px;
-      margin: 16px auto;
-      background: #fff;
-      border-radius: 8px;
-      padding: 16px 14px 20px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+      background: #f5f5f5;
+      color: #333;
     }
     h1 {
-      font-size: 18px;
-      margin: 0 0 8px;
+      margin: 0 0 12px;
+      font-size: 20px;
     }
-    p {
-      font-size: 14px;
-      margin: 4px 0;
-      line-height: 1.6;
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
-    #orderList .row {
-      font-size: 14px;
-      margin: 2px 0;
-    }
-    .summary {
-      margin-top: 8px;
-      border-top: 1px solid #ddd;
-      padding-top: 8px;
-      font-size: 14px;
-    }
-    .summary-row {
+    .row {
       display: flex;
       justify-content: space-between;
-      margin: 2px 0;
+      margin-bottom: 6px;
+      font-size: 14px;
     }
-    .summary-row.total {
-      margin-top: 4px;
-      font-weight: bold;
+    .row.total {
+      font-weight: 700;
+      font-size: 16px;
+      border-top: 1px solid #eee;
+      padding-top: 8px;
+      margin-top: 8px;
+    }
+    .items {
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      border-radius: 999px;
+      border: none;
       font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .btn-primary {
+      background: #00b900;
+      color: #fff;
+    }
+    .btn-secondary {
+      background: #fff;
+      border: 1px solid #ccc;
+      color: #333;
+      margin-top: 8px;
     }
     #statusMsg {
       margin-top: 8px;
-      font-size: 13px;
-      color: #555;
-      white-space: pre-line;
-    }
-    .btn-area {
-      margin-top: 16px;
-      display: flex;
-      gap: 8px;
-      justify-content: center;
-    }
-    button {
-      border-radius: 6px;
-      border: none;
-      padding: 10px 14px;
-      font-size: 14px;
-      cursor: pointer;
-    }
-    #confirmCod {
-      background: #ff9500;
-      color: #fff;
-      min-width: 140px;
-    }
-    #backBtn {
-      background: #ddd;
-      color: #333;
-      min-width: 80px;
-    }
-    small {
-      display: block;
-      margin-top: 8px;
       font-size: 12px;
-      color: #777;
+      color: #555;
     }
   </style>
 </head>
+
 <body>
+  <h1>ご注文内容の確認（代引き）</h1>
+
   <div class="card">
-    <h1>ご注文内容の確認（代金引換）</h1>
-    <p>代金引換でお支払いされる注文の内容です。</p>
-
-    <div id="orderList"></div>
-
-    <div class="summary">
-      <div class="summary-row">
-        <span>商品合計</span>
-        <span id="sumItems">0円</span>
-      </div>
-      <div class="summary-row">
-        <span>送料</span>
-        <span id="sumShipping">0円</span>
-      </div>
-      <div class="summary-row">
-        <span>代引き手数料</span>
-        <span id="sumCod">330円</span>
-      </div>
-      <div class="summary-row total">
-        <span>お支払い合計</span>
-        <span id="sumTotal">0円</span>
-      </div>
-    </div>
-
-    <p id="statusMsg">注文情報を読み込んでいます…</p>
-
-    <div class="btn-area">
-      <button id="backBtn">戻る</button>
-      <button id="confirmCod">代引きで注文を確定する</button>
-    </div>
-
-    <small>※この画面の合計金額を、商品お届け時に配達員へお支払いください。</small>
+    <div class="items" id="itemList"></div>
   </div>
 
-  <script src="./confirm-cod.js"></script>
+  <div class="card">
+    <div class="row">
+      <span>商品小計</span>
+      <span id="sumItems">0円</span>
+    </div>
+    <div class="row">
+      <span>送料</span>
+      <span id="sumShipping">0円</span>
+    </div>
+    <div class="row">
+      <span>代引き手数料</span>
+      <span id="sumCodFee">0円</span>
+    </div>
+    <div class="row total">
+      <span>お支払い合計</span>
+      <span id="sumTotal">0円</span>
+    </div>
+  </div>
+
+  <button id="orderBtn" class="btn btn-primary">この内容で注文する</button>
+  <button id="backBtn" class="btn btn-secondary">戻る</button>
+
+  <div id="statusMsg"></div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      const statusEl = document.getElementById("statusMsg");
+      const itemListEl = document.getElementById("itemList");
+      const sumItemsEl = document.getElementById("sumItems");
+      const sumShippingEl = document.getElementById("sumShipping");
+      const sumCodFeeEl = document.getElementById("sumCodFee");
+      const sumTotalEl = document.getElementById("sumTotal");
+      const orderBtn = document.getElementById("orderBtn");
+      const backBtn = document.getElementById("backBtn");
+
+      function setStatus(msg) {
+        statusEl.textContent = msg || "";
+      }
+
+      function yen(n) {
+        return Number(n || 0).toLocaleString("ja-JP") + "円";
+      }
+
+      function loadSummary() {
+        try {
+          const raw = sessionStorage.getItem("orderSummary");
+          if (!raw) return null;
+          return JSON.parse(raw);
+        } catch (e) {
+          console.warn("orderSummary parse error:", e);
+          return null;
+        }
+      }
+
+      function renderItems(items) {
+        if (!itemListEl) return;
+        if (!items || !items.length) {
+          itemListEl.textContent = "商品情報がありません。";
+          return;
+        }
+        itemListEl.innerHTML = items.map(it => {
+          const name = it.name || it.id || "商品";
+          const qty  = Number(it.qty || 0);
+          const price = Number(it.price || 0);
+          return `${name} × ${qty}個 = ${yen(price * qty)}`;
+        }).join("<br>");
+      }
+
+      async function init() {
+        setStatus("注文内容を確認しています…");
+
+        const s = loadSummary();
+        if (!s) {
+          setStatus("注文情報が見つかりません。最初からやり直してください。");
+          orderBtn.disabled = true;
+          return;
+        }
+
+        const itemsTotal = Number(s.itemsTotal || 0);
+        const shipping   = Number(s.shipping || 0);
+        const codFee     = Number(s.codFee || 0);
+        const codTotal   = Number(s.codTotal || (itemsTotal + shipping + codFee));
+
+        renderItems(s.items);
+
+        sumItemsEl.textContent    = yen(itemsTotal);
+        sumShippingEl.textContent = yen(shipping);
+        sumCodFeeEl.textContent   = yen(codFee);
+        sumTotalEl.textContent    = yen(codTotal);
+
+        setStatus("内容をご確認のうえ、注文を確定してください。");
+      }
+
+      document.addEventListener("DOMContentLoaded", () => {
+        init();
+
+        if (orderBtn) {
+          orderBtn.addEventListener("click", async (ev) => {
+            ev.preventDefault();
+            setStatus("注文を確定しています…");
+
+            // 実際の確定APIに合わせてください
+            // 例：
+            // await fetch("/api/order/confirm", { method: "POST", body: ... });
+
+            setStatus("ご注文を受け付けました。ありがとうございました。");
+          });
+        }
+
+        if (backBtn) {
+          backBtn.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            window.history.back();
+          });
+        }
+      });
+    })();
+  </script>
 </body>
 </html>

@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>商品一覧（磯屋）</title>
+
+  <!-- LIFF SDK（LIFF内で「直接注文」ボットを起動するため） -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+  <style>
+    body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#f6f6f6;color:#222;margin:0;padding:14px}
+    .wrap{max-width:980px;margin:0 auto}
+    h1{font-size:18px;margin:0 0 10px}
+    .card{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:12px;margin:10px 0}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    input,button{font:inherit}
+    .search{flex:1;min-width:220px;padding:10px;border:1px solid #ddd;border-radius:10px;background:#fff}
+    button{padding:10px 12px;border:0;border-radius:10px;background:#06c755;color:#fff;cursor:pointer;font-weight:700}
+    button.secondary{background:#e5e7eb;color:#111}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    .muted{color:#666;font-size:12px;line-height:1.6}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-top:10px}
+    .p{background:#fff;border-radius:14px;box-shadow:0 1px 3px rgba(0,0,0,.08);overflow:hidden;display:flex;flex-direction:column}
+    .img{width:100%;aspect-ratio:1/1;background:#f0f0f0;display:flex;align-items:center;justify-content:center}
+    .img img{width:100%;height:100%;object-fit:cover;display:block}
+    .body{padding:10px 10px 12px}
+    .name{font-weight:800;font-size:14px;line-height:1.4;margin:0 0 6px}
+    .meta{font-size:13px;line-height:1.6;color:#333}
+    .tag{display:inline-block;padding:2px 8px;border-radius:999px;background:#f3f4f6;font-size:12px;margin-top:6px}
+    .low{background:#fff7ed}
+    .soldout{opacity:.55}
+    .footer{padding:10px;border-top:1px solid #eee;display:flex;gap:8px}
+    .footer a{flex:1;text-align:center;text-decoration:none}
+    .btnlink{display:block;padding:10px 12px;border-radius:10px;background:#0b3a53;color:#fff;font-weight:700}
+    .btnlink.gray{background:#9ca3af}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+    .err{color:#b91c1c}
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <h1>商品一覧（磯屋）</h1>
+
+    <div class="card">
+      <div class="row">
+        <input id="q" class="search" placeholder="商品名で検索（例：オリジナル / えび / のり）" />
+        <button id="btnBot">LINEで「直接注文」を開く</button>
+        <button id="btnReload" class="secondary">再読み込み</button>
+      </div>
+      <div id="status" class="muted" style="margin-top:8px">読み込み中...</div>
+      <div class="muted" style="margin-top:6px">
+        ※このページは<strong>商品一覧専用</strong>です。購入はボット側（「直接注文」）で行います。<br/>
+        ※LIFF外（普通のブラウザ）で開いた場合、ボット起動ボタンは動きません。
+      </div>
+    </div>
+
+    <div id="grid" class="grid"></div>
+
+    <div class="card">
+      <div class="muted">
+        API: <span class="mono">GET /api/products</span>（久助は除外されます）<br/>
+        ボット起動: LIFF内で <span class="mono">liff.sendMessages([{text:"直接注文"}])</span>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+
+  let products = [];
+  let liffReady = false;
+
+  function yen(n){
+    return Number(n||0).toLocaleString("ja-JP") + "円";
+  }
+
+  function escapeHtml(s){
+    return String(s ?? "")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#39;");
+  }
+
+  async function initLiffIfPossible(){
+    try{
+      // LIFF外でもOK（失敗しても無視）
+      await liff.init({ liffId: "dummy" }); // ここは実際は無視されることが多いが、環境により例外が出る
+      liffReady = liff.isInClient();
+    }catch(e){
+      // 正しい初期化が必要な環境があるので、サーバーから liffId を取りに行って再試行
+      try{
+        const r = await fetch("/api/liff/config?kind=order", { cache:"no-store" });
+        const j = await r.json();
+        if (j?.liffId){
+          await liff.init({ liffId: j.liffId });
+          liffReady = liff.isInClient();
+        }
+      }catch(_e){
+        liffReady = false;
+      }
+    }
+
+    $("btnBot").disabled = !liffReady;
+    if (!liffReady){
+      $("status").innerHTML =
+        `※LIFF外のためボット起動は無効です（<span class="mono">/public/catalog.html</span> をLIFFから開いてください）`;
+    }
+  }
+
+  async function loadProducts(){
+    $("status").textContent = "読み込み中...";
+    try{
+      const r = await fetch("/api/products", { cache:"no-store" });
+      const j = await r.json();
+
+      if (!j?.ok || !Array.isArray(j.products)){
+        $("status").innerHTML = `<span class="err">取得失敗：</span>${escapeHtml(j?.error || "unknown")}`;
+        products = [];
+        render();
+        return;
+      }
+
+      products = j.products.slice();
+      $("status").textContent = `商品数：${products.length}件`;
+      render();
+    }catch(e){
+      $("status").innerHTML = `<span class="err">通信エラー：</span>${escapeHtml(String(e))}`;
+      products = [];
+      render();
+    }
+  }
+
+  function render(){
+    const q = ($("q").value || "").trim().toLowerCase();
+    const list = !q ? products : products.filter(p => {
+      const name = String(p.name||"").toLowerCase();
+      const desc = String(p.desc||"").toLowerCase();
+      const id   = String(p.id||"").toLowerCase();
+      return name.includes(q) || desc.includes(q) || id.includes(q);
+    });
+
+    const grid = $("grid");
+    if (list.length === 0){
+      grid.innerHTML = `<div class="card muted">表示できる商品がありません。</div>`;
+      return;
+    }
+
+    grid.innerHTML = list.map(p => {
+      const stock = Number(p.stock ?? 0);
+      const soldout = stock <= 0;
+      const low = stock > 0 && stock <= 5;
+
+      const cls = ["p", soldout ? "soldout" : "", low ? "low" : ""].join(" ").trim();
+
+      const img = p.image ? `<img src="${escapeHtml(p.image)}" alt="${escapeHtml(p.name)}">`
+                          : `<div class="muted">画像なし</div>`;
+
+      const tag = soldout ? `<div class="tag">売り切れ</div>`
+               : low ? `<div class="tag">在庫わずか</div>`
+               : `<div class="tag">在庫あり</div>`;
+
+      // ここは“商品一覧専用”なので、個別購入はせず「直接注文」へ誘導
+      return `
+        <div class="${cls}">
+          <div class="img">${img}</div>
+          <div class="body">
+            <div class="name">${escapeHtml(p.name || "")}</div>
+            <div class="meta">
+              価格：<b>${yen(p.price)}</b><br/>
+              在庫：<b>${stock}</b><br/>
+              ${p.desc ? `説明：${escapeHtml(p.desc)}` : ``}
+            </div>
+            ${tag}
+          </div>
+          <div class="footer">
+            <a href="javascript:void(0)" class="btnlink" onclick="window.__openBot()">直接注文へ</a>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  // 「直接注文」ボット起動（LIFF内のみ）
+  window.__openBot = async () => {
+    if (!liffReady){
+      alert("LIFF内で開くと『直接注文』が起動できます。");
+      return;
+    }
+    try{
+      await liff.sendMessages([{ type:"text", text:"直接注文" }]);
+      // 送信後はトーク画面へ戻す
+      liff.closeWindow();
+    }catch(e){
+      alert("送信に失敗しました。LINE内で開いているか確認してください。");
+      console.error(e);
+    }
+  };
+
+  $("q").addEventListener("input", render);
+  $("btnReload").addEventListener("click", loadProducts);
+  $("btnBot").addEventListener("click", window.__openBot);
+
+  // init
+  initLiffIfPossible();
+  loadProducts();
+})();
+</script>
+</body>
+</html>

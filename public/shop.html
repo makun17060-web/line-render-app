@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>商品一覧（直接注文）</title>
 
-  <!-- LIFF SDK -->
+  <!-- LIFF SDK（※1回だけ） -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
   <style>
@@ -28,7 +28,7 @@
     .price{font-size:13px;color:#111}
     .stock{font-size:12px;color:#666}
     .small{font-size:12px}
-    textarea{width:100%;min-height:100px;border:1px solid #ddd;border-radius:10px;padding:10px}
+    textarea{width:100%;min-height:120px;border:1px solid #ddd;border-radius:10px;padding:10px}
   </style>
 </head>
 
@@ -39,14 +39,16 @@
     <div class="card">
       <div class="row">
         <button id="btnDirect" disabled>LINEに「直接注文」を送る（ボット起動）</button>
-        <button id="btnReload" class="secondary">商品を再読み込み</button>
+        <button id="btnReload" class="secondary" type="button">商品を再読み込み</button>
       </div>
 
-      <div id="status" class="muted" style="margin-top:10px">初期化中...</div>
+      <!-- status は 1個だけに統一 -->
+      <pre id="status" class="muted" style="white-space:pre-wrap;margin-top:10px">初期化中...</pre>
 
       <div class="muted" style="margin-top:10px">
-        ・このページは <span class="mono">/api/products</span> から商品一覧を読み込みます（server-line.js と連携）<br/>
-        ・「直接注文」ボタンは <b>LINEアプリ内（inClient）</b> の時だけ有効になります（外部ブラウザ/PCは不可）<br/>
+        ・このページは <span class="mono">GET /api/products</span> から商品一覧を読み込みます（server-line.js と連携）<br/>
+        ・「直接注文」ボタンは <b>LINEアプリ内（inClient）</b> の時だけ有効です（外部ブラウザ/PCは不可）<br/>
+        ・LIFF ID は <span class="mono">GET /api/liff/config?kind=order</span> から取得します（直書きしません）<br/>
       </div>
     </div>
 
@@ -60,53 +62,158 @@
 
     <div class="card">
       <b>デバッグ</b>
-      <div class="muted small">（原因特定用）</div>
+      <div class="muted small">（原因特定用ログ）</div>
       <textarea id="debug" readonly></textarea>
     </div>
   </div>
 
-<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script>
-(async () => {
-  const show = (msg, obj) => {
-    const el = document.getElementById("status") || null;
-    const s = obj ? msg + "\n" + JSON.stringify(obj, null, 2) : msg;
-    if (el) el.textContent = s;
+(function(){
+  const $ = (id)=>document.getElementById(id);
+
+  function log(msg, obj){
+    const t = new Date().toISOString();
+    const line = obj ? `${t} ${msg}\n${JSON.stringify(obj,null,2)}\n\n` : `${t} ${msg}\n\n`;
+    $("debug").value = line + $("debug").value;
     console.log(msg, obj || "");
-  };
+  }
 
-  try {
-    if (!window.liff) throw new Error("LIFF SDK not loaded");
+  function setStatus(msg, ok=true, extraObj){
+    const head = ok ? "✅ " : "❌ ";
+    const s = extraObj ? `${head}${msg}\n${JSON.stringify(extraObj,null,2)}` : `${head}${msg}`;
+    $("status").textContent = s;
+  }
 
-    // ① ここにあなたの LIFF_ID を入れる（または /api/liff/config から取る）
-    const LIFF_ID = "2008406620-XvqTln6y"; // ←必ず自分のに
+  function yen(n){
+    return Number(n||0).toLocaleString("ja-JP") + "円";
+  }
 
-    await liff.init({ liffId: LIFF_ID });   // ★ここで落ちるのが「初期化エラー」
+  async function fetchJson(url, opt){
+    const r = await fetch(url, { cache:"no-store", ...(opt||{}) });
+    const ct = (r.headers.get("content-type")||"").toLowerCase();
+    const body = ct.includes("application/json") ? await r.json() : await r.text();
+    return { ok: r.ok, status: r.status, body };
+  }
 
-    show("LIFF init OK", {
-      isInClient: liff.isInClient(),
-      os: liff.getOS(),
-      version: liff.getVersion(),
-      language: liff.getLanguage(),
-    });
+  async function loadProducts(){
+    $("grid").innerHTML = "";
+    $("empty").style.display = "none";
 
-    // LINE内で開いてない場合はログインへ
-    if (!liff.isInClient()) {
-      // ※ 外部ブラウザで開いてもログインできるようにする
-      if (!liff.isLoggedIn()) liff.login();
+    const res = await fetchJson("/api/products");
+    log("GET /api/products", res);
+
+    if (!res.ok || !res.body || !res.body.ok){
+      $("empty").style.display = "block";
+      $("empty").textContent = "商品一覧の取得に失敗しました（/api/products）。";
       return;
     }
 
-    // LINE内なら login 済みのことが多いが念のため
-    if (!liff.isLoggedIn()) liff.login();
+    const list = Array.isArray(res.body.products) ? res.body.products : [];
+    if (!list.length){
+      $("empty").style.display = "block";
+      return;
+    }
 
-  } catch (e) {
-    show("LIFF init ERROR", { message: String(e?.message || e), raw: e });
+    const grid = $("grid");
+    for (const p of list){
+      const img = p.image ? `<img class="img" src="${escapeHtml(p.image)}" alt="">`
+                          : `<div class="img"></div>`;
+      const stock = (p.stock ?? 0);
+      const card = document.createElement("div");
+      card.className = "item";
+      card.innerHTML = `
+        ${img}
+        <div class="name">${escapeHtml(p.name||"")}</div>
+        <div class="price">価格：${yen(p.price)}</div>
+        <div class="stock">在庫：${escapeHtml(String(stock))}</div>
+      `;
+      grid.appendChild(card);
+    }
   }
+
+  function escapeHtml(s){
+    return String(s||"")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#39;");
+  }
+
+  async function initLiff(){
+    try{
+      if (!window.liff) throw new Error("LIFF SDK not loaded");
+
+      // ★ server-line.js と一致：LIFF ID はサーバーから取る
+      const cfg = await fetchJson("/api/liff/config?kind=order");
+      log("GET /api/liff/config?kind=order", cfg);
+
+      const liffId = cfg?.body?.liffId;
+      if (!liffId) throw new Error("liffId not returned from /api/liff/config");
+
+      await liff.init({ liffId });
+
+      const info = {
+        liffId,
+        isInClient: liff.isInClient(),
+        isLoggedIn: liff.isLoggedIn(),
+        os: liff.getOS(),
+        version: liff.getVersion(),
+        language: liff.getLanguage(),
+      };
+      log("LIFF init OK", info);
+
+      // 表示
+      setStatus(
+        `LIFF 初期化OK\nisInClient=${info.isInClient}\nisLoggedIn=${info.isLoggedIn}\nos=${info.os}\nver=${info.version}`,
+        true
+      );
+
+      // ボタン制御：inClient の時だけ有効
+      $("btnDirect").disabled = !liff.isInClient();
+
+      // 外部ブラウザでも一覧は見せたいので、ここで強制 login はしない
+      // ただし「直接注文」送信は inClient 必須
+      return info;
+
+    }catch(e){
+      const detail = { message: String(e?.message || e), raw: e };
+      log("LIFF init ERROR", detail);
+      setStatus("LIFF 初期化エラー（invalid liff id の可能性あり）", false, detail);
+      $("btnDirect").disabled = true;
+      return null;
+    }
+  }
+
+  async function sendDirectOrder(){
+    try{
+      if (!window.liff) throw new Error("LIFF not ready");
+      if (!liff.isInClient()){
+        alert("この操作はLINEアプリ内でのみ可能です（inClient=false）");
+        return;
+      }
+      // ★ボット起動：トークに「直接注文」を送る
+      await liff.sendMessages([{ type:"text", text:"直接注文" }]);
+      alert("LINEに「直接注文」を送信しました。トーク画面に戻ります。");
+
+      // 送ったらトークへ戻す
+      liff.closeWindow();
+    }catch(e){
+      log("sendMessages ERROR", { message:String(e?.message||e), raw:e });
+      alert("送信に失敗しました： " + (e?.message || e));
+    }
+  }
+
+  // init
+  $("btnReload").addEventListener("click", loadProducts);
+  $("btnDirect").addEventListener("click", sendDirectOrder);
+
+  (async ()=>{
+    await initLiff();
+    await loadProducts();
+  })();
+
 })();
 </script>
-
-<pre id="status" style="white-space:pre-wrap;background:#fff;padding:10px;border-radius:8px"></pre>
-
 </body>
 </html>

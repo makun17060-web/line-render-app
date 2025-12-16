@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>送料計算（server-line完全一致）</title>
+  <title>送料計算（都道府県→地域変換｜server-line一致）</title>
   <style>
     body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f7f7f7;margin:0;padding:14px}
     h1{font-size:20px;margin:0 0 10px}
@@ -22,7 +22,7 @@
 </head>
 <body>
 
-<h1>📦 送料計算（server-line完全一致）</h1>
+<h1>📦 送料計算（都道府県名で選択）</h1>
 
 <div class="card" id="errBox" style="display:none"></div>
 
@@ -33,14 +33,15 @@
   <label>個数</label>
   <input type="number" id="qty" value="1" min="1">
 
-  <label>送付先地域</label>
-  <select id="region"></select>
+  <label>送付先（都道府県）</label>
+  <select id="pref"></select>
 </div>
 
 <div class="card">
   <div style="margin-bottom:6px">
-    <span class="pill" id="sizePill">サイズ：-</span>
+    <span class="pill" id="prefPill">都道府県：-</span>
     <span class="pill" id="regionPill">地域：-</span>
+    <span class="pill" id="sizePill">サイズ：-</span>
     <span class="pill" id="sourcePill">送料：読み込み中</span>
   </div>
 
@@ -55,15 +56,14 @@
   </div>
 
   <p class="note">
-    ※ 送料表・サイズ判定は <code>/api/shipping/config</code>（server-line.js）と同じ内容を使用します。<br>
-    ※ 箱サイズは「合計個数」と「オリジナルセット個数」を両方見て、大きい方を採用します（server-lineと同じ）。
+    ※ 都道府県から server-line.js と同じルールで「地域（東北/関東/中部…）」へ自動変換し、送料表に当てます。<br>
+    ※ サイズ判定も server-line と同じ（合計個数・オリジナルセット個数の両方を見て大きい方）。
   </p>
 </div>
 
 <script>
 /* ======================
-   商品（あなたが提示したもの）
-   ※価格は表示用。送料は server のロジックに合わせる
+   商品（表示用）
 ====================== */
 const PRODUCTS = [
   { id:"kusuke-250", name:"久助（えびせん）", price:250 },
@@ -73,15 +73,27 @@ const PRODUCTS = [
   { id:"matsu-akasha-340", name:"松あかしゃ", price:340 },
   { id:"iso-akasha-340", name:"磯あかしゃ", price:340 },
   { id:"goma-akasha-340", name:"ごまあかしゃ", price:340 },
-  // server側は ORIGINAL_SET_PRODUCT_ID が "original-set-2100" なのでそれに寄せる
   { id:"original-set-2100", name:"磯屋オリジナルセット", price:2100, isOriginalHint:true }
 ];
 
-let CFG = null; // /api/shipping/config の中身
+// 都道府県一覧（県名表示）
+const PREFS = [
+  "北海道",
+  "青森県","岩手県","宮城県","秋田県","山形県","福島県",
+  "茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県","山梨県",
+  "新潟県","富山県","石川県","福井県","長野県","岐阜県","静岡県","愛知県","三重県",
+  "滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県",
+  "鳥取県","島根県","岡山県","広島県","山口県",
+  "徳島県","香川県","愛媛県","高知県",
+  "福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県",
+  "沖縄県"
+];
+
+let CFG = null;
 
 const productSel = document.getElementById("product");
-const regionSel  = document.getElementById("region");
 const qtyInput   = document.getElementById("qty");
+const prefSel    = document.getElementById("pref");
 
 PRODUCTS.forEach(p=>{
   const o=document.createElement("option");
@@ -89,10 +101,16 @@ PRODUCTS.forEach(p=>{
   o.textContent=`${p.name}（${p.price.toLocaleString()}円）`;
   productSel.appendChild(o);
 });
+PREFS.forEach(p=>{
+  const o=document.createElement("option");
+  o.value=p;
+  o.textContent=p;
+  prefSel.appendChild(o);
+});
 
 productSel.onchange = calc;
-regionSel.onchange  = calc;
 qtyInput.oninput    = calc;
+prefSel.onchange    = calc;
 
 init();
 
@@ -102,15 +120,6 @@ async function init(){
     const data = await res.json();
     if (!data.ok) throw new Error("config not ok");
     CFG = data.config;
-
-    // 地域一覧
-    regionSel.innerHTML = "";
-    (CFG.regions || []).forEach(r=>{
-      const o=document.createElement("option");
-      o.value=r; o.textContent=r;
-      regionSel.appendChild(o);
-    });
-
     document.getElementById("sourcePill").textContent = "送料：server-line";
     calc();
   } catch (e) {
@@ -127,7 +136,25 @@ function showErr(msg){
 }
 
 /* ======================
-   ここから “server-line.js と同じ判定関数”
+   server-line.js と同等の地域判定（都道府県→地域）
+   detectRegionFromAddress() と同じ正規表現条件
+====================== */
+function detectRegionFromPref(pref){
+  const hay = String(pref||"").trim();
+  if (/北海道/.test(hay)) return "北海道";
+  if (/(青森|岩手|宮城|秋田|山形|福島|東北)/.test(hay)) return "東北";
+  if (/(茨城|栃木|群馬|埼玉|千葉|東京|神奈川|山梨|関東)/.test(hay)) return "関東";
+  if (/(新潟|富山|石川|福井|長野|岐阜|静岡|愛知|三重|中部)/.test(hay)) return "中部";
+  if (/(滋賀|京都|大阪|兵庫|奈良|和歌山|近畿|関西)/.test(hay)) return "近畿";
+  if (/(鳥取|島根|岡山|広島|山口|中国)/.test(hay)) return "中国";
+  if (/(徳島|香川|愛媛|高知|四国)/.test(hay)) return "四国";
+  if (/(福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|九州)/.test(hay)) return "九州";
+  if (/(沖縄)/.test(hay)) return "沖縄";
+  return "";
+}
+
+/* ======================
+   server-line.js と同じサイズ判定
 ====================== */
 function sizeFromOriginalSetQty(qty){
   const q = Number(qty) || 0;
@@ -138,7 +165,6 @@ function sizeFromOriginalSetQty(qty){
   if (q <= 6) return "140";
   return "160";
 }
-// ※server-lineコメント通り「個数」で判定
 function sizeFromTotalQty(totalQty){
   const q = Number(totalQty) || 0;
   if (q <= 1) return "60";
@@ -149,30 +175,26 @@ function sizeFromTotalQty(totalQty){
   return "160";
 }
 function maxSize(a,b){
-  const order = CFG.sizeOrder || ["60","80","100","120","140","160"];
+  const order = CFG?.sizeOrder || ["60","80","100","120","140","160"];
   if (!a) return b;
   if (!b) return a;
   return order.indexOf(a) >= order.indexOf(b) ? a : b;
 }
-function calcYamatoShipping(region, size){
-  if (!region) return 0;
-  const table = (CFG.yamatoChubuTaxed || {})[String(size)] || null;
-  if (!table) return 0;
-  return Number(table[region] || 0);
-}
-
-// server-line と同じ「オリジナルセット判定」
-// - id が ORIGINAL_SET_PRODUCT_ID と一致
-// - もしくは 名前が /磯屋.?オリジナルセ/ に一致
 function isOriginalItem(item){
   const id = String(item.id || "").trim();
   const name = String(item.name || "").trim();
-  const byId = (id && CFG.originalSetProductId && id === String(CFG.originalSetProductId));
+  const byId = (id && CFG?.originalSetProductId && id === String(CFG.originalSetProductId));
   const byName = /磯屋.?オリジナルセ/.test(name);
   return byId || byName;
 }
-
-function calcShippingUnified(items, region){
+function calcYamatoShipping(region, size){
+  if (!region) return 0;
+  const table = (CFG?.yamatoChubuTaxed || {})[String(size)] || null;
+  if (!table) return 0;
+  return Number(table[region] || 0);
+}
+function calcShippingUnified(items, pref){
+  const region = detectRegionFromPref(pref);
   const totalQty = items.reduce((s,it)=>s + Number(it.qty||0), 0);
   const originalQty = items.reduce((s,it)=> s + (isOriginalItem(it) ? Number(it.qty||0) : 0), 0);
 
@@ -181,7 +203,7 @@ function calcShippingUnified(items, region){
   const size  = maxSize(sizeA, sizeB);
 
   const shipping = calcYamatoShipping(region, size);
-  return { region, size, shipping, totalQty, originalQty };
+  return { pref, region, size, shipping, totalQty, originalQty };
 }
 
 /* ======================
@@ -192,18 +214,19 @@ function calc(){
 
   const p = PRODUCTS.find(x=>x.id===productSel.value);
   const qty = Math.max(1, Number(qtyInput.value||1));
-  const region = regionSel.value;
+  const pref = prefSel.value;
 
   const itemTotal = p.price * qty;
 
-  // 1商品だけの想定（ページ用途に合わせて）
   const items = [{ id: p.id, name: p.name, qty }];
+  const r = calcShippingUnified(items, pref);
 
-  const r = calcShippingUnified(items, region);
   const grand = itemTotal + r.shipping;
 
-  document.getElementById("sizePill").textContent = `サイズ：${r.size}`;
+  document.getElementById("prefPill").textContent = `都道府県：${pref || "-"}`;
   document.getElementById("regionPill").textContent = `地域：${r.region || "-"}`;
+  document.getElementById("sizePill").textContent = `サイズ：${r.size || "-"}`;
+
   document.getElementById("itemTotal").textContent = itemTotal.toLocaleString()+"円";
   document.getElementById("shippingFee").textContent = r.shipping.toLocaleString()+"円";
   document.getElementById("grandTotal").textContent = grand.toLocaleString()+"円";

@@ -77,7 +77,7 @@ const shippingUrl = (SHIPPING_URL || `${baseUrl}/public/shipping.html`).trim();
         },
         { // 右上：ご利用方法
           bounds: { x: 1667, y: 0, width: 833, height: 843 },
-          action: { type: "uri", label: "ご利用方法", uri: "https://liff.line.me/2008406620-QQFfWP1w" },
+          action: { type: "uri", label: "ご利用方法", uri: "https://line-render-app-1.onrender.com/public/howto.html" },
         },
 
         // 2行目

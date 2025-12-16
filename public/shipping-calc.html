@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>送料計算（ヤマト運輸参考｜サイズ自動切替）</title>
+  <style>
+    body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f7f7f7;margin:0;padding:14px}
+    h1{font-size:20px;margin:0 0 10px}
+    .card{background:#fff;border-radius:14px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:12px}
+    label{font-weight:800;display:block;margin:10px 0 4px}
+    select,input{width:100%;padding:10px;border-radius:10px;border:1px solid #ddd;font-size:15px}
+    table{width:100%;border-collapse:collapse;margin-top:10px;font-size:14px}
+    th,td{padding:8px;border-bottom:1px solid #eee}
+    th{text-align:left;background:#f1f5f9}
+    .right{text-align:right;font-weight:800}
+    .result{font-size:18px;font-weight:900;color:#0b3a53;text-align:right;margin-top:10px}
+    .pill{display:inline-block;background:#eef2ff;color:#0b3a53;border-radius:999px;padding:6px 10px;font-weight:800;font-size:12px;margin-right:6px}
+    .note{font-size:12px;color:#666;line-height:1.6}
+  </style>
+</head>
+<body>
+
+<h1>📦 送料計算（サイズ自動切替）</h1>
+
+<div class="card">
+  <label>商品</label>
+  <select id="product"></select>
+
+  <label>個数</label>
+  <input type="number" id="qty" value="1" min="1">
+
+  <label>送付先地域</label>
+  <select id="region"></select>
+</div>
+
+<div class="card">
+  <div style="margin-bottom:6px">
+    <span class="pill" id="sizePill">サイズ：-</span>
+    <span class="pill">ヤマト運輸 参考</span>
+  </div>
+
+  <table>
+    <tr><th>内容</th><th class="right">金額</th></tr>
+    <tr><td>商品合計</td><td class="right" id="itemTotal">-</td></tr>
+    <tr><td>送料</td><td class="right" id="shippingFee">-</td></tr>
+  </table>
+
+  <div class="result">
+    合計：<span id="grandTotal">-</span>
+  </div>
+
+  <p class="note">
+    ※ 個数によりサイズが自動で切り替わります。<br>
+    ※ 送料はヤマト運輸（60/80サイズ）を参考にした目安です。<br>
+    ※ 正確な送料は注文確定画面で最終表示されます。
+  </p>
+</div>
+
+<script>
+/* ======================
+   商品マスター
+   set:true → 常に80サイズ
+====================== */
+const PRODUCTS = [
+  { id:"kusuke-250", name:"久助（えびせん）", price:250 },
+  { id:"nori-akasha-340", name:"のりあかしゃ", price:340 },
+  { id:"uzu-akasha-340", name:"うずあかしゃ", price:340 },
+  { id:"shio-akasha-340", name:"潮あかしゃ", price:340 },
+  { id:"matsu-akasha-340", name:"松あかしゃ", price:340 },
+  { id:"iso-akasha-340", name:"磯あかしゃ", price:340 },
+  { id:"goma-akasha-340", name:"ごまあかしゃ", price:340 },
+  { id:"original-set-2000", name:"磯屋オリジナルセット", price:2000, set:true }
+];
+
+/* ======================
+   ヤマト参考送料
+====================== */
+const SHIPPING_60 = {
+  "北海道":1200,"東北":900,"関東":800,"信越":800,"北陸":800,"中部":800,
+  "関西":850,"中国":950,"四国":950,"九州":1100,"沖縄":1400
+};
+const SHIPPING_80 = {
+  "北海道":1400,"東北":1100,"関東":1000,"信越":1000,"北陸":1000,"中部":1000,
+  "関西":1050,"中国":1150,"四国":1150,"九州":1300,"沖縄":1800
+};
+
+/* ======================
+   サイズ判定ルール
+   - セット商品：80
+   - 1〜4個：60
+   - 5個以上：80
+====================== */
+function detectSize(product, qty){
+  if (product.set) return 80;
+  return qty >= 5 ? 80 : 60;
+}
+
+/* ======================
+   初期化
+====================== */
+const productSel = document.getElementById("product");
+const regionSel  = document.getElementById("region");
+const qtyInput   = document.getElementById("qty");
+
+PRODUCTS.forEach(p=>{
+  const o=document.createElement("option");
+  o.value=p.id;
+  o.textContent=`${p.name}（${p.price}円）`;
+  productSel.appendChild(o);
+});
+Object.keys(SHIPPING_60).forEach(r=>{
+  const o=document.createElement("option");
+  o.value=r; o.textContent=r; regionSel.appendChild(o);
+});
+
+productSel.onchange = calc;
+regionSel.onchange  = calc;
+qtyInput.oninput    = calc;
+calc();
+
+/* ======================
+   計算
+====================== */
+function calc(){
+  const p = PRODUCTS.find(x=>x.id===productSel.value);
+  const qty = Math.max(1, Number(qtyInput.value||1));
+  const region = regionSel.value;
+
+  const itemTotal = p.price * qty;
+  const size = detectSize(p, qty);
+  const shipping = (size===80 ? SHIPPING_80 : SHIPPING_60)[region] || 0;
+  const grand = itemTotal + shipping;
+
+  document.getElementById("sizePill").textContent = `サイズ：${size}`;
+  document.getElementById("itemTotal").textContent = itemTotal.toLocaleString()+"円";
+  document.getElementById("shippingFee").textContent = shipping.toLocaleString()+"円";
+  document.getElementById("grandTotal").textContent = grand.toLocaleString()+"円";
+}
+</script>
+
+</body>
+</html>

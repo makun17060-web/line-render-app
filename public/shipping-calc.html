@@ -1,70 +1,124 @@
 <!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>送料計算（都道府県→地域変換｜server-line一致）</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>送料のご案内（自動計算）</title>
   <style>
-    body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f7f7f7;margin:0;padding:14px}
-    h1{font-size:20px;margin:0 0 10px}
-    .card{background:#fff;border-radius:14px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:12px}
-    label{font-weight:800;display:block;margin:10px 0 4px}
-    select,input{width:100%;padding:10px;border-radius:10px;border:1px solid #ddd;font-size:15px}
+    :root{
+      --bg:#f7f7f7; --card:#fff; --text:#111827; --muted:#6b7280;
+      --primary:#0b3a53; --border:#e5e7eb; --radius:14px;
+    }
+    body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
+    .wrap{max-width:860px;margin:0 auto;padding:14px 14px 28px;}
+    h1{margin:6px 0 6px;font-size:20px}
+    .lead{margin:0 0 12px;color:var(--muted);font-size:13px;line-height:1.7}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px;box-shadow:0 1px 3px rgba(0,0,0,.05);margin:10px 0;}
+    .row{display:grid;grid-template-columns: 1.5fr .6fr .5fr;gap:10px;align-items:end}
+    label{display:block;font-weight:800;font-size:12px;margin:8px 0 4px;color:#111827}
+    select,input{width:100%;padding:10px;border:1px solid var(--border);border-radius:12px;font-size:14px;background:#fff}
+    .btn{border:0;border-radius:12px;padding:11px 12px;font-weight:800;cursor:pointer}
+    .btn.primary{background:var(--primary);color:#fff}
+    .btn.ghost{background:#fff;border:1px solid var(--border);color:var(--text)}
+    .btn.danger{background:#fff1f2;border:1px solid #fecdd3;color:#9f1239}
+    .small{font-size:12px;color:var(--muted);line-height:1.7}
+    .pill{display:inline-block;background:#eef2ff;color:var(--primary);border-radius:999px;padding:6px 10px;font-weight:900;font-size:12px;margin:4px 6px 0 0}
     table{width:100%;border-collapse:collapse;margin-top:10px;font-size:14px}
-    th,td{padding:8px;border-bottom:1px solid #eee}
+    th,td{padding:10px;border-bottom:1px solid var(--border)}
     th{text-align:left;background:#f1f5f9}
-    .right{text-align:right;font-weight:800}
-    .result{font-size:18px;font-weight:900;color:#0b3a53;text-align:right;margin-top:10px}
-    .pill{display:inline-block;background:#eef2ff;color:#0b3a53;border-radius:999px;padding:6px 10px;font-weight:800;font-size:12px;margin-right:6px}
-    .note{font-size:12px;color:#666;line-height:1.6}
-    .err{background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.6}
+    td.r{text-align:right;font-weight:900}
+    .total{font-size:18px;font-weight:900;text-align:right;margin-top:10px}
+    .warn{background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.7}
+    .err{background:#fff1f2;border:1px solid #fecdd3;color:#9f1239;border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.7}
+    .divider{height:1px;background:var(--border);margin:10px 0}
+    .muted{color:var(--muted)}
+    .rightActions{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;margin-top:10px}
   </style>
 </head>
 <body>
-
-<h1>📦 送料計算（都道府県名で選択）</h1>
-
-<div class="card" id="errBox" style="display:none"></div>
-
-<div class="card">
-  <label>商品</label>
-  <select id="product"></select>
-
-  <label>個数</label>
-  <input type="number" id="qty" value="1" min="1">
-
-  <label>送付先（都道府県）</label>
-  <select id="pref"></select>
-</div>
-
-<div class="card">
-  <div style="margin-bottom:6px">
-    <span class="pill" id="prefPill">都道府県：-</span>
-    <span class="pill" id="regionPill">地域：-</span>
-    <span class="pill" id="sizePill">サイズ：-</span>
-    <span class="pill" id="sourcePill">送料：読み込み中</span>
-  </div>
-
-  <table>
-    <tr><th>内容</th><th class="right">金額</th></tr>
-    <tr><td>商品合計</td><td class="right" id="itemTotal">-</td></tr>
-    <tr><td>送料</td><td class="right" id="shippingFee">-</td></tr>
-  </table>
-
-  <div class="result">
-    合計：<span id="grandTotal">-</span>
-  </div>
-
-  <p class="note">
-    ※ 都道府県から server-line.js と同じルールで「地域（東北/関東/中部…）」へ自動変換し、送料表に当てます。<br>
-    ※ サイズ判定も server-line と同じ（合計個数・オリジナルセット個数の両方を見て大きい方）。
+<div class="wrap">
+  <h1>送料のご案内（自動計算）</h1>
+  <p class="lead">
+    送付先（都道府県）と商品の個数を入れると、送料とサイズが自動表示されます。<br>
+    ※送料表とサイズ判定は <code>/api/shipping/config</code>（server-line.js）と同じ内容を使用します。
   </p>
+
+  <div class="card" id="errBox" style="display:none"></div>
+
+  <!-- 送付先 -->
+  <div class="card">
+    <label>送付先（都道府県）</label>
+    <select id="pref"></select>
+    <div class="small" style="margin-top:6px">
+      都道府県から地域（東北/関東/中部…）を自動判定します（server-line と同じ判定）。
+    </div>
+  </div>
+
+  <!-- カート -->
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>商品</label>
+        <select id="product"></select>
+      </div>
+      <div>
+        <label>個数</label>
+        <input id="qty" type="number" min="1" value="1" />
+      </div>
+      <div>
+        <button class="btn primary" id="btnAdd" style="width:100%">追加</button>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div id="cartArea"></div>
+
+    <div class="rightActions">
+      <button class="btn ghost" id="btnClear">全部クリア</button>
+      <button class="btn ghost" id="btnRecalc">再計算</button>
+    </div>
+
+    <div class="small" style="margin-top:10px">
+      <b>あかしゃ6種の特別ルール</b>：<br>
+      のりあかしゃ/うずあかしゃ/潮あかしゃ/ごまあかしゃ/いそあかしゃ/松あかしゃの合計個数で、<br>
+      1〜4=60、5〜8=80、9〜13=100、14〜18=120（19以上=140）に自動判定します。
+    </div>
+  </div>
+
+  <!-- 結果 -->
+  <div class="card">
+    <div>
+      <span class="pill" id="pillPref">都道府県：-</span>
+      <span class="pill" id="pillRegion">地域：-</span>
+      <span class="pill" id="pillSize">サイズ：-</span>
+      <span class="pill" id="pillSource">送料：読み込み中</span>
+    </div>
+
+    <table>
+      <tr><th>内容</th><th class="r">金額</th></tr>
+      <tr><td>商品合計</td><td class="r" id="itemsTotal">-</td></tr>
+      <tr><td>送料</td><td class="r" id="shippingFee">-</td></tr>
+    </table>
+
+    <div class="total">合計：<span id="grandTotal">-</span></div>
+
+    <div id="warnBox" style="display:none; margin-top:10px"></div>
+  </div>
+
+  <div class="card">
+    <div class="small">
+      ※本ページは「送料の目安表示」です。最終的な送料は、ご注文時（住所登録後）に同じロジックで計算されます。<br>
+      ※沖縄など一部地域はサイズによって送料が変わります。
+    </div>
+  </div>
 </div>
 
 <script>
-/* ======================
-   商品（表示用）
-====================== */
+/* ======================================================
+   0) UI初期データ（表示用商品リスト）
+   ※在庫や価格は表示用。送料は server 側の表と一致させる
+====================================================== */
 const PRODUCTS = [
   { id:"kusuke-250", name:"久助（えびせん）", price:250 },
   { id:"nori-akasha-340", name:"のりあかしゃ", price:340 },
@@ -73,10 +127,9 @@ const PRODUCTS = [
   { id:"matsu-akasha-340", name:"松あかしゃ", price:340 },
   { id:"iso-akasha-340", name:"磯あかしゃ", price:340 },
   { id:"goma-akasha-340", name:"ごまあかしゃ", price:340 },
-  { id:"original-set-2100", name:"磯屋オリジナルセット", price:2100, isOriginalHint:true }
+  { id:"original-set-2100", name:"磯屋オリジナルセット", price:2100 }
 ];
 
-// 都道府県一覧（県名表示）
 const PREFS = [
   "北海道",
   "青森県","岩手県","宮城県","秋田県","山形県","福島県",
@@ -89,56 +142,130 @@ const PREFS = [
   "沖縄県"
 ];
 
-let CFG = null;
+let CFG = null;          // /api/shipping/config の内容
+let cart = [];           // [{id,name,price,qty}]
 
-const productSel = document.getElementById("product");
-const qtyInput   = document.getElementById("qty");
-const prefSel    = document.getElementById("pref");
+const elPref = document.getElementById("pref");
+const elProduct = document.getElementById("product");
+const elQty = document.getElementById("qty");
+const elCartArea = document.getElementById("cartArea");
 
-PRODUCTS.forEach(p=>{
-  const o=document.createElement("option");
-  o.value=p.id;
-  o.textContent=`${p.name}（${p.price.toLocaleString()}円）`;
-  productSel.appendChild(o);
-});
-PREFS.forEach(p=>{
-  const o=document.createElement("option");
-  o.value=p;
-  o.textContent=p;
-  prefSel.appendChild(o);
-});
-
-productSel.onchange = calc;
-qtyInput.oninput    = calc;
-prefSel.onchange    = calc;
+const yen = (n)=> (Number(n||0)).toLocaleString("ja-JP")+"円";
 
 init();
 
 async function init(){
-  try {
-    const res = await fetch("/api/shipping/config", { cache: "no-store" });
-    const data = await res.json();
-    if (!data.ok) throw new Error("config not ok");
-    CFG = data.config;
-    document.getElementById("sourcePill").textContent = "送料：server-line";
-    calc();
-  } catch (e) {
-    showErr("送料設定の読み込みに失敗しました。server-line.js に /api/shipping/config を追加しているか確認してください。");
-    document.getElementById("sourcePill").textContent = "送料：読込失敗";
+  try{
+    // 都道府県
+    PREFS.forEach(p=>{
+      const o=document.createElement("option");
+      o.value=p; o.textContent=p;
+      elPref.appendChild(o);
+    });
+
+    // 商品
+    PRODUCTS.forEach(p=>{
+      const o=document.createElement("option");
+      o.value=p.id;
+      o.textContent = `${p.name}（${yen(p.price)}）`;
+      elProduct.appendChild(o);
+    });
+
+    // 送料設定（server-lineと同期）
+    const r = await fetch("/api/shipping/config", { cache:"no-store" });
+    const j = await r.json();
+    if (!j.ok) throw new Error("config not ok");
+    CFG = j.config;
+    document.getElementById("pillSource").textContent = "送料：server-line同期";
+
+    // 初期カート（空）
+    renderCart();
+    recalc();
+
+    // イベント
+    document.getElementById("btnAdd").onclick = onAdd;
+    document.getElementById("btnClear").onclick = () => { cart = []; renderCart(); recalc(); };
+    document.getElementById("btnRecalc").onclick = recalc;
+    elPref.onchange = recalc;
+
+  }catch(e){
+    showErr("送料設定の読み込みに失敗しました。server-line.js に /api/shipping/config を追加済みか確認してください。");
+    document.getElementById("pillSource").textContent = "送料：読込失敗";
   }
 }
 
 function showErr(msg){
   const box = document.getElementById("errBox");
-  box.className = "err";
-  box.style.display = "block";
-  box.textContent = msg;
+  box.className="err";
+  box.style.display="block";
+  box.textContent=msg;
 }
 
-/* ======================
-   server-line.js と同等の地域判定（都道府県→地域）
-   detectRegionFromAddress() と同じ正規表現条件
-====================== */
+function onAdd(){
+  const id = elProduct.value;
+  const qty = Math.max(1, Number(elQty.value||1));
+  const p = PRODUCTS.find(x=>x.id===id);
+  if (!p) return;
+
+  const idx = cart.findIndex(x=>x.id===id);
+  if (idx >= 0) cart[idx].qty += qty;
+  else cart.push({ id:p.id, name:p.name, price:p.price, qty });
+
+  renderCart();
+  recalc();
+}
+
+function renderCart(){
+  if (cart.length === 0){
+    elCartArea.innerHTML = `<div class="warn">カートが空です。商品を追加してください。</div>`;
+    return;
+  }
+
+  const rows = cart.map((it, i)=>{
+    return `
+      <div class="card" style="margin:10px 0; padding:10px">
+        <div style="display:grid; grid-template-columns:1.4fr .6fr .6fr; gap:10px; align-items:end">
+          <div>
+            <div style="font-weight:900">${escapeHtml(it.name)}</div>
+            <div class="small muted">単価：${yen(it.price)} / ID: ${escapeHtml(it.id)}</div>
+          </div>
+          <div>
+            <label style="margin:0 0 4px">個数</label>
+            <input type="number" min="1" value="${it.qty}" data-i="${i}" class="qtyEdit">
+          </div>
+          <div style="display:flex; gap:10px; justify-content:flex-end">
+            <button class="btn danger" data-del="${i}" style="width:100%">削除</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  elCartArea.innerHTML = rows;
+
+  // 数量変更
+  document.querySelectorAll(".qtyEdit").forEach(inp=>{
+    inp.oninput = ()=>{
+      const i = Number(inp.getAttribute("data-i"));
+      const v = Math.max(1, Number(inp.value||1));
+      cart[i].qty = v;
+      recalc();
+    };
+  });
+  // 削除
+  document.querySelectorAll("[data-del]").forEach(btn=>{
+    btn.onclick = ()=>{
+      const i = Number(btn.getAttribute("data-del"));
+      cart.splice(i,1);
+      renderCart();
+      recalc();
+    };
+  });
+}
+
+/* ======================================================
+   1) server-line と同じ地域判定（都道府県→地域）
+====================================================== */
 function detectRegionFromPref(pref){
   const hay = String(pref||"").trim();
   if (/北海道/.test(hay)) return "北海道";
@@ -153,9 +280,22 @@ function detectRegionFromPref(pref){
   return "";
 }
 
-/* ======================
-   server-line.js と同じサイズ判定
-====================== */
+/* ======================================================
+   2) server-line と同じサイズ判定（＋あかしゃ特別ルール）
+====================================================== */
+function isAkashaSeries(item){
+  const name = String(item?.name || "");
+  return /(のりあかしゃ|うずあかしゃ|潮あかしゃ|ごまあかしゃ|いそあかしゃ|磯あかしゃ|松あかしゃ)/.test(name);
+}
+function sizeFromAkashaQty(qty){
+  const q = Number(qty) || 0;
+  if (q <= 0) return null;
+  if (q <= 4)  return "60";
+  if (q <= 8)  return "80";
+  if (q <= 13) return "100";
+  if (q <= 18) return "120";
+  return "140";
+}
 function sizeFromOriginalSetQty(qty){
   const q = Number(qty) || 0;
   if (q <= 0) return null;
@@ -175,17 +315,10 @@ function sizeFromTotalQty(totalQty){
   return "160";
 }
 function maxSize(a,b){
-  const order = CFG?.sizeOrder || ["60","80","100","120","140","160"];
+  const order = (CFG && CFG.sizeOrder) ? CFG.sizeOrder : ["60","80","100","120","140","160"];
   if (!a) return b;
   if (!b) return a;
   return order.indexOf(a) >= order.indexOf(b) ? a : b;
-}
-function isOriginalItem(item){
-  const id = String(item.id || "").trim();
-  const name = String(item.name || "").trim();
-  const byId = (id && CFG?.originalSetProductId && id === String(CFG.originalSetProductId));
-  const byName = /磯屋.?オリジナルセ/.test(name);
-  return byId || byName;
 }
 function calcYamatoShipping(region, size){
   if (!region) return 0;
@@ -193,45 +326,87 @@ function calcYamatoShipping(region, size){
   if (!table) return 0;
   return Number(table[region] || 0);
 }
+function isOriginalItem(it){
+  const id = String(it.id || "").trim();
+  const name = String(it.name || "").trim();
+  const byId = (CFG?.originalSetProductId && id === String(CFG.originalSetProductId));
+  const byName = /磯屋.?オリジナルセ/.test(name);
+  return byId || byName;
+}
+
 function calcShippingUnified(items, pref){
   const region = detectRegionFromPref(pref);
+
   const totalQty = items.reduce((s,it)=>s + Number(it.qty||0), 0);
+  const akashaQty = items.reduce((s,it)=> s + (isAkashaSeries(it) ? Number(it.qty||0) : 0), 0);
   const originalQty = items.reduce((s,it)=> s + (isOriginalItem(it) ? Number(it.qty||0) : 0), 0);
 
-  const sizeA = sizeFromOriginalSetQty(originalQty);
-  const sizeB = sizeFromTotalQty(totalQty);
-  const size  = maxSize(sizeA, sizeB);
+  const sizeAkasha = akashaQty > 0 ? sizeFromAkashaQty(akashaQty) : null;
+  const sizeOrig   = sizeFromOriginalSetQty(originalQty);
+  const sizeTotal  = sizeFromTotalQty(totalQty);
 
+  const size = maxSize(maxSize(sizeAkasha, sizeOrig), sizeTotal);
   const shipping = calcYamatoShipping(region, size);
-  return { pref, region, size, shipping, totalQty, originalQty };
+
+  return { pref, region, size, shipping, totalQty, akashaQty, originalQty };
 }
 
-/* ======================
-   計算表示
-====================== */
-function calc(){
-  if (!CFG) return;
+/* ======================================================
+   3) 再計算して表示
+====================================================== */
+function recalc(){
+  if (!CFG){
+    setPills("-", "-", "-", 0, 0);
+    return;
+  }
 
-  const p = PRODUCTS.find(x=>x.id===productSel.value);
-  const qty = Math.max(1, Number(qtyInput.value||1));
-  const pref = prefSel.value;
+  const pref = elPref.value || "";
+  const items = cart.map(x=>({ id:x.id, name:x.name, price:x.price, qty:x.qty }));
 
-  const itemTotal = p.price * qty;
+  const itemsTotal = items.reduce((s,it)=> s + (Number(it.price)||0) * (Number(it.qty)||0), 0);
 
-  const items = [{ id: p.id, name: p.name, qty }];
   const r = calcShippingUnified(items, pref);
+  const grand = itemsTotal + Number(r.shipping||0);
 
-  const grand = itemTotal + r.shipping;
+  setPills(pref, r.region, r.size, itemsTotal, r.shipping);
 
-  document.getElementById("prefPill").textContent = `都道府県：${pref || "-"}`;
-  document.getElementById("regionPill").textContent = `地域：${r.region || "-"}`;
-  document.getElementById("sizePill").textContent = `サイズ：${r.size || "-"}`;
+  document.getElementById("itemsTotal").textContent = yen(itemsTotal);
+  document.getElementById("shippingFee").textContent = yen(r.shipping);
+  document.getElementById("grandTotal").textContent = yen(grand);
 
-  document.getElementById("itemTotal").textContent = itemTotal.toLocaleString()+"円";
-  document.getElementById("shippingFee").textContent = r.shipping.toLocaleString()+"円";
-  document.getElementById("grandTotal").textContent = grand.toLocaleString()+"円";
+  // 注意表示（住所未選択など）
+  const warnBox = document.getElementById("warnBox");
+  if (!pref){
+    warnBox.style.display="block";
+    warnBox.className="warn";
+    warnBox.textContent="送付先（都道府県）を選ぶと、地域と送料が確定します。";
+  } else if (!r.region){
+    warnBox.style.display="block";
+    warnBox.className="warn";
+    warnBox.textContent="地域判定ができませんでした。都道府県の選択を確認してください。";
+  } else if (!items.length){
+    warnBox.style.display="block";
+    warnBox.className="warn";
+    warnBox.textContent="商品を追加してください。";
+  } else {
+    warnBox.style.display="none";
+  }
+}
+
+function setPills(pref, region, size, itemsTotal, shipping){
+  document.getElementById("pillPref").textContent = `都道府県：${pref || "-"}`;
+  document.getElementById("pillRegion").textContent = `地域：${region || "-"}`;
+  document.getElementById("pillSize").textContent = `サイズ：${size || "-"}`;
+}
+
+function escapeHtml(s){
+  return String(s||"")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
 }
 </script>
-
 </body>
 </html>

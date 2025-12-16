@@ -700,6 +700,20 @@ function detectRegionFromAddress(address = {}) {
 // =============================================================
 // ★送料計算 一本化（ここが中核）
 // =============================================================
+function isAkasha6(item) {
+  const name = String(item?.name || "");
+  return /(のりあかしゃ|うずあかしゃ|潮あかしゃ|松あかしゃ|ごまあかしゃ|磯あかしゃ)/.test(name);
+}
+function sizeFromAkasha6Qty(qty) {
+  const q = Number(qty) || 0;
+  if (q <= 0) return null;
+  if (q <= 4)  return "60";   // 1〜4
+  if (q <= 8)  return "80";   // 5〜8
+  if (q <= 13) return "100";  // 9〜13
+  if (q <= 18) return "120";  // 14〜18
+  return "140";               // 19以上（安全側）
+}
+
 function calcShippingUnified(items = [], address = {}) {
   const region = detectRegionFromAddress(address);
 

@@ -141,7 +141,7 @@
     </div>
 
     <p class="small" style="margin-top:10px;">
-      ※ お問い合わせ送信はLINEアプリ内（LIFF）でのみ可能です。
+      ※ LINEアプリ内で開くと、そのままお問い合わせできます。
     </p>
   </div>
 
@@ -153,35 +153,12 @@
 =========================== */
 const LIFF_ID = "2008406620-QQFfWP1w";
 
-// このLIFFを入口として 1本化します（別LIFFへ飛ばさない）
-const LIFF_BASE = "https://liff.line.me/2008406620-QQFfWP1w";
-
-// 同一ドメインの実ページ（必要ならパスだけ調整してください）
-const ROUTE_MAP = {
-  address:  "/public/cod-register.html",
-  products: "/public/products.html",
-  shipping: "/public/shipping.html",
+const LINKS = {
+  ORDER_URL:   "https://line-render-app-1.onrender.com/public/products.html",
+  ADDRESS_URL: "https://line-render-app-1.onrender.com/public/cod-register.html",
+  SHIPPING_URL:"https://line-render-app-1.onrender.com/public/shipping.html",
+  CHAT_TEXT:   "お問い合わせ",
 };
-
-const CHAT_TEXT = "お問い合わせ";
-
-/* ===========================
-   LIFF 1本化ルーティング
-   - ?page=address/products/shipping が付いて来たら
-     同一ドメインの実ページへ振り分け
-   - 別LIFFへ移動しないので確認メッセージが減ります
-=========================== */
-(function routeByQuery(){
-  const p = new URLSearchParams(location.search);
-  const page = p.get("page");
-  if (!page) return;
-
-  const to = ROUTE_MAP[page];
-  if (!to) return;
-
-  // 履歴を増やさず遷移
-  location.replace(to);
-})();
 
 /* ===========================
    共通関数
@@ -194,8 +171,6 @@ function isInLiff(){
 async function ensureLiff(){
   if (!window.liff || !liff.init) return false;
   try {
-    // 二重initでも落ちないように
-    if (typeof liff.isInitialized === "function" && liff.isInitialized()) return true;
     await liff.init({ liffId: LIFF_ID });
     return true;
   } catch (e) {
@@ -204,27 +179,10 @@ async function ensureLiff(){
   }
 }
 
-// openUrl: LIFF内ならopenWindow、外なら通常遷移
-async function openUrl(url, external=false){
-  // init をできるだけ保証（失敗しても落ちない）
-  if (window.liff && liff.init) {
-    try {
-      if (typeof liff.isInitialized === "function") {
-        if (!liff.isInitialized()) await liff.init({ liffId: LIFF_ID });
-      } else {
-        // 古い環境向け：一応init試行
-        await liff.init({ liffId: LIFF_ID });
-      }
-    } catch {}
+function openUrl(url, external=false){
+  if (isInLiff()){
+    try { liff.openWindow({ url, external }); return; } catch {}
   }
-
-  try {
-    if (window.liff && liff.isInClient()) {
-      liff.openWindow({ url, external });
-      return;
-    }
-  } catch {}
-
   window.location.href = url;
 }
 
@@ -243,24 +201,22 @@ document.addEventListener("DOMContentLoaded", async () => {
     else history.back();
   };
 
-  // ★ すべて同一LIFFへ（?page=で切替）
   document.getElementById("btnOrder").onclick =
-    () => openUrl(`${LIFF_BASE}?page=products`, false);
+    () => openUrl(LINKS.ORDER_URL, false);
 
   document.getElementById("btnAddress").onclick =
-    () => openUrl(`${LIFF_BASE}?page=address`, false);
+    () => openUrl(LINKS.ADDRESS_URL, false);
 
   document.getElementById("btnShipping").onclick =
-    () => openUrl(`${LIFF_BASE}?page=shipping`, false);
+    () => openUrl(LINKS.SHIPPING_URL, true);
 
-  // お問い合わせ：sendMessages は in-client 限定
   document.getElementById("btnChat").onclick = async () => {
     if (!inClient){
-      alert("お問い合わせ送信はLINEアプリ内でのみ可能です。\nLINEアプリから開いてお試しください。");
+      alert("LINEアプリ内で開くと、そのままお問い合わせできます。");
       return;
     }
     try {
-      await liff.sendMessages([{ type:"text", text: CHAT_TEXT }]);
+      await liff.sendMessages([{ type:"text", text: LINKS.CHAT_TEXT }]);
       liff.closeWindow();
     } catch (e) {
       alert("お問い合わせの送信に失敗しました。");

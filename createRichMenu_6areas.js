@@ -50,7 +50,7 @@ if (!addressLiffUrl) {
 }
 
 // 画像 中央上：商品一覧
-const productsUrl = (PRODUCTS_URL || `${baseUrl}/public/products.html`).trim();
+const productsUrl = (PRODUCTS_URL || `${baseUrl}/public/catalog.html`).trim();
 
 // 画像 右上：ご利用方法
 const howtoUrl = (HOWTO_URL || `${baseUrl}/public/howto.html`).trim();

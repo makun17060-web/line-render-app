@@ -3,42 +3,25 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>送料計算（ヤマト運輸参考）</title>
+  <title>送料計算（ヤマト運輸参考｜60〜120サイズ）</title>
   <style>
-    body{
-      font-family: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-      background:#f7f7f7;
-      margin:0; padding:14px;
-    }
-    h1{ font-size:20px; margin:0 0 10px; }
-    .card{
-      background:#fff; border-radius:14px; padding:14px;
-      box-shadow:0 1px 3px rgba(0,0,0,.08);
-      margin-bottom:12px;
-    }
-    label{ font-weight:700; display:block; margin:10px 0 4px; }
-    select, input{
-      width:100%; padding:10px;
-      border-radius:10px; border:1px solid #ddd;
-      font-size:15px;
-    }
-    table{
-      width:100%; border-collapse:collapse; margin-top:10px;
-      font-size:14px;
-    }
-    th,td{ padding:8px; border-bottom:1px solid #eee; }
-    th{ text-align:left; background:#f1f5f9; }
-    .right{ text-align:right; font-weight:700; }
-    .result{
-      font-size:18px; font-weight:800; color:#0b3a53;
-      text-align:right; margin-top:10px;
-    }
-    .note{ font-size:12px; color:#666; line-height:1.6; }
+    body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f7f7f7;margin:0;padding:14px}
+    h1{font-size:20px;margin:0 0 10px}
+    .card{background:#fff;border-radius:14px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:12px}
+    label{font-weight:800;display:block;margin:10px 0 4px}
+    select,input{width:100%;padding:10px;border-radius:10px;border:1px solid #ddd;font-size:15px}
+    table{width:100%;border-collapse:collapse;margin-top:10px;font-size:14px}
+    th,td{padding:8px;border-bottom:1px solid #eee}
+    th{text-align:left;background:#f1f5f9}
+    .right{text-align:right;font-weight:800}
+    .result{font-size:18px;font-weight:900;color:#0b3a53;text-align:right;margin-top:10px}
+    .pill{display:inline-block;background:#eef2ff;color:#0b3a53;border-radius:999px;padding:6px 10px;font-weight:800;font-size:12px;margin-right:6px}
+    .note{font-size:12px;color:#666;line-height:1.6}
   </style>
 </head>
 <body>
 
-<h1>📦 送料計算（ヤマト運輸参考）</h1>
+<h1>📦 送料計算（サイズ自動判定）</h1>
 
 <div class="card">
   <label>商品</label>
@@ -52,19 +35,15 @@
 </div>
 
 <div class="card">
+  <div style="margin-bottom:6px">
+    <span class="pill" id="sizePill">サイズ：-</span>
+    <span class="pill">ヤマト運輸 参考</span>
+  </div>
+
   <table>
-    <tr>
-      <th>内容</th>
-      <th class="right">金額</th>
-    </tr>
-    <tr>
-      <td>商品合計</td>
-      <td class="right" id="itemTotal">-</td>
-    </tr>
-    <tr>
-      <td>送料</td>
-      <td class="right" id="shippingFee">-</td>
-    </tr>
+    <tr><th>内容</th><th class="right">金額</th></tr>
+    <tr><td>商品合計</td><td class="right" id="itemTotal">-</td></tr>
+    <tr><td>送料</td><td class="right" id="shippingFee">-</td></tr>
   </table>
 
   <div class="result">
@@ -72,14 +51,15 @@
   </div>
 
   <p class="note">
-    ※ 送料はヤマト運輸（60サイズ換算）を参考にした目安です。<br>
-    ※ 正確な送料は注文確定画面で最終表示されます。
+    ※ 個数により 60 / 80 / 100 / 120 サイズへ自動切替されます。<br>
+    ※ 送料はヤマト運輸の参考料金です。実際の送料は確定画面で表示されます。
   </p>
 </div>
 
 <script>
 /* ======================
    商品マスター
+   set:true → 常に100サイズ
 ====================== */
 const PRODUCTS = [
   { id:"kusuke-250", name:"久助（えびせん）", price:250 },
@@ -89,26 +69,29 @@ const PRODUCTS = [
   { id:"matsu-akasha-340", name:"松あかしゃ", price:340 },
   { id:"iso-akasha-340", name:"磯あかしゃ", price:340 },
   { id:"goma-akasha-340", name:"ごまあかしゃ", price:340 },
-  { id:"original-set-2000", name:"磯屋オリジナルセット", price:2000 }
+  { id:"original-set-2000", name:"磯屋オリジナルセット", price:2000, set:true }
 ];
 
 /* ======================
-   地域別送料（ヤマト参考）
-   ※60サイズ想定
+   ヤマト参考送料（例）
 ====================== */
-const SHIPPING_BY_REGION = {
-  "北海道": 1200,
-  "東北": 900,
-  "関東": 800,
-  "信越": 800,
-  "北陸": 800,
-  "中部": 800,
-  "関西": 850,
-  "中国": 950,
-  "四国": 950,
-  "九州": 1100,
-  "沖縄": 1400
+const SHIPPING = {
+  60:  {"北海道":1200,"東北":900,"関東":800,"信越":800,"北陸":800,"中部":800,"関西":850,"中国":950,"四国":950,"九州":1100,"沖縄":1400},
+  80:  {"北海道":1400,"東北":1100,"関東":1000,"信越":1000,"北陸":1000,"中部":1000,"関西":1050,"中国":1150,"四国":1150,"九州":1300,"沖縄":1800},
+  100: {"北海道":1700,"東北":1400,"関東":1300,"信越":1300,"北陸":1300,"中部":1300,"関西":1350,"中国":1500,"四国":1500,"九州":1650,"沖縄":2300},
+  120: {"北海道":2000,"東北":1700,"関東":1600,"信越":1600,"北陸":1600,"中部":1600,"関西":1650,"中国":1800,"四国":1800,"九州":1950,"沖縄":2800}
 };
+
+/* ======================
+   サイズ判定
+====================== */
+function detectSize(product, qty){
+  if (product.set) return 100;
+  if (qty <= 4)  return 60;
+  if (qty <= 8)  return 80;
+  if (qty <= 14) return 100;
+  return 120;
+}
 
 /* ======================
    初期化
@@ -123,18 +106,14 @@ PRODUCTS.forEach(p=>{
   o.textContent=`${p.name}（${p.price}円）`;
   productSel.appendChild(o);
 });
-
-Object.keys(SHIPPING_BY_REGION).forEach(r=>{
+Object.keys(SHIPPING[60]).forEach(r=>{
   const o=document.createElement("option");
-  o.value=r;
-  o.textContent=r;
-  regionSel.appendChild(o);
+  o.value=r; o.textContent=r; regionSel.appendChild(o);
 });
 
 productSel.onchange = calc;
 regionSel.onchange  = calc;
 qtyInput.oninput    = calc;
-
 calc();
 
 /* ======================
@@ -146,15 +125,14 @@ function calc(){
   const region = regionSel.value;
 
   const itemTotal = p.price * qty;
-  const shipping  = SHIPPING_BY_REGION[region] || 0;
-  const grand     = itemTotal + shipping;
+  const size = detectSize(p, qty);
+  const shipping = SHIPPING[size][region] || 0;
+  const grand = itemTotal + shipping;
 
-  document.getElementById("itemTotal").textContent =
-    itemTotal.toLocaleString()+"円";
-  document.getElementById("shippingFee").textContent =
-    shipping.toLocaleString()+"円";
-  document.getElementById("grandTotal").textContent =
-    grand.toLocaleString()+"円";
+  document.getElementById("sizePill").textContent = `サイズ：${size}`;
+  document.getElementById("itemTotal").textContent = itemTotal.toLocaleString()+"円";
+  document.getElementById("shippingFee").textContent = shipping.toLocaleString()+"円";
+  document.getElementById("grandTotal").textContent = grand.toLocaleString()+"円";
 }
 </script>
 

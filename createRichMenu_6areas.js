@@ -83,7 +83,7 @@ const shippingUrl = (SHIPPING_URL || `${baseUrl}/public/shipping.html`).trim();
         // 2行目
         { // 左下：住所登録
           bounds: { x: 0, y: 843, width: 833, height: 843 },
-          action: { type: "uri", label: "住所登録", uri:  "https://liff.line.me/2008406620-4kyQVyqe?page=address"},
+          action: { type: "uri", label: "住所登録", uri:  "https://liff.line.me/2008406620-4kyQVyqe"},
         },
         { // 中央下：配送・送料
           bounds: { x: 833, y: 843, width: 834, height: 843 },

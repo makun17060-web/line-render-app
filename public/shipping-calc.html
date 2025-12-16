@@ -59,7 +59,7 @@
 
     <div class="card">
       <div class="row" style="align-items:center">
-        <div><b>商品（複数OK）</b> <span class="pill">あかしゃ6種＋オリジナルセット 追加済</span></div>
+        <div><b>商品（複数OK）</b> <span class="pill">プリセットにオリジナルセット追加</span></div>
         <div class="right">
           <button class="secondary" id="btnAdd">＋ 行を追加</button>
         </div>
@@ -100,24 +100,48 @@
     $("debug").value = line + $("debug").value;
   };
 
-  // あかしゃ6種 + オリジナルセット（ページ側の「選択肢」用）
-  // 送料計算はサーバー参照なので、ここはUIの利便性目的です
-  const presetOptions = [
-    { id:"", name:"（手入力）" },
-    { id:"akasha-nori", name:"のりあかしゃ" },
-    { id:"akasha-uzu", name:"うずあかしゃ" },
-    { id:"akasha-shio", name:"潮あかしゃ" },
-    { id:"akasha-goma", name:"ごまあかしゃ" },
-    { id:"akasha-iso",  name:"いそあかしゃ" },
-    { id:"akasha-matsu",name:"松あかしゃ" },
-    { id:"original-set-2100", name:"磯屋オリジナルセット" }
-  ];
+  // ★サーバーの originalSetProductId を自動反映（取れない時は既定値）
+  let ORIGINAL_SET_ID = "original-set-2100";
+
+  // ★プリセット一覧（都度生成：ORIGINAL_SET_ID を反映するため）
+  function getPresetOptions(){
+    return [
+      { id:"", name:"（手入力）" },
+      { id:"akasha-nori", name:"のりあかしゃ" },
+      { id:"akasha-uzu", name:"うずあかしゃ" },
+      { id:"akasha-shio", name:"潮あかしゃ" },
+      { id:"akasha-goma", name:"ごまあかしゃ" },
+      { id:"akasha-iso",  name:"いそあかしゃ" },
+      { id:"akasha-matsu",name:"松あかしゃ" },
+      // ★ここが「プルダウンにオリジナルセット追加」
+      { id: ORIGINAL_SET_ID, name:"磯屋オリジナルセット" }
+    ];
+  }
 
   let productsIndex = {}; // id -> {id,name,price}
   let serverConfig = null;
 
-  function rowHtml(initial){
-    const optHtml = presetOptions.map(o=>`<option value="${escapeHtml(o.id)}">${escapeHtml(o.name)}</option>`).join("");
+  function escapeHtml(s){
+    return String(s||"")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#39;");
+  }
+
+  function buildOptionsHtml(selectedValue){
+    const opts = getPresetOptions();
+    return opts.map(o=>{
+      const v = escapeHtml(o.id);
+      const t = escapeHtml(o.name);
+      const sel = (String(selectedValue||"") === String(o.id)) ? " selected" : "";
+      return `<option value="${v}"${sel}>${t}</option>`;
+    }).join("");
+  }
+
+  function rowHtml(){
+    const optHtml = buildOptionsHtml("");
     return `
       <tr data-row="1">
         <td style="width:260px">
@@ -126,7 +150,7 @@
         </td>
         <td style="width:260px">
           <label>商品ID（任意）</label><br/>
-          <input class="inId" placeholder="例：original-set-2100" />
+          <input class="inId" placeholder="例：${escapeHtml(ORIGINAL_SET_ID)}" />
         </td>
         <td>
           <label>商品名（任意・名前判定用）</label><br/>
@@ -144,30 +168,23 @@
     `;
   }
 
-  function addRow(prefill){
-    tbody.insertAdjacentHTML("beforeend", rowHtml(prefill||{}));
-    const tr = tbody.querySelector("tr:last-child");
+  function wireRow(tr){
     const sel = tr.querySelector(".selPreset");
     const inId = tr.querySelector(".inId");
     const inName = tr.querySelector(".inName");
     const inQty = tr.querySelector(".inQty");
     const btnDel = tr.querySelector(".btnDel");
 
-    // 初期値（必要なら）
-    if (prefill?.id) inId.value = prefill.id;
-    if (prefill?.name) inName.value = prefill.name;
-    if (prefill?.qty) inQty.value = prefill.qty;
-
     sel.addEventListener("change", ()=>{
       const pid = sel.value || "";
       if (!pid) return;
-      // プリセットを選んだらID/名前を埋める（サーバー参照なのであくまで補助）
-      const preset = presetOptions.find(x=>x.id===pid);
+
+      const preset = getPresetOptions().find(x=>x.id===pid);
       if (preset){
         inId.value = preset.id || inId.value;
         inName.value = preset.name || inName.value;
       }
-      // products.json に同じIDがあれば、より正確な名称に置換
+
       if (productsIndex[pid]?.name){
         inName.value = productsIndex[pid].name;
       }
@@ -177,15 +194,44 @@
       tr.remove();
       if (!tbody.querySelector("tr")) addRow();
     });
+
+    // 数量の安全策
+    inQty.addEventListener("change", ()=>{
+      const q = Math.max(1, Number(inQty.value || 1));
+      inQty.value = String(q);
+    });
   }
 
-  function escapeHtml(s){
-    return String(s||"")
-      .replaceAll("&","&amp;")
-      .replaceAll("<","&lt;")
-      .replaceAll(">","&gt;")
-      .replaceAll('"',"&quot;")
-      .replaceAll("'","&#39;");
+  function addRow(prefill){
+    tbody.insertAdjacentHTML("beforeend", rowHtml());
+    const tr = tbody.querySelector("tr:last-child");
+    const sel = tr.querySelector(".selPreset");
+    const inId = tr.querySelector(".inId");
+    const inName = tr.querySelector(".inName");
+    const inQty = tr.querySelector(".inQty");
+
+    // 初期値（必要なら）
+    if (prefill?.id){
+      sel.value = prefill.id; // 先に選択
+      inId.value = prefill.id;
+    }
+    if (prefill?.name) inName.value = prefill.name;
+    if (prefill?.qty) inQty.value = prefill.qty;
+
+    wireRow(tr);
+  }
+
+  // ★すでに表示中のプルダウンを、最新 ORIGINAL_SET_ID で作り直す
+  function refreshAllPresetSelects(){
+    const selects = Array.from(document.querySelectorAll(".selPreset"));
+    for (const sel of selects){
+      const current = sel.value || "";
+      sel.innerHTML = buildOptionsHtml(current);
+      // current が options に無い（ID変更後など）なら手入力に戻す
+      if (![...sel.options].some(o=>o.value===current)){
+        sel.value = "";
+      }
+    }
   }
 
   async function loadProducts(){
@@ -209,9 +255,17 @@
       const r = await fetch("/api/shipping/config", { cache:"no-store" });
       const j = await r.json();
       serverConfig = j?.config || null;
+
+      // ★originalSetProductId を反映
+      if (serverConfig?.originalSetProductId){
+        ORIGINAL_SET_ID = String(serverConfig.originalSetProductId);
+        refreshAllPresetSelects(); // 既存行のプルダウンも更新
+      }
+
       $("serverConfig").textContent = serverConfig
         ? JSON.stringify(serverConfig, null, 2)
         : "設定が取得できませんでした。";
+
       debug("loaded /api/shipping/config", j);
     }catch(e){
       $("serverConfig").textContent = "読み込み失敗（/api/shipping/config）";
@@ -227,10 +281,7 @@
       const name = tr.querySelector(".inName").value.trim();
       const qty = Math.max(1, Number(tr.querySelector(".inQty").value || 1));
 
-      // price は /api/shipping で itemsTotal に使われるだけなので、未指定なら 0 でOK
       const price = (id && productsIndex[id]) ? Number(productsIndex[id].price || 0) : 0;
-
-      // サーバーの名前判定（正規表現）を効かせたいので、name はできるだけ入れる
       const finalName = name || (id && productsIndex[id]?.name) || id || "商品";
 
       items.push({ id: id || undefined, name: finalName, price, qty });
@@ -251,11 +302,7 @@
     const items = collectItems();
     const body = {
       items,
-      address: {
-        prefecture,
-        city,
-        address1
-      }
+      address: { prefecture, city, address1 }
     };
 
     debug("POST /api/shipping", body);

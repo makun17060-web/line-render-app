@@ -87,7 +87,7 @@ const shippingUrl = (SHIPPING_URL || `${baseUrl}/public/shipping.html`).trim();
         },
         { // 中央下：配送・送料
           bounds: { x: 833, y: 843, width: 834, height: 843 },
-          action: { type: "uri", label: "配送・送料", uri: "https://line-render-app-1.onrender.com/}shipping-calc.html"},
+          action: { type: "uri", label: "配送・送料", uri: "https://line-render-app-1.onrender.com/public/shipping-calc.html"},
         },
         { // 右下：お問い合わせ（LINEで質問）
           bounds: { x: 1667, y: 843, width: 833, height: 843 },

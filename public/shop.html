@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>商品一覧（直接注文）</title>
+
+  <!-- LIFF SDK -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+  <style>
+    body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#f6f6f6;color:#222;margin:0;padding:14px}
+    .wrap{max-width:980px;margin:0 auto}
+    h1{font-size:18px;margin:0 0 10px}
+    .card{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:12px;margin:10px 0}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    button{font:inherit;padding:10px 12px;border:0;border-radius:10px;background:#06c755;color:#fff;cursor:pointer}
+    button.secondary{background:#e5e7eb;color:#111}
+    button:disabled{opacity:.5;cursor:not-allowed}
+    .muted{color:#666;font-size:12px;line-height:1.6}
+    .ok{color:#16a34a;font-weight:700}
+    .ng{color:#dc2626;font-weight:700}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-top:10px}
+    .item{border:1px solid #eee;border-radius:12px;padding:10px;background:#fff}
+    .img{width:100%;aspect-ratio:1/1;border-radius:10px;background:#f3f4f6;object-fit:cover}
+    .name{font-weight:700;margin:8px 0 4px}
+    .price{font-size:13px;color:#111}
+    .stock{font-size:12px;color:#666}
+    .small{font-size:12px}
+    textarea{width:100%;min-height:100px;border:1px solid #ddd;border-radius:10px;padding:10px}
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <h1>商品一覧（直接注文）</h1>
+
+    <div class="card">
+      <div class="row">
+        <button id="btnDirect" disabled>LINEに「直接注文」を送る（ボット起動）</button>
+        <button id="btnReload" class="secondary">商品を再読み込み</button>
+      </div>
+
+      <div id="status" class="muted" style="margin-top:10px">初期化中...</div>
+
+      <div class="muted" style="margin-top:10px">
+        ・このページは <span class="mono">/api/products</span> から商品一覧を読み込みます（server-line.js と連携）<br/>
+        ・「直接注文」ボタンは <b>LINEアプリ内（inClient）</b> の時だけ有効になります（外部ブラウザ/PCは不可）<br/>
+      </div>
+    </div>
+
+    <div class="card">
+      <b>商品一覧</b>
+      <div id="grid" class="grid"></div>
+      <div id="empty" class="muted" style="margin-top:10px;display:none">
+        商品がありません。<span class="mono">data/products.json</span> を確認してください。
+      </div>
+    </div>
+
+    <div class="card">
+      <b>デバッグ</b>
+      <div class="muted small">（原因特定用）</div>
+      <textarea id="debug" readonly></textarea>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+
+  function log(msg, obj){
+    const t = new Date().toISOString();
+    const line = obj ? `${t} ${msg}\n${JSON.stringify(obj,null,2)}\n\n` : `${t} ${msg}\n\n`;
+    $("debug").value = line + $("debug").value;
+    console.log(msg, obj || "");
+  }
+  function escapeHtml(s){
+    return String(s ?? "")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#39;");
+  }
+  function yen(n){
+    return Number(n||0).toLocaleString("ja-JP") + "円";
+  }
+
+  async function fetchJson(url){
+    const r = await fetch(url, { cache:"no-store" });
+    const text = await r.text();
+    let j = null;
+    try { j = JSON.parse(text); } catch {}
+    if (!r.ok) {
+      throw new Error(`HTTP ${r.status} ${url} : ${text.slice(0,200)}`);
+    }
+    return j;
+  }
+
+  async function initLiff(){
+    const diag = { step:"start" };
+    try{
+      // server-line.js と一致：/api/liff/config?kind=order から liffId を取得
+      diag.step = "fetch /api/liff/config";
+      const cfg = await fetchJson("/api/liff/config?kind=order");
+      const liffId = (cfg?.liffId || "").trim();
+      if (!liffId) throw new Error("liffId_not_found");
+
+      diag.liffId = liffId;
+      diag.step = "liff.init";
+      await liff.init({ liffId });
+
+      diag.step = "after_init";
+      diag.isInClient = liff.isInClient();
+      diag.isLoggedIn = liff.isLoggedIn();
+      diag.os = liff.getOS();
+      diag.lang = liff.getLanguage();
+      diag.context = liff.getContext ? liff.getContext() : null;
+
+      log("LIFF DIAG", diag);
+
+      if (diag.isInClient){
+        $("status").innerHTML = `<span class="ok">LINEアプリ内で開いています（直接注文ボタンOK）</span>`;
+        $("btnDirect").disabled = false;
+      } else {
+        $("status").innerHTML =
+          `<span class="ng">LINEアプリ内ではありません（外部ブラウザ/PCの可能性）</span><br>` +
+          `<span class="muted">この状態では <span class="mono">liff.sendMessages</span> が使えません。` +
+          ` LINEのトーク/リッチメニューから開いてください。</span>`;
+        $("btnDirect").disabled = true;
+      }
+    }catch(e){
+      log("initLiff error", { error: String(e) });
+      $("status").innerHTML =
+        `<span class="ng">LIFF初期化エラー</span><br>` +
+        `<span class="mono">${escapeHtml(String(e))}</span>`;
+      $("btnDirect").disabled = true;
+    }
+  }
+
+  async function loadProducts(){
+    $("empty").style.display = "none";
+    $("grid").innerHTML = "";
+    try{
+      const j = await fetchJson("/api/products");
+      log("loaded /api/products", { ok:j?.ok, count:j?.products?.length });
+
+      const products = Array.isArray(j?.products) ? j.products : [];
+      if (products.length === 0){
+        $("empty").style.display = "block";
+        return;
+      }
+
+      const html = products.map(p => {
+        const img = (p.image || "").trim();
+        const safeName = escapeHtml(p.name || p.id || "商品");
+        const price = yen(p.price || 0);
+        const stock = (p.stock ?? 0);
+        const desc = escapeHtml(p.desc || "");
+        const volume = escapeHtml(p.volume || "");
+        return `
+          <div class="item">
+            ${img ? `<img class="img" src="${escapeHtml(img)}" alt="${safeName}">` : `<div class="img"></div>`}
+            <div class="name">${safeName}</div>
+            <div class="price">価格：<b>${price}</b></div>
+            <div class="stock">在庫：${escapeHtml(String(stock))}</div>
+            ${volume ? `<div class="muted small">内容量：${volume}</div>` : ``}
+            ${desc ? `<div class="muted small" style="margin-top:6px">${desc}</div>` : ``}
+          </div>
+        `;
+      }).join("");
+
+      $("grid").innerHTML = html;
+
+    }catch(e){
+      log("loadProducts error", { error:String(e) });
+      $("grid").innerHTML =
+        `<div class="muted"><span class="ng">商品取得に失敗：</span>${escapeHtml(String(e))}</div>`;
+    }
+  }
+
+  async function sendDirectOrder(){
+    try{
+      if (!liff || !liff.isInClient || !liff.isInClient()){
+        alert("LINEアプリ内で開いていないため送信できません。LINEのトーク/リッチメニューから開いてください。");
+        return;
+      }
+      // server-line.js のボットと一致：「直接注文」を送れば商品カルーセルが出る
+      await liff.sendMessages([{ type:"text", text:"直接注文" }]);
+      // 送信後は閉じる（好みでコメントアウト可）
+      liff.closeWindow();
+    }catch(e){
+      log("sendDirectOrder error", { error:String(e) });
+      alert("送信に失敗しました。\n" + String(e));
+    }
+  }
+
+  $("btnDirect").addEventListener("click", sendDirectOrder);
+  $("btnReload").addEventListener("click", loadProducts);
+
+  // init
+  initLiff();
+  loadProducts();
+})();
+</script>
+</body>
+</html>

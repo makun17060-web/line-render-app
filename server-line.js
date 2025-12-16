@@ -665,6 +665,19 @@ const YAMATO_CHUBU_TAXED = {
   "140": { 北海道:3440, 東北:2930, 関東:2630, 中部:2630, 近畿:2630, 中国:2780, 四国:2780, 九州:2930, 沖縄:4030 },
   "160": { 北海道:3820, 東北:3320, 関東:3020, 中部:3020, 近畿:3020, 中国:3160, 四国:3160, 九州:3320, 沖縄:4680 },
 };
+function isAkashaSeries(item) {
+  const name = String(item?.name || "");
+  return /(のりあかしゃ|うずあかしゃ|潮あかしゃ|ごまあかしゃ|いそあかしゃ|磯あかしゃ|松あかしゃ)/.test(name);
+}
+function sizeFromAkashaQty(qty) {
+  const q = Number(qty) || 0;
+  if (q <= 0) return null;
+  if (q <= 4)  return "60";
+  if (q <= 8)  return "80";
+  if (q <= 13) return "100";
+  if (q <= 18) return "120";
+  return "140"; // 念のため
+}
 
 const ORIGINAL_SET_PRODUCT_ID = (process.env.ORIGINAL_SET_PRODUCT_ID || "original-set-2100").trim();
 
@@ -692,6 +705,12 @@ function calcShippingUnified(items = [], address = {}) {
 
   const totalQty = items.reduce((s, it) => s + Number(it.qty || 0), 0);
 
+  // あかしゃシリーズの合計個数
+  const akashaQty = items.reduce((s, it) => {
+    return s + (isAkashaSeries(it) ? Number(it.qty || 0) : 0);
+  }, 0);
+
+  // オリジナルセット個数
   const originalQty = items.reduce((s, it) => {
     return s + (
       it.id === ORIGINAL_SET_PRODUCT_ID ||
@@ -701,14 +720,19 @@ function calcShippingUnified(items = [], address = {}) {
     );
   }, 0);
 
-  const sizeA = sizeFromOriginalSetQty(originalQty);
-  const sizeB = sizeFromTotalQty(totalQty);
-  const size  = maxSize(sizeA, sizeB);
+  // サイズ判定（優先順位）
+  const sizeAkasha  = akashaQty > 0 ? sizeFromAkashaQty(akashaQty) : null;
+  const sizeOrig    = sizeFromOriginalSetQty(originalQty);
+  const sizeTotal   = sizeFromTotalQty(totalQty);
+
+  // 最大サイズを採用
+  const size = maxSize(maxSize(sizeAkasha, sizeOrig), sizeTotal);
 
   const shipping = calcYamatoShipping(region, size);
 
   return { region, size, shipping };
 }
+
 
 function sizeFromOriginalSetQty(qty) {
   const q = Number(qty) || 0;

@@ -655,26 +655,6 @@ async function maybeLowStockAlert(productId, productName, stockNow) {
     try { await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg }); } catch {}
   }
 }
-// 送料テーブル・サイズ判定ルールを「唯一の正」としてサーバーに置く
-const SHIPPING_CONFIG = {
-  // 個数→サイズの境界（必要に応じて変更）
-  // 例: 1-4=60, 5-8=80, 9-14=100, 15+=120
-  sizeRules: {
-    default: [
-      { maxQty: 4, size: 60 },
-      { maxQty: 8, size: 80 },
-      { maxQty: 14, size: 100 },
-      { maxQty: 9999, size: 120 },
-    ],
-    // セット商品など例外（必要なら追加）
-    perProduct: {
-      "original-set-2000": { fixedSize: 100 } // セットは常に100（必要なら120に）
-    }
-  },
-
- 
-
-
 
 // ====== ヤマト送料（中部発・税込） & サイズ自動判定 ======
 const YAMATO_CHUBU_TAXED = {

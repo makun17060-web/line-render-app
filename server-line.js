@@ -665,88 +665,71 @@ const YAMATO_CHUBU_TAXED = {
   "140": { 北海道:3440, 東北:2930, 関東:2630, 中部:2630, 近畿:2630, 中国:2780, 四国:2780, 九州:2930, 沖縄:4030 },
   "160": { 北海道:3820, 東北:3320, 関東:3020, 中部:3020, 近畿:3020, 中国:3160, 四国:3160, 九州:3320, 沖縄:4680 },
 };
-function isAkashaSeries(item) {
+
+// ================================
+// ★ あかしゃ6種 判定（名称ベース）
+// ================================
+function isAkasha6(item) {
   const name = String(item?.name || "");
   return /(のりあかしゃ|うずあかしゃ|潮あかしゃ|ごまあかしゃ|いそあかしゃ|磯あかしゃ|松あかしゃ)/.test(name);
 }
-function sizeFromAkashaQty(qty) {
+
+// ================================
+// ★ あかしゃ6種 合計袋数 → サイズ
+// ================================
+function sizeFromAkasha6Qty(qty) {
   const q = Number(qty) || 0;
   if (q <= 0) return null;
   if (q <= 4)  return "60";
   if (q <= 8)  return "80";
   if (q <= 13) return "100";
   if (q <= 18) return "120";
-  return "140"; // 念のため
+  return "140"; // 19袋以上は安全側
 }
 
-const ORIGINAL_SET_PRODUCT_ID = (process.env.ORIGINAL_SET_PRODUCT_ID || "original-set-2100").trim();
-
+// ================================
+// ★ 都道府県 → 地域判定
+// ================================
 function detectRegionFromAddress(address = {}) {
-  const pref = String(address.prefecture || address.pref || "").trim();
-  const addr1 = String(address.addr1 || address.address1 || "").trim();
-  const hay = pref || addr1;
+  const pref = String(address.prefecture || "").trim();
 
-  if (/北海道/.test(hay)) return "北海道";
-  if (/(青森|岩手|宮城|秋田|山形|福島|東北)/.test(hay)) return "東北";
-  if (/(茨城|栃木|群馬|埼玉|千葉|東京|神奈川|山梨|関東)/.test(hay)) return "関東";
-  if (/(新潟|富山|石川|福井|長野|岐阜|静岡|愛知|三重|中部)/.test(hay)) return "中部";
-  if (/(滋賀|京都|大阪|兵庫|奈良|和歌山|近畿|関西)/.test(hay)) return "近畿";
-  if (/(鳥取|島根|岡山|広島|山口|中国)/.test(hay)) return "中国";
-  if (/(徳島|香川|愛媛|高知|四国)/.test(hay)) return "四国";
-  if (/(福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|九州)/.test(hay)) return "九州";
-  if (/(沖縄)/.test(hay)) return "沖縄";
+  if (/北海道/.test(pref)) return "北海道";
+  if (/(青森|岩手|宮城|秋田|山形|福島)/.test(pref)) return "東北";
+  if (/(茨城|栃木|群馬|埼玉|千葉|東京|神奈川)/.test(pref)) return "関東";
+  if (/(新潟|富山|石川|福井|長野|岐阜|静岡|愛知|三重)/.test(pref)) return "中部";
+  if (/(滋賀|京都|大阪|兵庫|奈良|和歌山)/.test(pref)) return "近畿";
+  if (/(鳥取|島根|岡山|広島|山口)/.test(pref)) return "中国";
+  if (/(徳島|香川|愛媛|高知)/.test(pref)) return "四国";
+  if (/(福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島)/.test(pref)) return "九州";
+  if (/沖縄/.test(pref)) return "沖縄";
   return "";
 }
-// =============================================================
-// ★送料計算 一本化（ここが中核）
-// =============================================================
-function isAkasha6(item) {
-  const name = String(item?.name || "");
-  return /(のりあかしゃ|うずあかしゃ|潮あかしゃ|松あかしゃ|ごまあかしゃ|磯あかしゃ)/.test(name);
-}
-function sizeFromAkasha6Qty(qty) {
-  const q = Number(qty) || 0;
-  if (q <= 0) return null;
-  if (q <= 4)  return "60";   // 1〜4
-  if (q <= 8)  return "80";   // 5〜8
-  if (q <= 13) return "100";  // 9〜13
-  if (q <= 18) return "120";  // 14〜18
-  return "140";               // 19以上（安全側）
-}
 
+// ================================
+// ★ 送料計算（一本化・最終版）
+// ================================
 function calcShippingUnified(items = [], address = {}) {
   const region = detectRegionFromAddress(address);
 
-  const totalQty = items.reduce((s, it) => s + Number(it.qty || 0), 0);
-
-  // 6商品（あかしゃ指定）の合計個数
-  const akasha6Qty = items.reduce((s, it) => {
-    return s + (isAkasha6(it) ? Number(it.qty || 0) : 0);
+  // あかしゃ6種の合計袋数
+  const akashaQty = items.reduce((sum, it) => {
+    return sum + (isAkasha6(it) ? Number(it.qty || 0) : 0);
   }, 0);
 
-  // オリジナルセット個数（既存）
-  const originalQty = items.reduce((s, it) => {
-    return s + (
-      it.id === ORIGINAL_SET_PRODUCT_ID ||
-      /磯屋.?オリジナルセ/.test(it.name || "")
-        ? Number(it.qty || 0)
-        : 0
-    );
-  }, 0);
+  let size = null;
 
-  // ★優先順位：6商品 → オリジナルセット → それ以外（合計個数）
-  let size;
-  if (akasha6Qty > 0) {
-    size = sizeFromAkasha6Qty(akasha6Qty);
-  } else if (originalQty > 0) {
-    size = sizeFromOriginalSetQty(originalQty);
-  } else {
-    size = sizeFromTotalQty(totalQty);
+  if (akashaQty > 0) {
+    size = sizeFromAkasha6Qty(akashaQty);
   }
 
-  const shipping = calcYamatoShipping(region, size);
+  if (!region || !size) {
+    return { region, size, shipping: 0 };
+  }
+
+  const shipping = Number(YAMATO_CHUBU_TAXED[size]?.[region] || 0);
   return { region, size, shipping };
 }
+
 
 
 function sizeFromOriginalSetQty(qty) {

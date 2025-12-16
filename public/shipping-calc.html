@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>送料計算（server-line一致）</title>
+  <title>送料計算（server-line完全一致）</title>
   <style>
     body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f7f7f7;margin:0;padding:14px}
     h1{font-size:20px;margin:0 0 10px}
@@ -22,7 +22,7 @@
 </head>
 <body>
 
-<h1>📦 送料計算（server-line と一致）</h1>
+<h1>📦 送料計算（server-line完全一致）</h1>
 
 <div class="card" id="errBox" style="display:none"></div>
 
@@ -40,6 +40,7 @@
 <div class="card">
   <div style="margin-bottom:6px">
     <span class="pill" id="sizePill">サイズ：-</span>
+    <span class="pill" id="regionPill">地域：-</span>
     <span class="pill" id="sourcePill">送料：読み込み中</span>
   </div>
 
@@ -54,14 +55,15 @@
   </div>
 
   <p class="note">
-    ※ 送料・サイズ判定は server-line.js 側の設定（/api/shipping/config）を使用します。<br>
-    ※ サーバーの設定を変えるだけで、このページも自動で追従します。
+    ※ 送料表・サイズ判定は <code>/api/shipping/config</code>（server-line.js）と同じ内容を使用します。<br>
+    ※ 箱サイズは「合計個数」と「オリジナルセット個数」を両方見て、大きい方を採用します（server-lineと同じ）。
   </p>
 </div>
 
 <script>
 /* ======================
-   商品（ユーザー提示のもの）
+   商品（あなたが提示したもの）
+   ※価格は表示用。送料は server のロジックに合わせる
 ====================== */
 const PRODUCTS = [
   { id:"kusuke-250", name:"久助（えびせん）", price:250 },
@@ -71,14 +73,12 @@ const PRODUCTS = [
   { id:"matsu-akasha-340", name:"松あかしゃ", price:340 },
   { id:"iso-akasha-340", name:"磯あかしゃ", price:340 },
   { id:"goma-akasha-340", name:"ごまあかしゃ", price:340 },
-  { id:"original-set-2000", name:"磯屋オリジナルセット", price:2000, set:true }
+  // server側は ORIGINAL_SET_PRODUCT_ID が "original-set-2100" なのでそれに寄せる
+  { id:"original-set-2100", name:"磯屋オリジナルセット", price:2100, isOriginalHint:true }
 ];
 
-let SHIPPING_CONFIG = null;
+let CFG = null; // /api/shipping/config の中身
 
-/* ======================
-   UI初期化
-====================== */
 const productSel = document.getElementById("product");
 const regionSel  = document.getElementById("region");
 const qtyInput   = document.getElementById("qty");
@@ -86,7 +86,7 @@ const qtyInput   = document.getElementById("qty");
 PRODUCTS.forEach(p=>{
   const o=document.createElement("option");
   o.value=p.id;
-  o.textContent=`${p.name}（${p.price}円）`;
+  o.textContent=`${p.name}（${p.price.toLocaleString()}円）`;
   productSel.appendChild(o);
 });
 
@@ -96,30 +96,25 @@ qtyInput.oninput    = calc;
 
 init();
 
-/* ======================
-   サーバーから送料設定取得
-====================== */
 async function init(){
   try {
     const res = await fetch("/api/shipping/config", { cache: "no-store" });
     const data = await res.json();
     if (!data.ok) throw new Error("config not ok");
-    SHIPPING_CONFIG = data.config;
+    CFG = data.config;
 
-    // 地域ドロップダウン（60サイズの地域キーを基準に作る）
-    const fees60 = SHIPPING_CONFIG.feesBySize?.["60"] || SHIPPING_CONFIG.feesBySize?.[60];
-    const regions = Object.keys(fees60 || {});
+    // 地域一覧
     regionSel.innerHTML = "";
-    regions.forEach(r=>{
+    (CFG.regions || []).forEach(r=>{
       const o=document.createElement("option");
       o.value=r; o.textContent=r;
       regionSel.appendChild(o);
     });
 
-    document.getElementById("sourcePill").textContent = "送料：サーバー設定";
+    document.getElementById("sourcePill").textContent = "送料：server-line";
     calc();
   } catch (e) {
-    showErr("送料設定の読み込みに失敗しました。/api/shipping/config が動作しているか確認してください。");
+    showErr("送料設定の読み込みに失敗しました。server-line.js に /api/shipping/config を追加しているか確認してください。");
     document.getElementById("sourcePill").textContent = "送料：読込失敗";
   }
 }
@@ -132,29 +127,68 @@ function showErr(msg){
 }
 
 /* ======================
-   サイズ判定（サーバー設定に従う）
+   ここから “server-line.js と同じ判定関数”
 ====================== */
-function detectSize(productId, qty){
-  const rules = SHIPPING_CONFIG?.sizeRules;
-  if (!rules) return 60;
+function sizeFromOriginalSetQty(qty){
+  const q = Number(qty) || 0;
+  if (q <= 0) return null;
+  if (q === 1) return "80";
+  if (q === 2) return "100";
+  if (q <= 4) return "120";
+  if (q <= 6) return "140";
+  return "160";
+}
+// ※server-lineコメント通り「個数」で判定
+function sizeFromTotalQty(totalQty){
+  const q = Number(totalQty) || 0;
+  if (q <= 1) return "60";
+  if (q === 2) return "80";
+  if (q === 3) return "100";
+  if (q <= 4) return "120";
+  if (q <= 6) return "140";
+  return "160";
+}
+function maxSize(a,b){
+  const order = CFG.sizeOrder || ["60","80","100","120","140","160"];
+  if (!a) return b;
+  if (!b) return a;
+  return order.indexOf(a) >= order.indexOf(b) ? a : b;
+}
+function calcYamatoShipping(region, size){
+  if (!region) return 0;
+  const table = (CFG.yamatoChubuTaxed || {})[String(size)] || null;
+  if (!table) return 0;
+  return Number(table[region] || 0);
+}
 
-  // 商品別固定
-  const per = rules.perProduct?.[productId];
-  if (per?.fixedSize) return Number(per.fixedSize);
+// server-line と同じ「オリジナルセット判定」
+// - id が ORIGINAL_SET_PRODUCT_ID と一致
+// - もしくは 名前が /磯屋.?オリジナルセ/ に一致
+function isOriginalItem(item){
+  const id = String(item.id || "").trim();
+  const name = String(item.name || "").trim();
+  const byId = (id && CFG.originalSetProductId && id === String(CFG.originalSetProductId));
+  const byName = /磯屋.?オリジナルセ/.test(name);
+  return byId || byName;
+}
 
-  // defaultルール
-  const arr = rules.default || [];
-  for (const r of arr){
-    if (qty <= Number(r.maxQty)) return Number(r.size);
-  }
-  return 60;
+function calcShippingUnified(items, region){
+  const totalQty = items.reduce((s,it)=>s + Number(it.qty||0), 0);
+  const originalQty = items.reduce((s,it)=> s + (isOriginalItem(it) ? Number(it.qty||0) : 0), 0);
+
+  const sizeA = sizeFromOriginalSetQty(originalQty);
+  const sizeB = sizeFromTotalQty(totalQty);
+  const size  = maxSize(sizeA, sizeB);
+
+  const shipping = calcYamatoShipping(region, size);
+  return { region, size, shipping, totalQty, originalQty };
 }
 
 /* ======================
-   計算
+   計算表示
 ====================== */
 function calc(){
-  if (!SHIPPING_CONFIG) return;
+  if (!CFG) return;
 
   const p = PRODUCTS.find(x=>x.id===productSel.value);
   const qty = Math.max(1, Number(qtyInput.value||1));
@@ -162,15 +196,16 @@ function calc(){
 
   const itemTotal = p.price * qty;
 
-  const size = detectSize(p.id, qty);
-  const feeTable = SHIPPING_CONFIG.feesBySize?.[size] || SHIPPING_CONFIG.feesBySize?.[String(size)];
-  const shipping = (feeTable && feeTable[region]) ? Number(feeTable[region]) : 0;
+  // 1商品だけの想定（ページ用途に合わせて）
+  const items = [{ id: p.id, name: p.name, qty }];
 
-  const grand = itemTotal + shipping;
+  const r = calcShippingUnified(items, region);
+  const grand = itemTotal + r.shipping;
 
-  document.getElementById("sizePill").textContent = `サイズ：${size}`;
+  document.getElementById("sizePill").textContent = `サイズ：${r.size}`;
+  document.getElementById("regionPill").textContent = `地域：${r.region || "-"}`;
   document.getElementById("itemTotal").textContent = itemTotal.toLocaleString()+"円";
-  document.getElementById("shippingFee").textContent = shipping.toLocaleString()+"円";
+  document.getElementById("shippingFee").textContent = r.shipping.toLocaleString()+"円";
   document.getElementById("grandTotal").textContent = grand.toLocaleString()+"円";
 }
 </script>

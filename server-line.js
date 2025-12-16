@@ -719,12 +719,12 @@ function calcShippingUnified(items = [], address = {}) {
 
   const totalQty = items.reduce((s, it) => s + Number(it.qty || 0), 0);
 
-  // あかしゃシリーズの合計個数
-  const akashaQty = items.reduce((s, it) => {
-    return s + (isAkashaSeries(it) ? Number(it.qty || 0) : 0);
+  // 6商品（あかしゃ指定）の合計個数
+  const akasha6Qty = items.reduce((s, it) => {
+    return s + (isAkasha6(it) ? Number(it.qty || 0) : 0);
   }, 0);
 
-  // オリジナルセット個数
+  // オリジナルセット個数（既存）
   const originalQty = items.reduce((s, it) => {
     return s + (
       it.id === ORIGINAL_SET_PRODUCT_ID ||
@@ -734,16 +734,17 @@ function calcShippingUnified(items = [], address = {}) {
     );
   }, 0);
 
-  // サイズ判定（優先順位）
-  const sizeAkasha  = akashaQty > 0 ? sizeFromAkashaQty(akashaQty) : null;
-  const sizeOrig    = sizeFromOriginalSetQty(originalQty);
-  const sizeTotal   = sizeFromTotalQty(totalQty);
-
-  // 最大サイズを採用
-  const size = maxSize(maxSize(sizeAkasha, sizeOrig), sizeTotal);
+  // ★優先順位：6商品 → オリジナルセット → それ以外（合計個数）
+  let size;
+  if (akasha6Qty > 0) {
+    size = sizeFromAkasha6Qty(akasha6Qty);
+  } else if (originalQty > 0) {
+    size = sizeFromOriginalSetQty(originalQty);
+  } else {
+    size = sizeFromTotalQty(totalQty);
+  }
 
   const shipping = calcYamatoShipping(region, size);
-
   return { region, size, shipping };
 }
 

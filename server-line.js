@@ -758,6 +758,26 @@ function calcDeliveryForSingleItem(product, qty, address) {
 
   return { region, size, shipping, isOriginal };
 }
+// ====== フロント表示用：送料設定を返す（server-line と完全一致） ======
+app.get("/api/shipping/config", (_req, res) => {
+  return res.json({
+    ok: true,
+    config: {
+      origin: "yamato_chubu_taxed",
+      originalSetProductId: ORIGINAL_SET_PRODUCT_ID,
+      sizeOrder: SIZE_ORDER, // ["60","80","100","120","140","160"]
+      yamatoChubuTaxed: YAMATO_CHUBU_TAXED, // 送料表そのもの
+      // 参考として “判定ロジック情報” も返す（フロントは同じ関数を実装する）
+      rules: {
+        totalQty: "1=>60, 2=>80, 3=>100, 4=>120, 5-6=>140, 7+=>160",
+        originalSetQty: "1=>80, 2=>100, 3-4=>120, 5-6=>140, 7+=>160",
+        note: "final size = max(sizeFromOriginalSetQty, sizeFromTotalQty)",
+      },
+      // 地域一覧（表のキーから作る）
+      regions: Object.keys(YAMATO_CHUBU_TAXED["60"] || {}),
+    },
+  });
+});
 
 // ====== ミニアプリ用：送料計算 API ======
 app.post("/api/shipping", (req, res) => {

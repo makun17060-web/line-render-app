@@ -6,61 +6,15 @@
 <title>送料計算（ヤマト運輸）</title>
 
 <style>
-  body {
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    background: #f7f7f7;
-    margin: 0;
-    padding: 16px;
-    color: #333;
-  }
-  .wrap {
-    max-width: 720px;
-    margin: 0 auto;
-  }
-  h1 {
-    font-size: 20px;
-    margin-bottom: 12px;
-  }
-  .card {
-    background: #fff;
-    border-radius: 12px;
-    padding: 14px;
-    margin-bottom: 12px;
-    box-shadow: 0 1px 3px rgba(0,0,0,.08);
-  }
-  label {
-    font-size: 14px;
-    font-weight: 700;
-    display: block;
-    margin-bottom: 4px;
-  }
-  select, input {
-    width: 100%;
-    padding: 10px;
-    font-size: 15px;
-    border-radius: 8px;
-    border: 1px solid #ccc;
-  }
-  button {
-    width: 100%;
-    padding: 12px;
-    font-size: 16px;
-    border: 0;
-    border-radius: 10px;
-    background: #0b3a53;
-    color: #fff;
-    font-weight: 700;
-    cursor: pointer;
-  }
-  .result {
-    font-size: 16px;
-    line-height: 1.7;
-  }
-  .note {
-    font-size: 13px;
-    color: #666;
-    line-height: 1.6;
-  }
+  body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:#f7f7f7; margin:0; padding:16px; color:#333; }
+  .wrap { max-width:720px; margin:0 auto; }
+  h1 { font-size:20px; margin-bottom:12px; }
+  .card { background:#fff; border-radius:12px; padding:14px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+  label { font-size:14px; font-weight:700; display:block; margin-bottom:4px; }
+  select, input { width:100%; padding:10px; font-size:15px; border-radius:8px; border:1px solid #ccc; }
+  button { width:100%; padding:12px; font-size:16px; border:0; border-radius:10px; background:#0b3a53; color:#fff; font-weight:700; cursor:pointer; }
+  .result { font-size:16px; line-height:1.7; }
+  .note { font-size:13px; color:#666; line-height:1.6; }
 </style>
 </head>
 
@@ -86,8 +40,17 @@
   </select>
 </div>
 
+<!-- ★追加：商品種別プルダウン -->
 <div class="card">
-  <label>あかしゃシリーズ 合計袋数</label>
+  <label>商品種別</label>
+  <select id="productType">
+    <option value="akasha">あかしゃシリーズ</option>
+    <option value="original">磯屋オリジナルセット</option>
+  </select>
+</div>
+
+<div class="card">
+  <label id="qtyLabel">あかしゃシリーズ 合計袋数</label>
   <input type="number" id="qty" min="1" max="99" placeholder="例：6" />
 </div>
 
@@ -99,7 +62,7 @@
   <div id="result" class="result">―</div>
 </div>
 
-<div class="card note">
+<div class="card note" id="noteBox">
   対象商品：のりあかしゃ／うずあかしゃ／潮あかしゃ／ごまあかしゃ／いそあかしゃ／松あかしゃ<br>
   ※ あかしゃシリーズのみ対象です（他商品は含まれません）。
 </div>
@@ -111,11 +74,13 @@
 // ヤマト 中部発 送料（税込）
 // ================================
 const YAMATO_CHUBU_TAXED = {
-  "60":  { 北海道:1610, 東北:1190, 関東:940, 中部:940, 近畿:940, 中国:1060, 四国:1060, 九州:1190, 沖縄:1460 },
+  "60":  { 北海道:1610, 東北:1190, 関東: 940, 中部: 940, 近畿: 940, 中国:1060, 四国:1060, 九州:1190, 沖縄:1460 },
   "80":  { 北海道:1900, 東北:1480, 関東:1230, 中部:1230, 近畿:1230, 中国:1350, 四国:1350, 九州:1480, 沖縄:2070 },
   "100": { 北海道:2200, 東北:1790, 関東:1530, 中部:1530, 近畿:1530, 中国:1650, 四国:1650, 九州:1790, 沖縄:2710 },
   "120": { 北海道:2780, 東北:2310, 関東:2040, 中部:2040, 近畿:2040, 中国:2170, 四国:2170, 九州:2310, 沖縄:3360 },
-  "140": { 北海道:3440, 東北:2930, 関東:2630, 中部:2630, 近畿:2630, 中国:2780, 四国:2780, 九州:2930, 沖縄:4030 }
+  "140": { 北海道:3440, 東北:2930, 関東:2630, 中部:2630, 近畿:2630, 中国:2780, 四国:2780, 九州:2930, 沖縄:4030 },
+  // ★追加：オリジナルセットで使う可能性があるため160も入れる
+  "160": { 北海道:3820, 東北:3320, 関東:3020, 中部:3020, 近畿:3020, 中国:3160, 四国:3160, 九州:3320, 沖縄:4680 }
 };
 
 // ================================
@@ -137,16 +102,49 @@ function detectRegion(pref) {
 // ================================
 // 袋数 → サイズ（あかしゃシリーズ）
 // ================================
-function sizeFromQty(q) {
+function sizeFromAkashaQty(q) {
   if (q <= 4) return "60";
   if (q <= 8) return "80";
   if (q <= 13) return "100";
   if (q <= 18) return "120";
-  return "140";
+  return "140"; // 19袋以上は安全側
+}
+
+// ================================
+// 個数 → サイズ（磯屋オリジナルセット）
+// server-line.js と同じルール：1=>80, 2=>100, 3-4=>120, 5-6=>140, 7+=>160
+// ================================
+function sizeFromOriginalSetQty(q) {
+  if (q === 1) return "80";
+  if (q === 2) return "100";
+  if (q <= 4) return "120";
+  if (q <= 6) return "140";
+  return "160";
 }
 
 function yen(n) {
-  return n.toLocaleString("ja-JP") + "円";
+  return Number(n || 0).toLocaleString("ja-JP") + "円";
+}
+
+// ================================
+// UI切替
+// ================================
+function updateUiByType() {
+  const type = document.getElementById("productType").value;
+  const label = document.getElementById("qtyLabel");
+  const note = document.getElementById("noteBox");
+
+  if (type === "original") {
+    label.textContent = "磯屋オリジナルセット 個数";
+    note.innerHTML =
+      "対象商品：磯屋オリジナルセット<br>" +
+      "※ 個数でサイズ判定します（1=>80 / 2=>100 / 3-4=>120 / 5-6=>140 / 7+=>160）。";
+  } else {
+    label.textContent = "あかしゃシリーズ 合計袋数";
+    note.innerHTML =
+      "対象商品：のりあかしゃ／うずあかしゃ／潮あかしゃ／ごまあかしゃ／いそあかしゃ／松あかしゃ<br>" +
+      "※ あかしゃシリーズのみ対象です（他商品は含まれません）。";
+  }
 }
 
 // ================================
@@ -155,21 +153,31 @@ function yen(n) {
 function calc() {
   const pref = document.getElementById("pref").value;
   const qty  = Number(document.getElementById("qty").value);
+  const type = document.getElementById("productType").value;
 
   if (!pref || !qty) {
-    document.getElementById("result").textContent = "都道府県と袋数を入力してください。";
+    document.getElementById("result").textContent = "都道府県と数量を入力してください。";
     return;
   }
 
   const region = detectRegion(pref);
-  const size   = sizeFromQty(qty);
-  const fee    = YAMATO_CHUBU_TAXED[size]?.[region] || 0;
+
+  let size = "";
+  if (type === "original") size = sizeFromOriginalSetQty(qty);
+  else size = sizeFromAkashaQty(qty);
+
+  const fee = YAMATO_CHUBU_TAXED[size]?.[region] || 0;
 
   document.getElementById("result").innerHTML =
+    `商品：<b>${type === "original" ? "磯屋オリジナルセット" : "あかしゃシリーズ"}</b><br>` +
     `配送地域：<b>${region}</b><br>` +
     `サイズ：<b>${size}</b><br>` +
     `送料：<b>${yen(fee)}</b>`;
 }
+
+// init
+document.getElementById("productType").addEventListener("change", updateUiByType);
+updateUiByType();
 </script>
 </body>
 </html>

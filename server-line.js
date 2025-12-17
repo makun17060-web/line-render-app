@@ -56,8 +56,8 @@ function rand4() {
   return String(Math.floor(Math.random() * 10000)).padStart(4, "0");
 }
 
-// ====== 環境変数 ======
-const LIFF_ID = (process.env.LIFF_ID || "2008406620-4QJ06JLv").trim();
+// ====== 環境変数 ==
+const LIFF_ID = (process.env.LIFF_ID || "").trim();
 const LIFF_ID_DIRECT_ADDRESS = (process.env.LIFF_ID_DIRECT_ADDRESS || LIFF_ID).trim();
 const LIFF_ID_SHOP = (process.env.LIFF_ID_SHOP || "").trim();
 

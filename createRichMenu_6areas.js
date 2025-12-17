@@ -71,10 +71,11 @@ const shippingUrl = (SHIPPING_URL || `${baseUrl}/public/shipping.html`).trim();
           bounds: { x: 0, y: 0, width: 833, height: 843 },
           action: { type: "uri", label: "ご注文はこちら", uri: ORDER_LIFF_URL },
         },
-        { // 中央上：商品一覧
-          bounds: { x: 833, y: 0, width: 834, height: 843 },
-          action: { type: "uri", label: "商品一覧", uri: "https://liff.line.me/2008406620-XvqTln6y"},
-        },
+       { // 中央上：商品一覧
+  bounds: { x: 833, y: 0, width: 834, height: 843 },
+  action: { type: "uri", label: "商品一覧", uri: `${baseUrl}/public/shop.html` },
+},
+
         { // 右上：ご利用方法
           bounds: { x: 1667, y: 0, width: 833, height: 843 },
           action: { type: "uri", label: "ご利用方法", uri: "https://liff.line.me/2008406620-QQFfWP1w"},

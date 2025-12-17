@@ -1311,7 +1311,7 @@ app.get("/api/liff/config", (req, res) => {
   return res.json({ ok:true, liffId: LIFF_ID });
 });
 
-  }
+  
 
   if (kind === "order") return res.json({ liffId: LIFF_ID });
   if (kind === "cod")   return res.json({ liffId: LIFF_ID_DIRECT_ADDRESS });

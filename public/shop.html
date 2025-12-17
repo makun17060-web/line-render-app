@@ -5,83 +5,190 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>商品一覧（直接注文）</title>
 
-  <!-- LIFF SDK -->
+  <!-- LIFF SDK（1回だけ） -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
   <style>
-    body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#f6f6f6;margin:0;padding:14px}
+    body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#f6f6f6;color:#222;margin:0;padding:14px}
     .wrap{max-width:980px;margin:0 auto}
-    h1{font-size:18px;margin-bottom:10px}
-    .card{background:#fff;border-radius:12px;padding:12px;margin:10px 0}
-    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
-    .item{border:1px solid #eee;border-radius:12px;padding:10px}
-    .img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:10px}
-    button{width:100%;margin-top:8px;padding:10px;border:0;border-radius:10px;background:#06c755;color:#fff}
-    .muted{font-size:12px;color:#666}
+    h1{font-size:18px;margin:0 0 10px}
+    .card{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:12px;margin:10px 0}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    button{font:inherit;padding:10px 12px;border:0;border-radius:10px;background:#06c755;color:#fff;cursor:pointer}
+    button.secondary{background:#e5e7eb;color:#111}
+    button:disabled{opacity:.5;cursor:not-allowed}
+    .muted{color:#666;font-size:12px;line-height:1.6}
+    .ok{color:#16a34a;font-weight:700}
+    .ng{color:#dc2626;font-weight:700}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-top:10px}
+    .item{border:1px solid #eee;border-radius:12px;padding:10px;background:#fff}
+    .img{width:100%;aspect-ratio:1/1;border-radius:10px;background:#f3f4f6;object-fit:cover}
+    .name{font-weight:700;margin:8px 0 4px}
+    .price{font-size:13px;color:#111}
+    .stock{font-size:12px;color:#666}
+    textarea{width:100%;min-height:120px;border:1px solid #ddd;border-radius:10px;padding:10px}
   </style>
 </head>
 
 <body>
-<div class="wrap">
-  <h1>商品一覧（直接注文）</h1>
+  <div class="wrap">
+    <h1>商品一覧（直接注文）</h1>
 
-  <div class="card">
-    <div id="status" class="muted">LIFF 初期化中…</div>
-  </div>
+    <div class="card">
+      <div class="row">
+        <button id="btnDirect" disabled>LINEに「直接注文」を送る（ボット起動）</button>
+        <button id="btnReload" class="secondary">商品を再読み込み</button>
+      </div>
 
-  <div class="card">
-    <div id="grid" class="grid"></div>
+      <div id="status" class="muted" style="margin-top:10px">初期化中...</div>
+
+      <div class="muted" style="margin-top:10px">
+        ・商品一覧は <span class="mono">/api/products</span> から取得します（server-line.js）<br/>
+        ・「直接注文」は <b>LINEアプリ内（inClient）</b> の時だけ送信できます<br/>
+        ・LIFF ID は <span class="mono">/api/liff/config?kind=shop</span> から取得し、直書きしません<br/>
+      </div>
+    </div>
+
+    <div class="card">
+      <b>商品一覧</b>
+      <div id="grid" class="grid"></div>
+      <div id="empty" class="muted" style="margin-top:10px;display:none">
+        商品がありません。<span class="mono">data/products.json</span> を確認してください。
+      </div>
+    </div>
+
+    <div class="card">
+      <b>デバッグ</b>
+      <div class="muted">（原因特定用）</div>
+      <textarea id="debug" readonly></textarea>
+    </div>
   </div>
-</div>
 
 <script>
-(async () => {
-  const status = (t) => document.getElementById("status").textContent = t;
+(() => {
+  const $ = (id) => document.getElementById(id);
 
-  try {
-    // ★ server-line.js から正しい LIFF_ID を取得
-    const cfgRes = await fetch("/api/liff/config?kind=order");
-    const cfg = await cfgRes.json();
-const LIFF_ID ="2008406620-XvqTln6y";
-    await liff.init({ liffId: cfg.liffId });
+  function log(msg, obj) {
+    const t = new Date().toISOString();
+    const line = obj ? `${t} ${msg}\n${JSON.stringify(obj,null,2)}\n\n` : `${t} ${msg}\n\n`;
+    $("debug").value = line + $("debug").value;
+    console.log(msg, obj || "");
+  }
 
-    status(
-      `LIFF OK / inClient=${liff.isInClient()} / OS=${liff.getOS()}`
-    );
+  function setStatus(msg, obj) {
+    const s = obj ? msg + "\n" + JSON.stringify(obj, null, 2) : msg;
+    $("status").textContent = s;
+  }
 
-    if (!liff.isLoggedIn()) liff.login();
+  function yen(n){ return Number(n||0).toLocaleString("ja-JP") + "円"; }
 
-    // 商品一覧取得
-    const res = await fetch("/api/products");
-    const data = await res.json();
+  async function loadProducts() {
+    try {
+      const r = await fetch("/api/products", { cache: "no-store" });
+      const j = await r.json();
+      log("GET /api/products", j);
 
-    const grid = document.getElementById("grid");
-    grid.innerHTML = "";
+      const products = (j && j.ok && Array.isArray(j.products)) ? j.products : [];
+      const grid = $("grid");
+      grid.innerHTML = "";
 
-    data.products.forEach(p => {
-      const div = document.createElement("div");
-      div.className = "item";
-      div.innerHTML = `
-        <img class="img" src="${p.image || ''}">
-        <div><b>${p.name}</b></div>
-        <div>${p.price}円</div>
-        <button onclick="sendDirect()">直接注文</button>
-      `;
-      grid.appendChild(div);
-    });
+      if (!products.length) {
+        $("empty").style.display = "block";
+        return;
+      }
+      $("empty").style.display = "none";
 
-    window.sendDirect = async () => {
+      for (const p of products) {
+        const el = document.createElement("div");
+        el.className = "item";
+        el.innerHTML = `
+          <img class="img" src="${(p.image||"")}" alt="" onerror="this.style.display='none'">
+          <div class="name">${escapeHtml(p.name||"")}</div>
+          <div class="price">価格：${yen(p.price)}</div>
+          <div class="stock">在庫：${Number(p.stock ?? 0)} 個</div>
+        `;
+        grid.appendChild(el);
+      }
+    } catch (e) {
+      log("loadProducts ERROR", { error: String(e) });
+    }
+  }
+
+  function escapeHtml(s){
+    return String(s||"")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#39;");
+  }
+
+  async function initLiff() {
+    try {
+      if (!window.liff) throw new Error("LIFF SDK not loaded");
+
+      // ★ server から LIFF ID を取る（shop）
+      const cfg = await fetch("/api/liff/config?kind=shop", { cache: "no-store" }).then(r => r.json());
+      log("GET /api/liff/config?kind=shop", cfg);
+
+      const liffId = String(cfg?.liffId || "").trim();
+      if (!liffId) throw new Error("LIFF ID missing (server returned empty)");
+
+      await liff.init({ liffId });
+
+      const info = {
+        liffId,
+        isInClient: liff.isInClient(),
+        os: liff.getOS(),
+        version: liff.getVersion(),
+        language: liff.getLanguage(),
+      };
+      setStatus("LIFF init OK", info);
+      log("LIFF init OK", info);
+
+      // 外部ブラウザでも商品一覧は見せたい → loginは任意
       if (!liff.isInClient()) {
-        alert("LINEアプリ内で開いてください");
+        // ここで login を強制すると PC で見れなくなるので、強制しない
+        $("btnDirect").disabled = true;
+        return;
+      }
+
+      // LINE内だけ「直接注文」送信を有効化
+      $("btnDirect").disabled = false;
+
+    } catch (e) {
+      setStatus("LIFF init ERROR", { message: String(e?.message || e), raw: e });
+      log("LIFF init ERROR", { message: String(e?.message || e), raw: e });
+      $("btnDirect").disabled = true;
+    }
+  }
+
+  async function sendDirectOrder() {
+    try {
+      if (!liff.isInClient()) {
+        alert("LINEアプリ内で開いたときだけ送信できます。");
         return;
       }
       await liff.sendMessages([{ type: "text", text: "直接注文" }]);
-      liff.closeWindow();
-    };
-
-  } catch (e) {
-    status("LIFF 初期化エラー: " + (e.message || e));
+      setStatus("送信しました：直接注文（ボット起動）");
+      log("liff.sendMessages OK", { text: "直接注文" });
+      // 送った後、閉じたいなら next 行を有効化
+      // liff.closeWindow();
+    } catch (e) {
+      setStatus("送信エラー", { message: String(e?.message || e) });
+      log("sendDirectOrder ERROR", { message: String(e?.message || e), raw: e });
+    }
   }
+
+  // init
+  $("btnReload").addEventListener("click", loadProducts);
+  $("btnDirect").addEventListener("click", sendDirectOrder);
+
+  (async () => {
+    await initLiff();
+    await loadProducts();
+  })();
 })();
 </script>
 </body>

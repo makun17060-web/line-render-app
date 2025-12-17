@@ -42,7 +42,7 @@
     // ★ server-line.js から正しい LIFF_ID を取得
     const cfgRes = await fetch("/api/liff/config?kind=order");
     const cfg = await cfgRes.json();
-const LIFF_ID ="2008406620-XvqTln6y";
+const LIFF_ID ="2008406620-G5j1gjzM";
     await liff.init({ liffId: cfg.liffId });
 
     status(

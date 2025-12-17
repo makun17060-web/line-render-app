@@ -59,6 +59,7 @@ function rand4() {
 // ====== 環境変数 ======
 const LIFF_ID = (process.env.LIFF_ID || "2008406620-4QJ06JLv").trim();
 const LIFF_ID_DIRECT_ADDRESS = (process.env.LIFF_ID_DIRECT_ADDRESS || LIFF_ID).trim();
+const LIFF_ID_SHOP = (process.env.LIFF_ID_SHOP || "").trim();
 
 const ADMIN_USER_ID = (process.env.ADMIN_USER_ID || "").trim();
 const MULTICAST_USER_IDS = (process.env.MULTICAST_USER_IDS || "")
@@ -1295,10 +1296,18 @@ app.get("/api/liff/address/me", async (req, res) => {
 
 app.get("/api/liff/config", (req, res) => {
   const kind = (req.query.kind || "order").trim();
+
+  if (kind === "shop") {
+    return res.json({
+      liffId: LIFF_ID_SHOP || LIFF_ID, // LIFF_ID_SHOPが無ければ注文用にフォールバック
+    });
+  }
+
   if (kind === "order") return res.json({ liffId: LIFF_ID });
-  if (kind === "cod") return res.json({ liffId: LIFF_ID_DIRECT_ADDRESS });
+  if (kind === "cod")   return res.json({ liffId: LIFF_ID_DIRECT_ADDRESS });
   return res.json({ liffId: LIFF_ID });
 });
+
 
 // ★危険：公開住所取得API（トークン必須）
 app.get("/api/public/address-by-code", async (req, res) => {

@@ -1297,10 +1297,20 @@ app.get("/api/liff/address/me", async (req, res) => {
 app.get("/api/liff/config", (req, res) => {
   const kind = (req.query.kind || "order").trim();
 
+  app.get("/api/liff/config", (req, res) => {
+  const kind = String(req.query.kind || "order").trim();
+
   if (kind === "shop") {
-    return res.json({
-      liffId: LIFF_ID_SHOP || LIFF_ID, // LIFF_ID_SHOPが無ければ注文用にフォールバック
-    });
+    if (!LIFF_ID_SHOP) return res.status(500).json({ ok:false, error:"LIFF_ID_SHOP_not_set" });
+    return res.json({ ok:true, liffId: LIFF_ID_SHOP });
+  }
+
+  if (kind === "order") return res.json({ ok:true, liffId: LIFF_ID });
+  if (kind === "cod")   return res.json({ ok:true, liffId: LIFF_ID_DIRECT_ADDRESS || LIFF_ID });
+
+  return res.json({ ok:true, liffId: LIFF_ID });
+});
+
   }
 
   if (kind === "order") return res.json({ liffId: LIFF_ID });
@@ -2494,6 +2504,8 @@ app.get("/api/health", async (_req, res) => {
       ONLINE_NOTIFY_TOKEN: !!ONLINE_NOTIFY_TOKEN,
       DATABASE_URL: !!process.env.DATABASE_URL,
       PUBLIC_ADDRESS_LOOKUP_TOKEN: !!PUBLIC_ADDRESS_LOOKUP_TOKEN,
+      LIFF_ID_SHOP: !!process.env.LIFF_ID_SHOP,
+      LIFF_ID_DIRECT_ADDRESS: !!process.env.LIFF_ID_DIRECT_ADDRESS, 
     },
   });
 });

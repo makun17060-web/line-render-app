@@ -2506,6 +2506,9 @@ app.get("/api/health", async (_req, res) => {
       PUBLIC_ADDRESS_LOOKUP_TOKEN: !!PUBLIC_ADDRESS_LOOKUP_TOKEN,
       LIFF_ID_SHOP: !!process.env.LIFF_ID_SHOP,
       LIFF_ID_DIRECT_ADDRESS: !!process.env.LIFF_ID_DIRECT_ADDRESS, 
+      LIFF_ID_SHOP: !!process.env.LIFF_ID_SHOP,
+LIFF_ID_DIRECT_ADDRESS: !!process.env.LIFF_ID_DIRECT_ADDRESS,
+
     },
   });
 });

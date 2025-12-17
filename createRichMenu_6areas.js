@@ -73,7 +73,7 @@ const shippingUrl = (SHIPPING_URL || `${baseUrl}/public/shipping.html`).trim();
         },
        { // 中央上：商品一覧
   bounds: { x: 833, y: 0, width: 834, height: 843 },
-  action: { type: "uri", label: "商品一覧", uri: `${baseUrl}/public/shop.html` },
+  action: { type: "uri", label: "商品一覧", uri: "https://liff.line.me/2008406620-XvqTln6y"},
 },
 
         { // 右上：ご利用方法

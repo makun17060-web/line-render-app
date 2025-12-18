@@ -65,6 +65,9 @@ const LIFF_ID = (process.env.LIFF_ID || "").trim();
 const LIFF_ID_DIRECT_ADDRESS = (process.env.LIFF_ID_DIRECT_ADDRESS || LIFF_ID).trim();
 const LIFF_ID_SHOP = (process.env.LIFF_ID_SHOP || "").trim();
 
+// ★推奨（LIFF openのidToken検証用）：LIFFチャネルID
+const LINE_CHANNEL_ID = (process.env.LINE_CHANNEL_ID || "").trim();
+
 const ADMIN_USER_ID = (process.env.ADMIN_USER_ID || "").trim();
 const MULTICAST_USER_IDS = (process.env.MULTICAST_USER_IDS || "")
   .split(",")
@@ -843,13 +846,43 @@ function toPublicImageUrl(raw) {
 }
 
 // ======================================================================
+// ★LIFF open idToken 検証（任意：LINE_CHANNEL_ID がある時のみ有効）
+// ======================================================================
+async function verifyLineIdToken(idToken) {
+  if (!idToken || !LINE_CHANNEL_ID) return null;
+  try {
+    const params = new URLSearchParams();
+    params.set("id_token", idToken);
+    params.set("client_id", LINE_CHANNEL_ID);
+
+    const r = await fetch("https://api.line.me/oauth2/v2.1/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+    });
+    if (!r.ok) return null;
+
+    const j = await r.json();
+    // j.sub が LINE userId
+    return j?.sub || null;
+  } catch {
+    return null;
+  }
+}
+
+// ======================================================================
 // ★LIFF 起動ログ（セグメント配信用）
 // ======================================================================
 app.post("/api/liff/open", async (req, res) => {
   try {
-    const userId = String(req.body?.userId || "").trim();
     const kindRaw = String(req.body?.kind || "order").trim();
     const kind = kindRaw.slice(0, 32);
+
+    const idToken = String(req.body?.idToken || "").trim();
+    const tokenUserId = await verifyLineIdToken(idToken);
+
+    // idToken があればそれを優先。無ければ従来通り userId。
+    const userId = String(tokenUserId || req.body?.userId || "").trim();
 
     if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
     if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
@@ -2524,6 +2557,7 @@ app.get("/api/health", async (_req, res) => {
       LIFF_ID: !!process.env.LIFF_ID,
       LIFF_ID_DIRECT_ADDRESS: !!process.env.LIFF_ID_DIRECT_ADDRESS,
       LIFF_ID_SHOP: !!process.env.LIFF_ID_SHOP,
+      LINE_CHANNEL_ID: !!process.env.LINE_CHANNEL_ID,
       ADMIN_API_TOKEN: !!ADMIN_API_TOKEN_ENV,
       ADMIN_CODE: !!ADMIN_CODE_ENV,
       BANK_INFO: !!BANK_INFO,

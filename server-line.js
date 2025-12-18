@@ -123,7 +123,10 @@ if (!stripe) {
     "⚠️ STRIPE_SECRET_KEY / STRIPE_SECRET が設定されていません。/api/pay-stripe はエラーになります。"
   );
 }
+
 // ====== パス定義（Render Persistent Disk 対応） ======
+// Render の Disk Mount Path を /var/data にしておく
+// ローカルで /var/data が無い場合は ./data-disk を使う
 const DISK_ROOT =
   (process.env.DISK_ROOT || "").trim() ||
   (fs.existsSync("/var/data") ? "/var/data" : path.join(__dirname, "data-disk"));
@@ -141,12 +144,23 @@ const ADDRESSES_PATH = path.join(DATA_DIR, "addresses.json"); // (旧) 互換・
 const PHONE_ADDRESSES_PATH = path.join(DATA_DIR, "phone-addresses.json");
 const SURVEYS_LOG = path.join(DATA_DIR, "surveys.log");
 const MESSAGES_LOG = path.join(DATA_DIR, "messages.log");
+const SESSIONS_PATH = path.join(DATA_DIR, "sessions.json");
+const NOTIFY_STATE_PATH = path.join(DATA_DIR, "notify_state.json");
+const STOCK_LOG = path.join(DATA_DIR, "stock.log");
+
+// public（HTMLなど）だけはコード内
+const PUBLIC_DIR = path.join(__dirname, "public");
+
 // static
 app.use("/public", express.static(PUBLIC_DIR));
 // ★Disk上の uploads を /uploads で公開（重要）
 app.use("/uploads", express.static(UPLOAD_DIR, { maxAge: "7d" }));
 
-const STOCK_LOG = path.join(DATA_DIR, "stock.log");
+// ====== ディレクトリ自動作成 ======
+if (!fs.existsSync(DISK_ROOT)) fs.mkdirSync(DISK_ROOT, { recursive: true });
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 // public（HTMLなど）だけはコード内
 const PUBLIC_DIR = path.join(__dirname, "public");

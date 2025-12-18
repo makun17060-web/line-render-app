@@ -27,7 +27,6 @@
   await p.query(`CREATE INDEX IF NOT EXISTS idx_message_events_user_id ON message_events(user_id);`);
 
 
-
 "use strict";
 
 require("dotenv").config();
@@ -117,7 +116,7 @@ const DATA_DIR = path.join(__dirname, "data");
 const PRODUCTS_PATH = path.join(DATA_DIR, "products.json");
 const ORDERS_LOG = path.join(DATA_DIR, "orders.log");
 const RESERVATIONS_LOG = path.join(DATA_DIR, "reservations.log");
-const ADDRESSES_PATH = path.join(DATA_DIR, "addresses.json"); // (旧) 互換・参考用
+const ADDRESSES_PATH = path.join(DATA_DIR, "addresses.json"); // 旧互換
 const PHONE_ADDRESSES_PATH = path.join(DATA_DIR, "phone-addresses.json");
 const MESSAGES_LOG = path.join(DATA_DIR, "messages.log");
 const SESSIONS_PATH = path.join(DATA_DIR, "sessions.json");
@@ -177,21 +176,6 @@ const writeNotifyState = (s) => fs.writeFileSync(NOTIFY_STATE_PATH, JSON.stringi
 
 const yen = (n) => `${Number(n || 0).toLocaleString("ja-JP")}円`;
 
-const qstr = (obj) =>
-  Object.entries(obj)
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v === undefined || v === null ? "" : v)}`)
-    .join("&");
-
-const parse = (data) => {
-  const s = data && data.includes("=") ? data : "";
-  const o = {};
-  s.split("&").forEach((kv) => {
-    const [k, v] = kv.split("=");
-    if (k) o[decodeURIComponent(k)] = decodeURIComponent(v || "");
-  });
-  return o;
-};
-
 // ===== 認可 =====
 function bearerToken(req) {
   const h = req.headers?.authorization || req.headers?.Authorization || "";
@@ -222,13 +206,15 @@ function readLogLines(filePath, limit = 100) {
   if (!fs.existsSync(filePath)) return [];
   const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/).filter(Boolean);
   const tail = lines.slice(-Math.min(Number(limit) || 100, lines.length));
-  return tail.map((l) => {
-    try {
-      return JSON.parse(l);
-    } catch {
-      return null;
-    }
-  }).filter(Boolean);
+  return tail
+    .map((l) => {
+      try {
+        return JSON.parse(l);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
 }
 function jstRangeFromYmd(ymd) {
   const s = String(ymd || "");
@@ -532,17 +518,6 @@ async function dbGetAddressByMemberCode(memberCode) {
   return r.rows[0] || null;
 }
 
-async function dbUpsertAddressByMemberCode(memberCode, addr = {}) {
-  const mc = String(memberCode || "").trim();
-  if (!/^\d{4}$/.test(mc)) throw new Error("invalid_memberCode");
-
-  const codes = await dbGetCodesByMemberCode(mc);
-  if (!codes?.user_id) return { ok: false, reason: "memberCode_not_found" };
-
-  await dbUpsertAddressByUserId(codes.user_id, addr);
-  return { ok: true, userId: codes.user_id };
-}
-
 // ======================================================================
 // Flex / 商品 / 在庫
 // ======================================================================
@@ -553,8 +528,6 @@ const PRODUCT_ALIASES = {
   kusuke: "kusuke-250",
   "kusuke-250": "kusuke-250",
 };
-const HIDE_PRODUCT_IDS = new Set(["kusuke-250"]);
-
 function resolveProductId(token) {
   return PRODUCT_ALIASES[token] || token;
 }
@@ -588,15 +561,6 @@ function addStock(productId, delta, actor = "system") {
   writeProducts(products);
   writeStockLog({ action: "add", productId, before, after, delta: d, actor });
   return { before, after };
-}
-async function maybeLowStockAlert(productId, productName, stockNow) {
-  if (stockNow < LOW_STOCK_THRESHOLD && ADMIN_USER_ID) {
-    const msg =
-      `⚠️ 在庫僅少アラート\n商品：${productName}（${productId}）\n` + `残り：${stockNow}個\nしきい値：${LOW_STOCK_THRESHOLD}個`;
-    try {
-      await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg });
-    } catch {}
-  }
 }
 
 // ====== ヤマト送料（中部発・税込） & サイズ自動判定 ======
@@ -774,7 +738,12 @@ app.post("/api/liff/address", async (req, res) => {
     await dbUpsertAddressByUserId(userId, addr);
     const codes = await dbEnsureCodes(userId);
 
-    res.json({ ok: true, memberCode: String(codes.member_code || ""), addressCode: String(codes.address_code || ""), saved: true });
+    res.json({
+      ok: true,
+      memberCode: String(codes.member_code || ""),
+      addressCode: String(codes.address_code || ""),
+      saved: true
+    });
   } catch (e) {
     console.error("/api/liff/address error:", e);
     res.status(500).json({ ok: false, error: e?.message || "server_error" });
@@ -809,7 +778,7 @@ app.get("/api/liff/address/me", async (req, res) => {
   }
 });
 
-// ✅ config は二重定義しない（この1本だけ）
+// ✅ config はこの1本だけ
 app.get("/api/liff/config", (req, res) => {
   const kind = String(req.query.kind || "order").trim();
   if (kind === "shop") {
@@ -971,7 +940,7 @@ app.post("/api/pay-stripe", async (req, res) => {
 });
 
 // ======================================================================
-// 管理API（最小） + ★セグメント配信API
+// 管理API（最小） + セグメント配信API
 // ======================================================================
 app.get("/api/admin/ping", (req, res) => {
   if (!requireAdmin(req, res)) return;
@@ -1081,7 +1050,6 @@ app.delete("/api/admin/images/:name", (req, res) => {
   }
 });
 
-// ✅ ここは「必ず閉じる」：あなたのコードはここが壊れてました
 app.post("/api/admin/products/set-image", (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
@@ -1098,7 +1066,7 @@ app.post("/api/admin/products/set-image", (req, res) => {
   } catch (e) {
     res.status(500).json({ ok: false, error: "save_error" });
   }
-}); // ←✅ここが重要
+});
 
 // ======================================================================
 // ★セグメント抽出（テキスト送信者）
@@ -1115,7 +1083,6 @@ async function segmentTextSenders(days = 30) {
   return (r.rows || []).map((x) => x.user_id).filter(Boolean);
 }
 
-// GET /api/admin/segment/text-senders?days=30
 app.get("/api/admin/segment/text-senders", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
@@ -1131,7 +1098,6 @@ app.get("/api/admin/segment/text-senders", async (req, res) => {
 // ======================================================================
 // ★セグメント抽出（LIFF起動者）
 // ======================================================================
-// GET /api/admin/segment/liff-open?kind=order&days=30
 app.get("/api/admin/segment/liff-open", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
@@ -1159,15 +1125,7 @@ app.get("/api/admin/segment/liff-open", async (req, res) => {
 });
 
 // ======================================================================
-// ★管理：セグメントへ一括Push（自前セグメント配信）
-// POST /api/admin/push/segment
-// body:
-// {
-//   segment: "liff-open" | "text-senders",
-//   kind: "order" (liff-openのみ),
-//   days: 30,
-//   message: { type:"text", text:"..." }
-// }
+// ★管理：セグメントへ一括Push
 // ======================================================================
 app.post("/api/admin/push/segment", async (req, res) => {
   if (!requireAdmin(req, res)) return;
@@ -1234,8 +1192,7 @@ app.post("/webhook", line.middleware(config), async (req, res) => {
 });
 
 // ======================================================================
-// イベント処理（※必要最低限：テキストログ＆会員コード返しだけ残す）
-// あなたの元コードが長大なので、ここは「落ちない・セグメントログが取れる」状態を優先
+// イベント処理（テキストログ＆会員/住所コード返し）
 // ======================================================================
 async function handleEvent(ev) {
   try {
@@ -1253,7 +1210,7 @@ async function handleEvent(ev) {
         );
       } catch {}
 
-      // ✅ message_events（DB：セグメント用）
+      // message_events（DB：セグメント用）
       if (pool) {
         try {
           const id = String(uid || "").trim();
@@ -1275,7 +1232,6 @@ async function handleEvent(ev) {
         try { await client.pushMessage(ADMIN_USER_ID, { type: "text", text: notice }); } catch {}
       }
 
-      // 会員コード
       if (t === "会員コード") {
         if (!pool) {
           await client.replyMessage(ev.replyToken, { type: "text", text: "現在DBが未設定のため会員コードを発行できません（DATABASE_URL未設定）。" });
@@ -1289,7 +1245,6 @@ async function handleEvent(ev) {
         return;
       }
 
-      // 住所コード
       if (t === "住所コード" || t === "住所番号") {
         if (!pool) {
           await client.replyMessage(ev.replyToken, { type: "text", text: "現在DBが未設定のため住所コードを発行できません（DATABASE_URL未設定）。" });
@@ -1363,6 +1318,5 @@ app.get("/api/health", async (_req, res) => {
     console.log(`🚀 Server started on port ${PORT}`);
     console.log("   Webhook: POST /webhook");
     console.log("   Public: /public/*");
-    console.log("   Segment Admin: /public/admin-segment.html");
   });
 })();

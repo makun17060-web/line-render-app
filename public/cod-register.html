@@ -98,6 +98,9 @@
       const API_BASE_RAW = (qs.get("api") || "").trim().replace(/\/+$/, "");
       const API_BASE = API_BASE_RAW || "";
 
+      // ✅ セグメント用：kind を URL で上書きできる（例: ?kind=address）
+      const SEG_KIND = (qs.get("kind") || "order").trim().slice(0, 32);
+
       const statusEl = document.getElementById("statusMsg");
       const saveBtn  = document.getElementById("saveBtn");
       const closeBtn = document.getElementById("closeBtn");
@@ -142,6 +145,25 @@
         return { res, data };
       }
 
+      // ✅ セグメントログ送信（失敗しても止めない）
+      async function logLiffOpen(userId) {
+        if (!userId) return;
+        try {
+          const { res, data } = await fetchJson(apiUrl("/api/liff/open"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId, kind: SEG_KIND }),
+          });
+          if (!res.ok || !data?.ok) {
+            console.warn("liff open log not ok:", res.status, data);
+          } else {
+            console.log("liff open logged:", userId, "kind=", SEG_KIND);
+          }
+        } catch (e) {
+          console.warn("liff open log failed:", e);
+        }
+      }
+
       async function initLiff() {
         setStatus("LIFF 初期化中…", "");
         saveBtn.disabled = true;
@@ -176,24 +198,15 @@
           setStatus("userId取得に失敗しました。LINEアプリ内（LIFF）で開いているか確認してください。", "err");
           return;
         }
-// ✅ LIFF起動ログ（セグメント配信用）
-// 失敗しても画面は止めない（握りつぶし）
-try {
-  await fetch(apiUrl("/api/liff/open"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      userId: lineUserId,
-      kind: "order" // 住所登録も order に寄せて「注文導線」セグメントに統一
-      // 分けたいなら kind:"address" にしてOK
-    }),
-  });
-  console.log("liff open logged:", lineUserId);
-} catch (e) {
-  console.warn("liff open log failed:", e);
-}
 
-        setStatus("userId取得OK。住所を入力して「住所を保存する」を押してください。", "ok");
+        // ✅ ここが追加：起動ログ（セグメント用）
+        // 住所登録を開いたユーザーを liff_open_logs に貯める
+        await logLiffOpen(lineUserId);
+
+        setStatus(
+          `userId取得OK（kind=${SEG_KIND}）。住所を入力して「住所を保存する」を押してください。`,
+          "ok"
+        );
         saveBtn.disabled = false;
 
         // 既存住所の読み込み（任意）

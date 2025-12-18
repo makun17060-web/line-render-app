@@ -28,7 +28,7 @@
       msg_type TEXT NOT NULL,
       text_len INT DEFAULT 0
     );
-  `);
+  
   await p.query(`CREATE INDEX IF NOT EXISTS idx_message_events_ts ON message_events(ts DESC);`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_message_events_user_id ON message_events(user_id);`);
 

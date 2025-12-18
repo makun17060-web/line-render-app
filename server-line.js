@@ -164,7 +164,7 @@ if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 
 // public（HTMLなど）だけはコード内
-const PUBLIC_DIR = path.join(__dirname, "public");
+
 
 // static
 app.use("/public", express.static(PUBLIC_DIR));

@@ -125,7 +125,7 @@ if (!stripe) {
 }
 // ====== パス定義 ======
 const DATA_DIR = path.join(__dirname, "data");
-...
+
 const PUBLIC_DIR = path.join(__dirname, "public");
 const UPLOAD_DIR = path.join(PUBLIC_DIR, "uploads");
 

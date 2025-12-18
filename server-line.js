@@ -892,24 +892,20 @@ function toPublicImageUrl(raw) {
   let s = String(raw).trim();
   if (!s) return "";
 
-  // 完全URLはそのまま
   if (/^https?:\/\//i.test(s)) return s;
-
-  // 既に /uploads/... ならそのまま
   if (s.startsWith("/uploads/")) return s;
 
-  // 過去互換：/public/uploads/... → /uploads/...
   if (s.startsWith("/public/uploads/")) {
     return s.replace(/^\/public\/uploads\//, "/uploads/");
   }
 
-  // ファイル名だけの場合
   let fname = s;
   const lastSlash = s.lastIndexOf("/");
   if (lastSlash >= 0) fname = s.slice(lastSlash + 1);
 
   return `/uploads/${fname}`;
 }
+
 
 
 // ====== Flex（商品一覧） ======

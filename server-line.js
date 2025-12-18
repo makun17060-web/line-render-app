@@ -124,23 +124,13 @@ if (!stripe) {
   );
 }
 
-// ====== パス定義（Render Persistent Disk 対応） ======
-// Render の Disk Mount Path を /var/data に設定している前提
-// ローカルでは /var/data が無いので ./data-disk を使う
-const DISK_ROOT =
-  (process.env.DISK_ROOT || "").trim() ||
-  (fs.existsSync("/var/data") ? "/var/data" : path.join(__dirname, "data-disk"));
-
-// JSON / ログ類（再デプロイでも消えない）
-const DATA_DIR = path.join(DISK_ROOT, "data");
-
-// 商品画像（再デプロイでも消えない）
-const UPLOAD_DIR = path.join(DISK_ROOT, "uploads");
+// ====== パス定義 ======
+const DATA_DIR = path.join(__dirname, "data");
 
 const PRODUCTS_PATH = path.join(DATA_DIR, "products.json");
 const ORDERS_LOG = path.join(DATA_DIR, "orders.log");
 const RESERVATIONS_LOG = path.join(DATA_DIR, "reservations.log");
-const ADDRESSES_PATH = path.join(DATA_DIR, "addresses.json");
+const ADDRESSES_PATH = path.join(DATA_DIR, "addresses.json"); // (旧) 互換・参考用
 const PHONE_ADDRESSES_PATH = path.join(DATA_DIR, "phone-addresses.json");
 const SURVEYS_LOG = path.join(DATA_DIR, "surveys.log");
 const MESSAGES_LOG = path.join(DATA_DIR, "messages.log");
@@ -148,49 +138,16 @@ const SESSIONS_PATH = path.join(DATA_DIR, "sessions.json");
 const NOTIFY_STATE_PATH = path.join(DATA_DIR, "notify_state.json");
 const STOCK_LOG = path.join(DATA_DIR, "stock.log");
 
-// public（HTMLなどは今まで通り）
 const PUBLIC_DIR = path.join(__dirname, "public");
+const UPLOAD_DIR = path.join(PUBLIC_DIR, "uploads");
 
 // static
 app.use("/public", express.static(PUBLIC_DIR));
-// ★ Disk上の uploads を /uploads で公開（超重要）
-app.use("/uploads", express.static(UPLOAD_DIR, { maxAge: "7d" }));
 
 // ====== ディレクトリ自動作成 ======
-if (!fs.existsSync(DISK_ROOT)) fs.mkdirSync(DISK_ROOT, { recursive: true });
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-
-
-// public（HTMLなど）だけはコード内
-
-
-// static
-app.use("/public", express.static(PUBLIC_DIR));
-// ★Disk上の uploads を /uploads で公開（重要）
-app.use("/uploads", express.static(UPLOAD_DIR, { maxAge: "7d" }));
-
-// ====== ディレクトリ自動作成 ======
-if (!fs.existsSync(DISK_ROOT)) fs.mkdirSync(DISK_ROOT, { recursive: true });
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
-if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-
-// public（HTMLなど）だけはコード内
-const PUBLIC_DIR = path.join(__dirname, "public");
-
-const STOCK_LOG = path.join(DATA_DIR, "stock.log");
-
-// public はコード内
-const PUBLIC_DIR = path.join(__dirname, "public");
-
-// ====== ディレクトリ自動作成 ======
-if (!fs.existsSync(DISK_ROOT)) fs.mkdirSync(DISK_ROOT, { recursive: true });
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
-if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-
 
 // ====== ページ ======
 app.all("/public/confirm-card-success.html", (_req, res) => {
@@ -902,26 +859,31 @@ res.json({
     res.status(400).json({ ok: false, error: e.message || "shipping_error" });
   }
 });
+
+// ===== 画像URL整形 =====
 function toPublicImageUrl(raw) {
   if (!raw) return "";
   let s = String(raw).trim();
   if (!s) return "";
 
-  if (/^https?:\/\//i.test(s)) return s;
-  if (s.startsWith("/uploads/")) return s;
+  s = s.replace(".onrender.com./", ".onrender.com/");
 
-  if (s.startsWith("/public/uploads/")) {
-    return s.replace(/^\/public\/uploads\//, "/uploads/");
-  }
+  if (/^https?:\/\//i.test(s)) return s;
 
   let fname = s;
   const lastSlash = s.lastIndexOf("/");
   if (lastSlash >= 0) fname = s.slice(lastSlash + 1);
 
-  return `/uploads/${fname}`;
+  const pathPart = `/public/uploads/${fname}`;
+  const hostFromRender =
+    process.env.RENDER_EXTERNAL_HOSTNAME ||
+    (process.env.RENDER_EXTERNAL_URL || "")
+      .replace(/^https?:\/\//, "")
+      .replace(/\/.*$/, "");
+
+  if (hostFromRender) return `https://${hostFromRender}${pathPart}`;
+  return pathPart;
 }
-
-
 
 // ====== Flex（商品一覧） ======
 function productsFlex(allProducts) {
@@ -1953,8 +1915,7 @@ app.post("/api/admin/stock/add", (req, res) => {
 
 app.get("/api/admin/connection-test", (req, res) => {
   if (!requireAdmin(req, res)) return;
- res.json({ ok: true, uploads: true, uploadDir: "/uploads" });
-
+  res.json({ ok: true, uploads: true, uploadDir: "/public/uploads" });
 });
 
 app.post("/api/admin/upload-image", (req, res) => {
@@ -1964,17 +1925,15 @@ app.post("/api/admin/upload-image", (req, res) => {
     if (!req.file) return res.status(400).json({ ok: false, error: "no_file" });
 
     const filename = req.file.filename;
-    const relPath = `/uploads/${filename}`;
+    const relPath = `/public/uploads/${filename}`;
 
-let base = PUBLIC_BASE_URL;
-if (!base) {
-  const proto = req.headers["x-forwarded-proto"] || "https";
-  const host = req.headers.host;
-  base = `${proto}://${host}`;
-}
-const url = `${base}${relPath}`;
-
-res.json({ ok: true, file: filename, url, path: relPath, size: req.file.size, mimetype: req.file.mimetype });
+    let base = PUBLIC_BASE_URL;
+    if (!base) {
+      const proto = req.headers["x-forwarded-proto"] || "https";
+      const host = req.headers.host;
+      base = `${proto}://${host}`;
+    }
+    const url = `${base}${relPath}`;
 
     res.json({ ok: true, file: filename, url, path: relPath, size: req.file.size, mimetype: req.file.mimetype });
   });
@@ -1989,8 +1948,7 @@ app.get("/api/admin/images", (req, res) => {
       .map((name) => {
         const p = path.join(UPLOAD_DIR, name);
         const st = fs.statSync(p);
-   return { name, url: `/uploads/${name}`, path: `/uploads/${name}`, bytes: st.size, mtime: st.mtimeMs };
-
+        return { name, url: `/public/uploads/${name}`, path: `/public/uploads/${name}`, bytes: st.size, mtime: st.mtimeMs };
       })
       .sort((a, b) => b.mtime - a.mtime);
 

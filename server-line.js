@@ -18,19 +18,6 @@
 // ★DBスキーマ（自動作成）
 // - codes(user_id PK, member_code UNIQUE, address_code UNIQUE)
 // - addresses(member_code PK, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at)
-// - phone_address_events（任意ログ）
-  // message_events（テキスト送信者セグメント用）
-  await p.query(`
-    CREATE TABLE IF NOT EXISTS message_events (
-      id BIGSERIAL PRIMARY KEY,
-      ts TIMESTAMPTZ DEFAULT NOW(),
-      user_id TEXT NOT NULL,
-      msg_type TEXT NOT NULL,
-      text_len INT DEFAULT 0
-    );
-  
-  await p.query(`CREATE INDEX IF NOT EXISTS idx_message_events_ts ON message_events(ts DESC);`);
-  await p.query(`CREATE INDEX IF NOT EXISTS idx_message_events_user_id ON message_events(user_id);`);
 
 // - ★liff_open_logs（セグメント配信用）
   // ===== テキスト送信ログ（セグメント配信用） =====

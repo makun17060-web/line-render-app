@@ -20,8 +20,20 @@
 // - addresses(member_code PK, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at)
 // - phone_address_events（任意ログ）
 // - ★liff_open_logs（セグメント配信用）
-//
-// ================================================================
+  // ===== テキスト送信ログ（セグメント配信用） =====
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS message_events (
+      id BIGSERIAL PRIMARY KEY,
+      ts TIMESTAMPTZ DEFAULT NOW(),
+      user_id TEXT NOT NULL,
+      msg_type TEXT NOT NULL,
+      text_len INT DEFAULT 0
+    );
+  `);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_message_events_ts ON message_events(ts DESC);`);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_message_events_user_id ON message_events(user_id);`);
+
+
 
 "use strict";
 
@@ -1935,7 +1947,45 @@ app.post("/api/admin/products/set-image", (req, res) => {
   } catch (e) {
     res.status(500).json({ ok: false, error: "save_error" });
   }
+  async function segmentTextSenders(days = 30) {
+  const d = Math.max(1, Math.min(365, Number(days) || 30));
+  const set = new Set();
+
+  // DB優先
+  if (pool) {
+    const r = await mustPool().query(
+      `SELECT DISTINCT user_id
+         FROM message_events
+        WHERE ts >= NOW() - ($1 || ' days')::interval`,
+      [String(d)]
+    );
+    r.rows.forEach(row => row.user_id && set.add(row.user_id));
+    return Array.from(set);
+  }
+
+  return [];
+}
+// ===== セグメント：テキスト送信者 =====
+// GET /api/admin/segment/text-senders?days=30
+app.get("/api/admin/segment/text-senders", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const days = Number(req.query.days || 30);
+    const items = await segmentTextSenders(days);
+    res.json({
+      ok: true,
+      segment: "text_senders",
+      days,
+      count: items.length,
+      items
+    });
+  } catch (e) {
+    console.error("segment text-senders error:", e);
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
 });
+
+
 
 // ======================================================================
 // ★管理：LIFF起動セグメント対象 userId 取得
@@ -2048,6 +2098,21 @@ async function handleEvent(ev) {
           "utf8"
         );
       } catch {}
+// ★追加：DBにも保存（セグメント配信用）
+if (pool) {
+  try {
+    const uid = String(ev.source?.userId || "").trim();
+    if (uid) {
+      await mustPool().query(
+        `INSERT INTO message_events (user_id, msg_type, text_len)
+         VALUES ($1,$2,$3)`,
+        [uid, "text", Number((ev.message.text || "").length || 0)]
+      );
+    }
+  } catch (e) {
+    console.warn("message_events insert skipped:", e?.message || e);
+  }
+}
 
       const sessions = readSessions();
       const uid = ev.source?.userId || "";

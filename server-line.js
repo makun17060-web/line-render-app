@@ -358,6 +358,17 @@ async function ensureDbSchema() {
   `);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_phone_address_events_member_code ON phone_address_events(member_code);`);
 }
+  // ★LIFF 起動ログ（セグメント配信用）
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS liff_open_logs (
+      id BIGSERIAL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      opened_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_liff_open_logs_kind_time ON liff_open_logs(kind, opened_at DESC);`);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_liff_open_logs_user ON liff_open_logs(user_id);`);
 
 // ======================================================================
 // codes / addresses DB関数（一本化）
@@ -583,6 +594,33 @@ async function dbGetAddressByMemberCode(memberCode) {
   );
   return r.rows[0] || null;
 }
+// ======================================================================
+// ★LIFF 起動ログ（セグメント配信用）
+// - LIFF起動時にフロントから userId + kind を送って保存する
+// ======================================================================
+app.post("/api/liff/open", async (req, res) => {
+  try {
+    const userId = String(req.body?.userId || "").trim();
+    const kindRaw = String(req.body?.kind || "order").trim();
+    const kind = kindRaw.slice(0, 32); // 長すぎ事故防止
+
+    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
+    if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
+
+    await mustPool().query(
+      `INSERT INTO liff_open_logs (user_id, kind) VALUES ($1,$2)`,
+      [userId, kind]
+    );
+
+    // ついでに codes を確保しておく（後々便利：会員コード/住所コードの発行がスムーズ）
+    try { await dbEnsureCodes(userId); } catch {}
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("/api/liff/open error:", e);
+    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
+  }
+});
 
 // ★電話住所を memberCode で addresses(DB) に反映
 async function dbUpsertAddressByMemberCode(memberCode, addr = {}) {
@@ -1769,6 +1807,84 @@ app.get("/api/admin/orders", (req, res) => {
   if (req.query.from || req.query.to) range = { from: req.query.from, to: req.query.to };
   if (range.from || range.to) items = filterByIsoRange(items, (x) => x.ts, range.from, range.to);
   res.json({ ok: true, items });
+});
+// ======================================================================
+// ★管理：LIFF起動セグメントの対象 userId を取得
+// 例) /api/admin/segment/liff-open?kind=order&days=30
+// ======================================================================
+app.get("/api/admin/segment/liff-open", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    if (!pool) return res.json({ ok: true, items: [] });
+
+    const kind = String(req.query.kind || "order").trim().slice(0, 32);
+    const days = Math.min(365, Math.max(1, Number(req.query.days || 30)));
+
+    const r = await mustPool().query(
+      `
+      SELECT DISTINCT user_id
+      FROM liff_open_logs
+      WHERE kind = $1
+        AND opened_at >= NOW() - ($2 || ' days')::interval
+      ORDER BY user_id ASC
+      `,
+      [kind, String(days)]
+    );
+
+    return res.json({ ok: true, kind, days, count: r.rows.length, items: r.rows.map(x => x.user_id) });
+  } catch (e) {
+    console.error("/api/admin/segment/liff-open error:", e);
+    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
+  }
+});
+// ======================================================================
+// ★管理：LIFF起動者セグメントへ一括Push（自前セグメント配信）
+// POST /api/admin/push/segment
+// body: { kind:"order", days:30, message:{type:"text",text:"..."} }
+// ======================================================================
+app.post("/api/admin/push/segment", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
+
+    const kind = String(req.body?.kind || "order").trim().slice(0, 32);
+    const days = Math.min(365, Math.max(1, Number(req.body?.days || 30)));
+
+    const message = req.body?.message;
+    if (!message || !message.type) {
+      return res.status(400).json({ ok: false, error: "message required" });
+    }
+
+    const r = await mustPool().query(
+      `
+      SELECT DISTINCT user_id
+      FROM liff_open_logs
+      WHERE kind = $1
+        AND opened_at >= NOW() - ($2 || ' days')::interval
+      `,
+      [kind, String(days)]
+    );
+
+    const ids = r.rows.map(x => x.user_id).filter(Boolean);
+
+    let okCount = 0;
+    let ngCount = 0;
+
+    // pushはレート制限があるので少しずつ（安全運用）
+    for (const uid of ids) {
+      try {
+        await client.pushMessage(uid, message);
+        okCount++;
+      } catch (e) {
+        ngCount++;
+      }
+    }
+
+    return res.json({ ok: true, kind, days, target: ids.length, pushed: okCount, failed: ngCount });
+  } catch (e) {
+    console.error("/api/admin/push/segment error:", e?.response?.data || e);
+    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
+  }
 });
 
 app.get("/api/admin/orders/shipped", (req, res) => {

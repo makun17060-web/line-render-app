@@ -176,6 +176,22 @@
           setStatus("userId取得に失敗しました。LINEアプリ内（LIFF）で開いているか確認してください。", "err");
           return;
         }
+// ✅ LIFF起動ログ（セグメント配信用）
+// 失敗しても画面は止めない（握りつぶし）
+try {
+  await fetch(apiUrl("/api/liff/open"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      userId: lineUserId,
+      kind: "order" // 住所登録も order に寄せて「注文導線」セグメントに統一
+      // 分けたいなら kind:"address" にしてOK
+    }),
+  });
+  console.log("liff open logged:", lineUserId);
+} catch (e) {
+  console.warn("liff open log failed:", e);
+}
 
         setStatus("userId取得OK。住所を入力して「住所を保存する」を押してください。", "ok");
         saveBtn.disabled = false;

@@ -242,7 +242,7 @@
     </div>
     <div class="info">
       ・「発送通知」ボタンは1回押すと「通知済み」になり、再読み込みしても有効です（同じブラウザでのみ有効）。<br/>
-      ・「明細印字」ボタンで1件ずつ A4 縦の簡易納品書（印刷ダイアログ）が開きます。<br/>
+      ・「明細印字」ボタンで1件ずつ A4 縦の注文明細書（印刷ダイアログ）が開きます。<br/>
       ・複数PCで管理する場合は、サーバー側に発送済みフラグを保存するAPIも用意すると安全です。
     </div>
   </div>
@@ -387,9 +387,7 @@
       function orderItemsText(o) {
         const items = buildItemsArray(o);
         if (!items.length) return "（内容不明）";
-        return items
-          .map((it) => `・${it.name} x ${it.qty}`)
-          .join("\n");
+        return items.map((it) => `・${it.name} x ${it.qty}`).join("\n");
       }
 
       function orderTotalText(o) {
@@ -419,25 +417,37 @@
           line2 || "",
           name ? `氏名：${name}` : "",
           tel ? `TEL：${tel}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n");
+        ].filter(Boolean).join("\n");
       }
 
       // 明細印字用：アイテム配列を統一的に作る
       function buildItemsArray(o) {
         if (Array.isArray(o.items) && o.items.length > 0) {
-          return o.items.map((it) => ({
-            name: it.name || it.id || "商品",
-            unitPrice: Number(it.price || 0),
-            qty: Number(it.qty || 0) || 0,
-          }));
+          return o.items.map((it) => {
+            const name = it.name || it.id || "商品";
+            let unitPrice = Number(it.price || 0);
+
+            // ★任意：久助の単価補完（単価が無い場合のみ）
+            if (!unitPrice && /久助/.test(name)) unitPrice = 250;
+
+            return {
+              name,
+              unitPrice,
+              qty: Number(it.qty || 0) || 0,
+            };
+          });
         }
         if (o.productName || o.productId) {
+          let name = o.productName || o.productId;
+          let unitPrice = Number(o.price || o.unitPrice || 0);
+
+          // ★任意：久助の単価補完
+          if (!unitPrice && /久助/.test(name)) unitPrice = 250;
+
           return [
             {
-              name: o.productName || o.productId,
-              unitPrice: Number(o.price || o.unitPrice || 0),
+              name,
+              unitPrice,
               qty: Number(o.qty || 1),
             },
           ];
@@ -455,7 +465,7 @@
           .replace(/'/g, "&#39;");
       }
 
-      // ===== 明細印字 =====
+      // ===== 明細印字（A4・崩れ防止） =====
       function printOrderDetail(o) {
         const w = window.open("", "_blank");
         if (!w) {
@@ -502,7 +512,7 @@
         const itemRows = items.length
           ? items
               .map((it) => {
-                const lineTotal = it.unitPrice * it.qty;
+                const lineTotal = Number(it.unitPrice || 0) * Number(it.qty || 0);
                 return `
               <tr>
                 <td>${escapeHtml(it.name)}</td>
@@ -536,33 +546,27 @@
 <meta charset="UTF-8" />
 <title>注文明細書 - 手造りえびせんべい 磯屋</title>
 <style>
+  /* 画面表示 */
   body {
     font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     margin: 20px;
     color: #333;
   }
-  h1 {
-    font-size: 20px;
-    margin: 0 0 8px;
-  }
-  .shop-name {
-    font-size: 14px;
-    margin-bottom: 16px;
-  }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  .shop-name { font-size: 14px; margin-bottom: 16px; }
   .header-row {
     display: flex;
     justify-content: space-between;
+    gap: 12px;
     align-items: flex-start;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
     font-size: 12px;
   }
-  .order-info, .customer-info {
-    width: 48%;
-  }
+  .order-info, .customer-info { width: 50%; }
   .section-title {
-    font-weight: 600;
-    border-bottom: 1px solid #000;
-    margin-bottom: 4px;
+    font-weight: 700;
+    border-bottom: 2px solid #000;
+    margin: 0 0 6px;
     padding-bottom: 2px;
     font-size: 13px;
   }
@@ -572,34 +576,23 @@
     font-size: 12px;
     margin-top: 8px;
   }
-  th, td {
-    border: 1px solid #000;
-    padding: 4px 6px;
-  }
-  th {
-    background: #f5f5f5;
-  }
-  td.num {
-    text-align: right;
-  }
-  td.label {
-    text-align: right;
-    font-weight: 600;
-  }
-  .totals {
-    margin-top: 10px;
-    width: 50%;
-    margin-left: auto;
-  }
-  .note {
-    margin-top: 16px;
-    font-size: 11px;
-  }
+  th, td { border: 1px solid #000; padding: 5px 6px; }
+  th { background: #f5f5f5; }
+  td.num { text-align: right; }
+  td.label { text-align: right; font-weight: 700; }
+  .totals { margin-top: 10px; width: 55%; margin-left: auto; }
+  .note { margin-top: 14px; font-size: 11px; }
 
+  /* 印刷設定（A4固定） */
+  @page {
+    size: A4 portrait;
+    margin: 10mm 10mm 12mm 10mm;
+  }
   @media print {
-    body {
-      margin: 10mm;
-    }
+    body { margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    table { page-break-inside: auto; }
+    tr, td, th { page-break-inside: avoid; }
+    .header-row { page-break-inside: avoid; }
   }
 </style>
 </head>
@@ -664,9 +657,15 @@
         doc.open();
         doc.write(html);
         doc.close();
+
         w.focus();
-        // 自動で印刷ダイアログを開く（不要ならコメントアウト）
-        w.print();
+
+        // ★重要：描画完了後に印刷（崩れ防止）
+        w.onload = () => {
+          w.print();
+          // 印刷後に閉じたい場合は有効化
+          // w.close();
+        };
       }
 
       async function loadOrders() {
@@ -800,9 +799,6 @@
               "商品到着まで今しばらくお待ちくださいませ。";
 
             try {
-              // server-line.js 側で:
-              // POST /api/admin/orders/notify-shipped?token=...
-              // body: { userId, orderKey, message }
               await apiFetch("/api/admin/orders/notify-shipped", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -814,10 +810,7 @@
               });
 
               const st = loadShipState();
-              st[key] = {
-                status: "ok",
-                ts: new Date().toISOString(),
-              };
+              st[key] = { status: "ok", ts: new Date().toISOString() };
               saveShipState(st);
 
               btn.textContent = "通知済み";
@@ -852,7 +845,6 @@
           tdNotify.appendChild(keyDiv);
 
           tr.appendChild(tdNotify);
-
           ordersTbody.appendChild(tr);
         });
       }
@@ -909,12 +901,7 @@
           }
           segmentResultEl.textContent = text;
 
-          // 後で send に使えるよう、window に持たせる
-          window.__segmentLastResult = {
-            type,
-            date,
-            userIds: ids,
-          };
+          window.__segmentLastResult = { type, date, userIds: ids };
         } catch (e) {
           console.error("segment preview error:", e);
           segmentSummaryEl.textContent = "プレビュー中にエラーが発生しました：" + e.message;
@@ -973,7 +960,6 @@
 
       // ===== 初期化 =====
       document.addEventListener("DOMContentLoaded", () => {
-        // トークン復元
         const t = loadAdminToken();
         if (t) adminTokenInput.value = t;
 
@@ -991,14 +977,12 @@
         const d = String(now.getDate()).padStart(2, "0");
         dateFilterInput.value = `${y}-${m}-${d}`;
 
-        // 最初に自動ロード（トークンがあれば）
         if (t) {
           loadOrders();
         } else {
           ordersSummaryEl.textContent = "管理トークンを入力して「注文を読み込み」を押してください。";
         }
 
-        // タブ切り替え
         tabs.forEach((tab) => {
           tab.addEventListener("click", () => {
             const name = tab.getAttribute("data-tab");
@@ -1006,7 +990,6 @@
           });
         });
 
-        // セグメントボタン
         segmentPreviewBtn.addEventListener("click", previewSegment);
         segmentSendBtn.addEventListener("click", sendSegment);
       });

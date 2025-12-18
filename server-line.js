@@ -1919,8 +1919,7 @@ app.post("/api/admin/upload-image", (req, res) => {
     if (!req.file) return res.status(400).json({ ok: false, error: "no_file" });
 
     const filename = req.file.filename;
-    const filename = req.file.filename;
-const relPath = `/uploads/${filename}`;
+    const relPath = `/uploads/${filename}`;
 
 let base = PUBLIC_BASE_URL;
 if (!base) {

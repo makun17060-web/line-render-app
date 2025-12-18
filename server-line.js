@@ -60,6 +60,11 @@ function rand4() {
 const LIFF_ID = (process.env.LIFF_ID || "").trim();
 const LIFF_ID_DIRECT_ADDRESS = (process.env.LIFF_ID_DIRECT_ADDRESS || LIFF_ID).trim();
 const LIFF_ID_SHOP = (process.env.LIFF_ID_SHOP || "").trim();
+// ====== LIFF 起動イベント（セグメント用） ======
+const LIFF_EVENT_TOKEN = (process.env.LIFF_EVENT_TOKEN || "").trim();
+const LIFF_SEGMENT_TAG_ANY   = (process.env.LIFF_SEGMENT_TAG_ANY   || "liff_opened_any").trim();
+const LIFF_SEGMENT_TAG_ORDER = (process.env.LIFF_SEGMENT_TAG_ORDER || "liff_opened_order").trim();
+const LIFF_SEGMENT_TAG_SHOP  = (process.env.LIFF_SEGMENT_TAG_SHOP  || "liff_opened_shop").trim();
 
 const ADMIN_USER_ID = (process.env.ADMIN_USER_ID || "").trim();
 const MULTICAST_USER_IDS = (process.env.MULTICAST_USER_IDS || "")
@@ -263,6 +268,51 @@ function filterByIsoRange(items, getTs, fromIso, toIso) {
 
 // ====== ★LINE client（1回だけ生成） ======
 const client = new line.Client(config);
+// ======================================================================
+// ★ LINE Audience API（LIFF起動 → セグメント化）
+// ======================================================================
+async function callLineApi(path, method = "GET", body = null) {
+  const url = `https://api.line.me${path}`;
+  const headers = {
+    Authorization: `Bearer ${config.channelAccessToken}`,
+    "Content-Type": "application/json",
+  };
+  const opt = { method, headers };
+  if (body) opt.body = JSON.stringify(body);
+
+  const r = await fetch(url, opt);
+  const text = await r.text();
+  let json = null;
+  try { json = text ? JSON.parse(text) : null; } catch {}
+
+  if (!r.ok) {
+    const msg = json?.message || text || `HTTP ${r.status}`;
+    throw new Error(`LINE API ${method} ${path} failed: ${msg}`);
+  }
+  return json;
+}
+
+// audience作成（ユーザーIDアップロード型）
+async function createUploadAudienceGroup(audienceGroupName, description) {
+  const body = {
+    description,
+    isIfaAudience: false,
+    audiences: [],
+    audienceGroupName,
+  };
+  const res = await callLineApi("/v2/bot/audienceGroup/upload", "POST", body);
+  return res?.audienceGroupId;
+}
+
+// audienceへユーザー追加
+async function addUsersToUploadAudienceGroup(audienceGroupId, userIds, uploadDescription) {
+  const body = {
+    audienceGroupId,
+    uploadDescription,
+    audiences: userIds.map((id) => ({ id })),
+  };
+  await callLineApi("/v2/bot/audienceGroup/upload", "PUT", body);
+}
 
 // ====== ★ LINE 疎通確認 API ======
 app.get("/api/line/ping", async (_req, res) => {
@@ -358,6 +408,28 @@ async function ensureDbSchema() {
   `);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_phone_address_events_member_code ON phone_address_events(member_code);`);
 }
+  // liff_audiences（タグ名 -> audienceGroupId）
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS liff_audiences (
+      tag TEXT PRIMARY KEY,
+      audience_group_id BIGINT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
+  // liff_open_events（起動ログ）
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS liff_open_events (
+      id BIGSERIAL PRIMARY KEY,
+      ts TIMESTAMPTZ DEFAULT NOW(),
+      user_id TEXT,
+      tag TEXT,
+      liff_id TEXT,
+      ua TEXT,
+      ip TEXT
+    );
+  `);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_liff_open_events_user_tag ON liff_open_events(user_id, tag);`);
 
 // ======================================================================
 // codes / addresses DB関数（一本化）
@@ -1384,6 +1456,59 @@ app.post("/api/phone/address-registered", async (req, res) => {
     if (!pool) {
       return res.status(500).json({ ok: false, error: "db_not_configured" });
     }
+// ======================================================================
+// ★ LIFF 起動イベント → Audience（タグ化）
+// ======================================================================
+app.post("/api/liff/opened", async (req, res) => {
+  try {
+    if (!pool) return res.status(500).json({ ok:false });
+
+    const userId = String(req.body?.userId || "").trim();
+    const kind   = String(req.body?.kind || "").trim();
+    if (!userId) return res.status(400).json({ ok:false });
+
+    const tag =
+      kind === "order" ? "liff_opened_order" :
+      kind === "shop"  ? "liff_opened_shop"  :
+      "liff_opened_any";
+
+    // ログ
+    await mustPool().query(
+      `INSERT INTO liff_open_events(user_id, tag, liff_id)
+       VALUES($1,$2,$3)`,
+      [userId, tag, req.body?.liffId || ""]
+    );
+
+    // audience 確保
+    let r = await mustPool().query(
+      `SELECT audience_group_id FROM liff_audiences WHERE tag=$1`,
+      [tag]
+    );
+
+    let audienceGroupId = r.rows[0]?.audience_group_id;
+
+    if (!audienceGroupId) {
+      audienceGroupId = await createUploadAudienceGroup(tag, `auto:${tag}`);
+      await mustPool().query(
+        `INSERT INTO liff_audiences(tag, audience_group_id)
+         VALUES($1,$2)`,
+        [tag, audienceGroupId]
+      );
+    }
+
+    // ユーザー追加
+    await addUsersToUploadAudienceGroup(
+      audienceGroupId,
+      [userId],
+      `liff_opened:${tag}`
+    );
+
+    res.json({ ok:true, tag, audienceGroupId });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok:false });
+  }
+});
 
     // 受信フォーマットは揺れがちなので両対応
     // A) { memberCode, isNew, address:{...} }

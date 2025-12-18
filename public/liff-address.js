@@ -55,6 +55,22 @@ async function initLiffAddress() {
     const prof = await liff.getProfile();
     currentUserId   = prof.userId || "";
     currentUserName = prof.displayName || "";      // ✅ 追加
+    // ✅ LIFF起動ログ（セグメント配信用）
+// 失敗しても住所入力は止めない
+try {
+  await fetch("/api/liff/open", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      userId: currentUserId,
+      kind: "order" // 住所ページでも「order」で統一（必要なら "address" に分けてもOK）
+    }),
+  });
+  console.log("liff open logged");
+} catch (e) {
+  console.warn("liff open log failed:", e);
+}
+
     // ✅ confirm側でも使えるように一応グローバルにも残しておく
     window._lineUserId   = currentUserId;
     window._lineUserName = currentUserName;

@@ -123,26 +123,19 @@ if (!stripe) {
     "⚠️ STRIPE_SECRET_KEY / STRIPE_SECRET が設定されていません。/api/pay-stripe はエラーになります。"
   );
 }
-
 // ====== パス定義 ======
 const DATA_DIR = path.join(__dirname, "data");
-
-const PRODUCTS_PATH = path.join(DATA_DIR, "products.json");
-const ORDERS_LOG = path.join(DATA_DIR, "orders.log");
-const RESERVATIONS_LOG = path.join(DATA_DIR, "reservations.log");
-const ADDRESSES_PATH = path.join(DATA_DIR, "addresses.json"); // (旧) 互換・参考用
-const PHONE_ADDRESSES_PATH = path.join(DATA_DIR, "phone-addresses.json");
-const SURVEYS_LOG = path.join(DATA_DIR, "surveys.log");
-const MESSAGES_LOG = path.join(DATA_DIR, "messages.log");
-const SESSIONS_PATH = path.join(DATA_DIR, "sessions.json");
-const NOTIFY_STATE_PATH = path.join(DATA_DIR, "notify_state.json");
-const STOCK_LOG = path.join(DATA_DIR, "stock.log");
-
+...
 const PUBLIC_DIR = path.join(__dirname, "public");
 const UPLOAD_DIR = path.join(PUBLIC_DIR, "uploads");
 
 // static
 app.use("/public", express.static(PUBLIC_DIR));
+// static（public は従来通り）
+app.use("/public", express.static(PUBLIC_DIR));
+
+// ★Disk上の uploads を /uploads で公開（重要）
+app.use("/uploads", express.static(UPLOAD_DIR, { maxAge: "7d" }));
 
 // ====== ディレクトリ自動作成 ======
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -859,30 +852,30 @@ res.json({
     res.status(400).json({ ok: false, error: e.message || "shipping_error" });
   }
 });
-
-// ===== 画像URL整形 =====
+// ===== 画像URL整形（Disk対応：/uploads を公開URLにする） =====
 function toPublicImageUrl(raw) {
   if (!raw) return "";
   let s = String(raw).trim();
   if (!s) return "";
 
-  s = s.replace(".onrender.com./", ".onrender.com/");
-
+  // 既に http(s) の完全URLならそのまま
   if (/^https?:\/\//i.test(s)) return s;
 
+  // 既に /uploads/... 形式ならそのまま
+  if (s.startsWith("/uploads/")) return s;
+
+  // /public/uploads/... を入れていた過去互換：/uploads に寄せる
+  if (s.startsWith("/public/uploads/")) {
+    return s.replace(/^\/public\/uploads\//, "/uploads/");
+  }
+
+  // ファイル名だけ渡されたケース（"xxx.jpg" など）
   let fname = s;
   const lastSlash = s.lastIndexOf("/");
   if (lastSlash >= 0) fname = s.slice(lastSlash + 1);
 
-  const pathPart = `/public/uploads/${fname}`;
-  const hostFromRender =
-    process.env.RENDER_EXTERNAL_HOSTNAME ||
-    (process.env.RENDER_EXTERNAL_URL || "")
-      .replace(/^https?:\/\//, "")
-      .replace(/\/.*$/, "");
-
-  if (hostFromRender) return `https://${hostFromRender}${pathPart}`;
-  return pathPart;
+  // ここで /uploads/ に統一
+  return `/uploads/${fname}`;
 }
 
 // ====== Flex（商品一覧） ======
@@ -1915,7 +1908,8 @@ app.post("/api/admin/stock/add", (req, res) => {
 
 app.get("/api/admin/connection-test", (req, res) => {
   if (!requireAdmin(req, res)) return;
-  res.json({ ok: true, uploads: true, uploadDir: "/public/uploads" });
+ res.json({ ok: true, uploads: true, uploadDir: "/uploads" });
+
 });
 
 app.post("/api/admin/upload-image", (req, res) => {
@@ -1925,15 +1919,18 @@ app.post("/api/admin/upload-image", (req, res) => {
     if (!req.file) return res.status(400).json({ ok: false, error: "no_file" });
 
     const filename = req.file.filename;
-    const relPath = `/public/uploads/${filename}`;
+    const filename = req.file.filename;
+const relPath = `/uploads/${filename}`;
 
-    let base = PUBLIC_BASE_URL;
-    if (!base) {
-      const proto = req.headers["x-forwarded-proto"] || "https";
-      const host = req.headers.host;
-      base = `${proto}://${host}`;
-    }
-    const url = `${base}${relPath}`;
+let base = PUBLIC_BASE_URL;
+if (!base) {
+  const proto = req.headers["x-forwarded-proto"] || "https";
+  const host = req.headers.host;
+  base = `${proto}://${host}`;
+}
+const url = `${base}${relPath}`;
+
+res.json({ ok: true, file: filename, url, path: relPath, size: req.file.size, mimetype: req.file.mimetype });
 
     res.json({ ok: true, file: filename, url, path: relPath, size: req.file.size, mimetype: req.file.mimetype });
   });
@@ -1948,7 +1945,8 @@ app.get("/api/admin/images", (req, res) => {
       .map((name) => {
         const p = path.join(UPLOAD_DIR, name);
         const st = fs.statSync(p);
-        return { name, url: `/public/uploads/${name}`, path: `/public/uploads/${name}`, bytes: st.size, mtime: st.mtimeMs };
+   return { name, url: `/uploads/${name}`, path: `/uploads/${name}`, bytes: st.size, mtime: st.mtimeMs };
+
       })
       .sort((a, b) => b.mtime - a.mtime);
 

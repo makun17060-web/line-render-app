@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>磯屋｜セグメント配信 管理</title>
+  <style>
+    :root { --bg:#f6f7fb; --card:#fff; --line:#e7e7ef; --txt:#111; --muted:#666; }
+    body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--txt); }
+    header{ padding:14px 16px; background:#111; color:#fff; }
+    header h1{ font-size:16px; margin:0; }
+    main{ padding:14px; max-width:1100px; margin:0 auto; }
+    .grid{ display:grid; gap:12px; grid-template-columns: 1fr; }
+    @media (min-width: 900px){ .grid{ grid-template-columns: 420px 1fr; } }
+    .card{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; }
+    .card h2{ font-size:14px; margin:0 0 8px; }
+    .row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    label{ font-size:12px; color:var(--muted); display:block; margin-bottom:4px; }
+    input, select, textarea{
+      width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:10px;
+      padding:10px; background:#fff; font-size:14px;
+    }
+    textarea{ min-height:120px; resize:vertical; }
+    .field{ margin:10px 0; }
+    .btn{
+      border:1px solid #111; background:#111; color:#fff; padding:10px 12px; border-radius:10px;
+      cursor:pointer; font-size:14px;
+    }
+    .btn.secondary{ background:#fff; color:#111; }
+    .btn.danger{ background:#b00020; border-color:#b00020; }
+    .hint{ font-size:12px; color:var(--muted); line-height:1.5; }
+    .pill{ display:inline-block; padding:2px 8px; border-radius:999px; background:#eee; font-size:12px; }
+    .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    table{ width:100%; border-collapse:collapse; }
+    th, td{ border-bottom:1px solid var(--line); padding:8px; font-size:13px; text-align:left; }
+    th{ color:var(--muted); font-weight:600; }
+    .ok{ color:#0a7a0a; }
+    .ng{ color:#b00020; }
+    .right{ text-align:right; }
+    .small{ font-size:12px; }
+    .two{ display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>磯屋｜セグメント配信 管理</h1>
+  </header>
+
+  <main class="grid">
+    <!-- 左：設定 -->
+    <section class="card">
+      <h2>認証 / 条件</h2>
+
+      <div class="field">
+        <label>管理トークン（ADMIN_API_TOKEN または ADMIN_CODE）</label>
+        <div class="row">
+          <input id="token" placeholder="例）XXXX" />
+          <button class="btn secondary" id="saveToken">保存</button>
+        </div>
+        <div class="hint">※ URLに <span class="mono">?token=</span> を付けてもOK。ローカル保存します。</div>
+      </div>
+
+      <div class="two">
+        <div class="field">
+          <label>kind（LIFF起動ログ種別）</label>
+          <select id="kind">
+            <option value="order">order（注文LIFF）</option>
+            <option value="address">address（住所登録）</option>
+            <option value="kusuke">kusuke（久助）</option>
+            <option value="cod">cod（電話/代引）</option>
+            <option value="shop">shop（ショップ）</option>
+          </select>
+          <div class="hint small">/api/liff/open の kind と一致させます</div>
+        </div>
+
+        <div class="field">
+          <label>対象期間（日）</label>
+          <input id="days" type="number" min="1" max="365" value="30" />
+          <div class="hint small">例：30 → 過去30日で起動した人</div>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:6px;">
+        <button class="btn" id="loadSegment">対象者を取得</button>
+        <button class="btn secondary" id="copyIds">IDコピー</button>
+        <button class="btn secondary" id="downloadCsv">CSV保存</button>
+      </div>
+
+      <hr style="border:none;border-top:1px solid var(--line);margin:12px 0;">
+
+      <h2>配信内容</h2>
+
+      <div class="field">
+        <label>配信タイプ</label>
+        <select id="msgType">
+          <option value="text">テキスト</option>
+          <option value="flex">Flex（JSON貼り付け）</option>
+        </select>
+        <div class="hint small">まずはテキストで運用が安定します</div>
+      </div>
+
+      <div class="field" id="textBox">
+        <label>テキスト本文</label>
+        <textarea id="text" placeholder="例）📢 磯屋 年末セール！&#10;こちらから注文できます👇&#10;https://liff.line.me/XXXX"></textarea>
+      </div>
+
+      <div class="field" id="flexBox" style="display:none;">
+        <label>Flex JSON（messageオブジェクト）</label>
+        <textarea id="flexJson" class="mono" placeholder='{"type":"flex","altText":"お知らせ","contents":{...}}'></textarea>
+        <div class="hint">※ LINE Pushのmessage形式そのまま（type/altText/contents）</div>
+      </div>
+
+      <div class="row">
+        <button class="btn danger" id="sendSegment">この条件の対象者へ一括Push</button>
+      </div>
+
+      <div class="hint" style="margin-top:8px;">
+        送信API：<span class="mono">POST /api/admin/push/segment?token=XXXX</span><br>
+        対象取得：<span class="mono">GET /api/admin/segment/liff-open?kind=order&days=30&token=XXXX</span>
+      </div>
+    </section>
+
+    <!-- 右：結果 -->
+    <section class="card">
+      <h2>対象者 / 実行結果</h2>
+
+      <div class="row" style="justify-content:space-between;">
+        <div>
+          <span class="pill">対象者数：<b id="count">0</b></span>
+          <span class="pill">kind：<b id="kindLabel">-</b></span>
+          <span class="pill">days：<b id="daysLabel">-</b></span>
+        </div>
+        <div class="hint" id="status">待機中</div>
+      </div>
+
+      <div style="margin-top:10px;">
+        <table>
+          <thead>
+            <tr><th>#</th><th>userId</th></tr>
+          </thead>
+          <tbody id="list"></tbody>
+        </table>
+      </div>
+
+      <hr style="border:none;border-top:1px solid var(--line);margin:12px 0;">
+
+      <h2>送信レポート</h2>
+      <div class="hint" id="report">まだ送信していません</div>
+    </section>
+  </main>
+
+  <script src="/public/admin_segment.js"></script>
+</body>
+</html>

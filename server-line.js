@@ -330,24 +330,6 @@ async function ensureDbSchema() {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_addresses_user_id ON addresses(user_id);`);
 
   await p.query(`
-    CREATE TABLE IF NOT EXISTS phone_address_events (
-      id BIGSERIAL PRIMARY KEY,
-      ts TIMESTAMPTZ DEFAULT NOW(),
-      member_code CHAR(4),
-      is_new BOOLEAN,
-      name TEXT,
-      phone TEXT,
-      postal TEXT,
-      prefecture TEXT,
-      city TEXT,
-      address1 TEXT,
-      address2 TEXT
-    );
-  `);
-  await p.query(`CREATE INDEX IF NOT EXISTS idx_phone_address_events_member_code ON phone_address_events(member_code);`);
-
-  // ✅ ここが今回の追加：テキスト送信ログ（セグメント配信用）
-  await p.query(`
     CREATE TABLE IF NOT EXISTS message_events (
       id BIGSERIAL PRIMARY KEY,
       ts TIMESTAMPTZ DEFAULT NOW(),

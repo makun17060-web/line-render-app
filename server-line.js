@@ -736,9 +736,23 @@ app.post("/api/liff/open", async (req, res) => {
 // =====================================================
 app.post("/api/liff/address", async (req, res) => {
   try {
-    const userId = String(req.body?.userId || "").trim();
-    const addr = req.body?.address || {};
-    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
+    const userId = String(
+      req.body?.userId ||
+      req.headers["x-line-userid"] ||
+      req.headers["x-line-user-id"] ||
+      req.query?.userId ||
+      ""
+    ).trim();
+
+    const addr = req.body?.address || req.body?.addr || {};
+
+    if (!userId) {
+      return res.status(400).json({
+        ok: false,
+        error: "userId required",
+        hint: "Send userId in body.userId or header x-line-userid",
+      });
+    }
     if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
 
     await dbUpsertAddressByUserId(userId, addr);
@@ -756,33 +770,6 @@ app.post("/api/liff/address", async (req, res) => {
   }
 });
 
-app.get("/api/liff/address/me", async (req, res) => {
-  try {
-    const userId = String(req.query.userId || req.headers["x-line-userid"] || "").trim();
-    if (!userId || !pool) return res.json({ ok: true, address: null });
-
-    const row = await dbGetAddressByUserId(userId);
-    if (!row) return res.json({ ok: true, address: null });
-
-    return res.json({
-      ok: true,
-      address: {
-        name: row.name || "",
-        phone: row.phone || "",
-        postal: row.postal || "",
-        prefecture: row.prefecture || "",
-        city: row.city || "",
-        address1: row.address1 || "",
-        address2: row.address2 || "",
-        memberCode: String(row.member_code || ""),
-        addressCode: String(row.address_code || ""),
-      },
-    });
-  } catch (e) {
-    console.error("/api/liff/address/me error:", e);
-    return res.json({ ok: false, address: null });
-  }
-});
 
 app.get("/api/liff/config", (req, res) => {
   const kind = String(req.query.kind || "order").trim();

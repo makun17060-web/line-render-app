@@ -3,152 +3,156 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>磯屋｜セグメント配信 管理</title>
+  <title>磯屋 管理：セグメント配信（LIFF起動ログ）</title>
   <style>
-    :root { --bg:#f6f7fb; --card:#fff; --line:#e7e7ef; --txt:#111; --muted:#666; }
-    body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--txt); }
-    header{ padding:14px 16px; background:#111; color:#fff; }
-    header h1{ font-size:16px; margin:0; }
-    main{ padding:14px; max-width:1100px; margin:0 auto; }
-    .grid{ display:grid; gap:12px; grid-template-columns: 1fr; }
-    @media (min-width: 900px){ .grid{ grid-template-columns: 420px 1fr; } }
-    .card{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; }
-    .card h2{ font-size:14px; margin:0 0 8px; }
-    .row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-    label{ font-size:12px; color:var(--muted); display:block; margin-bottom:4px; }
-    input, select, textarea{
-      width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:10px;
-      padding:10px; background:#fff; font-size:14px;
+    body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;background:#f6f7fb;color:#222}
+    header{padding:14px 16px;background:#111827;color:#fff}
+    header h1{margin:0;font-size:16px}
+    main{padding:16px;max-width:1100px;margin:0 auto}
+    .grid{display:grid;gap:12px}
+    @media(min-width:920px){.grid{grid-template-columns:420px 1fr}}
+    .card{background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.08);padding:14px}
+    .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    label{font-size:12px;color:#555}
+    input,select,textarea,button{font:inherit}
+    input,select,textarea{
+      width:100%;box-sizing:border-box;padding:10px;border:1px solid #d9dbe2;border-radius:10px;
+      background:#fff;outline:none
     }
-    textarea{ min-height:120px; resize:vertical; }
-    .field{ margin:10px 0; }
-    .btn{
-      border:1px solid #111; background:#111; color:#fff; padding:10px 12px; border-radius:10px;
-      cursor:pointer; font-size:14px;
+    textarea{min-height:160px;resize:vertical}
+    button{
+      padding:10px 12px;border:0;border-radius:10px;background:#2563eb;color:#fff;cursor:pointer
     }
-    .btn.secondary{ background:#fff; color:#111; }
-    .btn.danger{ background:#b00020; border-color:#b00020; }
-    .hint{ font-size:12px; color:var(--muted); line-height:1.5; }
-    .pill{ display:inline-block; padding:2px 8px; border-radius:999px; background:#eee; font-size:12px; }
-    .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    table{ width:100%; border-collapse:collapse; }
-    th, td{ border-bottom:1px solid var(--line); padding:8px; font-size:13px; text-align:left; }
-    th{ color:var(--muted); font-weight:600; }
-    .ok{ color:#0a7a0a; }
-    .ng{ color:#b00020; }
-    .right{ text-align:right; }
-    .small{ font-size:12px; }
-    .two{ display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+    button.secondary{background:#111827}
+    button.ghost{background:#e5e7eb;color:#111827}
+    button:disabled{opacity:.5;cursor:not-allowed}
+    .hint{font-size:12px;color:#666;line-height:1.5}
+    .stat{font-size:13px;color:#111827}
+    .pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:12px}
+    .warn{background:#fff7ed;color:#9a3412}
+    .ok{background:#ecfdf5;color:#065f46}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    table{border-collapse:collapse;width:100%}
+    th,td{border-bottom:1px solid #eee;padding:8px;font-size:12px;text-align:left;vertical-align:top}
+    th{color:#555}
+    .right{text-align:right}
+    .small{font-size:12px}
+    .split{display:flex;gap:8px;flex-wrap:wrap}
+    .split > div{flex:1;min-width:180px}
+    .toast{margin-top:8px;padding:10px;border-radius:10px;font-size:12px}
   </style>
 </head>
 <body>
-  <header>
-    <h1>磯屋｜セグメント配信 管理</h1>
-  </header>
+<header>
+  <h1>磯屋 管理：セグメント配信（LIFF起動ログ）</h1>
+</header>
 
-  <main class="grid">
-    <!-- 左：設定 -->
-    <section class="card">
-      <h2>認証 / 条件</h2>
+<main class="grid">
+  <!-- 左：条件＆配信 -->
+  <section class="card">
+    <h2 style="margin:0 0 10px;font-size:14px;">配信条件</h2>
 
-      <div class="field">
-        <label>管理トークン（ADMIN_API_TOKEN または ADMIN_CODE）</label>
+    <div class="grid" style="grid-template-columns:1fr;gap:10px;">
+      <div>
+        <label>管理トークン（ADMIN_API_TOKEN / ADMIN_CODE）</label>
         <div class="row">
-          <input id="token" placeholder="例）XXXX" />
-          <button class="btn secondary" id="saveToken">保存</button>
+          <input id="token" class="mono" placeholder="例：xxxxxxxx" />
+          <button id="saveToken" class="ghost" type="button">保存</button>
+          <button id="clearToken" class="ghost" type="button">消去</button>
         </div>
-        <div class="hint">※ URLに <span class="mono">?token=</span> を付けてもOK。ローカル保存します。</div>
+        <div class="hint">※ token はブラウザの localStorage に保存します（PC管理用）。</div>
       </div>
 
-      <div class="two">
-        <div class="field">
-          <label>kind（LIFF起動ログ種別）</label>
+      <div class="split">
+        <div>
+          <label>kind（LIFF種別）</label>
           <select id="kind">
             <option value="order">order（注文LIFF）</option>
-            <option value="address">address（住所登録）</option>
-            <option value="kusuke">kusuke（久助）</option>
-            <option value="cod">cod（電話/代引）</option>
-            <option value="shop">shop（ショップ）</option>
+            <option value="address">address（住所LIFF）</option>
+            <option value="shop">shop（ショップLIFF）</option>
+            <option value="cod">cod（電話→住所）</option>
           </select>
-          <div class="hint small">/api/liff/open の kind と一致させます</div>
         </div>
-
-        <div class="field">
-          <label>対象期間（日）</label>
-          <input id="days" type="number" min="1" max="365" value="30" />
-          <div class="hint small">例：30 → 過去30日で起動した人</div>
+        <div>
+          <label>対象期間（日数）</label>
+          <input id="days" type="number" min="1" max="365" value="30"/>
         </div>
-      </div>
-
-      <div class="row" style="margin-top:6px;">
-        <button class="btn" id="loadSegment">対象者を取得</button>
-        <button class="btn secondary" id="copyIds">IDコピー</button>
-        <button class="btn secondary" id="downloadCsv">CSV保存</button>
-      </div>
-
-      <hr style="border:none;border-top:1px solid var(--line);margin:12px 0;">
-
-      <h2>配信内容</h2>
-
-      <div class="field">
-        <label>配信タイプ</label>
-        <select id="msgType">
-          <option value="text">テキスト</option>
-          <option value="flex">Flex（JSON貼り付け）</option>
-        </select>
-        <div class="hint small">まずはテキストで運用が安定します</div>
-      </div>
-
-      <div class="field" id="textBox">
-        <label>テキスト本文</label>
-        <textarea id="text" placeholder="例）📢 磯屋 年末セール！&#10;こちらから注文できます👇&#10;https://liff.line.me/XXXX"></textarea>
-      </div>
-
-      <div class="field" id="flexBox" style="display:none;">
-        <label>Flex JSON（messageオブジェクト）</label>
-        <textarea id="flexJson" class="mono" placeholder='{"type":"flex","altText":"お知らせ","contents":{...}}'></textarea>
-        <div class="hint">※ LINE Pushのmessage形式そのまま（type/altText/contents）</div>
       </div>
 
       <div class="row">
-        <button class="btn danger" id="sendSegment">この条件の対象者へ一括Push</button>
+        <button id="fetchSegment" type="button" class="secondary">対象者を抽出</button>
+        <span id="segmentStat" class="pill">未抽出</span>
       </div>
 
-      <div class="hint" style="margin-top:8px;">
-        送信API：<span class="mono">POST /api/admin/push/segment?token=XXXX</span><br>
-        対象取得：<span class="mono">GET /api/admin/segment/liff-open?kind=order&days=30&token=XXXX</span>
+      <hr style="border:none;border-top:1px solid #eee;margin:10px 0"/>
+
+      <h2 style="margin:0 0 10px;font-size:14px;">配信内容</h2>
+      <div>
+        <label>メッセージ種別</label>
+        <select id="msgType">
+          <option value="text">テキスト（推奨）</option>
+        </select>
       </div>
-    </section>
-
-    <!-- 右：結果 -->
-    <section class="card">
-      <h2>対象者 / 実行結果</h2>
-
-      <div class="row" style="justify-content:space-between;">
-        <div>
-          <span class="pill">対象者数：<b id="count">0</b></span>
-          <span class="pill">kind：<b id="kindLabel">-</b></span>
-          <span class="pill">days：<b id="daysLabel">-</b></span>
-        </div>
-        <div class="hint" id="status">待機中</div>
+      <div>
+        <label>テキスト本文</label>
+        <textarea id="msgText" placeholder="例：\n【磯屋】新商品のお知らせ…\n本日から期間限定…"></textarea>
+        <div class="hint">※ まずは短文でテスト推奨。長文は配信失敗になりやすいです。</div>
       </div>
 
-      <div style="margin-top:10px;">
-        <table>
-          <thead>
-            <tr><th>#</th><th>userId</th></tr>
-          </thead>
-          <tbody id="list"></tbody>
-        </table>
+      <div class="row">
+        <button id="dryRun" type="button" class="ghost">テスト送信（自分だけ）</button>
+        <button id="sendPush" type="button">抽出対象へ一括Push</button>
       </div>
 
-      <hr style="border:none;border-top:1px solid var(--line);margin:12px 0;">
+      <div id="toast" class="toast" style="display:none;"></div>
 
-      <h2>送信レポート</h2>
-      <div class="hint" id="report">まだ送信していません</div>
-    </section>
-  </main>
+      <div class="hint" style="margin-top:10px;">
+        ✅ 使うAPI：<span class="mono">/api/admin/segment/liff-open</span> と <span class="mono">/api/admin/push/segment</span><br/>
+        ⚠️ Push失敗（ブロック等）の userId は失敗としてカウントされます。
+      </div>
+    </div>
+  </section>
 
-  <script src="/public/admin_segment.js"></script>
+  <!-- 右：抽出結果 -->
+  <section class="card">
+    <div class="row" style="justify-content:space-between;">
+      <h2 style="margin:0;font-size:14px;">抽出結果（userId）</h2>
+      <div class="row">
+        <button id="copyAll" class="ghost" type="button" disabled>コピー</button>
+        <button id="downloadCsv" class="ghost" type="button" disabled>CSV</button>
+      </div>
+    </div>
+
+    <div class="hint" style="margin:6px 0 10px;">
+      表示は先頭から最大 500件。配信は抽出された全件に対して実行します（サーバー側）。
+    </div>
+
+    <div class="stat">
+      <span>件数：</span><span id="count" class="mono">0</span>
+      <span style="margin-left:12px;">kind：</span><span id="kindEcho" class="mono">-</span>
+      <span style="margin-left:12px;">days：</span><span id="daysEcho" class="mono">-</span>
+    </div>
+
+    <div style="margin-top:10px;overflow:auto;max-height:520px;border:1px solid #eee;border-radius:10px;">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:60px;">#</th>
+            <th>userId</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="2" class="small" style="color:#666;padding:12px;">まだ抽出していません。</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="hint" style="margin-top:10px;">
+      ※ LINE公式アカウント側の「友だち追加」状態やブロックで Push 可否が変わります。
+    </div>
+  </section>
+</main>
+
+<script src="/public/admin_segment.js"></script>
 </body>
 </html>

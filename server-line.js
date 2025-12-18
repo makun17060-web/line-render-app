@@ -125,28 +125,43 @@ if (!stripe) {
 }
 
 // ====== パス定義（Render Persistent Disk 対応） ======
-// Render の Disk Mount Path を /var/data にしておく
-// ローカルで /var/data が無い場合は ./data-disk を使う
+// Render の Disk Mount Path を /var/data に設定している前提
+// ローカルでは /var/data が無いので ./data-disk を使う
 const DISK_ROOT =
   (process.env.DISK_ROOT || "").trim() ||
   (fs.existsSync("/var/data") ? "/var/data" : path.join(__dirname, "data-disk"));
 
-// JSON/ログ類も Disk に寄せる（再デプロイで消えない）
+// JSON / ログ類（再デプロイでも消えない）
 const DATA_DIR = path.join(DISK_ROOT, "data");
 
-// 画像も Disk に保存（再デプロイで消えない）
+// 商品画像（再デプロイでも消えない）
 const UPLOAD_DIR = path.join(DISK_ROOT, "uploads");
 
 const PRODUCTS_PATH = path.join(DATA_DIR, "products.json");
 const ORDERS_LOG = path.join(DATA_DIR, "orders.log");
 const RESERVATIONS_LOG = path.join(DATA_DIR, "reservations.log");
-const ADDRESSES_PATH = path.join(DATA_DIR, "addresses.json"); // (旧) 互換・参考用
+const ADDRESSES_PATH = path.join(DATA_DIR, "addresses.json");
 const PHONE_ADDRESSES_PATH = path.join(DATA_DIR, "phone-addresses.json");
 const SURVEYS_LOG = path.join(DATA_DIR, "surveys.log");
 const MESSAGES_LOG = path.join(DATA_DIR, "messages.log");
 const SESSIONS_PATH = path.join(DATA_DIR, "sessions.json");
 const NOTIFY_STATE_PATH = path.join(DATA_DIR, "notify_state.json");
 const STOCK_LOG = path.join(DATA_DIR, "stock.log");
+
+// public（HTMLなどは今まで通り）
+const PUBLIC_DIR = path.join(__dirname, "public");
+
+// static
+app.use("/public", express.static(PUBLIC_DIR));
+// ★ Disk上の uploads を /uploads で公開（超重要）
+app.use("/uploads", express.static(UPLOAD_DIR, { maxAge: "7d" }));
+
+// ====== ディレクトリ自動作成 ======
+if (!fs.existsSync(DISK_ROOT)) fs.mkdirSync(DISK_ROOT, { recursive: true });
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
 
 // public（HTMLなど）だけはコード内
 const PUBLIC_DIR = path.join(__dirname, "public");

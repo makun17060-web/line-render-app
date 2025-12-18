@@ -4,7 +4,7 @@
 // + 画像アップロード/一覧/削除 + 商品へ画像URL紐付け
 // + ミニアプリ用 /api/products（久助除外） /api/shipping（ヤマト中部発）
 // + LIFF 住所保存/取得（DB）: /api/liff/address /api/liff/address/me /api/liff/config
-// + ★LIFF起動ログ（セグメント配信用）: /api/liff/open
+// + ★LIFF起動ログ（セグメント配信用）: /api/liff/open  ※kindは "all" に統一
 // + ★管理：セグメント抽出/一括Push : /api/admin/segment/liff-open , /api/admin/push/segment
 // + Stripe決済 /api/pay-stripe / 決済完了通知 /api/order/complete
 // + 会員コード/住所コード（DB・4桁）
@@ -67,6 +67,14 @@ const LIFF_ID_SHOP = (process.env.LIFF_ID_SHOP || "").trim();
 
 // ★推奨（LIFF openのidToken検証用）：LIFFチャネルID
 const LINE_CHANNEL_ID = (process.env.LINE_CHANNEL_ID || "").trim();
+
+// ★ LIFF open の kind を統一運用（デフォルト all）
+const LIFF_OPEN_KIND_MODE = (process.env.LIFF_OPEN_KIND_MODE || "all").trim(); // "all" or "keep"
+function normalizeLiffKind(kindRaw) {
+  const k = String(kindRaw || "").trim().slice(0, 32);
+  if (LIFF_OPEN_KIND_MODE === "keep") return k || "all";
+  return "all";
+}
 
 const ADMIN_USER_ID = (process.env.ADMIN_USER_ID || "").trim();
 const MULTICAST_USER_IDS = (process.env.MULTICAST_USER_IDS || "")
@@ -871,13 +879,11 @@ async function verifyLineIdToken(idToken) {
 }
 
 // ======================================================================
-// ★LIFF 起動ログ（セグメント配信用）
+// ★LIFF 起動ログ（セグメント配信用）※ kind を all に統一
 // ======================================================================
 app.post("/api/liff/open", async (req, res) => {
   try {
-    const kindRaw = String(req.body?.kind || "order").trim();
-    const kind = kindRaw.slice(0, 32);
-
+    const kind = normalizeLiffKind(req.body?.kind); // ★強制all（デフォルト）
     const idToken = String(req.body?.idToken || "").trim();
     const tokenUserId = await verifyLineIdToken(idToken);
 
@@ -892,7 +898,7 @@ app.post("/api/liff/open", async (req, res) => {
     // ついでに codes を確保（後で便利）
     try { await dbEnsureCodes(userId); } catch {}
 
-    return res.json({ ok: true });
+    return res.json({ ok: true, kind });
   } catch (e) {
     console.error("/api/liff/open error:", e);
     return res.status(500).json({ ok: false, error: e?.message || "server_error" });
@@ -1737,7 +1743,7 @@ function reserveOffer(product, needQty, stock) {
 }
 
 // ======================================================================
-// 管理API（最小） + ★セグメント配信API
+// 管理API（最小） + ★セグメント配信API + 商品更新API
 // ======================================================================
 app.get("/api/admin/ping", (req, res) => { if (!requireAdmin(req, res)) return; res.json({ ok: true, ping: "pong" }); });
 
@@ -1870,6 +1876,33 @@ app.get("/api/admin/products", (req, res) => {
   res.json({ ok: true, items });
 });
 
+// ★管理：商品 更新（admin_products.js 想定の「1件更新」）
+app.post("/api/admin/products/update", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const body = req.body || {};
+    const id = String(body.id || body.productId || "").trim();
+    if (!id) return res.status(400).json({ ok: false, error: "id required" });
+
+    const { products, idx } = findProductById(id);
+    if (idx < 0) return res.status(404).json({ ok: false, error: "product_not_found" });
+
+    const patch = {};
+    if (body.name !== undefined) patch.name = String(body.name || "").trim();
+    if (body.price !== undefined) patch.price = Number(body.price) || 0;
+    if (body.stock !== undefined) patch.stock = Math.max(0, Number(body.stock) || 0);
+    if (body.desc !== undefined) patch.desc = String(body.desc || "").trim();
+    if (body.volume !== undefined) patch.volume = String(body.volume || "").trim();
+    if (body.image !== undefined) patch.image = String(body.image || "").trim();
+
+    products[idx] = { ...products[idx], ...patch };
+    writeProducts(products);
+    return res.json({ ok: true, product: products[idx] });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: "save_error", detail: e?.message || String(e) });
+  }
+});
+
 app.post("/api/admin/stock/set", (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
@@ -1972,14 +2005,15 @@ app.post("/api/admin/products/set-image", (req, res) => {
 
 // ======================================================================
 // ★管理：LIFF起動セグメント対象 userId 取得
-// 例) /api/admin/segment/liff-open?kind=order&days=30&token=XXXX
+// 例) /api/admin/segment/liff-open?days=30&token=XXXX
+// ※ kindは all 統一のため指定不要（指定されても all扱い）
 // ======================================================================
 app.get("/api/admin/segment/liff-open", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
     if (!pool) return res.json({ ok: true, items: [] });
 
-    const kind = String(req.query.kind || "order").trim().slice(0, 32);
+    const kind = normalizeLiffKind(req.query.kind); // ★all
     const days = Math.min(365, Math.max(1, Number(req.query.days || 30)));
 
     const r = await mustPool().query(
@@ -2003,14 +2037,15 @@ app.get("/api/admin/segment/liff-open", async (req, res) => {
 // ======================================================================
 // ★管理：LIFF起動者セグメントへ一括Push（自前セグメント配信）
 // POST /api/admin/push/segment?token=XXXX
-// body: { kind:"order", days:30, message:{type:"text",text:"..."} }
+// body: { days:30, message:{type:"text",text:"..."} }
+// ※ kindは all 統一のため指定不要（指定されても all扱い）
 // ======================================================================
 app.post("/api/admin/push/segment", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
     if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
 
-    const kind = String(req.body?.kind || "order").trim().slice(0, 32);
+    const kind = normalizeLiffKind(req.body?.kind); // ★all
     const days = Math.min(365, Math.max(1, Number(req.body?.days || 30)));
     const message = req.body?.message;
 
@@ -2228,7 +2263,8 @@ async function handleEvent(ev) {
         return;
       }
 
-      if (text === "直接注文") {
+      // ★起動ワード：リッチメニューの文言が変わっても動くように複数対応
+      if (t === "直接注文" || t === "店頭受取" || t === "注文") {
         await client.replyMessage(ev.replyToken, productsFlex(readProducts()));
         return;
       }
@@ -2558,6 +2594,7 @@ app.get("/api/health", async (_req, res) => {
       LIFF_ID_DIRECT_ADDRESS: !!process.env.LIFF_ID_DIRECT_ADDRESS,
       LIFF_ID_SHOP: !!process.env.LIFF_ID_SHOP,
       LINE_CHANNEL_ID: !!process.env.LINE_CHANNEL_ID,
+      LIFF_OPEN_KIND_MODE: LIFF_OPEN_KIND_MODE,
       ADMIN_API_TOKEN: !!ADMIN_API_TOKEN_ENV,
       ADMIN_CODE: !!ADMIN_CODE_ENV,
       BANK_INFO: !!BANK_INFO,

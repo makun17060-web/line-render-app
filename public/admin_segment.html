@@ -1,280 +1,178 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>セグメント配信 管理</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>管理：セグメント抽出 & 一括Push</title>
   <style>
-    body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;background:#f6f7f9;color:#222}
-    header{padding:14px 16px;background:#111827;color:#fff}
-    main{padding:14px 16px;max-width:1100px;margin:0 auto}
-    .row{display:flex;flex-wrap:wrap;gap:10px}
-    .card{background:#fff;border-radius:12px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
-    .w1{flex:1 1 260px}
-    .w2{flex:2 1 520px}
-    label{font-size:12px;color:#555}
-    input,select,textarea,button{width:100%;padding:10px;border:1px solid #ddd;border-radius:10px;font-size:14px;box-sizing:border-box}
-    textarea{min-height:120px;resize:vertical}
-    button{background:#111827;color:#fff;border:none;cursor:pointer}
-    button.secondary{background:#e5e7eb;color:#111827}
-    button:disabled{opacity:.5;cursor:not-allowed}
-    .kpi{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-    .k{padding:10px;border:1px solid #eee;border-radius:10px;background:#fafafa}
-    .k .n{font-size:22px;font-weight:700}
-    .muted{color:#666;font-size:12px}
+    :root{
+      --bg:#f5f6f8; --card:#fff; --text:#111827; --muted:#6b7280;
+      --line:#e5e7eb; --ok:#16a34a; --warn:#b91c1c;
+      --btn:#111827; --btn2:#374151;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;padding:16px;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    h1{margin:0 0 10px;font-size:20px}
+    .wrap{max-width:980px;margin:0 auto}
+    .grid{display:grid;grid-template-columns:1fr;gap:12px}
+    @media(min-width:920px){ .grid{grid-template-columns:380px 1fr} }
+    .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    label{font-size:12px;color:var(--muted)}
+    input,select,textarea{
+      width:100%; padding:10px; border:1px solid var(--line); border-radius:10px;
+      font-size:14px; background:#fff;
+    }
+    textarea{min-height:110px;resize:vertical}
+    .field{margin:10px 0}
+    .small{font-size:12px;color:var(--muted)}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+    button{
+      border:0; border-radius:10px; padding:10px 12px; cursor:pointer;
+      background:var(--btn); color:#fff; font-weight:600;
+    }
+    button.secondary{background:var(--btn2)}
+    button.ghost{background:#fff;color:var(--text);border:1px solid var(--line)}
+    button:disabled{opacity:.45;cursor:not-allowed}
+    .toast{
+      display:none; margin:10px 0 0; padding:10px 12px; border-radius:10px;
+      border:1px solid var(--line); background:#fff;
+    }
+    .toast.ok{border-color:#bbf7d0;background:#f0fdf4;color:#166534}
+    .toast.warn{border-color:#fecaca;background:#fef2f2;color:#991b1b}
     table{width:100%;border-collapse:collapse}
-    th,td{border-bottom:1px solid #eee;padding:8px;text-align:left;font-size:13px}
-    .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:12px}
-    .right{display:flex;gap:8px;align-items:center;justify-content:flex-end}
+    th,td{border-bottom:1px solid var(--line);padding:8px;text-align:left;font-size:13px}
+    th{color:var(--muted);font-weight:700}
+    .stat{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 10px;font-size:12px;color:var(--muted)}
+    .pill b{color:var(--text)}
+    .hint{font-size:12px;color:var(--muted);line-height:1.55}
+    .danger-note{font-size:12px;color:#7f1d1d;background:#fff7ed;border:1px solid #fed7aa;padding:10px;border-radius:10px}
   </style>
 </head>
 <body>
-<header>
-  <div style="font-weight:700">セグメント配信 管理</div>
-  <div class="muted" style="color:#cbd5e1">ユニーク人数・抽出・一括Pushを1画面で</div>
-</header>
+  <div class="wrap">
+    <h1>管理：セグメント抽出 & 一括Push</h1>
+    <div class="grid">
 
-<main>
-  <div class="row">
-    <div class="card w1">
-      <label>管理トークン（X-Admin-Token）</label>
-      <input id="token" placeholder="ADMIN_API_TOKEN を貼り付け" />
-      <div style="height:8px"></div>
-      <button class="secondary" id="saveToken">保存</button>
-      <div class="muted" id="authMsg" style="margin-top:8px"></div>
-    </div>
+      <!-- 左：操作 -->
+      <div class="card">
+        <div class="field">
+          <label>管理トークン（Bearer）</label>
+          <input id="token" type="password" placeholder="ADMIN_TOKEN を貼り付け" autocomplete="off" />
+          <div class="row" style="margin-top:8px;">
+            <button id="saveToken" class="secondary" type="button">保存</button>
+            <button id="clearToken" class="ghost" type="button">消去</button>
+          </div>
+          <div class="hint" style="margin-top:6px;">
+            サーバー側の管理認証（Bearer）に合わせています。ブラウザの localStorage に保存します。
+          </div>
+        </div>
 
-    <div class="card w2">
-      <div class="right">
-        <button class="secondary" id="reloadStats">統計更新</button>
+        <hr style="border:0;border-top:1px solid var(--line);margin:12px 0;" />
+
+        <div class="field">
+          <label>抽出条件</label>
+          <div class="row">
+            <div style="flex:1;min-width:160px;">
+              <label class="small">source（種別）</label>
+              <!-- ★idは kind のまま（JSと一致） -->
+              <select id="kind">
+                <option value="active" selected>active（最近アクティブ）</option>
+                <option value="chat">chat（最近チャット）</option>
+                <option value="liff">liff（最近LIFF起動）</option>
+                <option value="all">all（全て統合）</option>
+              </select>
+            </div>
+            <div style="width:140px;">
+              <label class="small">days（日数）</label>
+              <input id="days" type="number" min="1" max="365" value="30" />
+            </div>
+          </div>
+
+          <div class="row" style="margin-top:10px;">
+            <button id="fetchSegment" type="button">対象者を抽出</button>
+            <span id="segmentStat" class="small">未抽出</span>
+          </div>
+
+          <div class="danger-note" style="margin-top:10px;">
+            ⚠ 一括Pushは対象人数に応じて送信量が増えます。まずは抽出→件数確認→文面確認を推奨。
+          </div>
+        </div>
+
+        <hr style="border:0;border-top:1px solid var(--line);margin:12px 0;" />
+
+        <div class="field">
+          <label>配信メッセージ</label>
+          <div class="row">
+            <div style="width:160px;">
+              <label class="small">種別</label>
+              <select id="msgType">
+                <option value="text" selected>text</option>
+              </select>
+            </div>
+          </div>
+          <div class="field" style="margin-top:8px;">
+            <label class="small">本文（text）</label>
+            <textarea id="msgText" placeholder="例）年末のご挨拶／新商品のお知らせ など"></textarea>
+          </div>
+
+          <div class="row">
+            <button id="dryRun" class="secondary" type="button">dryRun（送らずに確認）</button>
+            <button id="sendPush" type="button">一括Push（本送信）</button>
+          </div>
+          <div class="hint" style="margin-top:8px;">
+            dryRun はサーバーが対応している場合、対象件数やプレビューを返します（安全確認用）。
+          </div>
+        </div>
+
+        <div id="toast" class="toast"></div>
       </div>
-      <div style="height:8px"></div>
-      <div class="kpi">
-        <div class="k"><div class="muted">ユニーク台帳（segment_users）</div><div class="n" id="k_total">-</div></div>
-        <div class="k"><div class="muted">チャット送信者（ユニーク）</div><div class="n" id="k_chat">-</div></div>
-        <div class="k"><div class="muted">LIFF起動者（ユニーク）</div><div class="n" id="k_liff">-</div></div>
-        <div class="k"><div class="muted">住所登録者（ユニーク）</div><div class="n" id="k_addr">-</div></div>
+
+      <!-- 右：結果 -->
+      <div class="card">
+        <div class="stat">
+          <span class="pill">source: <b id="kindEcho">-</b></span>
+          <span class="pill">days: <b id="daysEcho">-</b></span>
+          <span class="pill">count: <b id="count">0</b></span>
+          <span class="small">（表示は最大500件）</span>
+        </div>
+
+        <div class="row" style="margin:10px 0;">
+          <button id="copyAll" class="ghost" type="button" disabled>userId を全コピー</button>
+          <button id="downloadCsv" class="ghost" type="button" disabled>CSV ダウンロード</button>
+        </div>
+
+        <div style="overflow:auto;border:1px solid var(--line);border-radius:12px;">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:70px;">#</th>
+                <th>userId</th>
+              </tr>
+            </thead>
+            <tbody id="tbody">
+              <tr>
+                <td colspan="2" class="small" style="color:#666;padding:12px;">
+                  ここに抽出結果が表示されます。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="hint" style="margin-top:10px;">
+          API:
+          <span class="mono">GET /api/admin/segment/users?source=...&days=...</span> /
+          <span class="mono">POST /api/admin/push/segment</span>
+          （Bearer 必須）
+        </div>
       </div>
-      <div class="muted" style="margin-top:8px">
-        ※ログ回数ではなく、<span class="pill">重複しない userId の人数</span> を表示します。
-      </div>
+
     </div>
   </div>
 
-  <div style="height:12px"></div>
-
-  <div class="row">
-    <div class="card w1">
-      <label>抽出条件</label>
-      <div style="height:6px"></div>
-
-      <label>対象</label>
-      <select id="source">
-        <option value="active">アクティブ（chat or liff）</option>
-        <option value="chat">チャット送信者のみ</option>
-        <option value="liff">LIFF起動者のみ</option>
-        <option value="all">全員（台帳）</option>
-      </select>
-
-      <div style="height:8px"></div>
-
-      <label>期間（日）</label>
-      <input id="days" type="number" min="1" max="365" value="30"/>
-
-      <div style="height:8px"></div>
-
-      <label>最大件数</label>
-      <input id="limit" type="number" min="1" max="500" value="500"/>
-
-      <div style="height:10px"></div>
-
-      <button id="loadList">対象者を取得</button>
-      <div class="muted" id="listMsg" style="margin-top:8px"></div>
-    </div>
-
-    <div class="card w2">
-      <div class="right">
-        <div class="muted">対象 userId:</div>
-        <div class="pill" id="targetCount">0</div>
-        <button class="secondary" id="copyIds">userId をコピー</button>
-      </div>
-      <div style="height:8px"></div>
-
-      <div style="max-height:220px;overflow:auto;border:1px solid #eee;border-radius:10px">
-        <table>
-          <thead>
-            <tr>
-              <th>userId</th>
-              <th>last_seen</th>
-              <th>chat</th>
-              <th>liff</th>
-            </tr>
-          </thead>
-          <tbody id="tbody"></tbody>
-        </table>
-      </div>
-
-      <div style="height:10px"></div>
-
-      <label>送信メッセージ（テキスト）</label>
-      <textarea id="msg" placeholder="例：年末のご挨拶／新商品のお知らせ など"></textarea>
-
-      <div style="height:10px"></div>
-
-      <div class="right">
-        <button class="secondary" id="testPush">先頭1名にテスト送信</button>
-        <button id="sendAll">この対象に一括Push</button>
-      </div>
-
-      <div class="muted" id="pushMsg" style="margin-top:8px"></div>
-    </div>
-  </div>
-</main>
-
-<script>
-  const STORAGE_KEY="iso_admin_token";
-  const tokenEl=document.getElementById("token");
-  const authMsg=document.getElementById("authMsg");
-
-  const k_total=document.getElementById("k_total");
-  const k_chat=document.getElementById("k_chat");
-  const k_liff=document.getElementById("k_liff");
-  const k_addr=document.getElementById("k_addr");
-
-  const sourceEl=document.getElementById("source");
-  const daysEl=document.getElementById("days");
-  const limitEl=document.getElementById("limit");
-  const listMsg=document.getElementById("listMsg");
-  const tbody=document.getElementById("tbody");
-  const targetCount=document.getElementById("targetCount");
-
-  const msgEl=document.getElementById("msg");
-  const pushMsg=document.getElementById("pushMsg");
-
-  let currentRows=[];
-
-  function getToken(){ return (tokenEl.value||"").trim(); }
-  function setMsg(el, text){ el.textContent=text||""; }
-
-  async function api(path, opt={}){
-    const t=getToken();
-    const headers=Object.assign({}, opt.headers||{}, {"x-admin-token": t});
-    const res=await fetch(path, Object.assign({}, opt, {headers}));
-    const j=await res.json().catch(()=>({ok:false,error:"invalid json"}));
-    if(!res.ok) throw new Error(j.error||("HTTP "+res.status));
-    return j;
-  }
-
-  function loadToken(){
-    const t=localStorage.getItem(STORAGE_KEY)||"";
-    tokenEl.value=t;
-    setMsg(authMsg, t ? "トークン読み込み済み" : "トークン未保存");
-  }
-  function saveToken(){
-    localStorage.setItem(STORAGE_KEY, getToken());
-    setMsg(authMsg, "保存しました");
-  }
-
-  async function reloadStats(){
-    setMsg(authMsg,"");
-    try{
-      const j=await api("/api/admin/segment/stats");
-      k_total.textContent=j.total_users;
-      k_chat.textContent=j.chat_users;
-      k_liff.textContent=j.liff_users;
-      k_addr.textContent=j.address_users;
-      setMsg(authMsg,"統計を更新しました");
-    }catch(e){
-      setMsg(authMsg,"エラー: "+e.message);
-    }
-  }
-
-  function renderTable(rows){
-    tbody.innerHTML="";
-    rows.forEach(r=>{
-      const tr=document.createElement("tr");
-      tr.innerHTML = `
-        <td style="font-family:ui-monospace, SFMono-Regular, Menlo, monospace">${r.user_id}</td>
-        <td>${r.last_seen ? new Date(r.last_seen).toLocaleString() : ""}</td>
-        <td>${r.last_chat_at ? "✅" : ""}</td>
-        <td>${r.last_liff_at ? "✅" : ""}</td>
-      `;
-      tbody.appendChild(tr);
-    });
-    targetCount.textContent=rows.length;
-  }
-
-  async function loadList(){
-    setMsg(listMsg,"取得中...");
-    try{
-      const source=sourceEl.value;
-      const days=Number(daysEl.value||30);
-      const limit=Number(limitEl.value||500);
-      const j = await api(
-  `/api/admin/segment/users?source=${encodeURIComponent(source)}&days=${days}`
-);
-
-      currentRows=j.rows||[];
-      renderTable(currentRows);
-      setMsg(listMsg, `取得OK：${j.count}件（source=${j.source}, days=${j.days}）`);
-    }catch(e){
-      setMsg(listMsg,"エラー: "+e.message);
-    }
-  }
-
-  async function copyIds(){
-    const ids=currentRows.map(r=>r.user_id).filter(Boolean);
-    await navigator.clipboard.writeText(ids.join("\n"));
-    setMsg(listMsg, `コピーしました（${ids.length}件）`);
-  }
-
-  async function testPush(){
-    if(currentRows.length===0) return setMsg(pushMsg,"対象者が0です");
-    const text=(msgEl.value||"").trim();
-    if(!text) return setMsg(pushMsg,"メッセージが空です");
-    const uid=currentRows[0].user_id;
-    try{
-      // サーバー側の既存APIに合わせてください（下は例）
-      const j=await api("/api/admin/push/one", {
-        method:"POST",
-        headers:{ "content-type":"application/json" },
-        body: JSON.stringify({ userId: uid, text })
-      });
-      setMsg(pushMsg, "テスト送信: "+(j.ok?"OK":"NG"));
-    }catch(e){
-      setMsg(pushMsg,"エラー: "+e.message+"（/api/admin/push/one が無ければ作ります）");
-    }
-  }
-
-  async function sendAll(){
-    if(currentRows.length===0) return setMsg(pushMsg,"対象者が0です");
-    const text=(msgEl.value||"").trim();
-    if(!text) return setMsg(pushMsg,"メッセージが空です");
-
-    const ids=currentRows.map(r=>r.user_id).filter(Boolean);
-    if(!confirm(`この対象 ${ids.length}名に一括Pushします。よろしいですか？`)) return;
-
-    try{
-      // 既存の /api/admin/push/segment に合わせた例
-      const j=await api("/api/admin/push/segment", {
-        method:"POST",
-        headers:{ "content-type":"application/json" },
-        body: JSON.stringify({ userIds: ids, message: { type:"text", text } })
-      });
-      setMsg(pushMsg, `送信完了: ok=${j.ok} 成功=${j.okCount||0} 失敗=${j.ngCount||0}`);
-    }catch(e){
-      setMsg(pushMsg,"エラー: "+e.message+"（/api/admin/push/segment の形式が違う場合は合わせます）");
-    }
-  }
-
-  document.getElementById("saveToken").onclick=saveToken;
-  document.getElementById("reloadStats").onclick=reloadStats;
-  document.getElementById("loadList").onclick=loadList;
-  document.getElementById("copyIds").onclick=copyIds;
-  document.getElementById("testPush").onclick=testPush;
-  document.getElementById("sendAll").onclick=sendAll;
-
-  loadToken();
-</script>
+  <!-- ★同階層のJSを読み込み -->
+  <script src="/admin_segment.js"></script>
 </body>
 </html>

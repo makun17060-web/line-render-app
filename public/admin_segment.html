@@ -210,7 +210,10 @@
       const source=sourceEl.value;
       const days=Number(daysEl.value||30);
       const limit=Number(limitEl.value||500);
-      const j=await api(`/api/admin/segment/list?source=${encodeURIComponent(source)}&days=${days}&limit=${limit}`);
+      const j = await api(
+  `/api/admin/segment/users?source=${encodeURIComponent(source)}&days=${days}`
+);
+
       currentRows=j.rows||[];
       renderTable(currentRows);
       setMsg(listMsg, `取得OK：${j.count}件（source=${j.source}, days=${j.days}）`);

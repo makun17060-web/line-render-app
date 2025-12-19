@@ -1,11 +1,14 @@
-// server-line.js — フル機能版（Stripe + ミニアプリ + 画像管理）【修正版・丸ごと】
+// server-line.js — フル機能版（Stripe + ミニアプリ + 画像管理）【追記版・丸ごと差し替え】
 // + Flex配信 / その他（価格入力なし）/ 久助専用テキスト購入フロー
 // + 予約 / 管理API / 店頭受取 Fix（店頭=現金のみ）/ 銀行振込案内
 // + 画像アップロード/一覧/削除 + 商品へ画像URL紐付け
 // + ミニアプリ用 /api/products（久助除外） /api/shipping（ヤマト中部発）
 // + LIFF 住所保存/取得（DB）: /api/liff/address /api/liff/address/me /api/liff/config
 // + ★LIFF起動ログ（セグメント配信用）: /api/liff/open  ※kindは "all" に統一
-// + ★管理：セグメント抽出/一括Push : /api/admin/segment/liff-open , /api/admin/push/segment
+// + ★セグメント台帳（チャット送信者 + LIFF起動者）: segment_users（DB or JSON）
+// + ★管理：セグメント抽出/一括Push :
+//    - GET  /api/admin/segment/users?days=30&source=active
+//    - POST /api/admin/push/segment   body:{days,source,message,dryRun}
 // + Stripe決済 /api/pay-stripe / 決済完了通知 /api/order/complete
 // + 会員コード/住所コード（DB・4桁）
 // + 電話→オンライン hook /api/phone/hook（phone-addresses.json + DB反映）
@@ -19,7 +22,8 @@
 // - codes(user_id PK, member_code UNIQUE, address_code UNIQUE)
 // - addresses(member_code PK, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at)
 // - phone_address_events（任意ログ）
-// - ★liff_open_logs（セグメント配信用）
+// - liff_open_logs（セグメント配信用）
+// - ★segment_users（チャット送信者 + LIFF起動者の台帳）
 //
 // ================================================================
 
@@ -101,6 +105,17 @@ const ONLINE_NOTIFY_TOKEN = (process.env.ONLINE_NOTIFY_TOKEN || "").trim();
 // ★ 住所取得公開APIを使うなら必須（超重要）
 const PUBLIC_ADDRESS_LOOKUP_TOKEN = (process.env.PUBLIC_ADDRESS_LOOKUP_TOKEN || "").trim();
 
+// ★セグメント配信の上限（事故防止）
+const SEGMENT_PUSH_LIMIT = Math.min(
+  20000,
+  Math.max(1, Number(process.env.SEGMENT_PUSH_LIMIT || 5000))
+);
+// ★multicast の分割サイズ（LINEは最大500）
+const SEGMENT_CHUNK_SIZE = Math.min(
+  500,
+  Math.max(50, Number(process.env.SEGMENT_CHUNK_SIZE || 500))
+);
+
 // LINE config
 const config = {
   channelAccessToken: (process.env.LINE_CHANNEL_ACCESS_TOKEN || "").trim(),
@@ -151,6 +166,9 @@ const SESSIONS_PATH = path.join(DATA_DIR, "sessions.json");
 const NOTIFY_STATE_PATH = path.join(DATA_DIR, "notify_state.json");
 const STOCK_LOG = path.join(DATA_DIR, "stock.log");
 
+// ★セグメント台帳（DBなしでも動かすためのJSON）
+const SEGMENT_USERS_PATH = path.join(DATA_DIR, "segment_users.json");
+
 const PUBLIC_DIR = path.join(__dirname, "public");
 const UPLOAD_DIR = path.join(PUBLIC_DIR, "uploads");
 
@@ -186,6 +204,7 @@ if (!fs.existsSync(ADDRESSES_PATH)) fs.writeFileSync(ADDRESSES_PATH, JSON.string
 if (!fs.existsSync(PHONE_ADDRESSES_PATH)) fs.writeFileSync(PHONE_ADDRESSES_PATH, JSON.stringify({}, null, 2), "utf8");
 if (!fs.existsSync(SESSIONS_PATH)) fs.writeFileSync(SESSIONS_PATH, JSON.stringify({}, null, 2), "utf8");
 if (!fs.existsSync(NOTIFY_STATE_PATH)) fs.writeFileSync(NOTIFY_STATE_PATH, JSON.stringify({}, null, 2), "utf8");
+if (!fs.existsSync(SEGMENT_USERS_PATH)) fs.writeFileSync(SEGMENT_USERS_PATH, JSON.stringify({}, null, 2), "utf8");
 
 // ====== ユーティリティ ======
 const safeReadJSON = (p, fb) => {
@@ -206,6 +225,9 @@ const writeSessions = (s) => fs.writeFileSync(SESSIONS_PATH, JSON.stringify(s, n
 
 const readNotifyState = () => safeReadJSON(NOTIFY_STATE_PATH, {});
 const writeNotifyState = (s) => fs.writeFileSync(NOTIFY_STATE_PATH, JSON.stringify(s, null, 2), "utf8");
+
+const readSegmentUsers = () => safeReadJSON(SEGMENT_USERS_PATH, {});
+const writeSegmentUsers = (s) => fs.writeFileSync(SEGMENT_USERS_PATH, JSON.stringify(s, null, 2), "utf8");
 
 const yen = (n) => `${Number(n || 0).toLocaleString("ja-JP")}円`;
 
@@ -272,6 +294,12 @@ function filterByIsoRange(items, getTs, fromIso, toIso) {
     const t = new Date(getTs(it)).getTime();
     return t >= from && t < to;
   });
+}
+
+function chunkArray(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
 }
 
 // ====== ★LINE client（1回だけ生成） ======
@@ -370,7 +398,7 @@ async function ensureDbSchema() {
   `);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_phone_address_events_member_code ON phone_address_events(member_code);`);
 
-  // ★LIFF起動ログ（セグメント配信用）
+  // LIFF起動ログ（セグメント配信用）
   await p.query(`
     CREATE TABLE IF NOT EXISTS liff_open_logs (
       id BIGSERIAL PRIMARY KEY,
@@ -381,6 +409,119 @@ async function ensureDbSchema() {
   `);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_liff_open_logs_kind_time ON liff_open_logs(kind, opened_at DESC);`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_liff_open_logs_user ON liff_open_logs(user_id);`);
+
+  // ★segment_users（チャット送信者 + LIFF起動者 台帳）
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS segment_users (
+      user_id TEXT PRIMARY KEY,
+      first_seen TIMESTAMPTZ DEFAULT NOW(),
+      last_seen  TIMESTAMPTZ DEFAULT NOW(),
+      last_chat_at TIMESTAMPTZ,
+      last_liff_at TIMESTAMPTZ
+    );
+  `);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_segment_users_last_seen ON segment_users(last_seen DESC);`);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_segment_users_last_chat ON segment_users(last_chat_at DESC);`);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_segment_users_last_liff ON segment_users(last_liff_at DESC);`);
+}
+
+// ======================================================================
+// ★セグメント台帳：userId touch（DB優先 / DB無ければJSON）
+// source: "chat" | "liff" | "seen"
+// ======================================================================
+async function dbTouchUser(userId, source = "seen") {
+  const uid = String(userId || "").trim();
+  if (!uid || !pool) return;
+
+  const p = mustPool();
+  const setChat = source === "chat";
+  const setLiff = source === "liff";
+
+  await p.query(
+    `
+    INSERT INTO segment_users (user_id, first_seen, last_seen, last_chat_at, last_liff_at)
+    VALUES ($1, NOW(), NOW(),
+      CASE WHEN $2 THEN NOW() ELSE NULL END,
+      CASE WHEN $3 THEN NOW() ELSE NULL END
+    )
+    ON CONFLICT (user_id) DO UPDATE SET
+      last_seen = NOW(),
+      last_chat_at = CASE WHEN $2 THEN NOW() ELSE segment_users.last_chat_at END,
+      last_liff_at = CASE WHEN $3 THEN NOW() ELSE segment_users.last_liff_at END
+    `,
+    [uid, setChat, setLiff]
+  );
+}
+
+function fileTouchUser(userId, source = "seen") {
+  const uid = String(userId || "").trim();
+  if (!uid) return;
+
+  const book = readSegmentUsers();
+  const now = new Date().toISOString();
+  if (!book[uid]) {
+    book[uid] = { userId: uid, firstSeen: now, lastSeen: now, lastChatAt: "", lastLiffAt: "" };
+  }
+  book[uid].lastSeen = now;
+  if (source === "chat") book[uid].lastChatAt = now;
+  if (source === "liff") book[uid].lastLiffAt = now;
+  writeSegmentUsers(book);
+}
+
+async function touchUser(userId, source = "seen") {
+  try {
+    if (pool) await dbTouchUser(userId, source);
+    else fileTouchUser(userId, source);
+  } catch (e) {
+    // DBが落ちた時も台帳が死なないようにJSONへフォールバック
+    try { fileTouchUser(userId, source); } catch {}
+  }
+}
+
+async function listSegmentUserIds(days = 30, source = "active") {
+  const d = Math.min(365, Math.max(1, Number(days || 30)));
+  const src = String(source || "active").toLowerCase();
+
+  // DBあり
+  if (pool) {
+    const p = mustPool();
+    let where = `last_seen >= NOW() - ($1::int * INTERVAL '1 day')`;
+    if (src === "chat") where = `last_chat_at IS NOT NULL AND last_chat_at >= NOW() - ($1::int * INTERVAL '1 day')`;
+    if (src === "liff") where = `last_liff_at IS NOT NULL AND last_liff_at >= NOW() - ($1::int * INTERVAL '1 day')`;
+    if (src === "active") where = `(
+      (last_chat_at IS NOT NULL AND last_chat_at >= NOW() - ($1::int * INTERVAL '1 day'))
+      OR
+      (last_liff_at IS NOT NULL AND last_liff_at >= NOW() - ($1::int * INTERVAL '1 day'))
+    )`;
+
+    const r = await p.query(
+      `SELECT user_id FROM segment_users WHERE ${where} ORDER BY user_id ASC LIMIT $2`,
+      [d, SEGMENT_PUSH_LIMIT]
+    );
+    return r.rows.map((x) => x.user_id).filter(Boolean);
+  }
+
+  // DBなし（JSON）
+  const book = readSegmentUsers();
+  const now = Date.now();
+  const ms = d * 24 * 60 * 60 * 1000;
+
+  const ids = Object.values(book)
+    .filter((x) => {
+      const lastSeen = x?.lastSeen ? new Date(x.lastSeen).getTime() : 0;
+      const lastChat = x?.lastChatAt ? new Date(x.lastChatAt).getTime() : 0;
+      const lastLiff = x?.lastLiffAt ? new Date(x.lastLiffAt).getTime() : 0;
+
+      if (src === "chat") return lastChat && (now - lastChat <= ms);
+      if (src === "liff") return lastLiff && (now - lastLiff <= ms);
+      if (src === "active") return (lastChat && (now - lastChat <= ms)) || (lastLiff && (now - lastLiff <= ms));
+      return lastSeen && (now - lastSeen <= ms); // all/seen
+    })
+    .map((x) => x.userId)
+    .filter(Boolean)
+    .slice(0, SEGMENT_PUSH_LIMIT);
+
+  return ids;
 }
 
 // ======================================================================
@@ -891,7 +1032,12 @@ app.post("/api/liff/open", async (req, res) => {
     const userId = String(tokenUserId || req.body?.userId || "").trim();
 
     if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
-    if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
+
+    // ★台帳に保存（DBあればDB / 無ければJSON）
+    await touchUser(userId, "liff");
+
+    // liff_open_logs は DBあり時のみ
+    if (!pool) return res.json({ ok: true, kind, note: "db_not_configured_but_segment_json_saved" });
 
     await mustPool().query(`INSERT INTO liff_open_logs (user_id, kind) VALUES ($1,$2)`, [userId, kind]);
 
@@ -1362,6 +1508,9 @@ app.post("/api/order/complete", async (req, res) => {
 
     try {
       if (order.lineUserId) {
+        // ★購入者も台帳に（「決済完了」＝確実にアクティブ）
+        await touchUser(order.lineUserId, "chat");
+
         const userMsg =
           "ご注文ありがとうございます！\n\n" +
           "【ご注文内容】\n" +
@@ -2004,9 +2153,25 @@ app.post("/api/admin/products/set-image", (req, res) => {
 });
 
 // ======================================================================
-// ★管理：LIFF起動セグメント対象 userId 取得
-// 例) /api/admin/segment/liff-open?days=30&token=XXXX
-// ※ kindは all 統一のため指定不要（指定されても all扱い）
+// ★管理：セグメント台帳（チャット送信者 + LIFF起動者）から userId 抽出
+// 例）/api/admin/segment/users?days=30&source=active&token=XXXX
+// source: active(デフォルト=chat or liff) / chat / liff / all(lastSeen)
+// ======================================================================
+app.get("/api/admin/segment/users", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const days = Math.min(365, Math.max(1, Number(req.query.days || 30)));
+    const source = String(req.query.source || "active").trim().toLowerCase();
+    const ids = await listSegmentUserIds(days, source);
+    return res.json({ ok: true, days, source, limit: SEGMENT_PUSH_LIMIT, count: ids.length, items: ids });
+  } catch (e) {
+    console.error("/api/admin/segment/users error:", e);
+    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
+  }
+});
+
+// ======================================================================
+// ★互換：従来の LIFF-open 抽出（kindはall統一）
 // ======================================================================
 app.get("/api/admin/segment/liff-open", async (req, res) => {
   if (!requireAdmin(req, res)) return;
@@ -2021,10 +2186,10 @@ app.get("/api/admin/segment/liff-open", async (req, res) => {
       SELECT DISTINCT user_id
       FROM liff_open_logs
       WHERE kind = $1
-        AND opened_at >= NOW() - ($2 || ' days')::interval
+        AND opened_at >= NOW() - ($2::int * INTERVAL '1 day')
       ORDER BY user_id ASC
       `,
-      [kind, String(days)]
+      [kind, days]
     );
 
     return res.json({ ok: true, kind, days, count: r.rows.length, items: r.rows.map(x => x.user_id) });
@@ -2035,49 +2200,69 @@ app.get("/api/admin/segment/liff-open", async (req, res) => {
 });
 
 // ======================================================================
-// ★管理：LIFF起動者セグメントへ一括Push（自前セグメント配信）
+// ★管理：セグメントへ一括Push（自前セグメント配信）
 // POST /api/admin/push/segment?token=XXXX
-// body: { days:30, message:{type:"text",text:"..."} }
-// ※ kindは all 統一のため指定不要（指定されても all扱い）
+// body: { days:30, source:"active", message:{type:"text",text:"..."}, dryRun:false }
+// source: active(デフォルト) / chat / liff / all
 // ======================================================================
 app.post("/api/admin/push/segment", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
-    if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
-
-    const kind = normalizeLiffKind(req.body?.kind); // ★all
     const days = Math.min(365, Math.max(1, Number(req.body?.days || 30)));
+    const source = String(req.body?.source || "active").trim().toLowerCase();
     const message = req.body?.message;
+    const dryRun = req.body?.dryRun === true;
 
     if (!message || !message.type) {
       return res.status(400).json({ ok: false, error: "message required" });
     }
 
-    const r = await mustPool().query(
-      `
-      SELECT DISTINCT user_id
-      FROM liff_open_logs
-      WHERE kind = $1
-        AND opened_at >= NOW() - ($2 || ' days')::interval
-      `,
-      [kind, String(days)]
-    );
+    const ids = await listSegmentUserIds(days, source);
+    if (ids.length === 0) {
+      return res.json({ ok: true, days, source, target: 0, pushed: 0, failed: 0, note: "no_targets" });
+    }
 
-    const ids = r.rows.map(x => x.user_id).filter(Boolean);
+    if (dryRun) {
+      return res.json({ ok: true, dryRun: true, days, source, target: ids.length, preview: ids.slice(0, 50) });
+    }
 
     let okCount = 0;
     let ngCount = 0;
 
-    for (const uid of ids) {
+    const chunks = chunkArray(ids, SEGMENT_CHUNK_SIZE);
+
+    for (const c of chunks) {
       try {
-        await client.pushMessage(uid, message);
-        okCount++;
-      } catch {
-        ngCount++;
+        if (c.length === 1) {
+          await client.pushMessage(c[0], message);
+          okCount += 1;
+        } else {
+          await client.multicast(c, message);
+          okCount += c.length;
+        }
+      } catch (e) {
+        // multicast 失敗時は個別pushにフォールバック（カウント正確化）
+        for (const uid of c) {
+          try {
+            await client.pushMessage(uid, message);
+            okCount += 1;
+          } catch {
+            ngCount += 1;
+          }
+        }
       }
     }
 
-    return res.json({ ok: true, kind, days, target: ids.length, pushed: okCount, failed: ngCount });
+    return res.json({
+      ok: true,
+      days,
+      source,
+      limit: SEGMENT_PUSH_LIMIT,
+      chunkSize: SEGMENT_CHUNK_SIZE,
+      target: ids.length,
+      pushed: okCount,
+      failed: ngCount,
+    });
   } catch (e) {
     console.error("/api/admin/push/segment error:", e?.response?.data || e);
     return res.status(500).json({ ok: false, error: e?.message || "server_error" });
@@ -2108,17 +2293,27 @@ app.post("/webhook", line.middleware(config), async (req, res) => {
 // ======================================================================
 async function handleEvent(ev) {
   try {
+    // ★どのイベントでも lastSeen だけは更新しておく（友だち追加/ボタン等も拾える）
+    try {
+      const uidAny = String(ev?.source?.userId || "").trim();
+      if (uidAny) await touchUser(uidAny, "seen");
+    } catch {}
+
     if (ev.type === "message" && ev.message?.type === "text") {
+      const uid = ev.source?.userId || "";
+
+      // ★チャット送信者として台帳に保存
+      try { if (uid) await touchUser(uid, "chat"); } catch {}
+
       try {
         fs.appendFileSync(
           MESSAGES_LOG,
-          JSON.stringify({ ts: new Date().toISOString(), userId: ev.source?.userId || "", type: "text", len: (ev.message.text || "").length }) + "\n",
+          JSON.stringify({ ts: new Date().toISOString(), userId: uid || "", type: "text", len: (ev.message.text || "").length }) + "\n",
           "utf8"
         );
       } catch {}
 
       const sessions = readSessions();
-      const uid = ev.source?.userId || "";
       const sess = sessions[uid] || null;
       const text = (ev.message.text || "").trim();
       const t = text.replace(/\s+/g, " ").trim();
@@ -2607,6 +2802,8 @@ app.get("/api/health", async (_req, res) => {
       ONLINE_NOTIFY_TOKEN: !!ONLINE_NOTIFY_TOKEN,
       DATABASE_URL: !!process.env.DATABASE_URL,
       PUBLIC_ADDRESS_LOOKUP_TOKEN: !!PUBLIC_ADDRESS_LOOKUP_TOKEN,
+      SEGMENT_PUSH_LIMIT: SEGMENT_PUSH_LIMIT,
+      SEGMENT_CHUNK_SIZE: SEGMENT_CHUNK_SIZE,
     },
   });
 });
@@ -2620,7 +2817,6 @@ app.get("/api/health", async (_req, res) => {
     console.log("✅ DB schema checked/ensured");
   } catch (e) {
     console.error("❌ ensureDbSchema error:", e?.message || e);
-    // DB必須運用なら止める（必要ならON）
     // process.exit(1);
   }
 

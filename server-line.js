@@ -2538,13 +2538,18 @@ async function handleEvent(ev) {
         try { await client.pushMessage(ADMIN_USER_ID, { type: "text", text: notice }); } catch {}
       }
 
-      if (t === "問い合わせ") {
-        await client.replyMessage(ev.replyToken, {
-          type: "text",
-          text: "お問い合わせありがとうございます。\nこのままトークにご質問内容を送ってください。\nスタッフが確認して返信します。",
-        });
-        return;
-      }
+      iif (t === "問い合わせ") {
+  // 返信しない（キーボードが閉じにくい）
+  // 必要なら管理者へだけ通知
+  if (ADMIN_USER_ID && uid && uid !== ADMIN_USER_ID) {
+    await client.pushMessage(ADMIN_USER_ID, {
+      type: "text",
+      text: `📩【問い合わせ開始】\nuserId: ${uid}\nこのあとユーザーから本文が届きます。`
+    });
+  }
+  return;
+}
+
 
       // 会員コード
       if (t === "会員コード") {

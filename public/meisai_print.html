@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>明細（納品書）</title>
+  <style>
+    /* ===== Print setup ===== */
+    @page { size: A4; margin: 10mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+      margin: 0;
+      background: #f5f5f5;
+      color: #111;
+    }
+    .sheet {
+      width: 190mm; /* A4 210mm - margins */
+      margin: 12px auto;
+      background: #fff;
+      padding: 10mm;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+    }
+    h1,h2,h3,p { margin: 0; }
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      margin: 12px auto 0;
+      width: 190mm;
+    }
+    button {
+      padding: 10px 12px;
+      border: 1px solid #ccc;
+      background: #fff;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button.primary { border-color:#111; }
+    button.danger { border-color:#b91c1c; color:#b91c1c; }
+    .muted { color: #666; font-size: 12px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+    .top {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 10mm;
+      align-items: start;
+      margin-bottom: 8mm;
+    }
+    .brand {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 6mm;
+    }
+    .logo {
+      width: 38mm;
+      height: 16mm;
+      border: 1px dashed #aaa;
+      border-radius: 8px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size: 11px;
+      color:#666;
+    }
+    .titlebox h1 {
+      font-size: 22px;
+      letter-spacing: 0.04em;
+    }
+    .titlebox .sub {
+      margin-top: 2mm;
+      font-size: 12px;
+      color: #444;
+    }
+
+    .box {
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 10px;
+    }
+    .box + .box { margin-top: 8px; }
+
+    .grid2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      gap: 8px;
+      align-items: center;
+      margin: 6px 0;
+    }
+    .label { color:#444; font-size: 12px; }
+    input, textarea, select {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      font-size: 13px;
+      background: #fff;
+    }
+    textarea { min-height: 64px; resize: vertical; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+      font-size: 13px;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 8px;
+      vertical-align: top;
+    }
+    th { background: #fafafa; text-align: left; }
+    td.num, th.num { text-align: right; white-space: nowrap; }
+    td.center, th.center { text-align: center; white-space: nowrap; }
+
+    .totals {
+      margin-top: 8px;
+      display: grid;
+      grid-template-columns: 1fr 80mm;
+      gap: 8mm;
+      align-items: start;
+    }
+    .summary table { margin: 0; }
+    .summary td, .summary th { padding: 7px; }
+    .summary th { width: 60%; }
+    .grand {
+      font-weight: 800;
+      font-size: 16px;
+    }
+
+    .footer {
+      margin-top: 10mm;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8mm;
+    }
+    .stamp {
+      height: 20mm;
+      border: 1px dashed #aaa;
+      border-radius: 10px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      color:#666;
+      font-size: 12px;
+    }
+
+    /* ===== Print-only ===== */
+    @media print {
+      body { background: #fff; }
+      .toolbar { display: none; }
+      .sheet { margin: 0; border: none; border-radius: 0; width: auto; }
+      input, textarea, select { border: none; padding: 0; }
+      .logo, .stamp { border: 1px solid #000; }
+      .muted { color:#000; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="toolbar">
+    <button class="primary" onclick="window.print()">印刷する</button>
+    <button onclick="addRow()">商品行を追加</button>
+    <button class="danger" onclick="resetForm()">初期化</button>
+  </div>
+
+  <div class="sheet" id="sheet">
+    <div class="top">
+      <div>
+        <div class="brand">
+          <div class="logo">ロゴ（任意）</div>
+          <div class="titlebox">
+            <h1>明細（納品書）</h1>
+            <div class="sub">※控えとして保管してください</div>
+          </div>
+        </div>
+
+        <div class="box">
+          <div class="row">
+            <div class="label">宛先</div>
+            <input id="toName" placeholder="例：磯屋 太郎 様 / 〇〇商店 御中" />
+          </div>
+          <div class="row">
+            <div class="label">住所</div>
+            <input id="toAddr" placeholder="例：〒000-0000 愛知県〇〇市…" />
+          </div>
+          <div class="row">
+            <div class="label">TEL</div>
+            <input id="toTel" placeholder="例：090-xxxx-xxxx" />
+          </div>
+          <div class="row">
+            <div class="label">会員コード</div>
+            <input id="memberCode" class="mono" placeholder="例：1234（任意）" />
+          </div>
+          <div class="row">
+            <div class="label">受取方法</div>
+            <select id="method">
+              <option value="delivery">宅配</option>
+              <option value="pickup">店頭受取</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="box">
+          <div class="row">
+            <div class="label">発行日</div>
+            <input id="issueDate" />
+          </div>
+          <div class="row">
+            <div class="label">注文番号</div>
+            <input id="orderNo" class="mono" placeholder="例：20251219-001（任意）" />
+          </div>
+          <div class="row">
+            <div class="label">注文日時</div>
+            <input id="orderAt" placeholder="例：2025-12-19 12:34" />
+          </div>
+          <div class="row">
+            <div class="label">支払方法</div>
+            <select id="payment">
+              <option value="cod">代金引換</option>
+              <option value="bank">銀行振込</option>
+              <option value="card">カード（Stripe）</option>
+              <option value="cash">現金（店頭）</option>
+            </select>
+          </div>
+          <div class="row">
+            <div class="label">担当/備考</div>
+            <textarea id="note" placeholder="例：熨斗・配送希望・到着希望など"></textarea>
+          </div>
+        </div>
+
+        <div class="box">
+          <h3 style="font-size:14px;margin-bottom:6px;">販売者情報</h3>
+          <div class="muted">
+            <div><strong>手造りえびせんべい 磯屋</strong></div>
+            <div>〒（住所）＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿＿</div>
+            <div>TEL：（電話）＿＿＿＿＿＿＿＿＿</div>
+            <div>URL：https://isoya-shop.com</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="box">
+      <h2 style="font-size:16px;margin-bottom:6px;">商品明細</h2>
+      <table id="itemsTable">
+        <thead>
+          <tr>
+            <th style="width:52%;">商品名</th>
+            <th class="center" style="width:10%;">数量</th>
+            <th class="num" style="width:14%;">単価</th>
+            <th class="num" style="width:14%;">小計</th>
+            <th class="center" style="width:10%;">操作</th>
+          </tr>
+        </thead>
+        <tbody id="itemsBody">
+          <tr>
+            <td><input placeholder="例：磯屋オリジナルセット" /></td>
+            <td class="center"><input class="qty" type="number" min="0" value="1" /></td>
+            <td class="num"><input class="unit" type="number" min="0" value="0" /></td>
+            <td class="num mono subtotal">0</td>
+            <td class="center"><button onclick="removeRow(this)">削除</button></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="muted" style="margin-top:6px;">※単価・送料・手数料は税込想定（必要に応じて変更）</div>
+    </div>
+
+    <div class="totals">
+      <div class="box">
+        <h3 style="font-size:14px;margin-bottom:6px;">配送・補足</h3>
+        <div class="grid2">
+          <div class="row">
+            <div class="label">配送地域</div>
+            <input id="region" placeholder="例：中部 / 関東" />
+          </div>
+          <div class="row">
+            <div class="label">サイズ</div>
+            <input id="size" placeholder="例：60 / 80 / 100" />
+          </div>
+        </div>
+        <div class="row">
+          <div class="label">メモ</div>
+          <textarea id="shipMemo" placeholder="例：時間指定：午前中 / 置き配不可 など"></textarea>
+        </div>
+      </div>
+
+      <div class="box summary">
+        <h3 style="font-size:14px;margin-bottom:6px;">金額</h3>
+        <table>
+          <tbody>
+            <tr>
+              <th>商品合計</th>
+              <td class="num mono" id="itemsTotal">0</td>
+            </tr>
+            <tr>
+              <th>送料</th>
+              <td class="num"><input id="shipping" type="number" min="0" value="0" /></td>
+            </tr>
+            <tr>
+              <th>代引き手数料</th>
+              <td class="num"><input id="codFee" type="number" min="0" value="0" /></td>
+            </tr>
+            <tr>
+              <th>値引き</th>
+              <td class="num"><input id="discount" type="number" min="0" value="0" /></td>
+            </tr>
+            <tr>
+              <th class="grand">合計</th>
+              <td class="num mono grand" id="grandTotal">0</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div class="box">
+        <h3 style="font-size:14px;margin-bottom:6px;">受領欄（任意）</h3>
+        <div class="muted">お客様控え／店舗控えにご利用ください。</div>
+        <div style="margin-top:10px;" class="stamp">受領印</div>
+      </div>
+      <div class="box">
+        <h3 style="font-size:14px;margin-bottom:6px;">注意事項</h3>
+        <div class="muted">
+          <div>・食品のため、開封後はお早めにお召し上がりください。</div>
+          <div>・不備がございましたら到着後すぐにご連絡ください。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ===== init defaults =====
+    (function initDates(){
+      const d = new Date();
+      const pad = (n)=>String(n).padStart(2,"0");
+      const y = d.getFullYear();
+      const m = pad(d.getMonth()+1);
+      const day = pad(d.getDate());
+      document.getElementById("issueDate").value = `${y}-${m}-${day}`;
+    })();
+
+    function yen(n){
+      const v = Math.max(0, Math.floor(Number(n)||0));
+      return v.toLocaleString("ja-JP");
+    }
+
+    function calc(){
+      const body = document.getElementById("itemsBody");
+      const rows = Array.from(body.querySelectorAll("tr"));
+      let itemsTotal = 0;
+
+      rows.forEach(r=>{
+        const qty = Number(r.querySelector(".qty")?.value||0);
+        const unit = Number(r.querySelector(".unit")?.value||0);
+        const sub = Math.max(0, qty*unit);
+        r.querySelector(".subtotal").textContent = yen(sub);
+        itemsTotal += sub;
+      });
+
+      document.getElementById("itemsTotal").textContent = yen(itemsTotal);
+
+      const shipping = Number(document.getElementById("shipping").value||0);
+      const codFee = Number(document.getElementById("codFee").value||0);
+      const discount = Number(document.getElementById("discount").value||0);
+
+      const grand = Math.max(0, itemsTotal + shipping + codFee - discount);
+      document.getElementById("grandTotal").textContent = yen(grand);
+    }
+
+    function addRow(){
+      const body = document.getElementById("itemsBody");
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><input placeholder="例：四角のりせん" /></td>
+        <td class="center"><input class="qty" type="number" min="0" value="1" /></td>
+        <td class="num"><input class="unit" type="number" min="0" value="0" /></td>
+        <td class="num mono subtotal">0</td>
+        <td class="center"><button onclick="removeRow(this)">削除</button></td>
+      `;
+      body.appendChild(tr);
+      wireInputs(tr);
+      calc();
+    }
+
+    function removeRow(btn){
+      const tr = btn.closest("tr");
+      if (!tr) return;
+      const body = document.getElementById("itemsBody");
+      if (body.querySelectorAll("tr").length <= 1) return; // 最低1行は残す
+      tr.remove();
+      calc();
+    }
+
+    function wireInputs(root=document){
+      const inputs = root.querySelectorAll("input, textarea, select");
+      inputs.forEach(el=>{
+        el.addEventListener("input", calc, { passive:true });
+        el.addEventListener("change", calc, { passive:true });
+      });
+    }
+
+    function resetForm(){
+      if (!confirm("入力を初期化します。よろしいですか？")) return;
+      location.reload();
+    }
+
+    wireInputs();
+    calc();
+  </script>
+</body>
+</html>

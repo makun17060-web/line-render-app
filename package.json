@@ -1,6 +1,7 @@
 {
   "name": "line-admin-server",
   "version": "1.0.0",
+   "type": "commonjs",
   "description": "LINE Bot 管理画面＋Flex配信＋画像アップロード＋リサイズ機能＋Twilio電話AI＋代引き注文",
   "main": "server-line.js",
   "scripts": {

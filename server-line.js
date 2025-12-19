@@ -3019,23 +3019,25 @@ app.get("/api/health", async (_req, res) => {
   });
 });
 
-// ======================================================================
-// 起動（DB schema を先に確保してから listen）
-// ======================================================================
-(async () => {
+// ==========================================================
+// 起動（★トップレベル await を禁止：CommonJSで確実に動かす）
+// ==========================================================
+async function start() {
   try {
-    await ensureDbSchema();
-    console.log("✅ DB schema checked/ensured");
+    await ensureDbSchema(); // ← ここでawaitしてOK（関数内）
+    console.log("[BOOT] DB schema ensured");
   } catch (e) {
-    console.error("❌ ensureDbSchema error:", e?.message || e);
+    console.error("[BOOT] ensureDbSchema failed:", e);
+    // DBが必須なら process.exit(1) にする。必須でないならこのまま続行でもOK。
     // process.exit(1);
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 Server started on port ${PORT}`);
-    console.log("   Webhook: POST /webhook");
-    console.log("   Public: /public/*");
-    console.log("   Phone hook: POST /api/phone/hook");
-    console.log("   Ping: GET /api/line/ping");
+  app.listen(PORT, () => {
+    console.log(`[BOOT] server listening on ${PORT}`);
   });
-})();
+}
+
+start().catch((e) => {
+  console.error("[BOOT] start() failed:", e);
+  process.exit(1);
+});

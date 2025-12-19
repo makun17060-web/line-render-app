@@ -424,6 +424,17 @@ async function ensureDbSchema() {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_segment_users_last_chat ON segment_users(last_chat_at DESC);`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_segment_users_last_liff ON segment_users(last_liff_at DESC);`);
 }
+  // ==========================================================
+  // ★セグメント配信用：チャット送信者ログ
+  // ==========================================================
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS chat_sender_logs (
+      user_id TEXT PRIMARY KEY,
+      first_seen TIMESTAMPTZ DEFAULT NOW(),
+      last_message_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_chat_sender_logs_last ON chat_sender_logs(last_message_at DESC);`);
 
 // ======================================================================
 // ★セグメント台帳：userId touch（DB優先 / DB無ければJSON）
@@ -759,6 +770,218 @@ async function dbUpsertAddressByMemberCode(memberCode, addr = {}) {
   await dbUpsertAddressByUserId(codes.user_id, addr);
   return { ok: true, userId: codes.user_id };
 }
+// ======================================================================
+// ★セグメント配信用（チャット送信者 / 合算）まとめ追記ブロック
+// - DB: chat_sender_logs（ensureDbSchemaで作成済み前提）
+// - ログ: テキスト受信時に userId をDBへ記録
+// - 管理API: chat / all の抽出＆一斉Push
+// ======================================================================
+
+// ★チャット送信者をDBに記録（upsert）
+async function dbTouchChatSender(userId) {
+  if (!pool) return; // DBなし運用でも落とさない
+  const p = mustPool();
+  const uid = String(userId || "").trim();
+  if (!uid) return;
+
+  await p.query(
+    `
+    INSERT INTO chat_sender_logs (user_id, first_seen, last_message_at)
+    VALUES ($1, NOW(), NOW())
+    ON CONFLICT (user_id) DO UPDATE SET
+      last_message_at = NOW()
+    `,
+    [uid]
+  );
+
+  // ついでに codes も確保（任意・便利）
+  try { await dbEnsureCodes(uid); } catch {}
+}
+
+// ★handleEvent() から呼ぶだけ用（落ちても本流を止めない）
+async function touchChatSenderSafe(ev) {
+  try {
+    const uid = ev?.source?.userId || "";
+    if (uid) await dbTouchChatSender(uid);
+  } catch (e) {
+    console.warn("dbTouchChatSender skipped:", e?.message || e);
+  }
+}
+
+// ======================================================================
+// ★管理：チャット送信者セグメント対象 userId 取得
+// 例) /api/admin/segment/chat-senders?days=30&token=XXXX
+// ======================================================================
+app.get("/api/admin/segment/chat-senders", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    if (!pool) return res.json({ ok: true, items: [] });
+
+    const days = Math.min(365, Math.max(1, Number(req.query.days || 30)));
+
+    const r = await mustPool().query(
+      `
+      SELECT user_id
+      FROM chat_sender_logs
+      WHERE last_message_at >= NOW() - ($1 || ' days')::interval
+      ORDER BY user_id ASC
+      `,
+      [String(days)]
+    );
+
+    return res.json({
+      ok: true,
+      source: "chat",
+      days,
+      count: r.rows.length,
+      items: r.rows.map(x => x.user_id).filter(Boolean),
+    });
+  } catch (e) {
+    console.error("/api/admin/segment/chat-senders error:", e);
+    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
+  }
+});
+
+// ======================================================================
+// ★管理：LIFF起動者 + チャット送信者 合算セグメント userId 取得（UNION）
+// 例) /api/admin/segment/all-users?days=30&token=XXXX
+// ======================================================================
+app.get("/api/admin/segment/all-users", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    if (!pool) return res.json({ ok: true, items: [] });
+
+    const days = Math.min(365, Math.max(1, Number(req.query.days || 30)));
+    const kind = normalizeLiffKind(req.query.kind); // ★all 統一
+
+    const r = await mustPool().query(
+      `
+      SELECT DISTINCT user_id FROM (
+        SELECT user_id
+        FROM liff_open_logs
+        WHERE kind = $1
+          AND opened_at >= NOW() - ($2 || ' days')::interval
+
+        UNION
+
+        SELECT user_id
+        FROM chat_sender_logs
+        WHERE last_message_at >= NOW() - ($2 || ' days')::interval
+      ) t
+      ORDER BY user_id ASC
+      `,
+      [kind, String(days)]
+    );
+
+    return res.json({
+      ok: true,
+      source: "all",
+      kind,
+      days,
+      count: r.rows.length,
+      items: r.rows.map(x => x.user_id).filter(Boolean),
+    });
+  } catch (e) {
+    console.error("/api/admin/segment/all-users error:", e);
+    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
+  }
+});
+
+// ======================================================================
+// ★管理：チャット送信者へ一括Push
+// POST /api/admin/push/chat-senders
+// body: { days:30, message:{type:"text",text:"..."} }
+// ======================================================================
+app.post("/api/admin/push/chat-senders", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
+
+    const days = Math.min(365, Math.max(1, Number(req.body?.days || 30)));
+    const message = req.body?.message;
+
+    if (!message || !message.type) {
+      return res.status(400).json({ ok: false, error: "message required" });
+    }
+
+    const r = await mustPool().query(
+      `
+      SELECT user_id
+      FROM chat_sender_logs
+      WHERE last_message_at >= NOW() - ($1 || ' days')::interval
+      `,
+      [String(days)]
+    );
+
+    const ids = r.rows.map(x => x.user_id).filter(Boolean);
+
+    let okCount = 0;
+    let ngCount = 0;
+
+    for (const uid of ids) {
+      try { await client.pushMessage(uid, message); okCount++; }
+      catch { ngCount++; }
+    }
+
+    return res.json({ ok: true, source: "chat", days, target: ids.length, pushed: okCount, failed: ngCount });
+  } catch (e) {
+    console.error("/api/admin/push/chat-senders error:", e?.response?.data || e);
+    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
+  }
+});
+
+// ======================================================================
+// ★管理：合算（LIFF起動 + チャット）へ一括Push
+// POST /api/admin/push/all-users
+// body: { days:30, message:{type:"text",text:"..."} }
+// ======================================================================
+app.post("/api/admin/push/all-users", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
+
+    const days = Math.min(365, Math.max(1, Number(req.body?.days || 30)));
+    const kind = normalizeLiffKind(req.body?.kind); // ★all 統一
+    const message = req.body?.message;
+
+    if (!message || !message.type) {
+      return res.status(400).json({ ok: false, error: "message required" });
+    }
+
+    const r = await mustPool().query(
+      `
+      SELECT DISTINCT user_id FROM (
+        SELECT user_id
+        FROM liff_open_logs
+        WHERE kind = $1
+          AND opened_at >= NOW() - ($2 || ' days')::interval
+
+        UNION
+
+        SELECT user_id
+        FROM chat_sender_logs
+        WHERE last_message_at >= NOW() - ($2 || ' days')::interval
+      ) t
+      `,
+      [kind, String(days)]
+    );
+
+    const ids = r.rows.map(x => x.user_id).filter(Boolean);
+
+    let okCount = 0;
+    let ngCount = 0;
+
+    for (const uid of ids) {
+      try { await client.pushMessage(uid, message); okCount++; }
+      catch { ngCount++; }
+    }
+
+    return res.json({ ok: true, source: "all", kind, days, target: ids.length, pushed: okCount, failed: ngCount });
+  } catch (e) {
+    console.error("/api/admin/push/all-users error:", e?.response?.data || e);
+    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
+  }
+});
 
 // ======================================================================
 // Flex / 商品 / 在庫
@@ -2300,6 +2523,8 @@ async function handleEvent(ev) {
     } catch {}
 
     if (ev.type === "message" && ev.message?.type === "text") {
+            await touchChatSenderSafe(ev);
+
       const uid = ev.source?.userId || "";
 
       // ★チャット送信者として台帳に保存

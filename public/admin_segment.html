@@ -1,255 +1,277 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>磯屋 管理：セグメント配信（LIFF起動者）</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>セグメント配信 管理</title>
   <style>
-    :root{
-      --bg:#f6f7fb; --card:#fff; --txt:#111827; --muted:#6b7280;
-      --line:#e5e7eb; --pri:#2563eb; --pri2:#1d4ed8; --danger:#dc2626;
-      --ok:#16a34a;
-    }
-    body{margin:0;background:var(--bg);color:var(--txt);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;}
-    header{padding:14px 16px;border-bottom:1px solid var(--line);background:#fff;position:sticky;top:0;z-index:10}
-    header h1{margin:0;font-size:16px}
-    header p{margin:6px 0 0;color:var(--muted);font-size:12px}
-    .wrap{max-width:1100px;margin:0 auto;padding:14px 16px 28px}
-    .grid{display:grid;grid-template-columns:360px 1fr;gap:12px}
-    @media (max-width: 900px){ .grid{grid-template-columns:1fr} }
-    .card{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);padding:12px}
-    .card h2{margin:0 0 10px;font-size:14px}
-    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-    label{font-size:12px;color:var(--muted);display:block;margin-bottom:6px}
-    input, textarea, select{
-      width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:10px;
-      padding:10px 10px; background:#fff; font-size:14px; outline:none;
-    }
-    textarea{min-height:130px;resize:vertical}
-    .btn{
-      border:1px solid var(--line); background:#fff; color:var(--txt);
-      padding:10px 12px; border-radius:10px; cursor:pointer; font-weight:600; font-size:13px;
-    }
-    .btn:hover{filter:brightness(.98)}
-    .btn.pri{background:var(--pri);border-color:var(--pri);color:#fff}
-    .btn.pri:hover{background:var(--pri2);border-color:var(--pri2)}
-    .btn.danger{background:var(--danger);border-color:var(--danger);color:#fff}
-    .pill{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--line);padding:6px 10px;border-radius:999px;font-size:12px;color:var(--muted);background:#fff}
-    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
-    .small{font-size:12px;color:var(--muted)}
-    .status{padding:10px;border-radius:10px;background:#0b1220;color:#e5e7eb;font-size:12px;white-space:pre-wrap}
-    .ok{color:var(--ok)}
-    .ng{color:#fca5a5}
-    .list{
-      border:1px solid var(--line);border-radius:10px;background:#fff;
-      max-height:320px;overflow:auto;padding:8px
-    }
-    .list .item{padding:6px 8px;border-bottom:1px dashed var(--line);font-size:12px}
-    .list .item:last-child{border-bottom:none}
-    .rightTop{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-    .hint{background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;padding:10px;border-radius:10px;font-size:12px;line-height:1.6}
-    .k{display:inline-block;background:#f3f4f6;border:1px solid var(--line);padding:2px 8px;border-radius:999px;font-size:12px}
+    body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;background:#f6f7f9;color:#222}
+    header{padding:14px 16px;background:#111827;color:#fff}
+    main{padding:14px 16px;max-width:1100px;margin:0 auto}
+    .row{display:flex;flex-wrap:wrap;gap:10px}
+    .card{background:#fff;border-radius:12px;padding:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+    .w1{flex:1 1 260px}
+    .w2{flex:2 1 520px}
+    label{font-size:12px;color:#555}
+    input,select,textarea,button{width:100%;padding:10px;border:1px solid #ddd;border-radius:10px;font-size:14px;box-sizing:border-box}
+    textarea{min-height:120px;resize:vertical}
+    button{background:#111827;color:#fff;border:none;cursor:pointer}
+    button.secondary{background:#e5e7eb;color:#111827}
+    button:disabled{opacity:.5;cursor:not-allowed}
+    .kpi{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+    .k{padding:10px;border:1px solid #eee;border-radius:10px;background:#fafafa}
+    .k .n{font-size:22px;font-weight:700}
+    .muted{color:#666;font-size:12px}
+    table{width:100%;border-collapse:collapse}
+    th,td{border-bottom:1px solid #eee;padding:8px;text-align:left;font-size:13px}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:12px}
+    .right{display:flex;gap:8px;align-items:center;justify-content:flex-end}
   </style>
 </head>
 <body>
 <header>
-  <h1>磯屋 管理：セグメント配信（LIFF起動者）</h1>
-  <p>API: <span class="mono">GET /api/admin/segment/liff-open</span> / <span class="mono">POST /api/admin/push/segment</span></p>
+  <div style="font-weight:700">セグメント配信 管理</div>
+  <div class="muted" style="color:#cbd5e1">ユニーク人数・抽出・一括Pushを1画面で</div>
 </header>
 
-<div class="wrap">
-  <div class="grid">
-    <!-- left -->
-    <section class="card">
-      <h2>認証</h2>
-      <div class="row" style="gap:10px">
-        <div style="flex:1;min-width:220px">
-          <label>管理トークン（Bearer / token / code どれでもOK）</label>
-          <input id="token" type="password" placeholder="ADMIN_API_TOKEN または ADMIN_CODE" />
-          <div class="small">保存先：ブラウザ（localStorage）</div>
-        </div>
-        <div style="width:140px">
-          <label>&nbsp;</label>
-          <button class="btn" id="saveToken">保存</button>
-        </div>
+<main>
+  <div class="row">
+    <div class="card w1">
+      <label>管理トークン（X-Admin-Token）</label>
+      <input id="token" placeholder="ADMIN_API_TOKEN を貼り付け" />
+      <div style="height:8px"></div>
+      <button class="secondary" id="saveToken">保存</button>
+      <div class="muted" id="authMsg" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card w2">
+      <div class="right">
+        <button class="secondary" id="reloadStats">統計更新</button>
       </div>
-
-      <div style="height:10px"></div>
-
-      <h2>対象（LIFF起動者）</h2>
-      <div class="row">
-        <div style="width:140px">
-          <label>過去何日分</label>
-          <input id="days" type="number" value="30" min="1" max="365" />
-        </div>
-        <div style="flex:1;min-width:220px">
-          <label>kind（今は all 固定運用）</label>
-          <input id="kind" type="text" value="all" disabled />
-          <div class="small">※ server側で kind は <span class="k">all</span> に統一される想定</div>
-        </div>
+      <div style="height:8px"></div>
+      <div class="kpi">
+        <div class="k"><div class="muted">ユニーク台帳（segment_users）</div><div class="n" id="k_total">-</div></div>
+        <div class="k"><div class="muted">チャット送信者（ユニーク）</div><div class="n" id="k_chat">-</div></div>
+        <div class="k"><div class="muted">LIFF起動者（ユニーク）</div><div class="n" id="k_liff">-</div></div>
+        <div class="k"><div class="muted">住所登録者（ユニーク）</div><div class="n" id="k_addr">-</div></div>
       </div>
-
-      <div style="height:10px"></div>
-
-      <div class="row">
-        <button class="btn pri" id="load">セグメント取得</button>
-        <button class="btn" id="copy">userIdをコピー</button>
-        <button class="btn danger" id="clear">表示クリア</button>
+      <div class="muted" style="margin-top:8px">
+        ※ログ回数ではなく、<span class="pill">重複しない userId の人数</span> を表示します。
       </div>
-
-      <div style="height:10px"></div>
-      <div class="hint">
-        送信対象は <b>友だち追加済み</b> かつ <b>ブロックしていない</b> ユーザーのみ届きます。<br/>
-        Push失敗は「ブロック/未友だち/ID無効」等でも起きます（failedに出ます）。
-      </div>
-    </section>
-
-    <!-- right -->
-    <section class="card">
-      <div class="rightTop">
-        <h2 style="margin:0">結果</h2>
-        <div class="pill">件数：<span id="count" class="mono">0</span></div>
-      </div>
-
-      <div style="height:10px"></div>
-
-      <div class="row" style="align-items:flex-start">
-        <div style="flex:1;min-width:320px">
-          <label>userId一覧</label>
-          <div class="list" id="list"></div>
-        </div>
-        <div style="flex:1;min-width:320px">
-          <label>一斉配信（text）</label>
-          <textarea id="message" placeholder="例：年末の特別セールのお知らせ…"></textarea>
-          <div class="row" style="margin-top:8px">
-            <button class="btn pri" id="send">このセグメントへ一斉Push</button>
-            <span class="small">（daysの条件で送信）</span>
-          </div>
-
-          <div style="height:10px"></div>
-          <label>ステータス</label>
-          <div class="status mono" id="status">ready.</div>
-        </div>
-      </div>
-    </section>
+    </div>
   </div>
-</div>
+
+  <div style="height:12px"></div>
+
+  <div class="row">
+    <div class="card w1">
+      <label>抽出条件</label>
+      <div style="height:6px"></div>
+
+      <label>対象</label>
+      <select id="source">
+        <option value="active">アクティブ（chat or liff）</option>
+        <option value="chat">チャット送信者のみ</option>
+        <option value="liff">LIFF起動者のみ</option>
+        <option value="all">全員（台帳）</option>
+      </select>
+
+      <div style="height:8px"></div>
+
+      <label>期間（日）</label>
+      <input id="days" type="number" min="1" max="365" value="30"/>
+
+      <div style="height:8px"></div>
+
+      <label>最大件数</label>
+      <input id="limit" type="number" min="1" max="500" value="500"/>
+
+      <div style="height:10px"></div>
+
+      <button id="loadList">対象者を取得</button>
+      <div class="muted" id="listMsg" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card w2">
+      <div class="right">
+        <div class="muted">対象 userId:</div>
+        <div class="pill" id="targetCount">0</div>
+        <button class="secondary" id="copyIds">userId をコピー</button>
+      </div>
+      <div style="height:8px"></div>
+
+      <div style="max-height:220px;overflow:auto;border:1px solid #eee;border-radius:10px">
+        <table>
+          <thead>
+            <tr>
+              <th>userId</th>
+              <th>last_seen</th>
+              <th>chat</th>
+              <th>liff</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+
+      <div style="height:10px"></div>
+
+      <label>送信メッセージ（テキスト）</label>
+      <textarea id="msg" placeholder="例：年末のご挨拶／新商品のお知らせ など"></textarea>
+
+      <div style="height:10px"></div>
+
+      <div class="right">
+        <button class="secondary" id="testPush">先頭1名にテスト送信</button>
+        <button id="sendAll">この対象に一括Push</button>
+      </div>
+
+      <div class="muted" id="pushMsg" style="margin-top:8px"></div>
+    </div>
+  </div>
+</main>
 
 <script>
-  const $ = (id) => document.getElementById(id);
+  const STORAGE_KEY="iso_admin_token";
+  const tokenEl=document.getElementById("token");
+  const authMsg=document.getElementById("authMsg");
 
-  const STORAGE_KEY = "iso_admin_token_segment";
-  function getToken() { return (localStorage.getItem(STORAGE_KEY) || "").trim(); }
-  function setToken(t) { localStorage.setItem(STORAGE_KEY, (t||"").trim()); }
+  const k_total=document.getElementById("k_total");
+  const k_chat=document.getElementById("k_chat");
+  const k_liff=document.getElementById("k_liff");
+  const k_addr=document.getElementById("k_addr");
 
-  function authHeaders(){
-    const tok = ($("token").value || "").trim() || getToken();
-    const h = { "Content-Type":"application/json" };
-    if (tok) h["Authorization"] = "Bearer " + tok;
-    return h;
+  const sourceEl=document.getElementById("source");
+  const daysEl=document.getElementById("days");
+  const limitEl=document.getElementById("limit");
+  const listMsg=document.getElementById("listMsg");
+  const tbody=document.getElementById("tbody");
+  const targetCount=document.getElementById("targetCount");
+
+  const msgEl=document.getElementById("msg");
+  const pushMsg=document.getElementById("pushMsg");
+
+  let currentRows=[];
+
+  function getToken(){ return (tokenEl.value||"").trim(); }
+  function setMsg(el, text){ el.textContent=text||""; }
+
+  async function api(path, opt={}){
+    const t=getToken();
+    const headers=Object.assign({}, opt.headers||{}, {"x-admin-token": t});
+    const res=await fetch(path, Object.assign({}, opt, {headers}));
+    const j=await res.json().catch(()=>({ok:false,error:"invalid json"}));
+    if(!res.ok) throw new Error(j.error||("HTTP "+res.status));
+    return j;
   }
 
-  function setStatus(msg, isOk=true){
-    const el = $("status");
-    const prefix = isOk ? "✅ " : "❌ ";
-    el.textContent = prefix + msg;
-    el.className = "status mono " + (isOk ? "ok" : "ng");
+  function loadToken(){
+    const t=localStorage.getItem(STORAGE_KEY)||"";
+    tokenEl.value=t;
+    setMsg(authMsg, t ? "トークン読み込み済み" : "トークン未保存");
+  }
+  function saveToken(){
+    localStorage.setItem(STORAGE_KEY, getToken());
+    setMsg(authMsg, "保存しました");
   }
 
-  let currentIds = [];
-
-  function renderList(ids){
-    const list = $("list");
-    list.innerHTML = "";
-    $("count").textContent = String(ids.length);
-    if (!ids.length){
-      list.innerHTML = '<div class="item" style="color:#6b7280">（まだありません）</div>';
-      return;
-    }
-    for (const uid of ids){
-      const div = document.createElement("div");
-      div.className = "item mono";
-      div.textContent = uid;
-      list.appendChild(div);
-    }
-  }
-
-  async function loadSegment(){
-    const days = Math.min(365, Math.max(1, Number($("days").value || 30)));
+  async function reloadStats(){
+    setMsg(authMsg,"");
     try{
-      setStatus("セグメント取得中...");
-      const url = `/api/admin/segment/liff-open?days=${encodeURIComponent(days)}`;
-      const r = await fetch(url, { headers: authHeaders() });
-      const j = await r.json().catch(()=>null);
-      if (!r.ok){
-        throw new Error(j?.error || `HTTP ${r.status}`);
-      }
-      currentIds = Array.isArray(j?.items) ? j.items : [];
-      renderList(currentIds);
-      setStatus(`取得OK：${currentIds.length}件（days=${days}）`);
+      const j=await api("/api/admin/segment/stats");
+      k_total.textContent=j.total_users;
+      k_chat.textContent=j.chat_users;
+      k_liff.textContent=j.liff_users;
+      k_addr.textContent=j.address_users;
+      setMsg(authMsg,"統計を更新しました");
     }catch(e){
-      setStatus(`取得失敗：${e.message || e}`, false);
+      setMsg(authMsg,"エラー: "+e.message);
     }
   }
 
-  async function pushSegment(){
-    const days = Math.min(365, Math.max(1, Number($("days").value || 30)));
-    const text = ($("message").value || "").trim();
-    if (!text){
-      setStatus("メッセージを入力してください。", false);
-      return;
-    }
+  function renderTable(rows){
+    tbody.innerHTML="";
+    rows.forEach(r=>{
+      const tr=document.createElement("tr");
+      tr.innerHTML = `
+        <td style="font-family:ui-monospace, SFMono-Regular, Menlo, monospace">${r.user_id}</td>
+        <td>${r.last_seen ? new Date(r.last_seen).toLocaleString() : ""}</td>
+        <td>${r.last_chat_at ? "✅" : ""}</td>
+        <td>${r.last_liff_at ? "✅" : ""}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+    targetCount.textContent=rows.length;
+  }
+
+  async function loadList(){
+    setMsg(listMsg,"取得中...");
     try{
-      setStatus("一斉Push実行中...");
-      const body = { days, message: { type:"text", text } };
-      const r = await fetch("/api/admin/push/segment", {
+      const source=sourceEl.value;
+      const days=Number(daysEl.value||30);
+      const limit=Number(limitEl.value||500);
+      const j=await api(`/api/admin/segment/list?source=${encodeURIComponent(source)}&days=${days}&limit=${limit}`);
+      currentRows=j.rows||[];
+      renderTable(currentRows);
+      setMsg(listMsg, `取得OK：${j.count}件（source=${j.source}, days=${j.days}）`);
+    }catch(e){
+      setMsg(listMsg,"エラー: "+e.message);
+    }
+  }
+
+  async function copyIds(){
+    const ids=currentRows.map(r=>r.user_id).filter(Boolean);
+    await navigator.clipboard.writeText(ids.join("\n"));
+    setMsg(listMsg, `コピーしました（${ids.length}件）`);
+  }
+
+  async function testPush(){
+    if(currentRows.length===0) return setMsg(pushMsg,"対象者が0です");
+    const text=(msgEl.value||"").trim();
+    if(!text) return setMsg(pushMsg,"メッセージが空です");
+    const uid=currentRows[0].user_id;
+    try{
+      // サーバー側の既存APIに合わせてください（下は例）
+      const j=await api("/api/admin/push/one", {
         method:"POST",
-        headers: authHeaders(),
-        body: JSON.stringify(body)
+        headers:{ "content-type":"application/json" },
+        body: JSON.stringify({ userId: uid, text })
       });
-      const j = await r.json().catch(()=>null);
-      if (!r.ok){
-        throw new Error(j?.error || `HTTP ${r.status}`);
-      }
-      setStatus(`送信完了：target=${j.target} pushed=${j.pushed} failed=${j.failed}`);
+      setMsg(pushMsg, "テスト送信: "+(j.ok?"OK":"NG"));
     }catch(e){
-      setStatus(`送信失敗：${e.message || e}`, false);
+      setMsg(pushMsg,"エラー: "+e.message+"（/api/admin/push/one が無ければ作ります）");
     }
   }
 
-  $("saveToken").addEventListener("click", () => {
-    const t = ($("token").value || "").trim();
-    if (!t){
-      setStatus("空のため保存できません。", false);
-      return;
-    }
-    setToken(t);
-    setStatus("トークン保存OK");
-  });
+  async function sendAll(){
+    if(currentRows.length===0) return setMsg(pushMsg,"対象者が0です");
+    const text=(msgEl.value||"").trim();
+    if(!text) return setMsg(pushMsg,"メッセージが空です");
 
-  $("load").addEventListener("click", loadSegment);
+    const ids=currentRows.map(r=>r.user_id).filter(Boolean);
+    if(!confirm(`この対象 ${ids.length}名に一括Pushします。よろしいですか？`)) return;
 
-  $("copy").addEventListener("click", async () => {
     try{
-      const text = currentIds.join("\n");
-      await navigator.clipboard.writeText(text);
-      setStatus(`コピーOK：${currentIds.length}件`);
-    }catch{
-      setStatus("コピー失敗（ブラウザ権限/HTTPSを確認）", false);
+      // 既存の /api/admin/push/segment に合わせた例
+      const j=await api("/api/admin/push/segment", {
+        method:"POST",
+        headers:{ "content-type":"application/json" },
+        body: JSON.stringify({ userIds: ids, message: { type:"text", text } })
+      });
+      setMsg(pushMsg, `送信完了: ok=${j.ok} 成功=${j.okCount||0} 失敗=${j.ngCount||0}`);
+    }catch(e){
+      setMsg(pushMsg,"エラー: "+e.message+"（/api/admin/push/segment の形式が違う場合は合わせます）");
     }
-  });
+  }
 
-  $("clear").addEventListener("click", () => {
-    currentIds = [];
-    renderList(currentIds);
-    setStatus("クリアしました");
-  });
+  document.getElementById("saveToken").onclick=saveToken;
+  document.getElementById("reloadStats").onclick=reloadStats;
+  document.getElementById("loadList").onclick=loadList;
+  document.getElementById("copyIds").onclick=copyIds;
+  document.getElementById("testPush").onclick=testPush;
+  document.getElementById("sendAll").onclick=sendAll;
 
-  $("send").addEventListener("click", pushSegment);
-
-  // init
-  $("token").value = getToken();
-  renderList([]);
+  loadToken();
 </script>
 </body>
 </html>

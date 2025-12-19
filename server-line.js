@@ -345,16 +345,13 @@ app.use((req, _res, next) => {
   console.log(`[REQ] ${new Date().toISOString()} ${req.method} ${req.url}`);
   next();
 });
-
 // ======================================================================
 // DB スキーマ自動作成（最重要）
 // ======================================================================
 async function ensureDbSchema() {
   if (!pool) return;
-
   const p = mustPool();
 
-  // codes
   await p.query(`
     CREATE TABLE IF NOT EXISTS codes (
       user_id      TEXT PRIMARY KEY,
@@ -363,7 +360,6 @@ async function ensureDbSchema() {
     );
   `);
 
-  // addresses（member_code 主キー）
   await p.query(`
     CREATE TABLE IF NOT EXISTS addresses (
       member_code CHAR(4) PRIMARY KEY,
@@ -380,7 +376,6 @@ async function ensureDbSchema() {
   `);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_addresses_user_id ON addresses(user_id);`);
 
-  // phone_address_events（任意ログ）
   await p.query(`
     CREATE TABLE IF NOT EXISTS phone_address_events (
       id BIGSERIAL PRIMARY KEY,
@@ -398,7 +393,6 @@ async function ensureDbSchema() {
   `);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_phone_address_events_member_code ON phone_address_events(member_code);`);
 
-  // LIFF起動ログ（セグメント配信用）
   await p.query(`
     CREATE TABLE IF NOT EXISTS liff_open_logs (
       id BIGSERIAL PRIMARY KEY,
@@ -410,7 +404,7 @@ async function ensureDbSchema() {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_liff_open_logs_kind_time ON liff_open_logs(kind, opened_at DESC);`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_liff_open_logs_user ON liff_open_logs(user_id);`);
 
-  // ★segment_users（チャット送信者 + LIFF起動者 台帳）← これ1本でOK
+  // ★チャット送信者＋LIFF起動者を “1本化” する台帳
   await p.query(`
     CREATE TABLE IF NOT EXISTS segment_users (
       user_id TEXT PRIMARY KEY,
@@ -424,6 +418,7 @@ async function ensureDbSchema() {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_segment_users_last_chat ON segment_users(last_chat_at DESC);`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_segment_users_last_liff ON segment_users(last_liff_at DESC);`);
 }
+
 
  ;
 

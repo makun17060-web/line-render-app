@@ -410,7 +410,7 @@ async function ensureDbSchema() {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_liff_open_logs_kind_time ON liff_open_logs(kind, opened_at DESC);`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_liff_open_logs_user ON liff_open_logs(user_id);`);
 
-  // ★segment_users（チャット送信者 + LIFF起動者 台帳）
+  // ★segment_users（チャット送信者 + LIFF起動者 台帳）← これ1本でOK
   await p.query(`
     CREATE TABLE IF NOT EXISTS segment_users (
       user_id TEXT PRIMARY KEY,
@@ -424,17 +424,8 @@ async function ensureDbSchema() {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_segment_users_last_chat ON segment_users(last_chat_at DESC);`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_segment_users_last_liff ON segment_users(last_liff_at DESC);`);
 }
-  // ==========================================================
-  // ★セグメント配信用：チャット送信者ログ
-  // ==========================================================
-  await p.query(`
-    CREATE TABLE IF NOT EXISTS chat_sender_logs (
-      user_id TEXT PRIMARY KEY,
-      first_seen TIMESTAMPTZ DEFAULT NOW(),
-      last_message_at TIMESTAMPTZ DEFAULT NOW()
-    );
-  `);
-  await p.query(`CREATE INDEX IF NOT EXISTS idx_chat_sender_logs_last ON chat_sender_logs(last_message_at DESC);`);
+
+ ;
 
 // ======================================================================
 // ★セグメント台帳：userId touch（DB優先 / DB無ければJSON）

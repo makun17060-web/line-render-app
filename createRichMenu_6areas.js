@@ -92,7 +92,7 @@ const shippingUrl = (SHIPPING_URL || `${baseUrl}/public/shipping.html`).trim();
         },
         { // 右下：お問い合わせ（LINEで質問）
           bounds: { x: 1667, y: 843, width: 833, height: 843 },
-          action: { type: "message", label: "お問い合わせ", text: "お問い合わせ" },
+          action: { type: "message", label: "お問い合わせ", text: "問い合わせ" },
         },
       ],
     };

@@ -1732,73 +1732,26 @@ async function handleEvent(ev) {
   }
 
   // メッセージ
-  if (ev.type === "message" && ev.message?.type === "text") {
-    const text = String(ev.message.text || "").trim();
-    if (userId) {
-      await touchUser(userId, "chat");
-      try {
-        appendJsonl(MESSAGES_LOG, { ts: new Date().toISOString(), userId, textLen: text.length });
-      } catch {}
-    }
+ if (ev.type === "message" && ev.message?.type === "text") {
+  const text = String(ev.message.text || "").trim();
 
-    // 途中入力（その他/店頭名）を扱う
-    const sess = userId ? getSession(userId) : null;
+  // ① 直接注文 → 通常商品ボット起動
+  if (text === "直接注文") {
+    return client.replyMessage(ev.replyToken, [
+      { type: "text", text: "直接注文を開始します。商品一覧です。" },
+      productsFlex(),
+    ]);
+  }
 
-    // 「その他」商品名入力待ち
-    if (sess?.mode === "other_name") {
-      const name = text.replace(/\s+/g, " ").trim();
-      if (!name) return client.replyMessage(ev.replyToken, { type: "text", text: "商品名を入力してください。" });
+  // ② 久助 → 久助専用ボット起動
+  if (text === "久助") {
+    return client.replyMessage(ev.replyToken, [
+      { type: "text", text: "久助のご注文を開始します。" },
+      kusukeFlex(), // ← 久助専用 Flex
+    ]);
+  }
 
-      setSession(userId, { mode: "other_qty", otherName: name });
-      return client.replyMessage(ev.replyToken, { type: "text", text: `「${name}」ですね。個数を数字で入力してください（例：3）` });
-    }
-
-    // 「その他」数量入力待ち
-    if (sess?.mode === "other_qty") {
-      const qty = Number(text);
-      if (!Number.isFinite(qty) || qty < 1 || qty > 99) {
-        return client.replyMessage(ev.replyToken, { type: "text", text: "個数は 1〜99 の数字で入力してください。" });
-      }
-
-      // その他は価格0で扱い、あとで管理者へ「価格未確定」として通知
-      const fakeProduct = { id: `other:${encodeURIComponent(sess.otherName)}:0`, name: sess.otherName, price: 0, stock: 9999, image: "" };
-      clearSession(userId);
-      return client.replyMessage(ev.replyToken, [
-        { type: "text", text: "受取方法を選択してください。" },
-        {
-          type: "template",
-          altText: "受取方法",
-          template: {
-            type: "buttons",
-            text: `商品：${sess.otherName}\n数量：${qty}個`,
-            actions: [
-              { type: "postback", label: "宅配", data: `order_payment?${qstr({ id: fakeProduct.id, qty, method: "delivery" })}` },
-              { type: "postback", label: "店頭受取", data: `order_payment?${qstr({ id: fakeProduct.id, qty, method: "pickup" })}` },
-            ],
-          },
-        },
-      ]);
-    }
-
-    // 店頭受取 名前入力待ち
-    if (sess?.mode === "pickup_name") {
-      const name = text.replace(/\s+/g, " ").trim();
-      if (!name) return client.replyMessage(ev.replyToken, { type: "text", text: "お名前を入力してください。" });
-
-      const { id, qty, method, payment } = sess;
-      clearSession(userId);
-
-      const product = loadProductByOrderId(id);
-      const address = null;
-      const flex = confirmFlex(product, qty, method, payment, address, name);
-      return client.replyMessage(ev.replyToken, flex);
-    }
-// 「直接注文」だけでボット起動
-if (text === "直接注文") {
-  return client.replyMessage(ev.replyToken, [
-    { type: "text", text: "直接注文を開始します。商品一覧です。" },
-    productsFlex(),
-  ]);
+  // それ以外のテキストは何もしない（通常応答 or 無視）
 }
 
     // コマンド

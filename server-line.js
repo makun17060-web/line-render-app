@@ -2669,11 +2669,12 @@ async function handleEvent(ev) {
         return;
       }
 
-      // ★起動ワード：リッチメニューの文言が変わっても動くように複数対応
-      if (t === "直接注文" || t === "店頭受取" || t === "注文") {
-        await client.replyMessage(ev.replyToken, productsFlex(readProducts()));
-        return;
-      }
+     // ★起動ワード：店頭受取の「直接注文」だけでボット起動（問い合わせ誤爆防止）
+if (t === "直接注文") {
+  await client.replyMessage(ev.replyToken, productsFlex(readProducts()));
+  return;
+}
+
 
       return;
     }

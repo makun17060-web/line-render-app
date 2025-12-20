@@ -1289,46 +1289,6 @@ app.get("/api/admin/orders", (req, res) => {
   return res.json({ ok: true, items });
 });
 
-app.get("/api/admin/orders-db", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
-// ===== 発送通知API（管理画面→顧客へPush）=====
-// HTML側が呼んでいるURL：/api/admin/orders/notify-shipped
-app.post("/api/admin/orders/notify-shipped", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
-
-  try {
-    const userId = String(req.body?.userId || "").trim();
-    const orderKey = String(req.body?.orderKey || "").trim(); // 例: ord:xxx
-    const message = String(req.body?.message || "").trim();
-
-    if (!userId) return res.status(400).json({ ok: false, error: "userId_required" });
-    if (!message) return res.status(400).json({ ok: false, error: "message_required" });
-
-    // 送信（Push）
-    await client.pushMessage(userId, { type: "text", text: message });
-
-    // 任意：サーバー側でも「通知済み」を保存（別PCでも二重送信防止）
-    // notify_state.json を使う（既に server-line.js 内で NOTIFY_STATE_PATH を作ってる前提）
-    try {
-      const st = readNotifyState(); // 既存 helper がある前提
-      st[orderKey || `${userId}:${Date.now()}`] = {
-        status: "ok",
-        userId,
-        ts: new Date().toISOString(),
-      };
-      writeNotifyState(st);
-    } catch (e) {
-      console.warn("notify_state save skipped:", e?.message || e);
-    }
-
-    return res.json({ ok: true });
-  } catch (e) {
-    console.error("/api/admin/orders/notify-shipped error:", e?.response?.data || e?.message || e);
-    return res.status(500).json({ ok: false, error: "notify_failed" });
-  }
-});
 
     const limit = Math.min(2000, Number(req.query.limit || 200));
     const payment = String(req.query.payment || "").trim().toLowerCase();
@@ -1359,9 +1319,7 @@ app.post("/api/admin/orders/notify-shipped", async (req, res) => {
     const r = await mustPool().query(sql, params);
     return res.json({ ok: true, count: r.rows.length, items: r.rows });
   } catch (e) {
-    console.error("/api/admin/orders-db error:", e);
-    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
-  }
+  app.get("/api/admin/orders-db", async (req, res) => 
 });
 
 // =============== 管理：セグメント抽出/Push ===============
@@ -1412,6 +1370,44 @@ app.post("/api/admin/push/segment", async (req, res) => {
   } catch (e) {
     console.error("/api/admin/push/segment error:", e);
     return res.status(500).json({ ok: false, error: e?.message || "server_error" });
+  }
+});
+// =============== 管理API：注文（ファイル）/（DB） ===============
+
+app.get("/api/admin/orders", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const limit = Math.min(5000, Number(req.query.limit || 1000));
+  const items = readLogLines(ORDERS_LOG, limit);
+  return res.json({ ok: true, items });
+});
+
+// ✅ 発送通知API（ここに置く：トップレベル）
+app.post("/api/admin/orders/notify-shipped", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  try {
+    const userId = String(req.body?.userId || "").trim();
+    const orderKey = String(req.body?.orderKey || "").trim();
+    const message = String(req.body?.message || "").trim();
+
+    if (!userId) return res.status(400).json({ ok: false, error: "userId_required" });
+    if (!message) return res.status(400).json({ ok: false, error: "message_required" });
+
+    await client.pushMessage(userId, { type: "text", text: message });
+
+    // サーバー側で通知済み保存（任意）
+    try {
+      const st = readNotifyState();
+      st[orderKey || `${userId}:${Date.now()}`] = { status: "ok", userId, ts: new Date().toISOString() };
+      writeNotifyState(st);
+    } catch (e) {
+      console.warn("notify_state save skipped:", e?.message || e);
+    }
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("/api/admin/orders/notify-shipped error:", e?.response?.data || e?.message || e);
+    return res.status(500).json({ ok: false, error: "notify_failed" });
   }
 });
 

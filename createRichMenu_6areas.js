@@ -92,7 +92,7 @@ const shippingUrl = (SHIPPING_URL || `${baseUrl}/public/shipping.html`).trim();
         },
         { // 右下：お問い合わせ（LINEで質問）
           bounds: { x: 1667, y: 843, width: 833, height: 843 },
-          action: { type: "message", label: "お問い合わせ", text: "問い合わせ" },
+          action: { type: "uri", label: "お問い合わせ", uri: "https://liff.line.me/2008406620-LUJ3dURd" },
         },
       ],
     };

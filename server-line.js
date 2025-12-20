@@ -2538,7 +2538,7 @@ async function handleEvent(ev) {
         try { await client.pushMessage(ADMIN_USER_ID, { type: "text", text: notice }); } catch {}
       }
 
-      if (t === "問い合わせ") {
+      iif (t === "問い合わせ") {
   // 返信しない（キーボードが閉じにくい）
   // 必要なら管理者へだけ通知
   if (ADMIN_USER_ID && uid && uid !== ADMIN_USER_ID) {

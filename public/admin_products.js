@@ -385,7 +385,7 @@ document.addEventListener("DOMContentLoaded", () => {
     uploadStatus.style.color = "#666";
 
     try {
-      const { url } = withToken("/api/admin/upload-image");
+      const { url } = withToken("/api/admin/upload");
       const fd = new FormData();
       fd.append("image", file); // multer.single("image")
 

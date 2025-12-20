@@ -1,13 +1,14 @@
 /**
  * server-line.js — フル機能版（Stripe + ミニアプリ + 画像管理 + 住所DB + セグメント配信 + 注文DB永続化）
  *
- * ✅ 重要（今回の要望）
- * - ボット起動キーワードは「直接注文」と「久助」だけ（それ以外は無反応）
- * - ただし、注文途中の入力（例：店頭名入力 / その他の商品名入力など）はセッション中のみ受け付ける
+ * ✅ 今回の要望対応（重要）
+ * - ボット起動キーワードは「直接注文」と「久助」だけ
+ *   → 「注文/商品/メニュー」等は一切反応しない
+ * - 「久助」は「久助」(案内) と「久助 3」(数量) のみ受付
  *
- * ✅ 発送通知ができない問題の修正
- * - /api/admin/orders/notify-shipped を「他のルートの中」に書いていたのが原因
- * - ルート定義をトップレベルへ移動して正常化
+ * ✅ 既存の不具合対策
+ * - await は必ず async 関数内でのみ使用（handleEvent/postback は async の中）
+ * - text のスコープ崩れ防止（message ブロック内で完結）
  *
  * --- 必須 .env ---
  * LINE_CHANNEL_ACCESS_TOKEN
@@ -59,7 +60,7 @@ const PUBLIC_ADDRESS_LOOKUP_TOKEN = (process.env.PUBLIC_ADDRESS_LOOKUP_TOKEN || 
 
 const COD_FEE = Number(process.env.COD_FEE || 330);
 
-// 久助は 250円固定（運用メモに合わせる）
+// 久助は 250円固定（あなたの運用メモに合わせる）
 const KUSUKE_UNIT_PRICE = 250;
 
 // セグメント設定
@@ -109,33 +110,16 @@ app.use((req, _res, next) => {
   next();
 });
 
-
-// =============== ディレクトリ & ファイル（★永続ディスク対応） ===============
+// =============== ディレクトリ & ファイル ===============
+const DATA_DIR = path.join(__dirname, "data");
 const PUBLIC_DIR = path.join(__dirname, "public");
+const UPLOAD_DIR = path.join(PUBLIC_DIR, "uploads");
 
-// Render Persistent Disk の Mount Path（Render側で /var/data に設定する想定）
-const PERSIST_ROOT =
-  (process.env.PERSIST_ROOT || "").trim() ||
-  (process.env.RENDER_DISK_PATH || "").trim() || // 任意（使ってなければ空でOK）
-  "/var/data";
-
-// data/ と uploads/ は永続ディスク配下へ
-const DATA_DIR = (process.env.DATA_DIR || "").trim() || path.join(PERSIST_ROOT, "data");
-const UPLOAD_DIR = (process.env.UPLOAD_DIR || "").trim() || path.join(PERSIST_ROOT, "uploads");
-
-// public はアプリ内（表示用HTML/CSS/JS）として維持
-if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
-
-// 永続ディスク側
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-// 既存の /public 配信（HTML等）
 app.use("/public", express.static(PUBLIC_DIR));
-
-// ★重要：画像URLは /public/uploads/xxx を維持したいので、そこに永続ディスクの uploads を割り当てる
-app.use("/public/uploads", express.static(UPLOAD_DIR));
-
 
 const PRODUCTS_PATH = path.join(DATA_DIR, "products.json");
 const ORDERS_LOG = path.join(DATA_DIR, "orders.log");
@@ -161,8 +145,16 @@ function safeWriteJSON(p, obj) {
   fs.writeFileSync(p, JSON.stringify(obj, null, 2), "utf8");
 }
 
-
-
+if (!fs.existsSync(PRODUCTS_PATH)) {
+  const sample = [
+    { id: "original-set-2100", name: "磯屋オリジナルセット", price: 2100, stock: 10, desc: "人気の詰め合わせ。", image: "" },
+    { id: "nori-square-300", name: "四角のりせん", price: 300, stock: 10, desc: "のり香る角せん。", image: "" },
+    { id: "premium-ebi-400", name: "プレミアムえびせん", price: 400, stock: 5, desc: "贅沢な旨み。", image: "" },
+    // 久助はミニアプリ一覧から除外。チャット購入専用（単価250固定）
+    { id: "kusuke-250", name: "久助（えびせん）", price: KUSUKE_UNIT_PRICE, stock: 20, desc: "お得な割れせん。", image: "" },
+  ];
+  safeWriteJSON(PRODUCTS_PATH, sample);
+}
 if (!fs.existsSync(SESSIONS_PATH)) safeWriteJSON(SESSIONS_PATH, {});
 if (!fs.existsSync(NOTIFY_STATE_PATH)) safeWriteJSON(NOTIFY_STATE_PATH, {});
 if (!fs.existsSync(SEGMENT_USERS_PATH)) safeWriteJSON(SEGMENT_USERS_PATH, {});
@@ -195,7 +187,8 @@ function pickNameFromAddress(a = {}) {
   if (n) return String(n).trim();
   const ln = a.lastName || "";
   const fn = a.firstName || "";
-  return `${ln}${fn}`.trim();
+  const comb = `${ln}${fn}`.trim();
+  return comb;
 }
 
 function normalizePaymentMethodFromOrder(order = {}) {
@@ -591,10 +584,8 @@ async function dbGetAddressByUserId(userId) {
 
   const row = r.rows[0] || null;
   if (!row?.member_code) return null;
-
   const hasAny = row.name || row.phone || row.postal || row.prefecture || row.city || row.address1 || row.address2;
   if (!hasAny) return null;
-
   return row;
 }
 
@@ -742,12 +733,11 @@ async function listSegmentUserIds(days = 30, source = "active") {
     let where = `last_seen >= NOW() - ($1::int * INTERVAL '1 day')`;
     if (src === "chat") where = `last_chat_at IS NOT NULL AND last_chat_at >= NOW() - ($1::int * INTERVAL '1 day')`;
     if (src === "liff") where = `last_liff_at IS NOT NULL AND last_liff_at >= NOW() - ($1::int * INTERVAL '1 day')`;
-    if (src === "active")
-      where = `(
-        (last_chat_at IS NOT NULL AND last_chat_at >= NOW() - ($1::int * INTERVAL '1 day'))
-        OR
-        (last_liff_at IS NOT NULL AND last_liff_at >= NOW() - ($1::int * INTERVAL '1 day'))
-      )`;
+    if (src === "active") where = `(
+      (last_chat_at IS NOT NULL AND last_chat_at >= NOW() - ($1::int * INTERVAL '1 day'))
+      OR
+      (last_liff_at IS NOT NULL AND last_liff_at >= NOW() - ($1::int * INTERVAL '1 day'))
+    )`;
 
     const r = await p.query(`SELECT user_id FROM segment_users WHERE ${where} ORDER BY user_id ASC LIMIT $2`, [d, SEGMENT_PUSH_LIMIT]);
     return r.rows.map((x) => x.user_id).filter(Boolean);
@@ -756,7 +746,6 @@ async function listSegmentUserIds(days = 30, source = "active") {
   const book = readSegmentUsers();
   const now = Date.now();
   const ms = d * 24 * 60 * 60 * 1000;
-
   const ids = Object.values(book)
     .filter((x) => {
       const lastSeen = x?.lastSeen ? new Date(x.lastSeen).getTime() : 0;
@@ -1293,71 +1282,13 @@ function readLogLines(filePath, limit = 100) {
     .filter(Boolean);
 }
 
-function yyyymmddFromIso(ts) {
-  const d = new Date(ts);
-  if (isNaN(d.getTime())) return "";
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${y}${m}${dd}`;
-}
-
 app.get("/api/admin/orders", (req, res) => {
   if (!requireAdmin(req, res)) return;
   const limit = Math.min(5000, Number(req.query.limit || 1000));
-  const date = String(req.query.date || "").trim(); // YYYYMMDD（任意）
-  let items = readLogLines(ORDERS_LOG, limit);
-
-  if (date && /^\d{8}$/.test(date)) {
-    items = items.filter((o) => {
-      const ts = o.ts || o.timestamp || o.created_at || "";
-      const key = ts ? yyyymmddFromIso(ts) : "";
-      return key === date;
-    });
-  }
-
+  const items = readLogLines(ORDERS_LOG, limit);
   return res.json({ ok: true, items });
 });
 
-// ✅ 発送通知API（管理画面→顧客へPush）【ここが修正点：トップレベルに配置】
-app.post("/api/admin/orders/notify-shipped", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
-
-  try {
-    const userId = String(req.body?.userId || "").trim();
-    const orderKey = String(req.body?.orderKey || "").trim();
-    const message = String(req.body?.message || "").trim();
-
-    if (!userId) return res.status(400).json({ ok: false, error: "userId_required" });
-    if (!message) return res.status(400).json({ ok: false, error: "message_required" });
-
-    await client.pushMessage(userId, { type: "text", text: message });
-
-    // サーバ側で通知済み保存（別PCでも二重送信防止の基礎）
-    try {
-      const st = readNotifyState();
-      st[orderKey || `${userId}:${Date.now()}`] = {
-        status: "ok",
-        userId,
-        ts: new Date().toISOString(),
-      };
-      writeNotifyState(st);
-    } catch (e) {
-      console.warn("notify_state save skipped:", e?.message || e);
-    }
-
-    return res.json({ ok: true });
-  } catch (e) {
-    console.error("/api/admin/orders/notify-shipped error:", e?.response?.data || e?.message || e);
-    return res.status(500).json({ ok: false, error: "notify_failed" });
-  }
-});
-
-// DB注文（検索用）
-app.get("/api/admin/orders-db", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
 
     const limit = Math.min(2000, Number(req.query.limit || 200));
     const payment = String(req.query.payment || "").trim().toLowerCase();
@@ -1388,152 +1319,10 @@ app.get("/api/admin/orders-db", async (req, res) => {
     const r = await mustPool().query(sql, params);
     return res.json({ ok: true, count: r.rows.length, items: r.rows });
   } catch (e) {
-    console.error("/api/admin/orders-db error:", e);
-    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
-  }
+  app.get("/api/admin/orders-db", async (req, res) => 
 });
 
-// =============== 管理：セグメント（管理HTML互換：preview / send） ===============
-function dayRangeJST(yyyymmdd) {
-  // yyyymmdd を JST の 00:00-24:00 として扱い、UTCへ変換した範囲を返す
-  // 簡易：Dateに "YYYY-MM-DDT00:00:00+09:00" を入れる
-  const y = yyyymmdd.slice(0, 4);
-  const m = yyyymmdd.slice(4, 6);
-  const d = yyyymmdd.slice(6, 8);
-  const start = new Date(`${y}-${m}-${d}T00:00:00+09:00`);
-  const end = new Date(`${y}-${m}-${d}T24:00:00+09:00`);
-  return { start, end };
-}
-
-app.post("/api/admin/segment/preview", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    const type = String(req.body?.type || "").trim(); // orders / activeChatters / addresses
-    const date = String(req.body?.date || "").trim(); // YYYYMMDD optional
-
-    let userIds = [];
-
-    if (pool) {
-      const p = mustPool();
-
-      if (type === "orders") {
-        if (date && /^\d{8}$/.test(date)) {
-          const { start, end } = dayRangeJST(date);
-          const r = await p.query(
-            `SELECT DISTINCT user_id FROM orders WHERE user_id IS NOT NULL AND created_at >= $1 AND created_at < $2 ORDER BY user_id ASC LIMIT $3`,
-            [start.toISOString(), end.toISOString(), SEGMENT_PUSH_LIMIT]
-          );
-          userIds = r.rows.map((x) => x.user_id).filter(Boolean);
-        } else {
-          const r = await p.query(
-            `SELECT DISTINCT user_id FROM orders WHERE user_id IS NOT NULL ORDER BY user_id ASC LIMIT $1`,
-            [SEGMENT_PUSH_LIMIT]
-          );
-          userIds = r.rows.map((x) => x.user_id).filter(Boolean);
-        }
-      } else if (type === "activeChatters") {
-        if (date && /^\d{8}$/.test(date)) {
-          const { start, end } = dayRangeJST(date);
-          const r = await p.query(
-            `SELECT user_id FROM segment_users WHERE last_chat_at IS NOT NULL AND last_chat_at >= $1 AND last_chat_at < $2 ORDER BY user_id ASC LIMIT $3`,
-            [start.toISOString(), end.toISOString(), SEGMENT_PUSH_LIMIT]
-          );
-          userIds = r.rows.map((x) => x.user_id).filter(Boolean);
-        } else {
-          const r = await p.query(
-            `SELECT user_id FROM segment_users WHERE last_chat_at IS NOT NULL ORDER BY user_id ASC LIMIT $1`,
-            [SEGMENT_PUSH_LIMIT]
-          );
-          userIds = r.rows.map((x) => x.user_id).filter(Boolean);
-        }
-      } else if (type === "addresses") {
-        if (date && /^\d{8}$/.test(date)) {
-          const { start, end } = dayRangeJST(date);
-          const r = await p.query(
-            `SELECT DISTINCT user_id FROM addresses WHERE user_id IS NOT NULL AND updated_at >= $1 AND updated_at < $2 ORDER BY user_id ASC LIMIT $3`,
-            [start.toISOString(), end.toISOString(), SEGMENT_PUSH_LIMIT]
-          );
-          userIds = r.rows.map((x) => x.user_id).filter(Boolean);
-        } else {
-          const r = await p.query(
-            `SELECT DISTINCT user_id FROM addresses WHERE user_id IS NOT NULL ORDER BY user_id ASC LIMIT $1`,
-            [SEGMENT_PUSH_LIMIT]
-          );
-          userIds = r.rows.map((x) => x.user_id).filter(Boolean);
-        }
-      } else {
-        return res.status(400).json({ ok: false, error: "type_invalid" });
-      }
-    } else {
-      // ファイル運用の簡易
-      if (type === "orders") {
-        const items = readLogLines(ORDERS_LOG, 5000);
-        if (date && /^\d{8}$/.test(date)) {
-          userIds = items
-            .filter((o) => yyyymmddFromIso(o.ts || o.timestamp || "") === date)
-            .map((o) => o.userId || o.lineUserId)
-            .filter(Boolean);
-        } else {
-          userIds = items.map((o) => o.userId || o.lineUserId).filter(Boolean);
-        }
-        userIds = Array.from(new Set(userIds)).slice(0, SEGMENT_PUSH_LIMIT);
-      } else if (type === "activeChatters") {
-        const book = readSegmentUsers();
-        const ids = Object.values(book)
-          .filter((x) => x?.lastChatAt)
-          .map((x) => x.userId)
-          .filter(Boolean);
-        userIds = Array.from(new Set(ids)).slice(0, SEGMENT_PUSH_LIMIT);
-      } else if (type === "addresses") {
-        const book = safeReadJSON(ADDRESSES_PATH, {});
-        const ids = Object.values(book).map((x) => x?.userId).filter(Boolean);
-        userIds = Array.from(new Set(ids)).slice(0, SEGMENT_PUSH_LIMIT);
-      } else {
-        return res.status(400).json({ ok: false, error: "type_invalid" });
-      }
-    }
-
-    userIds = Array.from(new Set(userIds)).filter(Boolean).slice(0, SEGMENT_PUSH_LIMIT);
-
-    return res.json({ ok: true, total: userIds.length, userIds });
-  } catch (e) {
-    console.error("/api/admin/segment/preview error:", e);
-    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
-  }
-});
-
-app.post("/api/admin/segment/send", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    const userIds = Array.isArray(req.body?.userIds) ? req.body.userIds.filter(Boolean) : [];
-    const messageText = String(req.body?.message || "").trim();
-    if (!userIds.length) return res.status(400).json({ ok: false, error: "userIds_required" });
-    if (!messageText) return res.status(400).json({ ok: false, error: "message_required" });
-
-    const ids = userIds.slice(0, SEGMENT_PUSH_LIMIT);
-    const chunks = chunkArray(ids, SEGMENT_CHUNK_SIZE);
-
-    let okCount = 0;
-    let ngCount = 0;
-
-    for (const part of chunks) {
-      try {
-        await client.multicast(part, { type: "text", text: messageText });
-        okCount += part.length;
-      } catch (e) {
-        ngCount += part.length;
-        console.error("segment multicast error:", e?.response?.data || e?.message || e);
-      }
-    }
-
-    return res.json({ ok: true, requested: ids.length, sent: okCount, failed: ngCount });
-  } catch (e) {
-    console.error("/api/admin/segment/send error:", e);
-    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
-  }
-});
-
-// 互換：旧エンドポイント（使ってる場合に備えて残す）
+// =============== 管理：セグメント抽出/Push ===============
 app.get("/api/admin/segment/users", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
@@ -1544,6 +1333,81 @@ app.get("/api/admin/segment/users", async (req, res) => {
   } catch (e) {
     console.error("/api/admin/segment/users error:", e);
     return res.status(500).json({ ok: false, error: e?.message || "server_error" });
+  }
+});
+
+app.post("/api/admin/push/segment", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const days = Number(req.body?.days || 30);
+    const source = String(req.body?.source || "active");
+    const message = req.body?.message;
+    const dryRun = !!req.body?.dryRun;
+
+    if (!message || !message.type) return res.status(400).json({ ok: false, error: "message_required" });
+
+    const ids = await listSegmentUserIds(days, source);
+    const chunks = chunkArray(ids, SEGMENT_CHUNK_SIZE);
+
+    if (dryRun) {
+      return res.json({ ok: true, dryRun: true, days, source, target: ids.length, chunks: chunks.length });
+    }
+
+    let okCount = 0;
+    let ngCount = 0;
+
+    for (const part of chunks) {
+      try {
+        await client.multicast(part, message);
+        okCount += part.length;
+      } catch (e) {
+        ngCount += part.length;
+        console.error("segment multicast error:", e?.response?.data || e?.message || e);
+      }
+    }
+
+    return res.json({ ok: true, days, source, target: ids.length, pushed: okCount, failed: ngCount });
+  } catch (e) {
+    console.error("/api/admin/push/segment error:", e);
+    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
+  }
+});
+// =============== 管理API：注文（ファイル）/（DB） ===============
+
+app.get("/api/admin/orders", (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const limit = Math.min(5000, Number(req.query.limit || 1000));
+  const items = readLogLines(ORDERS_LOG, limit);
+  return res.json({ ok: true, items });
+});
+
+// ✅ 発送通知API（ここに置く：トップレベル）
+app.post("/api/admin/orders/notify-shipped", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  try {
+    const userId = String(req.body?.userId || "").trim();
+    const orderKey = String(req.body?.orderKey || "").trim();
+    const message = String(req.body?.message || "").trim();
+
+    if (!userId) return res.status(400).json({ ok: false, error: "userId_required" });
+    if (!message) return res.status(400).json({ ok: false, error: "message_required" });
+
+    await client.pushMessage(userId, { type: "text", text: message });
+
+    // サーバー側で通知済み保存（任意）
+    try {
+      const st = readNotifyState();
+      st[orderKey || `${userId}:${Date.now()}`] = { status: "ok", userId, ts: new Date().toISOString() };
+      writeNotifyState(st);
+    } catch (e) {
+      console.warn("notify_state save skipped:", e?.message || e);
+    }
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("/api/admin/orders/notify-shipped error:", e?.response?.data || e?.message || e);
+    return res.status(500).json({ ok: false, error: "notify_failed" });
   }
 });
 
@@ -1845,9 +1709,7 @@ app.post("/webhook", line.middleware(config), async (req, res) => {
 
 // =============== 予約ログ ===============
 function appendJsonl(filePath, obj) {
-  try {
-    fs.appendFileSync(filePath, JSON.stringify(obj) + "\n", "utf8");
-  } catch {}
+  fs.appendFileSync(filePath, JSON.stringify(obj) + "\n", "utf8");
 }
 
 // =============== handleEvent ===============
@@ -1871,56 +1733,10 @@ async function handleEvent(ev) {
   }
 
   // ===========================
-  // ✅ テキストメッセージ
-  //  - 起動キーワードは2つだけ
-  //  - ただしセッション中は入力を受ける
+  // ✅ テキストメッセージ（起動キーワードは2つだけ）
   // ===========================
   if (ev.type === "message" && ev.message?.type === "text") {
     const text = String(ev.message.text || "").trim();
-
-    // --- セッション入力（起動キーワード以外でも、セッション中は受ける） ---
-    const sess = userId ? getSession(userId) : null;
-    if (sess?.mode === "pickup_name") {
-      await touchUser(userId, "chat");
-      const pickupName = text.slice(0, 40);
-      const id = sess.id;
-      const qty = Number(sess.qty || 1);
-      const method = sess.method || "pickup";
-      const payment = sess.payment || "cash";
-      clearSession(userId);
-
-      const product = loadProductByOrderId(id);
-      return client.replyMessage(ev.replyToken, [
-        { type: "text", text: `店頭受取のお名前「${pickupName}」で進めます。` },
-        confirmFlex(product, qty, method, payment === "cash" ? "store" : payment, null, pickupName),
-      ]);
-    }
-
-    if (sess?.mode === "other_name") {
-      await touchUser(userId, "chat");
-      const name = text.replace(/\s+/g, " ").slice(0, 60);
-      if (!name) return client.replyMessage(ev.replyToken, { type: "text", text: "商品名を入力してください。" });
-      setSession(userId, { mode: "other_qty", otherName: name });
-      return client.replyMessage(ev.replyToken, { type: "text", text: `「${name}」ですね。個数を数字で入力してください（例：3）` });
-    }
-
-    if (sess?.mode === "other_qty") {
-      await touchUser(userId, "chat");
-      const m = /^(\d{1,2})$/.exec(text);
-      if (!m) return client.replyMessage(ev.replyToken, { type: "text", text: "個数を数字で入力してください（例：3）" });
-      const qty = Number(m[1]);
-      if (qty < 1 || qty > 99) return client.replyMessage(ev.replyToken, { type: "text", text: "個数は 1〜99 で入力してください。" });
-
-      const otherName = String(sess.otherName || "その他");
-      clearSession(userId);
-
-      // price 0 で「その他」を商品として扱う（価格未入力運用）
-      const id = `other:${encodeURIComponent(otherName)}:0`;
-      return client.replyMessage(ev.replyToken, [
-        { type: "text", text: "受取方法を選択してください。" },
-        methodFlex(id, qty),
-      ]);
-    }
 
     // ① 直接注文 → 通常商品ボット起動
     if (text === "直接注文") {
@@ -1972,10 +1788,7 @@ async function handleEvent(ev) {
       }
 
       // 久助：宅配/代引（住所未登録なら確認画面で住所入力を促す）
-      return client.replyMessage(ev.replyToken, [
-        { type: "text", text: "久助の注文内容です。" },
-        confirmFlex(product, qty, "delivery", "cod", null, null),
-      ]);
+      return client.replyMessage(ev.replyToken, [{ type: "text", text: "久助の注文内容です。" }, confirmFlex(product, qty, "delivery", "cod", null, null)]);
     }
 
     // それ以外は無反応

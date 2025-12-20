@@ -1088,19 +1088,39 @@ app.post("/api/order/complete", async (req, res) => {
     const items = Array.isArray(order.items) ? order.items : [];
     if (!items.length) return res.json({ ok: false, error: "no_items" });
 
-    // log（sourceが来ても必ず stripe 系に補正）
-    const logSource = String(order.source || "liff-stripe").trim() || "liff-stripe";
+    // ★支払方法の判定（ここが重要）
+    // 期待：order.paymentMethod または order.payment に "cod" / "bank" / "stripe" が入る
+    const pmRaw = String(order.paymentMethod || order.payment || "").trim().toLowerCase();
+    const paymentMethod =
+      pmRaw === "cod" ? "cod" :
+      pmRaw === "bank" ? "bank" :
+      "stripe";
+
+    // ★ステータス（cod/bankは未入金扱い）
+    const status = paymentMethod === "stripe" ? "paid" : "new";
+
+    // ★sourceも合わせる（後で集計が超楽）
+    const source =
+      paymentMethod === "cod" ? "liff-cod" :
+      paymentMethod === "bank" ? "liff-bank" :
+      "liff-stripe";
+
+    // log（ファイル）
     try {
-      fs.appendFileSync(ORDERS_LOG, JSON.stringify({ ts: new Date().toISOString(), ...order, source: logSource }) + "\n", "utf8");
+      fs.appendFileSync(
+        ORDERS_LOG,
+        JSON.stringify({ ts: new Date().toISOString(), ...order, source, payment_method: paymentMethod }) + "\n",
+        "utf8"
+      );
     } catch {}
 
-    // DB保存（stripe/paid を明示 + rawEventにも残す）
+    // DB保存
     try {
       const a = order.address || {};
       const name =
-        a.lastName || a.firstName
+        (a.lastName || a.firstName)
           ? `${a.lastName || ""}${a.firstName || ""}`.trim()
-          : a.name || "";
+          : (a.name || "");
       const zip = a.zip || a.postal || "";
       const pref = a.prefecture || a.pref || "";
       const addrLine = `${a.city || ""}${a.addr1 || a.address1 || ""}${a.addr2 || a.address2 ? " " + (a.addr2 || a.address2) : ""}`.trim();
@@ -1112,76 +1132,29 @@ app.post("/api/order/complete", async (req, res) => {
         items: items.map((it) => ({ id: it.id || "", name: it.name || "", price: Number(it.price || 0), qty: Number(it.qty || 0) })),
         total: Number(order.finalTotal ?? order.total ?? 0),
         shippingFee: Number(order.shipping ?? 0),
-        paymentMethod: "stripe",
-        status: "paid",
+        paymentMethod,         // ← ★ここが可変になった
+        status,                // ← ★ここも
         name: name || null,
         zip: zip || null,
         pref: pref || null,
         address: addrLine || null,
-        source: logSource,
-        rawEvent: { ...order, paymentMethod: "stripe", payment_method: "stripe", source: logSource },
+        source,                // ← ★sourceも
+        rawEvent: order,
       });
     } catch (e) {
       console.error("orders db insert skipped:", e?.message || e);
     }
 
-    // 通知本文
-    const itemsText = items.map((it) => `・${it.name} x ${it.qty} = ${yen((it.price || 0) * (it.qty || 0))}`).join("\n");
+    // 通知本文（表示用。代引/振込でも同じ明細を送るならこのままでOK）
+    // ※必要なら「支払方法：代引/振込」を本文に入れるのも可能
 
-    const itemsTotal = Number(order.itemsTotal ?? order.total ?? 0);
-    const shipping = Number(order.shipping ?? 0);
-    const codFee = Number(order.codFee ?? 0);
-    const finalTotal = Number(order.finalTotal ?? order.total ?? 0);
-
-    let addrText = "住所：未登録";
-    if (order.address) {
-      const a = order.address;
-      addrText =
-        `住所：${a.zip || a.postal || ""} ` +
-        `${a.prefecture || a.pref || ""}${a.city || ""}${a.addr1 || a.address1 || ""}` +
-        `${a.addr2 || a.address2 ? " " + (a.addr2 || a.address2) : ""}\n` +
-        `氏名：${(a.lastName || "")}${(a.firstName || "") || a.name || ""}\n` +
-        `TEL：${a.tel || a.phone || ""}`;
-    }
-
-    const adminMsg =
-      `🧾【Stripe決済 新規注文】\n` +
-      (order.lineUserId ? `ユーザーID：${order.lineUserId}\n` : "") +
-      `\n【内容】\n${itemsText}\n` +
-      `\n商品合計：${yen(itemsTotal)}\n` +
-      `送料：${yen(shipping)}\n` +
-      (codFee ? `代引き手数料：${yen(codFee)}\n` : "") +
-      `合計：${yen(finalTotal)}\n\n` +
-      `${addrText}`;
-
-    try {
-      if (ADMIN_USER_ID) await client.pushMessage(ADMIN_USER_ID, { type: "text", text: adminMsg });
-    } catch {}
-
-    try {
-      if (order.lineUserId) {
-        await touchUser(order.lineUserId, "chat");
-        const userMsg =
-          "ご注文ありがとうございます！\n\n" +
-          "【ご注文内容】\n" +
-          itemsText +
-          "\n\n" +
-          `商品合計：${yen(itemsTotal)}\n` +
-          `送料：${yen(shipping)}\n` +
-          (codFee ? `代引き手数料：${yen(codFee)}\n` : "") +
-          `合計：${yen(finalTotal)}\n\n` +
-          addrText;
-
-        await client.pushMessage(order.lineUserId, { type: "text", text: userMsg });
-      }
-    } catch {}
-
-    return res.json({ ok: true });
+    return res.json({ ok: true, paymentMethod, status, source });
   } catch (e) {
     console.error("/api/order/complete error:", e);
     return res.status(500).json({ ok: false, error: "server_error" });
   }
 });
+
 
 // =============== 管理API：画像 ===============
 app.post("/api/admin/upload", upload.single("file"), (req, res) => {

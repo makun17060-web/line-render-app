@@ -1731,27 +1731,82 @@ async function handleEvent(ev) {
     return client.replyMessage(ev.replyToken, { type: "text", text: msg });
   }
 
-  // メッセージ
- if (ev.type === "message" && ev.message?.type === "text") {
-  const text = String(ev.message.text || "").trim();
+   // メッセージ（テキスト）
+  if (ev.type === "message" && ev.message?.type === "text") {
+    const text = String(ev.message.text || "").trim();
 
-  // ① 直接注文 → 通常商品ボット起動
-  if (text === "直接注文") {
-    return client.replyMessage(ev.replyToken, [
-      { type: "text", text: "直接注文を開始します。商品一覧です。" },
-      productsFlex(),
-    ]);
+    // ✅ 直接注文（このキーワードだけで通常商品ボット起動）
+    if (text === "直接注文") {
+      return client.replyMessage(ev.replyToken, [
+        { type: "text", text: "直接注文を開始します。商品一覧です。" },
+        productsFlex(),
+      ]);
+    }
+
+    // ✅ 久助（このキーワードだけで久助フロー起動）
+    // 「久助」だけで起動：案内を出して、数量入力を促す（Flexが未定義でも落ちない）
+    if (text === "久助") {
+      const msg =
+        "久助のご注文を開始します。\n" +
+        `単価：${yen(KUSUKE_UNIT_PRICE)}（税込）\n\n` +
+        "「久助 3」のように数量を入力してください。";
+      return client.replyMessage(ev.replyToken, { type: "text", text: msg });
+    }
+
+    // ✅ 久助の数量（例：久助 3）だけ受付
+    const m = /^久助\s*(\d{1,2})$/.exec(text.replace(/[　]+/g, " "));
+    if (m) {
+      const qty = Number(m[1]);
+      if (qty < 1 || qty > 99) {
+        return client.replyMessage(ev.replyToken, { type: "text", text: "個数は 1〜99 で入力してください。" });
+      }
+
+      const { product } = findProductById("kusuke-250");
+      if (!product) {
+        return client.replyMessage(ev.replyToken, { type: "text", text: "久助の商品データが見つかりません。" });
+      }
+
+      const stock = Number(product.stock || 0);
+      if (stock < qty) {
+        appendJsonl(RESERVATIONS_LOG, {
+          ts: new Date().toISOString(),
+          userId,
+          productId: product.id,
+          productName: product.name,
+          qty,
+          reason: "stock_shortage",
+        });
+
+        return client.replyMessage(ev.replyToken, [
+          { type: "text", text: `在庫不足です（在庫${stock}個）。予約しますか？` },
+          {
+            type: "template",
+            altText: "予約",
+            template: {
+              type: "confirm",
+              text: "予約しますか？",
+              actions: [
+                { type: "postback", label: "予約する", data: `order_reserve?${qstr({ id: product.id, qty })}` },
+                { type: "postback", label: "やめる", data: "order_cancel" },
+              ],
+            },
+          },
+        ]);
+      }
+
+      // 久助は宅配/代引（住所未登録なら確認画面で住所入力を促す）
+      return client.replyMessage(ev.replyToken, [
+        { type: "text", text: "久助の注文内容です。" },
+        confirmFlex(product, qty, "delivery", "cod", null, null),
+      ]);
+    }
+
+    // ✅ それ以外は無反応（必要ならここで return null;）
+    return null;
   }
 
-  // ② 久助 → 久助専用ボット起動
-  if (text === "久助") {
-    return client.replyMessage(ev.replyToken, [
-      { type: "text", text: "久助のご注文を開始します。" },
-      kusukeFlex(), // ← 久助専用 Flex
-    ]);
-  }
 
-  // それ以外のテキストは何もしない（通常応答 or 無視）
+  
 }
 
     // コマンド

@@ -1793,6 +1793,13 @@ async function handleEvent(ev) {
       const flex = confirmFlex(product, qty, method, payment, address, name);
       return client.replyMessage(ev.replyToken, flex);
     }
+// 「直接注文」だけでボット起動
+if (text === "直接注文") {
+  return client.replyMessage(ev.replyToken, [
+    { type: "text", text: "直接注文を開始します。商品一覧です。" },
+    productsFlex(),
+  ]);
+}
 
     // コマンド
     if (/^(注文|商品|メニュー)$/i.test(text)) {

@@ -1,4 +1,5 @@
-// products.js — オンライン注文用 商品一覧（ミニアプリ）
+// products.js — オンライン注文用 商品一覧（ミニアプリ）【修正版・丸ごと】
+// 改善点：API返却の揺れ吸収 / HTML返却時の耐性 / DOM初期化の確実化 / idの型揺れ対策
 
 (function () {
   "use strict";
@@ -9,7 +10,7 @@
   const statusEl = document.getElementById("statusMsg");
 
   let products = [];
-  let cart = {}; // { [id]: { id, name, price, qty } }
+  let cart = {}; // { [idStr]: { id, name, price, qty } }
 
   function yen(n) {
     return Number(n || 0).toLocaleString("ja-JP") + "円";
@@ -21,7 +22,11 @@
     statusEl.style.color =
       kind === "ok" ? "#0a7b19" :
       kind === "err" ? "#d00" :
-      "#d00"; // エラー表示が多いので赤ベース
+      "#d00";
+  }
+
+  function idKey(id) {
+    return String(id ?? "");
   }
 
   // ===== カート保存/読込 =====
@@ -30,14 +35,20 @@
     try {
       const raw = sessionStorage.getItem("cartItems");
       if (!raw) return;
+
       const arr = JSON.parse(raw);
       if (!Array.isArray(arr)) return;
+
       arr.forEach((it) => {
-        if (!it || !it.id) return;
+        if (!it) return;
+        const key = idKey(it.id);
+        if (!key) return;
+
         const qty = Math.max(0, Number(it.qty) || 0);
         if (!qty) return;
-        cart[it.id] = {
-          id: it.id,
+
+        cart[key] = {
+          id: key,
           name: it.name || "",
           price: Number(it.price) || 0,
           qty,
@@ -50,12 +61,12 @@
   }
 
   function saveCartToStorage() {
-    const arr = Object.values(cart).filter((it) => it.qty > 0);
+    const arr = Object.values(cart).filter((it) => (Number(it.qty) || 0) > 0);
     sessionStorage.setItem("cartItems", JSON.stringify(arr));
   }
 
   function getCartItemsArray() {
-    return Object.values(cart).filter((it) => it.qty > 0);
+    return Object.values(cart).filter((it) => (Number(it.qty) || 0) > 0);
   }
 
   function getItemsTotal() {
@@ -90,14 +101,17 @@
 
   // ===== 数量変更 =====
   function updateQty(product, newQty) {
+    const key = idKey(product.id);
     const qty = Math.max(0, Math.min(99, Number(newQty) || 0));
 
+    if (!key) return;
+
     if (qty <= 0) {
-      delete cart[product.id];
+      delete cart[key];
     } else {
-      cart[product.id] = {
-        id: product.id,
-        name: product.name,
+      cart[key] = {
+        id: key,
+        name: product.name || "",
         price: Number(product.price) || 0,
         qty,
       };
@@ -111,6 +125,8 @@
   function createProductCard(p) {
     const card = document.createElement("div");
     card.className = "card";
+
+    const stockNum = Number(p.stock ?? 0);
 
     // 画像
     if (p.image) {
@@ -151,7 +167,6 @@
     // 在庫表示
     const stock = document.createElement("div");
     stock.className = "card-stock";
-    const stockNum = Number(p.stock ?? 0);
     if (stockNum <= 0) {
       stock.textContent = "在庫：0個（在庫切れ）";
     } else {
@@ -168,8 +183,9 @@
     minusBtn.textContent = "−";
 
     const qtySpan = document.createElement("span");
-    const initialQty = cart[p.id]?.qty || 0;
-    qtySpan.textContent = initialQty;
+    const key = idKey(p.id);
+    const initialQty = cart[key]?.qty || 0;
+    qtySpan.textContent = String(initialQty);
 
     const plusBtn = document.createElement("button");
     plusBtn.type = "button";
@@ -180,21 +196,18 @@
     qtyRow.appendChild(plusBtn);
     card.appendChild(qtyRow);
 
-    // ボタンの動き
-    let currentQty = initialQty;
+    let currentQty = Number(initialQty) || 0;
 
     function applyQty(newQty) {
-      const maxStock = typeof stockNum === "number" && stockNum >= 0 ? stockNum : 99;
+      const maxStock = Number.isFinite(stockNum) && stockNum >= 0 ? stockNum : 99;
       const next = Math.max(0, Math.min(maxStock, Number(newQty) || 0));
       if (next === currentQty) return;
       currentQty = next;
-      qtySpan.textContent = currentQty;
+      qtySpan.textContent = String(currentQty);
       updateQty(p, currentQty);
     }
 
-    minusBtn.addEventListener("click", () => {
-      applyQty(currentQty - 1);
-    });
+    minusBtn.addEventListener("click", () => applyQty(currentQty - 1));
 
     plusBtn.addEventListener("click", () => {
       if (stockNum <= 0) {
@@ -204,7 +217,6 @@
       applyQty(currentQty + 1);
     });
 
-    // 在庫ゼロなら + ボタンを無効化
     if (stockNum <= 0) {
       plusBtn.disabled = true;
     }
@@ -214,32 +226,62 @@
 
   // ===== 商品一覧読み込み =====
   async function loadProducts() {
+    if (!grid) {
+      setStatus("画面の表示要素が見つかりません（productGrid）。HTML側のIDを確認してください。", "err");
+      return;
+    }
+
     try {
       setStatus("商品一覧を読み込んでいます…", "");
-      const res = await fetch("/api/products");
-      const data = await res.json().catch(() => ({}));
+
+      const res = await fetch("/api/products", { cache: "no-store" });
+
+      // 404/500でHTMLが返るケースを吸収
+      const ct = (res.headers.get("content-type") || "").toLowerCase();
+      const rawText = await res.text();
+
+      let data = {};
+      if (ct.includes("application/json")) {
+        try { data = JSON.parse(rawText); } catch { data = {}; }
+      } else {
+        // JSONじゃない（=だいたいHTML）→原因が分かるようにログ
+        console.error("/api/products non-json response:", rawText.slice(0, 500));
+        data = {};
+      }
+
       if (!res.ok || !data.ok) {
-        console.error("/api/products response:", data);
+        console.error("/api/products response:", { status: res.status, data, rawText: rawText.slice(0, 500) });
         setStatus("商品一覧の取得に失敗しました。時間をおいて再度お試しください。", "err");
         return;
       }
 
-      products = Array.isArray(data.products) ? data.products : [];
+      // ✅ 返却形式の揺れ吸収
+      // よくある候補：data.products / data.items / data.products.items
+      const list =
+        (Array.isArray(data.products) && data.products) ||
+        (Array.isArray(data.items) && data.items) ||
+        (data.products && Array.isArray(data.products.items) && data.products.items) ||
+        [];
+
+      // idを文字列に統一しておく
+      products = list
+        .map((p) => ({
+          ...p,
+          id: idKey(p?.id),
+          price: Number(p?.price) || 0,
+          stock: Number(p?.stock ?? 0),
+        }))
+        .filter((p) => p.id);
 
       if (!products.length) {
         grid.innerHTML = "<p>現在、オンライン注文できる商品がありません。</p>";
+        renderCartSummary();
         setStatus("", "");
         return;
       }
 
-      // 画面クリア
       grid.innerHTML = "";
-
-      // カード生成
-      products.forEach((p) => {
-        const card = createProductCard(p);
-        grid.appendChild(card);
-      });
+      products.forEach((p) => grid.appendChild(createProductCard(p)));
 
       renderCartSummary();
       setStatus("", "");
@@ -257,33 +299,29 @@
       return;
     }
 
-    // 念のため保存
     saveCartToStorage();
 
-    // 商品合計だけ別途保存しておいてもよい（confirmで使うなら）
     const itemsTotal = getItemsTotal();
     sessionStorage.setItem("itemsTotal", String(itemsTotal));
 
     setStatus("住所入力画面に移動します…", "ok");
 
-    // 既存クエリを維持しつつ from=miniapp を足す
-    const currentSearch = window.location.search || "";
-    const params = new URLSearchParams(currentSearch.replace(/^\?/, ""));
-    if (!params.has("from")) {
-      params.set("from", "miniapp");
-    }
+    const params = new URLSearchParams(window.location.search.replace(/^\?/, ""));
+    if (!params.has("from")) params.set("from", "miniapp");
     const qs = params.toString();
-    const nextUrl = "./liff-address.html" + (qs ? "?" + qs : "");
-    window.location.href = nextUrl;
+    window.location.href = "./liff-address.html" + (qs ? "?" + qs : "");
   }
 
-  // ===== 初期化 =====
-  document.addEventListener("DOMContentLoaded", () => {
+  // ===== 初期化（1回だけ確実に）=====
+  function init() {
     loadCartFromStorage();
     loadProducts();
+    toAddressBtn?.addEventListener("click", handleToAddress);
+  }
 
-    if (toAddressBtn) {
-      toAddressBtn.addEventListener("click", handleToAddress);
-    }
-  });
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init, { once: true });
+  } else {
+    init();
+  }
 })();

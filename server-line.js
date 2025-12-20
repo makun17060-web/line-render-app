@@ -35,7 +35,7 @@
  *
  * [管理]
  * - /api/admin/orders（ファイルログ）
- * - /api/admin/orders-db（DB注文）
+ * - /api/admin/orders-db（DB注文）★payment/sourceフィルタ対応
  * - /api/admin/products（一覧/更新）
  * - /api/admin/stock（在庫増減/設定）
  * - /api/admin/images（一覧/削除）
@@ -285,7 +285,9 @@ async function maybeLowStockAlert(productId, productName, stockNow) {
   if (!ADMIN_USER_ID) return;
   if (stockNow >= LOW_STOCK_THRESHOLD) return;
   const msg = `⚠️ 在庫僅少\n商品：${productName}（${productId}）\n残り：${stockNow}個`;
-  try { await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg }); } catch {}
+  try {
+    await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg });
+  } catch {}
 }
 
 function addStock(productId, delta, actor = "system") {
@@ -312,12 +314,12 @@ function setStock(productId, qty, actor = "system") {
 
 // =============== 送料（ヤマト中部 税込） ===============
 const YAMATO_CHUBU_TAXED = {
-  "60":  { 北海道:1610, 東北:1190, 関東: 940, 中部: 940, 近畿: 940, 中国:1060, 四国:1060, 九州:1190, 沖縄:1460 },
-  "80":  { 北海道:1900, 東北:1480, 関東:1230, 中部:1230, 近畿:1230, 中国:1350, 四国:1350, 九州:1480, 沖縄:2070 },
-  "100": { 北海道:2200, 東北:1790, 関東:1530, 中部:1530, 近畿:1530, 中国:1650, 四国:1650, 九州:1790, 沖縄:2710 },
-  "120": { 北海道:2780, 東北:2310, 関東:2040, 中部:2040, 近畿:2040, 中国:2170, 四国:2170, 九州:2310, 沖縄:3360 },
-  "140": { 北海道:3440, 東北:2930, 関東:2630, 中部:2630, 近畿:2630, 中国:2780, 四国:2780, 九州:2930, 沖縄:4030 },
-  "160": { 北海道:3820, 東北:3320, 関東:3020, 中部:3020, 近畿:3020, 中国:3160, 四国:3160, 九州:3320, 沖縄:4680 },
+  "60": { 北海道: 1610, 東北: 1190, 関東: 940, 中部: 940, 近畿: 940, 中国: 1060, 四国: 1060, 九州: 1190, 沖縄: 1460 },
+  "80": { 北海道: 1900, 東北: 1480, 関東: 1230, 中部: 1230, 近畿: 1230, 中国: 1350, 四国: 1350, 九州: 1480, 沖縄: 2070 },
+  "100": { 北海道: 2200, 東北: 1790, 関東: 1530, 中部: 1530, 近畿: 1530, 中国: 1650, 四国: 1650, 九州: 1790, 沖縄: 2710 },
+  "120": { 北海道: 2780, 東北: 2310, 関東: 2040, 中部: 2040, 近畿: 2040, 中国: 2170, 四国: 2170, 九州: 2310, 沖縄: 3360 },
+  "140": { 北海道: 3440, 東北: 2930, 関東: 2630, 中部: 2630, 近畿: 2630, 中国: 2780, 四国: 2780, 九州: 2930, 沖縄: 4030 },
+  "160": { 北海道: 3820, 東北: 3320, 関東: 3020, 中部: 3020, 近畿: 3020, 中国: 3160, 四国: 3160, 九州: 3320, 沖縄: 4680 },
 };
 const SIZE_ORDER = ["60", "80", "100", "120", "140", "160"];
 const ORIGINAL_SET_PRODUCT_ID = (process.env.ORIGINAL_SET_PRODUCT_ID || "original-set-2100").trim();
@@ -346,8 +348,8 @@ function isAkasha6(item) {
 function sizeFromAkasha6Qty(qty) {
   const q = Number(qty) || 0;
   if (q <= 0) return null;
-  if (q <= 4)  return "60";
-  if (q <= 8)  return "80";
+  if (q <= 4) return "60";
+  if (q <= 8) return "80";
   if (q <= 13) return "100";
   if (q <= 18) return "120";
   return "140";
@@ -450,7 +452,7 @@ async function ensureDbSchema() {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_segment_users_last_chat ON segment_users(last_chat_at DESC);`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_segment_users_last_liff ON segment_users(last_liff_at DESC);`);
 
-  // ★注文 永続保存
+  // ★注文 永続保存（payment_method/status は必ず入る）
   await p.query(`
     CREATE TABLE IF NOT EXISTS orders (
       id BIGSERIAL PRIMARY KEY,
@@ -464,8 +466,8 @@ async function ensureDbSchema() {
       total INT NOT NULL DEFAULT 0,
       shipping_fee INT NOT NULL DEFAULT 0,
 
-      payment_method TEXT,
-      status TEXT,
+      payment_method TEXT NOT NULL DEFAULT 'unknown',
+      status TEXT NOT NULL DEFAULT 'new',
 
       name TEXT,
       zip TEXT,
@@ -479,6 +481,20 @@ async function ensureDbSchema() {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at DESC);`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_orders_member_code ON orders(member_code);`);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_orders_payment_method ON orders(payment_method);`);
+
+  // 既存DBの安全補正（失敗しても起動は続ける）
+  try {
+    await p.query(`ALTER TABLE orders ALTER COLUMN payment_method SET DEFAULT 'unknown'`);
+    await p.query(`UPDATE orders SET payment_method='unknown' WHERE payment_method IS NULL OR payment_method=''`);
+    await p.query(`ALTER TABLE orders ALTER COLUMN payment_method SET NOT NULL`);
+
+    await p.query(`ALTER TABLE orders ALTER COLUMN status SET DEFAULT 'new'`);
+    await p.query(`UPDATE orders SET status='new' WHERE status IS NULL OR status=''`);
+    await p.query(`ALTER TABLE orders ALTER COLUMN status SET NOT NULL`);
+  } catch (e) {
+    console.warn("[BOOT] orders migration skipped:", e?.message || e);
+  }
 }
 
 async function dbGetCodesByUserId(userId) {
@@ -585,7 +601,7 @@ async function dbGetAddressByUserId(userId) {
 
   const row = r.rows[0] || null;
   if (!row?.member_code) return null;
-  const hasAny = (row.name || row.phone || row.postal || row.prefecture || row.city || row.address1 || row.address2);
+  const hasAny = row.name || row.phone || row.postal || row.prefecture || row.city || row.address1 || row.address2;
   if (!hasAny) return null;
   return row;
 }
@@ -598,7 +614,7 @@ async function dbGetAddressByMemberCode(memberCode) {
   return r.rows[0] || null;
 }
 
-// ★注文DB保存
+// ★注文DB保存（payment_method/source を必ず整形してから保存）
 async function dbInsertOrder(payload) {
   if (!pool) return { ok: false, skipped: "db_not_configured" };
   const p = mustPool();
@@ -610,15 +626,37 @@ async function dbInsertOrder(payload) {
     items = [],
     total = 0,
     shippingFee = 0,
-    paymentMethod = null, // stripe/cod/bank/store
+
+    paymentMethod = null, // stripe/cod/bank/store/unknown
     status = "new",
+
     name = null,
     zip = null,
     pref = null,
     address = null,
+
     source = null,
     rawEvent = null,
   } = payload || {};
+
+  // --- フェイルセーフ補完 ---
+  const src = String(source || rawEvent?.source || "").toLowerCase().trim();
+  const payFromEvent = String(rawEvent?.payment_method || rawEvent?.paymentMethod || rawEvent?.payment || "").toLowerCase().trim();
+
+  let pm = String(paymentMethod || payFromEvent || "").toLowerCase().trim();
+  if (!pm) {
+    if (src.includes("stripe")) pm = "stripe";
+    else if (src.includes("cod")) pm = "cod";
+    else if (src.includes("bank")) pm = "bank";
+    else if (src.includes("store") || src.includes("pickup") || src.includes("cash")) pm = "store";
+    else pm = "unknown";
+  }
+  if (!["stripe", "cod", "bank", "store", "unknown"].includes(pm)) pm = "unknown";
+
+  let st = String(status || "").toLowerCase().trim();
+  if (!st) st = pm === "stripe" ? "paid" : "new";
+
+  const safeItems = Array.isArray(items) ? items : [];
 
   await p.query(
     `
@@ -635,21 +673,21 @@ async function dbInsertOrder(payload) {
       userId,
       memberCode,
       phone,
-      JSON.stringify(items),
+      JSON.stringify(safeItems),
       Number(total || 0),
       Number(shippingFee || 0),
-      paymentMethod,
-      status,
+      pm,
+      st,
       name,
       zip,
       pref,
       address,
-      source,
+      source || null,
       rawEvent ? JSON.stringify(rawEvent) : null,
     ]
   );
 
-  return { ok: true };
+  return { ok: true, payment_method: pm, status: st };
 }
 
 // =============== セグメント台帳 ===============
@@ -701,7 +739,9 @@ async function touchUser(userId, source = "seen") {
     if (pool) await dbTouchUser(userId, source);
     else fileTouchUser(userId, source);
   } catch {
-    try { fileTouchUser(userId, source); } catch {}
+    try {
+      fileTouchUser(userId, source);
+    } catch {}
   }
 }
 
@@ -720,10 +760,7 @@ async function listSegmentUserIds(days = 30, source = "active") {
       (last_liff_at IS NOT NULL AND last_liff_at >= NOW() - ($1::int * INTERVAL '1 day'))
     )`;
 
-    const r = await p.query(
-      `SELECT user_id FROM segment_users WHERE ${where} ORDER BY user_id ASC LIMIT $2`,
-      [d, SEGMENT_PUSH_LIMIT]
-    );
+    const r = await p.query(`SELECT user_id FROM segment_users WHERE ${where} ORDER BY user_id ASC LIMIT $2`, [d, SEGMENT_PUSH_LIMIT]);
     return r.rows.map((x) => x.user_id).filter(Boolean);
   }
 
@@ -736,10 +773,10 @@ async function listSegmentUserIds(days = 30, source = "active") {
       const lastChat = x?.lastChatAt ? new Date(x.lastChatAt).getTime() : 0;
       const lastLiff = x?.lastLiffAt ? new Date(x.lastLiffAt).getTime() : 0;
 
-      if (src === "chat") return lastChat && (now - lastChat <= ms);
-      if (src === "liff") return lastLiff && (now - lastLiff <= ms);
-      if (src === "active") return (lastChat && (now - lastChat <= ms)) || (lastLiff && (now - lastLiff <= ms));
-      return lastSeen && (now - lastSeen <= ms);
+      if (src === "chat") return lastChat && now - lastChat <= ms;
+      if (src === "liff") return lastLiff && now - lastLiff <= ms;
+      if (src === "active") return (lastChat && now - lastChat <= ms) || (lastLiff && now - lastLiff <= ms);
+      return lastSeen && now - lastSeen <= ms;
     })
     .map((x) => x.userId)
     .filter(Boolean)
@@ -829,7 +866,9 @@ app.post("/api/liff/open", async (req, res) => {
 
     if (pool) {
       await mustPool().query(`INSERT INTO liff_open_logs (user_id, kind) VALUES ($1,$2)`, [userId, kind]);
-      try { await dbEnsureCodes(userId); } catch {}
+      try {
+        await dbEnsureCodes(userId);
+      } catch {}
     }
 
     return res.json({ ok: true, kind });
@@ -1049,18 +1088,19 @@ app.post("/api/order/complete", async (req, res) => {
     const items = Array.isArray(order.items) ? order.items : [];
     if (!items.length) return res.json({ ok: false, error: "no_items" });
 
-    // log
+    // log（sourceが来ても必ず stripe 系に補正）
+    const logSource = String(order.source || "liff-stripe").trim() || "liff-stripe";
     try {
-      fs.appendFileSync(ORDERS_LOG, JSON.stringify({ ts: new Date().toISOString(), ...order, source: "liff-stripe" }) + "\n", "utf8");
+      fs.appendFileSync(ORDERS_LOG, JSON.stringify({ ts: new Date().toISOString(), ...order, source: logSource }) + "\n", "utf8");
     } catch {}
 
-    // DB保存
+    // DB保存（stripe/paid を明示 + rawEventにも残す）
     try {
       const a = order.address || {};
       const name =
-        (a.lastName || a.firstName)
+        a.lastName || a.firstName
           ? `${a.lastName || ""}${a.firstName || ""}`.trim()
-          : (a.name || "");
+          : a.name || "";
       const zip = a.zip || a.postal || "";
       const pref = a.prefecture || a.pref || "";
       const addrLine = `${a.city || ""}${a.addr1 || a.address1 || ""}${a.addr2 || a.address2 ? " " + (a.addr2 || a.address2) : ""}`.trim();
@@ -1078,17 +1118,15 @@ app.post("/api/order/complete", async (req, res) => {
         zip: zip || null,
         pref: pref || null,
         address: addrLine || null,
-        source: "liff-stripe",
-        rawEvent: order,
+        source: logSource,
+        rawEvent: { ...order, paymentMethod: "stripe", payment_method: "stripe", source: logSource },
       });
     } catch (e) {
       console.error("orders db insert skipped:", e?.message || e);
     }
 
     // 通知本文
-    const itemsText = items
-      .map((it) => `・${it.name} x ${it.qty} = ${yen((it.price || 0) * (it.qty || 0))}`)
-      .join("\n");
+    const itemsText = items.map((it) => `・${it.name} x ${it.qty} = ${yen((it.price || 0) * (it.qty || 0))}`).join("\n");
 
     const itemsTotal = Number(order.itemsTotal ?? order.total ?? 0);
     const shipping = Number(order.shipping ?? 0);
@@ -1162,10 +1200,7 @@ app.get("/api/admin/images", (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
     const files = fs.readdirSync(UPLOAD_DIR).filter((x) => !x.startsWith("."));
-    return res.json({
-      ok: true,
-      items: files.map((name) => ({ name, url: toPublicImageUrl(name) })),
-    });
+    return res.json({ ok: true, items: files.map((name) => ({ name, url: toPublicImageUrl(name) })) });
   } catch (e) {
     return res.status(500).json({ ok: false, error: "server_error" });
   }
@@ -1206,7 +1241,7 @@ app.post("/api/admin/products/update", (req, res) => {
     const image = req.body?.image != null ? String(req.body.image) : product.image;
 
     // 久助は単価固定（250）
-    const price = id === "kusuke-250" ? KUSUKE_UNIT_PRICE : (req.body?.price != null ? Number(req.body.price) : product.price);
+    const price = id === "kusuke-250" ? KUSUKE_UNIT_PRICE : req.body?.price != null ? Number(req.body.price) : product.price;
     const stock = req.body?.stock != null ? Number(req.body.stock) : product.stock;
 
     products[idx] = { ...product, name, desc, image, price, stock };
@@ -1251,7 +1286,13 @@ function readLogLines(filePath, limit = 100) {
   if (!fs.existsSync(filePath)) return [];
   const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/).filter(Boolean);
   const tail = lines.slice(-Math.min(Number(limit) || 100, lines.length));
-  return tail.map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  return tail.map((l) => {
+    try {
+      return JSON.parse(l);
+    } catch {
+      return null;
+    }
+  }).filter(Boolean);
 }
 
 app.get("/api/admin/orders", (req, res) => {
@@ -1261,12 +1302,40 @@ app.get("/api/admin/orders", (req, res) => {
   return res.json({ ok: true, items });
 });
 
+// ★DB注文：payment/source/status で絞り込み可能
+// 例）/api/admin/orders-db?payment=cod&limit=200&token=...
 app.get("/api/admin/orders-db", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
     if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
+
     const limit = Math.min(2000, Number(req.query.limit || 200));
-    const r = await mustPool().query(`SELECT * FROM orders ORDER BY created_at DESC LIMIT $1`, [limit]);
+    const payment = String(req.query.payment || "").trim().toLowerCase(); // stripe/cod/bank/store/unknown
+    const status = String(req.query.status || "").trim().toLowerCase();
+    const source = String(req.query.source || "").trim().toLowerCase();
+
+    const wh = [];
+    const params = [];
+    let i = 1;
+
+    if (payment) {
+      wh.push(`payment_method = $${i++}`);
+      params.push(payment);
+    }
+    if (status) {
+      wh.push(`status = $${i++}`);
+      params.push(status);
+    }
+    if (source) {
+      wh.push(`LOWER(COALESCE(source,'')) LIKE $${i++}`);
+      params.push(`%${source}%`);
+    }
+
+    params.push(limit);
+    const whereSql = wh.length ? `WHERE ${wh.join(" AND ")}` : "";
+    const sql = `SELECT * FROM orders ${whereSql} ORDER BY created_at DESC LIMIT $${i}`;
+
+    const r = await mustPool().query(sql, params);
     return res.json({ ok: true, count: r.rows.length, items: r.rows });
   } catch (e) {
     console.error("/api/admin/orders-db error:", e);
@@ -1360,9 +1429,7 @@ function productsFlex() {
     const img = toPublicImageUrl(p.image || "");
     return {
       type: "bubble",
-      hero: img
-        ? { type: "image", url: img, size: "full", aspectRatio: "1:1", aspectMode: "cover" }
-        : undefined,
+      hero: img ? { type: "image", url: img, size: "full", aspectRatio: "1:1", aspectMode: "cover" } : undefined,
       body: {
         type: "box",
         layout: "vertical",
@@ -1377,9 +1444,7 @@ function productsFlex() {
         type: "box",
         layout: "horizontal",
         spacing: "md",
-        contents: [
-          { type: "button", style: "primary", action: { type: "postback", label: "数量を選ぶ", data: `order_qty?${qstr({ id: p.id, qty: 1 })}` } },
-        ],
+        contents: [{ type: "button", style: "primary", action: { type: "postback", label: "数量を選ぶ", data: `order_qty?${qstr({ id: p.id, qty: 1 })}` } }],
       },
     };
   });
@@ -1400,9 +1465,7 @@ function productsFlex() {
       type: "box",
       layout: "vertical",
       spacing: "md",
-      contents: [
-        { type: "button", style: "primary", action: { type: "postback", label: "商品名を入力する", data: "other_start" } },
-      ],
+      contents: [{ type: "button", style: "primary", action: { type: "postback", label: "商品名を入力する", data: "other_start" } }],
     },
   });
 
@@ -1416,15 +1479,7 @@ function qtyFlex(id, qty = 1) {
     altText: "数量を選択してください",
     contents: {
       type: "bubble",
-      body: {
-        type: "box",
-        layout: "vertical",
-        spacing: "md",
-        contents: [
-          { type: "text", text: "数量選択", weight: "bold", size: "lg" },
-          { type: "text", text: `現在の数量：${q} 個`, size: "md" },
-        ],
-      },
+      body: { type: "box", layout: "vertical", spacing: "md", contents: [{ type: "text", text: "数量選択", weight: "bold", size: "lg" }, { type: "text", text: `現在の数量：${q} 個`, size: "md" }] },
       footer: {
         type: "box",
         layout: "vertical",
@@ -1463,15 +1518,7 @@ function methodFlex(id, qty) {
     altText: "受取方法を選択してください",
     contents: {
       type: "bubble",
-      body: {
-        type: "box",
-        layout: "vertical",
-        spacing: "md",
-        contents: [
-          { type: "text", text: "受取方法", weight: "bold", size: "lg" },
-          { type: "text", text: "宅配 または 店頭受取 を選択してください。", wrap: true },
-        ],
-      },
+      body: { type: "box", layout: "vertical", spacing: "md", contents: [{ type: "text", text: "受取方法", weight: "bold", size: "lg" }, { type: "text", text: "宅配 または 店頭受取 を選択してください。", wrap: true }] },
       footer: {
         type: "box",
         layout: "horizontal",
@@ -1492,15 +1539,7 @@ function paymentFlex(id, qty, method) {
       altText: "店頭受取（現金のみ）",
       contents: {
         type: "bubble",
-        body: {
-          type: "box",
-          layout: "vertical",
-          spacing: "md",
-          contents: [
-            { type: "text", text: "お支払い方法", weight: "bold", size: "lg" },
-            { type: "text", text: "店頭受取は現金のみです。", wrap: true },
-          ],
-        },
+        body: { type: "box", layout: "vertical", spacing: "md", contents: [{ type: "text", text: "お支払い方法", weight: "bold", size: "lg" }, { type: "text", text: "店頭受取は現金のみです。", wrap: true }] },
         footer: {
           type: "box",
           layout: "vertical",
@@ -1564,10 +1603,7 @@ function confirmFlex(product, qty, method, payment, address, pickupName) {
   const codFee = payment === "cod" ? COD_FEE : 0;
   const total = subtotal + (method === "delivery" ? shipping : 0) + codFee;
 
-  const payText =
-    payment === "cod" ? `代金引換（+${yen(COD_FEE)}）` :
-    payment === "bank" ? "銀行振込" :
-    "現金（店頭）";
+  const payText = payment === "cod" ? `代金引換（+${yen(COD_FEE)}）` : payment === "bank" ? "銀行振込" : "現金（店頭）";
 
   const lines = [
     `受取方法：${method === "pickup" ? "店頭受取（送料0円）" : "宅配（送料あり）"}`,
@@ -1609,11 +1645,7 @@ function confirmFlex(product, qty, method, payment, address, pickupName) {
     footerButtons.push({
       type: "button",
       style: "primary",
-      action: {
-        type: "postback",
-        label: "この内容で確定",
-        data: `order_confirm?${qstr({ id: product.id, qty, method, payment, pickupName: pickupName || "" })}`,
-      },
+      action: { type: "postback", label: "この内容で確定", data: `order_confirm?${qstr({ id: product.id, qty, method, payment, pickupName: pickupName || "" })}` },
     });
   }
 
@@ -1667,7 +1699,9 @@ function appendJsonl(filePath, obj) {
 async function handleEvent(ev) {
   const userId = ev?.source?.userId || "";
   if (userId) {
-    try { await touchUser(userId, "seen"); } catch {}
+    try {
+      await touchUser(userId, "seen");
+    } catch {}
   }
 
   // 友だち追加
@@ -1686,7 +1720,9 @@ async function handleEvent(ev) {
     const text = String(ev.message.text || "").trim();
     if (userId) {
       await touchUser(userId, "chat");
-      try { appendJsonl(MESSAGES_LOG, { ts: new Date().toISOString(), userId, textLen: text.length }); } catch {}
+      try {
+        appendJsonl(MESSAGES_LOG, { ts: new Date().toISOString(), userId, textLen: text.length });
+      } catch {}
     }
 
     // 途中入力（その他/店頭名）を扱う
@@ -1744,15 +1780,11 @@ async function handleEvent(ev) {
 
     // コマンド
     if (/^(注文|商品|メニュー)$/i.test(text)) {
-      return client.replyMessage(ev.replyToken, [ { type: "text", text: "商品一覧です。" }, productsFlex() ]);
+      return client.replyMessage(ev.replyToken, [{ type: "text", text: "商品一覧です。" }, productsFlex()]);
     }
 
     if (/^(久助|くすけ)$/i.test(text)) {
-      const msg =
-        "久助の注文方法：\n" +
-        "「久助 3」 のように入力してください。\n" +
-        `単価：${yen(KUSUKE_UNIT_PRICE)}（税込）\n` +
-        "例：久助 5";
+      const msg = "久助の注文方法：\n" + "「久助 3」 のように入力してください。\n" + `単価：${yen(KUSUKE_UNIT_PRICE)}（税込）\n` + "例：久助 5";
       return client.replyMessage(ev.replyToken, { type: "text", text: msg });
     }
 
@@ -1786,30 +1818,20 @@ async function handleEvent(ev) {
         ]);
       }
 
-      // フローへ
-      return client.replyMessage(ev.replyToken, [
-        { type: "text", text: "久助の注文内容です。" },
-        confirmFlex(product, qty, "delivery", "cod", null, null), // デフォルトは宅配/代引（最終確認で住所登録を促す）
-      ]);
+      // フローへ（デフォルトは宅配/代引：最終確認で住所登録を促す）
+      return client.replyMessage(ev.replyToken, [{ type: "text", text: "久助の注文内容です。" }, confirmFlex(product, qty, "delivery", "cod", null, null)]);
     }
 
     // 住所コード/会員コード確認（DBのみ）
     if (/^コード$/i.test(text)) {
       if (!pool) return client.replyMessage(ev.replyToken, { type: "text", text: "DB未設定のためコードは発行できません（DATABASE_URLが必要）。" });
       const codes = await dbEnsureCodes(userId);
-      const msg =
-        `会員コード：${codes.member_code}\n` +
-        `住所コード：${codes.address_code}\n\n` +
-        "住所登録（LIFF）から登録すると送料計算が自動になります。";
+      const msg = `会員コード：${codes.member_code}\n` + `住所コード：${codes.address_code}\n\n` + "住所登録（LIFF）から登録すると送料計算が自動になります。";
       return client.replyMessage(ev.replyToken, { type: "text", text: msg });
     }
 
     // デフォルト
-    const help =
-      "使い方：\n" +
-      "・「注文」→ 商品一覧\n" +
-      "・「久助 3」→ 久助を3個\n" +
-      "・「コード」→ 会員コード表示（DBがある場合）";
+    const help = "使い方：\n" + "・「注文」→ 商品一覧\n" + "・「久助 3」→ 久助を3個\n" + "・「コード」→ 会員コード表示（DBがある場合）";
     return client.replyMessage(ev.replyToken, { type: "text", text: help });
   }
 
@@ -1818,7 +1840,7 @@ async function handleEvent(ev) {
     const data = String(ev.postback?.data || "");
 
     if (data === "order_back") {
-      return client.replyMessage(ev.replyToken, [ { type: "text", text: "商品一覧に戻ります。" }, productsFlex() ]);
+      return client.replyMessage(ev.replyToken, [{ type: "text", text: "商品一覧に戻ります。" }, productsFlex()]);
     }
 
     if (data === "other_start") {
@@ -1845,13 +1867,7 @@ async function handleEvent(ev) {
     if (data.startsWith("order_pickup_name?")) {
       // 店頭名入力へ（テキスト入力）
       const q = parseQuery(data);
-      setSession(userId, {
-        mode: "pickup_name",
-        id: q.id,
-        qty: Number(q.qty || 1),
-        method: q.method,
-        payment: q.payment,
-      });
+      setSession(userId, { mode: "pickup_name", id: q.id, qty: Number(q.qty || 1), method: q.method, payment: q.payment });
       return client.replyMessage(ev.replyToken, { type: "text", text: "店頭で受け取るお名前を入力してください。" });
     }
 
@@ -1987,7 +2003,9 @@ async function handleEvent(ev) {
       };
 
       // ファイルログ
-      try { appendJsonl(ORDERS_LOG, { ...order, source: "line-postback" }); } catch {}
+      try {
+        appendJsonl(ORDERS_LOG, { ...order, source: "line-postback" });
+      } catch {}
 
       // ★DB保存（orders）
       try {
@@ -1997,16 +2015,10 @@ async function handleEvent(ev) {
           memberCode = c?.member_code ? String(c.member_code).trim() : null;
         }
 
-        const nameForDb =
-          method === "pickup"
-            ? (pickupName || null)
-            : (address?.name || null);
-
+        const nameForDb = method === "pickup" ? pickupName || null : address?.name || null;
         const zip = address?.postal || null;
         const pref = address?.prefecture || null;
-        const addrLine = address
-          ? `${address.city || ""}${address.address1 || ""}${address.address2 ? " " + address.address2 : ""}`.trim() || null
-          : null;
+        const addrLine = address ? `${address.city || ""}${address.address1 || ""}${address.address2 ? " " + address.address2 : ""}`.trim() || null : null;
 
         await dbInsertOrder({
           userId,
@@ -2022,7 +2034,7 @@ async function handleEvent(ev) {
           pref,
           address: addrLine,
           source: "line-postback",
-          rawEvent: order,
+          rawEvent: { ...order, source: "line-postback" },
         });
       } catch (e) {
         console.error("orders db insert skipped:", e?.message || e);
@@ -2030,9 +2042,12 @@ async function handleEvent(ev) {
 
       // 管理者通知
       if (ADMIN_USER_ID) {
-        const addrText = method === "delivery" && address
-          ? `住所：${address.postal || ""} ${address.prefecture || ""}${address.city || ""}${address.address1 || ""}${address.address2 ? " " + address.address2 : ""}\n氏名：${address.name || ""}\nTEL：${address.phone || ""}`
-          : (method === "pickup" ? `店頭受取：${pickupName || ""}` : "住所：未登録");
+        const addrText =
+          method === "delivery" && address
+            ? `住所：${address.postal || ""} ${address.prefecture || ""}${address.city || ""}${address.address1 || ""}${address.address2 ? " " + address.address2 : ""}\n氏名：${address.name || ""}\nTEL：${address.phone || ""}`
+            : method === "pickup"
+            ? `店頭受取：${pickupName || ""}`
+            : "住所：未登録";
 
         const msg =
           `🧾【新規注文】\n` +
@@ -2046,7 +2061,9 @@ async function handleEvent(ev) {
           (order.note ? `※${order.note}\n` : "") +
           `\n${addrText}`;
 
-        try { await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg }); } catch {}
+        try {
+          await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg });
+        } catch {}
       }
 
       // ユーザー返信
@@ -2054,9 +2071,7 @@ async function handleEvent(ev) {
         "ご注文ありがとうございます！\n\n" +
         `商品：${product.name}\n` +
         `数量：${qty}\n` +
-        (method === "delivery"
-          ? `送料：${yen(shipping)}\n` + (codFee ? `代引手数料：${yen(codFee)}\n` : "")
-          : "送料：0円\n") +
+        (method === "delivery" ? `送料：${yen(shipping)}\n` + (codFee ? `代引手数料：${yen(codFee)}\n` : "") : "送料：0円\n") +
         `合計：${yen(total)}\n` +
         (method === "pickup" ? `\n店頭受取のお名前：${pickupName || ""}\n` : "") +
         (method === "delivery" && !address ? "\n※住所が未登録です。住所登録（LIFF）をお願いします。\n" : "");
@@ -2069,18 +2084,13 @@ async function handleEvent(ev) {
       const id = q.id;
       const qty = Number(q.qty || 1);
       const { product } = findProductById(id);
-      appendJsonl(RESERVATIONS_LOG, {
-        ts: new Date().toISOString(),
-        userId,
-        productId: id,
-        productName: product?.name || id,
-        qty,
-        action: "reserve",
-      });
+      appendJsonl(RESERVATIONS_LOG, { ts: new Date().toISOString(), userId, productId: id, productName: product?.name || id, qty, action: "reserve" });
 
       if (ADMIN_USER_ID) {
         const msg = `📌【予約】\n商品：${product?.name || id}\n数量：${qty}\nuserId：${userId}`;
-        try { await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg }); } catch {}
+        try {
+          await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg });
+        } catch {}
       }
 
       return client.replyMessage(ev.replyToken, { type: "text", text: "予約を受け付けました。入荷次第ご案内します。" });

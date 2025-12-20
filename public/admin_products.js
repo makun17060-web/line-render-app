@@ -1,12 +1,16 @@
 // admin_products.js（修正版・丸ごと）
-// 目的：404の原因だった /api/admin/products/update を使わず、
-//      サーバーに存在する API に合わせて動作させる。
+// 目的：server-line.js に実在するAPIに合わせて、画像アップロード/一覧/削除/商品への画像URL保存を確実に動かす。
 // 対応API（server-line.js に存在）:
-//  - GET    /api/admin/products
-//  - POST   /api/admin/upload-image   (multipart: image)
-//  - GET    /api/admin/images
-//  - DELETE /api/admin/images/:name
-//  - POST   /api/admin/products/set-image  (JSON: { productId, imageUrl })
+//  - GET    /api/admin/products                 -> { ok:true, products:[...] }
+//  - POST   /api/admin/upload                   (multipart: file) -> { ok:true, filename, url }
+//  - GET    /api/admin/images                   -> { ok:true, items:[{name,url}...] }
+//  - POST   /api/admin/images/delete            (JSON: { name }) -> { ok:true }
+//  - POST   /api/admin/products/update          (JSON: { id, image }) -> { ok:true, product:{...} }
+//  - POST   /api/admin/stock/set                (JSON: { id, qty }) -> { ok:true, ... }   ※server-line.js準拠
+//
+// 注意：この管理画面は「画像URLの保存」と「在庫変更」を行えます。
+//      商品名/価格/説明の更新も server-line.js の /api/admin/products/update で可能ですが、
+//      ここでは誤操作防止のため UI は画像のみ保存にしています（必要なら拡張できます）。
 
 document.addEventListener("DOMContentLoaded", () => {
   const tokenInput   = document.getElementById("tokenInput");
@@ -39,16 +43,17 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function getToken() {
-    return (tokenInput.value || "").trim() || (localStorage.getItem(STORAGE_KEY) || "").trim();
+    return (tokenInput?.value || "").trim() || (localStorage.getItem(STORAGE_KEY) || "").trim();
   }
 
   function setAuth(ok, msg) {
+    if (!authStatus) return;
     authStatus.textContent = msg;
     authStatus.style.color = ok ? "green" : "red";
   }
 
   function saveToken() {
-    const t = (tokenInput.value || "").trim();
+    const t = (tokenInput?.value || "").trim();
     if (!t) {
       setAuth(false, "トークンを入力してください。");
       return;
@@ -78,6 +83,15 @@ document.addEventListener("DOMContentLoaded", () => {
     return { url, token };
   }
 
+  async function readJsonOrThrow(res) {
+    const text = await res.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch {}
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`);
+    if (!data || data.ok !== true) throw new Error(`API error: ${(data && data.error) || text || "unknown"}`);
+    return data;
+  }
+
   async function apiGet(path) {
     const { url, token } = withToken(path);
     const res = await fetch(url, {
@@ -86,13 +100,7 @@ document.addEventListener("DOMContentLoaded", () => {
         "Accept": "application/json",
       },
     });
-    const text = await res.text();
-    let data = null;
-    try { data = JSON.parse(text); } catch {}
-
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`);
-    if (!data || data.ok !== true) throw new Error(`API error: ${(data && data.error) || "unknown"}`);
-    return data;
+    return readJsonOrThrow(res);
   }
 
   async function apiPostJson(path, bodyObj) {
@@ -106,39 +114,38 @@ document.addEventListener("DOMContentLoaded", () => {
       },
       body: JSON.stringify(bodyObj || {}),
     });
-    const text = await res.text();
-    let data = null;
-    try { data = JSON.parse(text); } catch {}
-
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`);
-    if (!data || data.ok !== true) throw new Error(`API error: ${(data && data.error) || "unknown"}`);
-    return data;
+    return readJsonOrThrow(res);
   }
 
   // =========================
   // Products
   // =========================
   async function fetchProducts() {
-    statusEl.textContent = "商品一覧取得中...";
-    listArea.textContent = "読み込み中...";
+    if (statusEl) statusEl.textContent = "商品一覧取得中...";
+    if (listArea) listArea.textContent = "読み込み中...";
     try {
       const data = await apiGet("/api/admin/products");
-      currentProducts = data.items || [];
+      // server-line.js は { ok:true, products:[...] }
+      currentProducts = data.products || [];
       renderProducts(currentProducts);
-      statusEl.textContent = `OK: 商品数 ${currentProducts.length} 件`;
+      if (statusEl) statusEl.textContent = `OK: 商品数 ${currentProducts.length} 件`;
+      setAuth(true, "認証OK");
     } catch (e) {
       console.error("fetchProducts error:", e);
-      statusEl.textContent = "商品一覧の取得に失敗しました。";
-      listArea.innerHTML = "";
-      const pre = document.createElement("pre");
-      pre.textContent = String(e.message || e);
-      listArea.appendChild(pre);
+      if (statusEl) statusEl.textContent = "商品一覧の取得に失敗しました。";
+      if (listArea) {
+        listArea.innerHTML = "";
+        const pre = document.createElement("pre");
+        pre.textContent = String(e.message || e);
+        listArea.appendChild(pre);
+      }
     }
   }
 
-  // ★重要：このサーバーには「name/price/stock/desc/image をまとめて更新する update API」が無い
-  // なので「保存」ボタンは、確実に存在する /api/admin/products/set-image で画像だけ保存する。
+  // 画像URLのみ保存（/api/admin/products/update で id + image を更新）
   function renderProducts(items) {
+    if (!listArea) return;
+
     if (!items || items.length === 0) {
       listArea.textContent = "商品がありません。";
       return;
@@ -172,14 +179,13 @@ document.addEventListener("DOMContentLoaded", () => {
       tdId.style.padding = "6px";
       tr.appendChild(tdId);
 
-      // 名称（表示のみ：編集しても保存されない）
+      // 名称（表示のみ）
       const tdName = document.createElement("td");
       const inputName = document.createElement("input");
       inputName.type = "text";
       inputName.value = p.name || "";
       inputName.style.width = "140px";
       inputName.disabled = true;
-      inputName.title = "※このサーバーには商品情報更新APIがないため、名称はここから更新できません";
       tdName.appendChild(inputName);
       tdName.style.padding = "6px";
       tr.appendChild(tdName);
@@ -191,7 +197,6 @@ document.addEventListener("DOMContentLoaded", () => {
       inputPrice.value = p.price != null ? String(p.price) : "";
       inputPrice.style.width = "80px";
       inputPrice.disabled = true;
-      inputPrice.title = "※このサーバーには商品情報更新APIがないため、価格はここから更新できません";
       tdPrice.appendChild(inputPrice);
       tdPrice.style.padding = "6px";
       tr.appendChild(tdPrice);
@@ -203,7 +208,6 @@ document.addEventListener("DOMContentLoaded", () => {
       inputStock.value = p.stock != null ? String(p.stock) : "0";
       inputStock.style.width = "60px";
       inputStock.disabled = true;
-      inputStock.title = "※このサーバーには商品情報更新APIがないため、在庫はここから更新できません（在庫は別APIで操作）";
       tdStock.appendChild(inputStock);
       tdStock.style.padding = "6px";
       tr.appendChild(tdStock);
@@ -215,12 +219,11 @@ document.addEventListener("DOMContentLoaded", () => {
       inputDesc.value = p.desc || "";
       inputDesc.style.width = "200px";
       inputDesc.disabled = true;
-      inputDesc.title = "※このサーバーには商品情報更新APIがないため、説明はここから更新できません";
       tdDesc.appendChild(inputDesc);
       tdDesc.style.padding = "6px";
       tr.appendChild(tdDesc);
 
-      // 画像URL（これは保存できる）
+      // 画像URL（編集可）
       const tdImage = document.createElement("td");
       tdImage.style.padding = "6px";
       const inputImage = document.createElement("input");
@@ -251,7 +254,6 @@ document.addEventListener("DOMContentLoaded", () => {
           }
           const chosen = cachedImages[index];
           inputImage.value = chosen.url; // /public/uploads/xxx
-          // プレビューも更新
           updatePreview(previewImg, inputImage.value);
         } catch (e) {
           console.error("select image error:", e);
@@ -274,7 +276,7 @@ document.addEventListener("DOMContentLoaded", () => {
       tdPrev.appendChild(previewImg);
       tr.appendChild(tdPrev);
 
-      // 操作（画像だけ保存）
+      // 操作
       const tdOps = document.createElement("td");
       tdOps.style.padding = "6px";
 
@@ -287,17 +289,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
           const imageUrl = (inputImage.value || "").trim();
 
-          // ✅ サーバーに存在するAPIへ
-          // body: { productId, imageUrl }
-          await apiPostJson("/api/admin/products/set-image", {
-            productId: p.id,
-            imageUrl,
+          // ✅ server-line.js に存在：POST /api/admin/products/update
+          // body: { id, image }
+          await apiPostJson("/api/admin/products/update", {
+            id: p.id,
+            image: imageUrl,
           });
 
-          statusEl.textContent = `画像を保存しました：${p.id}`;
+          if (statusEl) statusEl.textContent = `画像を保存しました：${p.id}`;
           updatePreview(previewImg, imageUrl);
 
-          // 商品一覧を再取得して整合（任意）
+          // 商品一覧を再取得して整合
           await fetchProducts();
         } catch (e) {
           console.error("save image error:", e);
@@ -309,11 +311,11 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       tdOps.appendChild(saveBtn);
 
-      // 参考：在庫操作（既存APIあり）
+      // 在庫操作（server-line.js：POST /api/admin/stock/set body { id, qty }）
       const stockBtn = document.createElement("button");
       stockBtn.textContent = "在庫を変更";
       stockBtn.style.marginLeft = "6px";
-      stockBtn.title = "在庫は /api/admin/stock/set または /api/admin/stock/add で変更します";
+      stockBtn.title = "在庫は /api/admin/stock/set で変更します";
       stockBtn.addEventListener("click", async () => {
         try {
           const input = prompt("在庫を何個にしますか？（半角数字）", String(p.stock ?? 0));
@@ -323,8 +325,8 @@ document.addEventListener("DOMContentLoaded", () => {
             alert("数値が不正です");
             return;
           }
-          await apiPostJson("/api/admin/stock/set", { productId: p.id, qty });
-          statusEl.textContent = `在庫を更新しました：${p.id}`;
+          await apiPostJson("/api/admin/stock/set", { id: p.id, qty });
+          if (statusEl) statusEl.textContent = `在庫を更新しました：${p.id}`;
           await fetchProducts();
         } catch (e) {
           alert("在庫更新に失敗しました。\n" + String(e.message || e));
@@ -333,7 +335,6 @@ document.addEventListener("DOMContentLoaded", () => {
       tdOps.appendChild(stockBtn);
 
       tr.appendChild(tdOps);
-
       tbody.appendChild(tr);
     });
 
@@ -346,8 +347,8 @@ document.addEventListener("DOMContentLoaded", () => {
     note.style.fontSize = "12px";
     note.style.color = "#555";
     note.innerHTML =
-      "※ このサーバーには <b>商品情報（名称/価格/説明）を更新するAPI</b> が無いので、ここでは編集できません。<br>" +
-      "※ 画像は <code>/api/admin/products/set-image</code> で保存されます。";
+      "※ 画像URLは <code>/api/admin/products/update</code>（<code>{ id, image }</code>）で保存します。<br>" +
+      "※ 在庫は <code>/api/admin/stock/set</code>（<code>{ id, qty }</code>）で変更します。";
     listArea.appendChild(note);
   }
 
@@ -374,53 +375,56 @@ document.addEventListener("DOMContentLoaded", () => {
       setAuth(false, "管理用トークンを入力して保存してください。");
       return;
     }
-    if (!uploadInput.files || !uploadInput.files[0]) {
-      uploadStatus.textContent = "ファイルを選択してください。";
-      uploadStatus.style.color = "red";
+    if (!uploadInput?.files || !uploadInput.files[0]) {
+      if (uploadStatus) {
+        uploadStatus.textContent = "ファイルを選択してください。";
+        uploadStatus.style.color = "red";
+      }
       return;
     }
 
     const file = uploadInput.files[0];
-    uploadStatus.textContent = "アップロード中...";
-    uploadStatus.style.color = "#666";
+    if (uploadStatus) {
+      uploadStatus.textContent = "アップロード中...";
+      uploadStatus.style.color = "#666";
+    }
 
     try {
+      // ✅ server-line.js：POST /api/admin/upload で upload.single("file")
       const { url } = withToken("/api/admin/upload");
       const fd = new FormData();
-      fd.append("file", file); // multer.single("image")
+      fd.append("file", file); // ★重要：multer.single("file") に合わせる
 
       const res = await fetch(url, {
         method: "POST",
-        headers: {
-          "Authorization": `Bearer ${token}`,
-        },
+        headers: { "Authorization": `Bearer ${token}` },
         body: fd,
       });
 
-      const text = await res.text();
-      let data = null;
-      try { data = JSON.parse(text); } catch {}
+      const data = await readJsonOrThrow(res);
 
-      if (!res.ok || !data || data.ok !== true) {
-        throw new Error(`upload failed: ${text}`);
+      if (uploadStatus) {
+        uploadStatus.textContent = "アップロード成功：" + (data.url || data.filename || "");
+        uploadStatus.style.color = "green";
       }
-
-      uploadStatus.textContent = "アップロード成功：" + (data.path || data.url || data.file);
-      uploadStatus.style.color = "green";
       uploadInput.value = "";
 
       // 画像一覧更新
       await fetchImages(true);
 
       // 便利：アップロード直後にURLをクリップボードへ
-      const copyText = data.path || data.url || "";
-      if (copyText && navigator.clipboard?.writeText) {
-        try { await navigator.clipboard.writeText(copyText); } catch {}
+      const copyText = data.url || "";
+      if (copyText) {
+        if (navigator.clipboard?.writeText) {
+          try { await navigator.clipboard.writeText(copyText); } catch {}
+        }
       }
     } catch (e) {
       console.error("uploadImage error:", e);
-      uploadStatus.textContent = "アップロード失敗：" + String(e.message || e);
-      uploadStatus.style.color = "red";
+      if (uploadStatus) {
+        uploadStatus.textContent = "アップロード失敗：" + String(e.message || e);
+        uploadStatus.style.color = "red";
+      }
     }
   }
 
@@ -428,6 +432,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // Images list
   // =========================
   async function fetchImages(force) {
+    if (!imagesList) return [];
     if (!force && cachedImages.length) return cachedImages;
 
     imagesList.textContent = "画像一覧取得中...";
@@ -435,6 +440,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     try {
       const data = await apiGet("/api/admin/images");
+      // server-line.js は { ok:true, items:[{name,url}...] }
       const items = data.items || [];
       cachedImages = items;
 
@@ -508,16 +514,8 @@ document.addEventListener("DOMContentLoaded", () => {
         delBtn.addEventListener("click", async () => {
           if (!confirm(`削除しますか？\n${img.name}`)) return;
           try {
-            const { url } = withToken(`/api/admin/images/${encodeURIComponent(img.name)}`);
-            await fetch(url, {
-              method: "DELETE",
-              headers: { "Authorization": `Bearer ${getToken()}` },
-            }).then(async (r) => {
-              const t = await r.text();
-              let j = null;
-              try { j = JSON.parse(t); } catch {}
-              if (!r.ok || !j || j.ok !== true) throw new Error(t);
-            });
+            // ✅ server-line.js：POST /api/admin/images/delete body { name }
+            await apiPostJson("/api/admin/images/delete", { name: img.name });
             await fetchImages(true);
           } catch (e) {
             alert("削除に失敗しました。\n" + String(e.message || e));
@@ -526,7 +524,6 @@ document.addEventListener("DOMContentLoaded", () => {
         row.appendChild(delBtn);
 
         card.appendChild(row);
-
         container.appendChild(card);
       });
 
@@ -548,8 +545,8 @@ document.addEventListener("DOMContentLoaded", () => {
   uploadBtn?.addEventListener("click", uploadImage);
   reloadImagesBtn?.addEventListener("click", () => fetchImages(true));
 
-  // 初期
+  // 初期表示
   loadToken();
   setAuth(false, "管理用トークンを入力して保存してください。");
-  listArea.textContent = "「商品一覧を再読み込み」を押すと一覧が表示されます。";
+  if (listArea) listArea.textContent = "「商品一覧を再読み込み」を押すと一覧が表示されます。";
 });

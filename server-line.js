@@ -1,28 +1,28 @@
 /**
  * server-line.js — フル機能版（Stripe + ミニアプリ + 画像管理 + 住所DB + セグメント配信 + 注文DB永続化）
  *
- * ✅ 修正版ポイント（今回の不具合）
- * - ミニアプリの /api/order/complete で「管理者通知が来ない」問題を修正
- *   → /api/order/complete 内で、管理者（ADMIN_USER_ID）へ pushMessage を実行する処理を追加
- *   → 併せて、購入者（order.lineUserId がある場合）にも完了メッセージを送れるように追加（任意）
- * - paymentMethod の判定を強化（paymentMethod / payment / method などに対応）
- * - 例外時もログに原因が出るようにログ強化（push失敗の詳細表示）
+ * ✅ 今回の要望対応（重要）
+ * - ボット起動キーワードは「直接注文」と「久助」だけ
+ *   → 「注文/商品/メニュー」等は一切反応しない
+ * - 「久助」は「久助」(案内) と「久助 3」(数量) のみ受付
+ *
+ * ✅ 既存の不具合対策
+ * - await は必ず async 関数内でのみ使用（handleEvent/postback は async の中）
+ * - text のスコープ崩れ防止（message ブロック内で完結）
  *
  * --- 必須 .env ---
  * LINE_CHANNEL_ACCESS_TOKEN
  * LINE_CHANNEL_SECRET
  * LIFF_ID
  * ADMIN_API_TOKEN  (推奨) もしくは ADMIN_CODE
- * DATABASE_URL     (orders DB保存したいなら推奨)
+ * DATABASE_URL     (住所DB/注文DBを使うなら推奨)
  *
  * --- 推奨 .env ---
  * ADMIN_USER_ID（管理者へ通知）
  * PUBLIC_BASE_URL（Renderの https://xxxx.onrender.com ）
  * STRIPE_SECRET_KEY（Stripe使うなら）
  * LINE_CHANNEL_ID（LIFF idToken検証するなら）
- *
- * --- セキュリティ ---
- * /api/public/address-by-code は PUBLIC_ADDRESS_LOOKUP_TOKEN 必須
+ * PUBLIC_ADDRESS_LOOKUP_TOKEN（公開住所取得APIを使うなら）
  */
 
 "use strict";
@@ -60,7 +60,7 @@ const PUBLIC_ADDRESS_LOOKUP_TOKEN = (process.env.PUBLIC_ADDRESS_LOOKUP_TOKEN || 
 
 const COD_FEE = Number(process.env.COD_FEE || 330);
 
-// 久助はメモリ情報に基づき 250円で固定（優先）
+// 久助は 250円固定（あなたの運用メモに合わせる）
 const KUSUKE_UNIT_PRICE = 250;
 
 // セグメント設定
@@ -97,7 +97,6 @@ const jsonParser = express.json({ limit: "2mb" });
 const urlParser = express.urlencoded({ extended: true });
 
 app.use((req, res, next) => {
-  // webhook は署名検証に raw body が必要になるケースがあるためパーサを避ける
   if (req.path.startsWith("/webhook")) return next();
   return jsonParser(req, res, next);
 });
@@ -198,7 +197,6 @@ function normalizePaymentMethodFromOrder(order = {}) {
   if (raw === "bank" || raw === "furikomi" || raw === "振込" || raw === "銀行振込") return "bank";
   if (raw === "store" || raw === "cash" || raw === "pickup" || raw === "店頭" || raw === "現金") return "store";
   if (raw === "stripe" || raw === "card" || raw === "credit") return "stripe";
-  // 未指定は stripe 扱いに倒す（現仕様踏襲）
   return "stripe";
 }
 
@@ -444,28 +442,22 @@ async function ensureDbSchema() {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_segment_users_last_chat ON segment_users(last_chat_at DESC);`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_segment_users_last_liff ON segment_users(last_liff_at DESC);`);
 
-  // ★注文 永続保存（payment_method/status は必ず入る）
   await p.query(`
     CREATE TABLE IF NOT EXISTS orders (
       id BIGSERIAL PRIMARY KEY,
       created_at TIMESTAMPTZ DEFAULT NOW(),
-
       user_id TEXT,
       member_code CHAR(4),
       phone TEXT,
-
       items JSONB NOT NULL DEFAULT '[]'::jsonb,
       total INT NOT NULL DEFAULT 0,
       shipping_fee INT NOT NULL DEFAULT 0,
-
       payment_method TEXT NOT NULL DEFAULT 'unknown',
       status TEXT NOT NULL DEFAULT 'new',
-
       name TEXT,
       zip TEXT,
       pref TEXT,
       address TEXT,
-
       source TEXT,
       raw_event JSONB
     );
@@ -475,7 +467,6 @@ async function ensureDbSchema() {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_orders_member_code ON orders(member_code);`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_orders_payment_method ON orders(payment_method);`);
 
-  // 既存DBの安全補正（失敗しても起動は続ける）
   try {
     await p.query(`ALTER TABLE orders ALTER COLUMN payment_method SET DEFAULT 'unknown'`);
     await p.query(`UPDATE orders SET payment_method='unknown' WHERE payment_method IS NULL OR payment_method=''`);
@@ -606,7 +597,7 @@ async function dbGetAddressByMemberCode(memberCode) {
   return r.rows[0] || null;
 }
 
-// ★注文DB保存（payment_method/source を必ず整形してから保存）
+// ★注文DB保存
 async function dbInsertOrder(payload) {
   if (!pool) return { ok: false, skipped: "db_not_configured" };
   const p = mustPool();
@@ -618,20 +609,16 @@ async function dbInsertOrder(payload) {
     items = [],
     total = 0,
     shippingFee = 0,
-
     paymentMethod = null, // stripe/cod/bank/store/unknown
     status = "new",
-
     name = null,
     zip = null,
     pref = null,
     address = null,
-
     source = null,
     rawEvent = null,
   } = payload || {};
 
-  // --- フェイルセーフ補完 ---
   const src = String(source || rawEvent?.source || "").toLowerCase().trim();
   const payFromEvent = String(rawEvent?.payment_method || rawEvent?.paymentMethod || rawEvent?.payment || "").toLowerCase().trim();
 
@@ -791,7 +778,6 @@ async function verifyLineIdToken(idToken) {
     params.set("id_token", idToken);
     params.set("client_id", LINE_CHANNEL_ID);
 
-    // Node 18+ なら fetch が標準
     const r = await fetch("https://api.line.me/oauth2/v2.1/verify", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -922,7 +908,7 @@ app.get("/api/liff/address/me", async (req, res) => {
   }
 });
 
-// ★公開住所取得（超注意：トークン必須）
+// ★公開住所取得（トークン必須）
 app.get("/api/public/address-by-code", async (req, res) => {
   try {
     if (!PUBLIC_ADDRESS_LOOKUP_TOKEN) return res.status(500).json({ ok: false, error: "PUBLIC_ADDRESS_LOOKUP_TOKEN_not_set" });
@@ -1080,23 +1066,14 @@ app.post("/api/order/complete", async (req, res) => {
     const items = Array.isArray(order.items) ? order.items : [];
     if (!items.length) return res.json({ ok: false, error: "no_items" });
 
-    // ★支払方法の判定（強化）
     const paymentMethod = normalizePaymentMethodFromOrder(order);
-
-    // ★ステータス（cod/bankは未入金扱い）
-    const status =
-      paymentMethod === "stripe" ? "paid" :
-      paymentMethod === "store" ? "new" :
-      "new";
-
-    // ★sourceも合わせる（後で集計が超楽）
+    const status = paymentMethod === "stripe" ? "paid" : "new";
     const source =
       paymentMethod === "cod" ? "liff-cod" :
       paymentMethod === "bank" ? "liff-bank" :
       paymentMethod === "store" ? "liff-store" :
       "liff-stripe";
 
-    // log（ファイル）
     try {
       fs.appendFileSync(
         ORDERS_LOG,
@@ -1105,7 +1082,6 @@ app.post("/api/order/complete", async (req, res) => {
       );
     } catch {}
 
-    // 住所/明細整理
     const a = order.address || {};
     const name = pickNameFromAddress(a) || order.lineUserName || "";
     const zip = a.zip || a.postal || "";
@@ -1117,10 +1093,9 @@ app.post("/api/order/complete", async (req, res) => {
     const codFee = Number(order.codFee || 0);
     const finalTotal = Number(order.finalTotal ?? order.total ?? 0) || (itemsTotal + shipping + codFee);
 
-    // DB保存
     try {
-      const memberCode = null; // ミニアプリ側で必要なら後で拡張
-      const addrLineForDb = `${a.city || ""}${a.addr1 || a.address1 || ""}${a.addr2 || a.address2 ? " " + (a.addr2 || a.address2) : ""}`.trim();
+      const memberCode = null;
+      const addrLineForDb = `${a.city || ""}${a.addr1 || a.address1 || ""}${(a.addr2 || a.address2) ? " " + (a.addr2 || a.address2) : ""}`.trim();
 
       await dbInsertOrder({
         userId: order.lineUserId || null,
@@ -1142,9 +1117,6 @@ app.post("/api/order/complete", async (req, res) => {
       console.error("orders db insert skipped:", e?.message || e);
     }
 
-    // ==============================
-    // ✅ ここが今回の修正：管理者通知（/api/order/complete でも必ず送る）
-    // ==============================
     const payText =
       paymentMethod === "cod" ? `代引（+${yen(codFee || COD_FEE)}）` :
       paymentMethod === "bank" ? "銀行振込" :
@@ -1174,7 +1146,6 @@ app.post("/api/order/complete", async (req, res) => {
       }
     }
 
-    // （任意）購入者へも完了通知：lineUserId が来ている時だけ
     const buyerId = String(order.lineUserId || "").trim();
     if (buyerId) {
       const buyerMsg =
@@ -1187,7 +1158,6 @@ app.post("/api/order/complete", async (req, res) => {
       try {
         await client.pushMessage(buyerId, { type: "text", text: buyerMsg });
       } catch (e) {
-        // ブロック等で失敗しても注文自体は成功扱いのまま
         console.warn("[BUYER PUSH] skipped/failed:", e?.response?.data || e?.message || e);
       }
     }
@@ -1256,7 +1226,6 @@ app.post("/api/admin/products/update", (req, res) => {
     const desc = req.body?.desc != null ? String(req.body.desc) : product.desc;
     const image = req.body?.image != null ? String(req.body.image) : product.image;
 
-    // 久助は単価固定（250）
     const price = id === "kusuke-250" ? KUSUKE_UNIT_PRICE : req.body?.price != null ? Number(req.body.price) : product.price;
     const stock = req.body?.stock != null ? Number(req.body.stock) : product.stock;
 
@@ -1302,13 +1271,15 @@ function readLogLines(filePath, limit = 100) {
   if (!fs.existsSync(filePath)) return [];
   const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/).filter(Boolean);
   const tail = lines.slice(-Math.min(Number(limit) || 100, lines.length));
-  return tail.map((l) => {
-    try {
-      return JSON.parse(l);
-    } catch {
-      return null;
-    }
-  }).filter(Boolean);
+  return tail
+    .map((l) => {
+      try {
+        return JSON.parse(l);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
 }
 
 app.get("/api/admin/orders", (req, res) => {
@@ -1318,15 +1289,13 @@ app.get("/api/admin/orders", (req, res) => {
   return res.json({ ok: true, items });
 });
 
-// ★DB注文：payment/source/status で絞り込み可能
-// 例）/api/admin/orders-db?payment=cod&limit=200&token=...
 app.get("/api/admin/orders-db", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
     if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
 
     const limit = Math.min(2000, Number(req.query.limit || 200));
-    const payment = String(req.query.payment || "").trim().toLowerCase(); // stripe/cod/bank/store/unknown
+    const payment = String(req.query.payment || "").trim().toLowerCase();
     const status = String(req.query.status || "").trim().toLowerCase();
     const source = String(req.query.source || "").trim().toLowerCase();
 
@@ -1364,7 +1333,7 @@ app.get("/api/admin/segment/users", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
     const days = Number(req.query.days || 30);
-    const source = String(req.query.source || "active"); // active/chat/liff/seen
+    const source = String(req.query.source || "active");
     const ids = await listSegmentUserIds(days, source);
     return res.json({ ok: true, days, source, count: ids.length, items: ids });
   } catch (e) {
@@ -1725,27 +1694,30 @@ async function handleEvent(ev) {
     if (userId) await touchUser(userId, "seen");
     const msg =
       "友だち追加ありがとうございます！\n\n" +
-      "・「注文」→ 商品一覧から選べます\n" +
-      "・「久助」→ 久助（1個250円）をテキストで注文できます\n" +
+      "・「直接注文」→ 商品一覧（通常商品）\n" +
+      "・「久助」→ 久助の注文（「久助 3」のように入力）\n" +
       "・住所登録（LIFF）もできます";
     return client.replyMessage(ev.replyToken, { type: "text", text: msg });
   }
 
-   // メッセージ（テキスト）
+  // ===========================
+  // ✅ テキストメッセージ（起動キーワードは2つだけ）
+  // ===========================
   if (ev.type === "message" && ev.message?.type === "text") {
     const text = String(ev.message.text || "").trim();
 
-    // ✅ 直接注文（このキーワードだけで通常商品ボット起動）
+    // ① 直接注文 → 通常商品ボット起動
     if (text === "直接注文") {
+      await touchUser(userId, "chat");
       return client.replyMessage(ev.replyToken, [
         { type: "text", text: "直接注文を開始します。商品一覧です。" },
         productsFlex(),
       ]);
     }
 
-    // ✅ 久助（このキーワードだけで久助フロー起動）
-    // 「久助」だけで起動：案内を出して、数量入力を促す（Flexが未定義でも落ちない）
+    // ② 久助 → 案内（数量入力を促す）
     if (text === "久助") {
+      await touchUser(userId, "chat");
       const msg =
         "久助のご注文を開始します。\n" +
         `単価：${yen(KUSUKE_UNIT_PRICE)}（税込）\n\n` +
@@ -1753,79 +1725,13 @@ async function handleEvent(ev) {
       return client.replyMessage(ev.replyToken, { type: "text", text: msg });
     }
 
-    // ✅ 久助の数量（例：久助 3）だけ受付
+    // ③ 久助 数量（例: 久助 3）
     const m = /^久助\s*(\d{1,2})$/.exec(text.replace(/[　]+/g, " "));
     if (m) {
-      const qty = Number(m[1]);
-      if (qty < 1 || qty > 99) {
-        return client.replyMessage(ev.replyToken, { type: "text", text: "個数は 1〜99 で入力してください。" });
-      }
-
-      const { product } = findProductById("kusuke-250");
-      if (!product) {
-        return client.replyMessage(ev.replyToken, { type: "text", text: "久助の商品データが見つかりません。" });
-      }
-
-      const stock = Number(product.stock || 0);
-      if (stock < qty) {
-        appendJsonl(RESERVATIONS_LOG, {
-          ts: new Date().toISOString(),
-          userId,
-          productId: product.id,
-          productName: product.name,
-          qty,
-          reason: "stock_shortage",
-        });
-
-        return client.replyMessage(ev.replyToken, [
-          { type: "text", text: `在庫不足です（在庫${stock}個）。予約しますか？` },
-          {
-            type: "template",
-            altText: "予約",
-            template: {
-              type: "confirm",
-              text: "予約しますか？",
-              actions: [
-                { type: "postback", label: "予約する", data: `order_reserve?${qstr({ id: product.id, qty })}` },
-                { type: "postback", label: "やめる", data: "order_cancel" },
-              ],
-            },
-          },
-        ]);
-      }
-
-      // 久助は宅配/代引（住所未登録なら確認画面で住所入力を促す）
-      return client.replyMessage(ev.replyToken, [
-        { type: "text", text: "久助の注文内容です。" },
-        confirmFlex(product, qty, "delivery", "cod", null, null),
-      ]);
-    }
-
-    // ✅ それ以外は無反応（必要ならここで return null;）
-    return null;
-  }
-
-
-  
-}
-
-    // コマンド
-    if (/^(注文|商品|メニュー)$/i.test(text)) {
-      return client.replyMessage(ev.replyToken, [{ type: "text", text: "商品一覧です。" }, productsFlex()]);
-    }
-
-    if (/^(久助|くすけ)$/i.test(text)) {
-      const msg = "久助の注文方法：\n" + "「久助 3」 のように入力してください。\n" + `単価：${yen(KUSUKE_UNIT_PRICE)}（税込）\n` + "例：久助 5";
-      return client.replyMessage(ev.replyToken, { type: "text", text: msg });
-    }
-
-    // 久助 数量入力（例: 久助 3）
-    const m = /^久助\s*(\d{1,2})$/.exec(text.replace(/[　]+/g, " "));
-    if (m) {
+      await touchUser(userId, "chat");
       const qty = Number(m[1]);
       if (qty < 1 || qty > 99) return client.replyMessage(ev.replyToken, { type: "text", text: "個数は 1〜99 で入力してください。" });
 
-      // 久助は在庫チェック
       const { product } = findProductById("kusuke-250");
       if (!product) return client.replyMessage(ev.replyToken, { type: "text", text: "久助の商品データが見つかりません。" });
 
@@ -1849,24 +1755,17 @@ async function handleEvent(ev) {
         ]);
       }
 
-      // フローへ（デフォルトは宅配/代引：最終確認で住所登録を促す）
+      // 久助：宅配/代引（住所未登録なら確認画面で住所入力を促す）
       return client.replyMessage(ev.replyToken, [{ type: "text", text: "久助の注文内容です。" }, confirmFlex(product, qty, "delivery", "cod", null, null)]);
     }
 
-    // 住所コード/会員コード確認（DBのみ）
-    if (/^コード$/i.test(text)) {
-      if (!pool) return client.replyMessage(ev.replyToken, { type: "text", text: "DB未設定のためコードは発行できません（DATABASE_URLが必要）。" });
-      const codes = await dbEnsureCodes(userId);
-      const msg = `会員コード：${codes.member_code}\n` + `住所コード：${codes.address_code}\n\n` + "住所登録（LIFF）から登録すると送料計算が自動になります。";
-      return client.replyMessage(ev.replyToken, { type: "text", text: msg });
-    }
-
-    // デフォルト
-    const help = "使い方：\n" + "・「注文」→ 商品一覧\n" + "・「久助 3」→ 久助を3個\n" + "・「コード」→ 会員コード表示（DBがある場合）";
-    return client.replyMessage(ev.replyToken, { type: "text", text: help });
+    // それ以外は無反応
+    return null;
   }
 
-  // postback
+  // ===========================
+  // Postback
+  // ===========================
   if (ev.type === "postback") {
     const data = String(ev.postback?.data || "");
 
@@ -1875,7 +1774,7 @@ async function handleEvent(ev) {
     }
 
     if (data === "other_start") {
-      if (!userId) return;
+      if (!userId) return null;
       setSession(userId, { mode: "other_name" });
       return client.replyMessage(ev.replyToken, { type: "text", text: "商品名を入力してください（例：えびせん詰め合わせ）" });
     }
@@ -1896,7 +1795,6 @@ async function handleEvent(ev) {
     }
 
     if (data.startsWith("order_pickup_name?")) {
-      // 店頭名入力へ（テキスト入力）
       const q = parseQuery(data);
       setSession(userId, { mode: "pickup_name", id: q.id, qty: Number(q.qty || 1), method: q.method, payment: q.payment });
       return client.replyMessage(ev.replyToken, { type: "text", text: "店頭で受け取るお名前を入力してください。" });
@@ -1966,7 +1864,6 @@ async function handleEvent(ev) {
           ]);
         }
 
-        // 在庫減算
         addStock(p.id, -qty, "order_confirm");
         await maybeLowStockAlert(p.id, p.name, Math.max(0, stock - qty));
       }
@@ -2003,7 +1900,6 @@ async function handleEvent(ev) {
       const codFee = payment === "cod" ? COD_FEE : 0;
       const total = subtotal + (method === "delivery" ? shipping : 0) + codFee;
 
-      // 注文オブジェクト（ログ/DB共通）
       const order = {
         ts: new Date().toISOString(),
         userId,
@@ -2033,12 +1929,10 @@ async function handleEvent(ev) {
         note: String(product.id).startsWith("other:") ? "価格未入力（その他）" : "",
       };
 
-      // ファイルログ
       try {
         appendJsonl(ORDERS_LOG, { ...order, source: "line-postback" });
       } catch {}
 
-      // ★DB保存（orders）
       try {
         let memberCode = null;
         if (pool) {
@@ -2071,7 +1965,6 @@ async function handleEvent(ev) {
         console.error("orders db insert skipped:", e?.message || e);
       }
 
-      // 管理者通知
       if (ADMIN_USER_ID) {
         const addrText =
           method === "delivery" && address
@@ -2097,7 +1990,6 @@ async function handleEvent(ev) {
         } catch {}
       }
 
-      // ユーザー返信
       const userMsg =
         "ご注文ありがとうございます！\n\n" +
         `商品：${product.name}\n` +
@@ -2136,7 +2028,6 @@ async function handleEvent(ev) {
 }
 
 function loadProductByOrderId(id) {
-  // その他
   if (String(id).startsWith("other:")) {
     const parts = String(id).split(":");
     const encName = parts[1] || "";
@@ -2144,11 +2035,9 @@ function loadProductByOrderId(id) {
     return { id, name: decodeURIComponent(encName || "その他"), price: Number(priceStr || 0), stock: 9999, image: "" };
   }
 
-  // 通常
   const { product } = findProductById(id);
   if (!product) return { id, name: id, price: 0, stock: 0, image: "" };
 
-  // 久助は価格250固定を担保
   if (id === "kusuke-250") return { ...product, price: KUSUKE_UNIT_PRICE };
   return product;
 }
@@ -2160,8 +2049,6 @@ async function start() {
     console.log("[BOOT] DB schema ensured");
   } catch (e) {
     console.error("[BOOT] ensureDbSchema failed:", e?.message || e);
-    // ordersをDBに入れたい運用ならここで落とす方が安全
-    // process.exit(1);
   }
 
   app.listen(PORT, () => {

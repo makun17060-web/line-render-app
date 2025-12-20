@@ -109,16 +109,33 @@ app.use((req, _res, next) => {
   next();
 });
 
-// =============== ディレクトリ & ファイル ===============
-const DATA_DIR = path.join(__dirname, "data");
-const PUBLIC_DIR = path.join(__dirname, "public");
-const UPLOAD_DIR = path.join(PUBLIC_DIR, "uploads");
 
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+// =============== ディレクトリ & ファイル（★永続ディスク対応） ===============
+const PUBLIC_DIR = path.join(__dirname, "public");
+
+// Render Persistent Disk の Mount Path（Render側で /var/data に設定する想定）
+const PERSIST_ROOT =
+  (process.env.PERSIST_ROOT || "").trim() ||
+  (process.env.RENDER_DISK_PATH || "").trim() || // 任意（使ってなければ空でOK）
+  "/var/data";
+
+// data/ と uploads/ は永続ディスク配下へ
+const DATA_DIR = (process.env.DATA_DIR || "").trim() || path.join(PERSIST_ROOT, "data");
+const UPLOAD_DIR = (process.env.UPLOAD_DIR || "").trim() || path.join(PERSIST_ROOT, "uploads");
+
+// public はアプリ内（表示用HTML/CSS/JS）として維持
 if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
+
+// 永続ディスク側
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
+// 既存の /public 配信（HTML等）
 app.use("/public", express.static(PUBLIC_DIR));
+
+// ★重要：画像URLは /public/uploads/xxx を維持したいので、そこに永続ディスクの uploads を割り当てる
+app.use("/public/uploads", express.static(UPLOAD_DIR));
+
 
 const PRODUCTS_PATH = path.join(DATA_DIR, "products.json");
 const ORDERS_LOG = path.join(DATA_DIR, "orders.log");

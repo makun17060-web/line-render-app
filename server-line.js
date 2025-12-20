@@ -1,56 +1,19 @@
 /**
  * server-line.js — フル機能版（Stripe + ミニアプリ + 画像管理 + 住所DB + セグメント配信 + 注文DB永続化）
  *
- * ✅ 重要：このファイルは「省略ゼロで単独で動く」完全版です。
- *
- * --- 主な機能 ---
- * [注文]
- * - 商品一覧（Flex）
- * - 数量選択
- * - 受取方法（宅配 or 店頭受取）
- * - 支払方法（代引 / 銀行振込 / 店頭現金）
- * - 最終確認 → 確定（postback）
- * - 「その他（自由入力）」= 価格入力なし（商品名/数量だけ）
- * - 久助（1個250円税込）テキスト購入フロー（1〜99個）
- * - 予約（在庫不足時）
- * - 注文ログ：data/orders.log（JSONL）
- * - ★注文DB永続化：Postgres orders テーブル（再デプロイでも消えない）
- *
- * [Stripe]
- * - /api/pay-stripe（Checkout Session）
- * - /api/order/complete（決済完了通知 + ★DB保存 + 管理者/購入者通知）
- *
- * [住所]
- * - /api/liff/address（userIdでDB保存）
- * - /api/liff/address/me（userIdで取得）
- * - /api/public/address-by-code（トークン必須）
- *
- * [LIFF 起動ログ]
- * - /api/liff/open（kind=all統一運用）
- *
- * [セグメント配信]
- * - segment_users（DB or JSON）へ userId 台帳（チャット/LIFF/seen）
- * - /api/admin/segment/users（抽出）
- * - /api/admin/push/segment（push）
- *
- * [管理]
- * - /api/admin/orders（ファイルログ）
- * - /api/admin/orders-db（DB注文）★payment/sourceフィルタ対応
- * - /api/admin/products（一覧/更新）
- * - /api/admin/stock（在庫増減/設定）
- * - /api/admin/images（一覧/削除）
- * - /api/admin/ping /api/health
- *
- * [画像]
- * - /api/admin/upload（画像アップロード）
- * - /public/uploads に保存
+ * ✅ 修正版ポイント（今回の不具合）
+ * - ミニアプリの /api/order/complete で「管理者通知が来ない」問題を修正
+ *   → /api/order/complete 内で、管理者（ADMIN_USER_ID）へ pushMessage を実行する処理を追加
+ *   → 併せて、購入者（order.lineUserId がある場合）にも完了メッセージを送れるように追加（任意）
+ * - paymentMethod の判定を強化（paymentMethod / payment / method などに対応）
+ * - 例外時もログに原因が出るようにログ強化（push失敗の詳細表示）
  *
  * --- 必須 .env ---
  * LINE_CHANNEL_ACCESS_TOKEN
  * LINE_CHANNEL_SECRET
  * LIFF_ID
  * ADMIN_API_TOKEN  (推奨) もしくは ADMIN_CODE
- * DATABASE_URL     (orders DB保存したいなら必須)
+ * DATABASE_URL     (orders DB保存したいなら推奨)
  *
  * --- 推奨 .env ---
  * ADMIN_USER_ID（管理者へ通知）
@@ -209,6 +172,35 @@ const readSegmentUsers = () => safeReadJSON(SEGMENT_USERS_PATH, {});
 const writeSegmentUsers = (obj) => safeWriteJSON(SEGMENT_USERS_PATH, obj);
 
 const yen = (n) => `${Number(n || 0).toLocaleString("ja-JP")}円`;
+
+function formatAddressText(a = {}) {
+  const postal = a.postal || a.zip || "";
+  const pref = a.prefecture || a.pref || "";
+  const city = a.city || "";
+  const addr1 = a.addr1 || a.address1 || "";
+  const addr2 = a.addr2 || a.address2 || "";
+  const line = `${pref}${city}${addr1}${addr2 ? " " + addr2 : ""}`.trim();
+  return `${postal ? postal + " " : ""}${line}`.trim();
+}
+
+function pickNameFromAddress(a = {}) {
+  const n = a.name || "";
+  if (n) return String(n).trim();
+  const ln = a.lastName || "";
+  const fn = a.firstName || "";
+  const comb = `${ln}${fn}`.trim();
+  return comb;
+}
+
+function normalizePaymentMethodFromOrder(order = {}) {
+  const raw = String(order.paymentMethod || order.payment || order.method || "").trim().toLowerCase();
+  if (raw === "cod" || raw === "daibiki" || raw === "代引" || raw === "代引き") return "cod";
+  if (raw === "bank" || raw === "furikomi" || raw === "振込" || raw === "銀行振込") return "bank";
+  if (raw === "store" || raw === "cash" || raw === "pickup" || raw === "店頭" || raw === "現金") return "store";
+  if (raw === "stripe" || raw === "card" || raw === "credit") return "stripe";
+  // 未指定は stripe 扱いに倒す（現仕様踏襲）
+  return "stripe";
+}
 
 // =============== 管理認証 ===============
 function bearerToken(req) {
@@ -1081,72 +1073,124 @@ app.post("/api/pay-stripe", async (req, res) => {
   }
 });
 
-// Stripe完了通知（管理者/購入者） + ★DB保存
+// Stripe/代引/振込の完了通知（管理者/購入者） + ★DB保存
 app.post("/api/order/complete", async (req, res) => {
   try {
     const order = req.body || {};
     const items = Array.isArray(order.items) ? order.items : [];
     if (!items.length) return res.json({ ok: false, error: "no_items" });
 
-    // ★支払方法の判定（ここが重要）
-    // 期待：order.paymentMethod または order.payment に "cod" / "bank" / "stripe" が入る
-    const pmRaw = String(order.paymentMethod || order.payment || "").trim().toLowerCase();
-    const paymentMethod =
-      pmRaw === "cod" ? "cod" :
-      pmRaw === "bank" ? "bank" :
-      "stripe";
+    // ★支払方法の判定（強化）
+    const paymentMethod = normalizePaymentMethodFromOrder(order);
 
     // ★ステータス（cod/bankは未入金扱い）
-    const status = paymentMethod === "stripe" ? "paid" : "new";
+    const status =
+      paymentMethod === "stripe" ? "paid" :
+      paymentMethod === "store" ? "new" :
+      "new";
 
     // ★sourceも合わせる（後で集計が超楽）
     const source =
       paymentMethod === "cod" ? "liff-cod" :
       paymentMethod === "bank" ? "liff-bank" :
+      paymentMethod === "store" ? "liff-store" :
       "liff-stripe";
 
     // log（ファイル）
     try {
       fs.appendFileSync(
         ORDERS_LOG,
-        JSON.stringify({ ts: new Date().toISOString(), ...order, source, payment_method: paymentMethod }) + "\n",
+        JSON.stringify({ ts: new Date().toISOString(), ...order, source, payment_method: paymentMethod, status }) + "\n",
         "utf8"
       );
     } catch {}
 
+    // 住所/明細整理
+    const a = order.address || {};
+    const name = pickNameFromAddress(a) || order.lineUserName || "";
+    const zip = a.zip || a.postal || "";
+    const pref = a.prefecture || a.pref || "";
+    const addrText = formatAddressText(a);
+    const tel = a.tel || a.phone || "";
+    const itemsTotal = Number(order.itemsTotal || 0) || items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 0), 0);
+    const shipping = Number(order.shipping || 0);
+    const codFee = Number(order.codFee || 0);
+    const finalTotal = Number(order.finalTotal ?? order.total ?? 0) || (itemsTotal + shipping + codFee);
+
     // DB保存
     try {
-      const a = order.address || {};
-      const name =
-        (a.lastName || a.firstName)
-          ? `${a.lastName || ""}${a.firstName || ""}`.trim()
-          : (a.name || "");
-      const zip = a.zip || a.postal || "";
-      const pref = a.prefecture || a.pref || "";
-      const addrLine = `${a.city || ""}${a.addr1 || a.address1 || ""}${a.addr2 || a.address2 ? " " + (a.addr2 || a.address2) : ""}`.trim();
+      const memberCode = null; // ミニアプリ側で必要なら後で拡張
+      const addrLineForDb = `${a.city || ""}${a.addr1 || a.address1 || ""}${a.addr2 || a.address2 ? " " + (a.addr2 || a.address2) : ""}`.trim();
 
       await dbInsertOrder({
         userId: order.lineUserId || null,
-        memberCode: null,
-        phone: a.tel || a.phone || null,
+        memberCode,
+        phone: tel || null,
         items: items.map((it) => ({ id: it.id || "", name: it.name || "", price: Number(it.price || 0), qty: Number(it.qty || 0) })),
-        total: Number(order.finalTotal ?? order.total ?? 0),
-        shippingFee: Number(order.shipping ?? 0),
-        paymentMethod,         // ← ★ここが可変になった
-        status,                // ← ★ここも
+        total: finalTotal,
+        shippingFee: shipping,
+        paymentMethod,
+        status,
         name: name || null,
         zip: zip || null,
         pref: pref || null,
-        address: addrLine || null,
-        source,                // ← ★sourceも
+        address: addrLineForDb || null,
+        source,
         rawEvent: order,
       });
     } catch (e) {
       console.error("orders db insert skipped:", e?.message || e);
     }
 
-    // 通知本文（表示用。代引/振込でも同じ明細を送るならこのままでOK）
-    // ※必要なら「支払方法：代引/振込」を本文に入れるのも可能
+    // ==============================
+    // ✅ ここが今回の修正：管理者通知（/api/order/complete でも必ず送る）
+    // ==============================
+    const payText =
+      paymentMethod === "cod" ? `代引（+${yen(codFee || COD_FEE)}）` :
+      paymentMethod === "bank" ? "銀行振込" :
+      paymentMethod === "store" ? "店頭現金" :
+      "カード(Stripe)";
+
+    const itemsLines = items
+      .map((it) => `${it.name || it.id || "商品"} ×${Number(it.qty || 0)} = ${yen((Number(it.price) || 0) * (Number(it.qty) || 0))}`)
+      .join("\n");
+
+    const adminMsg =
+      `🧾【注文完了（ミニアプリ）】\n` +
+      `${itemsLines || "（明細なし）"}\n` +
+      `\n支払：${payText}\n` +
+      `商品計：${yen(itemsTotal)}\n` +
+      `送料：${yen(shipping)}\n` +
+      `代引手数料：${yen(codFee)}\n` +
+      `合計：${yen(finalTotal)}\n` +
+      `\n氏名：${name || ""}\nTEL：${tel || ""}\n住所：${addrText || "（未入力）"}\n` +
+      `userId：${order.lineUserId || ""}\nsource：${source}`;
+
+    if (ADMIN_USER_ID) {
+      try {
+        await client.pushMessage(ADMIN_USER_ID, { type: "text", text: adminMsg });
+      } catch (e) {
+        console.error("[ADMIN PUSH] /api/order/complete failed:", e?.response?.data || e?.message || e);
+      }
+    }
+
+    // （任意）購入者へも完了通知：lineUserId が来ている時だけ
+    const buyerId = String(order.lineUserId || "").trim();
+    if (buyerId) {
+      const buyerMsg =
+        `ご注文ありがとうございます！\n` +
+        `${itemsLines || ""}\n` +
+        `\n支払：${payText}\n` +
+        `合計：${yen(finalTotal)}\n` +
+        `\n（このメッセージは自動送信です）`;
+
+      try {
+        await client.pushMessage(buyerId, { type: "text", text: buyerMsg });
+      } catch (e) {
+        // ブロック等で失敗しても注文自体は成功扱いのまま
+        console.warn("[BUYER PUSH] skipped/failed:", e?.response?.data || e?.message || e);
+      }
+    }
 
     return res.json({ ok: true, paymentMethod, status, source });
   } catch (e) {
@@ -1154,7 +1198,6 @@ app.post("/api/order/complete", async (req, res) => {
     return res.status(500).json({ ok: false, error: "server_error" });
   }
 });
-
 
 // =============== 管理API：画像 ===============
 app.post("/api/admin/upload", upload.single("file"), (req, res) => {

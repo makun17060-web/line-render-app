@@ -1,193 +1,126 @@
-// confirm.js — オンライン注文 共通確認画面（クレジット or 代引き）
-// ★ 送料は必ず /api/shipping の結果のみを使用（計算しない）
-
-(function () {
-  "use strict";
-
-  const COD_FEE = 330; // 代引き手数料（表示専用）
-
-  // ===== DOM =====
-  const orderListEl   = document.getElementById("orderList");
-  const sumItemsEl    = document.getElementById("sumItems");
-  const sumShippingEl = document.getElementById("sumShipping");
-  const sumTotalEl    = document.getElementById("sumTotal");
-  const cardTotalEl   = document.getElementById("cardTotalText");
-  const statusEl      = document.getElementById("statusMsg");
-
-  const cardBtn = document.getElementById("cardBtn");
-  const codBtn  = document.getElementById("codBtn");
-  const backBtn = document.getElementById("backBtn");
-
-  // ===== util =====
-  function setStatus(msg) {
-    if (statusEl) statusEl.textContent = msg || "";
-  }
-
-  function yen(n) {
-    return Number(n || 0).toLocaleString("ja-JP") + "円";
-  }
-
-  function renderOrderList(items) {
-    if (!orderListEl) return;
-    if (!items || !items.length) {
-      orderListEl.innerHTML = '<p class="order-row">カートに商品がありません。</p>';
-      return;
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ご注文内容の確認（代金引換）</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f5f5;
+      margin: 0;
+      padding: 16px;
     }
-    orderListEl.innerHTML = items.map(it => {
-      const name = it.name || it.id || "商品";
-      const qty  = Number(it.qty || 0);
-      const price = Number(it.price || 0);
-      return (
-        `<div class="order-row">` +
-        `${name} × ${qty}個 = ${yen(price * qty)}` +
-        `</div>`
-      );
-    }).join("");
-  }
-
-  // ===== storage =====
-  function loadOrderDraft() {
-    try {
-      const raw = sessionStorage.getItem("orderDraft");
-      if (!raw) return null;
-      const d = JSON.parse(raw);
-      if (!d || !Array.isArray(d.items)) return null;
-      return d;
-    } catch (e) {
-      console.warn("orderDraft parse error:", e);
-      return null;
+    .card {
+      max-width: 480px;
+      margin: 16px auto;
+      background: #fff;
+      border-radius: 8px;
+      padding: 16px 14px 20px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
     }
-  }
-
-  // ===== 送料API（唯一の正）=====
-  async function fetchShipping(items, address) {
-    const a = address || {};
-
-    // 住所キーの揺れを完全吸収（confirm / confirm-cod で同一）
-    const normalizedAddress = {
-      postal:     a.postal || a.zip || "",
-      prefecture: a.prefecture || a.pref || "",
-      city:       a.city || "",
-      address1:   a.address1 || a.addr1 || "",
-      address2:   a.address2 || a.addr2 || "",
-      // 互換用
-      addr1:      a.address1 || a.addr1 || "",
-    };
-
-    const normalizedItems = (items || []).map(it => ({
-      id:    String(it.id || ""),
-      name:  String(it.name || ""),
-      price: Number(it.price || 0),
-      qty:   Number(it.qty || 0),
-    }));
-
-    const res = await fetch("/api/shipping", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        items: normalizedItems,
-        address: normalizedAddress,
-      }),
-    });
-
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) {
-      throw new Error(data?.error || "shipping_api_failed");
+    h1 {
+      font-size: 18px;
+      margin: 0 0 8px;
     }
-
-    return {
-      itemsTotal: Number(data.itemsTotal || 0),
-      shipping:   Number(data.shipping || 0),
-      region:     data.region || "",
-      size:       data.size || "",
-      finalTotal: Number(data.finalTotal || 0),
-    };
-  }
-
-  // ===== init =====
-  async function init() {
-    setStatus("注文情報を読み込んでいます…");
-
-    const draft = loadOrderDraft();
-    if (!draft) {
-      setStatus("注文情報が見つかりません。最初からやり直してください。");
-      if (cardBtn) cardBtn.disabled = true;
-      if (codBtn)  codBtn.disabled  = true;
-      return;
+    p {
+      font-size: 14px;
+      margin: 4px 0;
+      line-height: 1.6;
     }
-
-    const items   = draft.items || [];
-    const address = draft.address || {};
-
-    renderOrderList(items);
-
-    let ship;
-    try {
-      ship = await fetchShipping(items, address);
-    } catch (e) {
-      console.error("shipping error:", e);
-      const fallbackTotal = items.reduce(
-        (s, it) => s + Number(it.price || 0) * Number(it.qty || 0),
-        0
-      );
-      ship = { itemsTotal: fallbackTotal, shipping: 0, region: "", size: "", finalTotal: fallbackTotal };
+    #orderList .row {
+      font-size: 14px;
+      margin: 2px 0;
     }
-
-    const itemsTotal = ship.itemsTotal;
-    const shipping   = ship.shipping;
-
-    // ★ 合計はここでだけ計算（送料はAPIの値）
-    const cardTotal = itemsTotal + shipping;
-    const codTotal  = cardTotal + COD_FEE;
-
-    // ===== 表示 =====
-    if (sumItemsEl)    sumItemsEl.textContent    = yen(itemsTotal);
-    if (sumShippingEl) sumShippingEl.textContent = yen(shipping);
-    if (sumTotalEl)    sumTotalEl.textContent    = yen(codTotal);
-    if (cardTotalEl)   cardTotalEl.textContent   = yen(cardTotal);
-
-    // ===== 次画面用に保存（confirm-card / confirm-cod 共通）=====
-    const summary = {
-      items,
-      address,
-      lineUserId:   draft.lineUserId   || "",
-      lineUserName: draft.lineUserName || "",
-      itemsTotal,
-      shipping,
-      region: ship.region,
-      size:   ship.size,
-      codFee: COD_FEE,
-      cardTotal,
-      codTotal,
-    };
-    sessionStorage.setItem("orderSummary", JSON.stringify(summary));
-
-    setStatus("お支払い方法を選択してください。");
-  }
-
-  // ===== events =====
-  document.addEventListener("DOMContentLoaded", () => {
-    init();
-
-    if (cardBtn) {
-      cardBtn.addEventListener("click", (ev) => {
-        ev.preventDefault();
-        window.location.href = "./confirm-card.html" + (window.location.search || "");
-      });
+    .summary {
+      margin-top: 8px;
+      border-top: 1px solid #ddd;
+      padding-top: 8px;
+      font-size: 14px;
     }
-
-    if (codBtn) {
-      codBtn.addEventListener("click", (ev) => {
-        ev.preventDefault();
-        window.location.href = "./confirm-cod.html" + (window.location.search || "");
-      });
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      margin: 2px 0;
     }
-
-    if (backBtn) {
-      backBtn.addEventListener("click", (ev) => {
-        ev.preventDefault();
-        window.location.href = "./products.html";
-      });
+    .summary-row.total {
+      margin-top: 4px;
+      font-weight: bold;
+      font-size: 15px;
     }
-  });
-})();
+    #statusMsg {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #555;
+      white-space: pre-line;
+    }
+    .btn-area {
+      margin-top: 16px;
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+    }
+    button {
+      border-radius: 6px;
+      border: none;
+      padding: 10px 14px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    #confirmCod {
+      background: #ff9500;
+      color: #fff;
+      min-width: 140px;
+    }
+    #backBtn {
+      background: #ddd;
+      color: #333;
+      min-width: 80px;
+    }
+    small {
+      display: block;
+      margin-top: 8px;
+      font-size: 12px;
+      color: #777;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>ご注文内容の確認（代金引換）</h1>
+    <p>代金引換でお支払いされる注文の内容です。</p>
+
+    <div id="orderList"></div>
+
+    <div class="summary">
+      <div class="summary-row">
+        <span>商品合計</span>
+        <span id="sumItems">0円</span>
+      </div>
+      <div class="summary-row">
+        <span>送料</span>
+        <span id="sumShipping">0円</span>
+      </div>
+      <div class="summary-row">
+        <span>代引き手数料</span>
+        <span id="sumCod">330円</span>
+      </div>
+      <div class="summary-row total">
+        <span>お支払い合計</span>
+        <span id="sumTotal">0円</span>
+      </div>
+    </div>
+
+    <p id="statusMsg">注文情報を読み込んでいます…</p>
+
+    <div class="btn-area">
+      <button id="backBtn">戻る</button>
+      <button id="confirmCod">代引きで注文を確定する</button>
+    </div>
+
+    <small>※この画面の合計金額を、商品お届け時に配達員へお支払いください。</small>
+  </div>
+
+  <script src="./confirm-cod.js"></script>
+</body>
+</html>

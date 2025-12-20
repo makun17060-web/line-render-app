@@ -112,15 +112,8 @@
         confirmBtn.disabled = true;
         setStatus("ご注文を確定しています…");
 
-        const orderForCod = {
-          items,
-          itemsTotal,
-          shipping,
-          codFee: COD_FEE,
-          finalTotal,
-          lineUserId: order.lineUserId || "",
-          lineUserName: order.lineUserName || "",
-          address,
+        const orderForCod 
+          
         };
 
         sessionStorage.setItem("lastOrder", JSON.stringify(orderForCod));

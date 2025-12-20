@@ -387,7 +387,7 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const { url } = withToken("/api/admin/upload");
       const fd = new FormData();
-      fd.append("image", file); // multer.single("image")
+      fd.append("file", file); // multer.single("image")
 
       const res = await fetch(url, {
         method: "POST",

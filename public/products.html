@@ -11,13 +11,8 @@
       padding: 12px;
       background: #f7f7f7;
     }
-    header {
-      margin-bottom: 12px;
-    }
-    header h1 {
-      font-size: 18px;
-      margin: 0 0 4px;
-    }
+    header { margin-bottom: 12px; }
+    header h1 { font-size: 18px; margin: 0 0 4px; }
     header p {
       font-size: 12px;
       margin: 0;
@@ -25,18 +20,14 @@
       white-space: pre-line;
     }
 
-    /* ===== 商品グリッド ===== */
     #productGrid {
       display: grid;
-      grid-template-columns: 1fr;            /* ★ 基本は1列で大きく表示 */
+      grid-template-columns: 1fr;
       gap: 10px;
       margin-bottom: 12px;
     }
-    /* 画面が十分広いときだけ2列にする */
     @media (min-width: 480px) {
-      #productGrid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
+      #productGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
 
     .card {
@@ -48,41 +39,20 @@
       flex-direction: column;
       gap: 6px;
     }
-
-    /* ★ ここを変更：上下が切れないように contain＋最大高さ */
     .card img {
       width: 100%;
-      max-height: 260px;          /* お好みで高さは調整可 */
+      max-height: 260px;
       border-radius: 8px;
-      object-fit: contain;        /* ← 画像を全部表示（トリミングしない） */
-      background: transparent;          /* 余白部分の背景グレー */
+      object-fit: contain;
+      background: transparent;
       display: block;
     }
 
-    .card-title {
-      font-size: 15px;            /* ★ ちょっと大きく */
-      font-weight: 700;
-    }
-    .card-desc {
-      font-size: 11px;
-      color: #555;
-      min-height: 2.4em;
-    }
-    /* 内容量やグラム数など */
-    .card-content,
-    .card-volume {
-      font-size: 12px;
-      color: #000;
-    }
-    .card-price {
-      font-size: 14px;            /* ★ 価格も少し大きく */
-      font-weight: 700;
-      color: #c00;                /* ★ 赤で目立たせる（お好みで） */
-    }
-    .card-stock {
-      font-size: 11px;
-      color: #666;
-    }
+    .card-title { font-size: 15px; font-weight: 700; }
+    .card-desc { font-size: 11px; color: #555; min-height: 2.4em; }
+    .card-content, .card-volume { font-size: 12px; color: #000; }
+    .card-price { font-size: 14px; font-weight: 700; color: #c00; }
+    .card-stock { font-size: 11px; color: #666; }
 
     .qty-row {
       display: flex;
@@ -117,11 +87,7 @@
       white-space: pre-line;
     }
 
-    .btn-row {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
+    .btn-row { display: flex; flex-direction: column; gap: 8px; }
     .btn {
       display: block;
       width: 100%;
@@ -131,13 +97,9 @@
       font-size: 14px;
       font-weight: 600;
     }
-    .btn-primary {
-      background: #00b900;
-      color: #fff;
-    }
-    .btn-primary:disabled {
-      opacity: 0.5;
-    }
+    .btn-primary { background: #00b900; color: #fff; }
+    .btn-primary:disabled { opacity: 0.5; }
+
     #statusMsg {
       margin-top: 6px;
       font-size: 11px;
@@ -157,24 +119,23 @@
   </header>
 
   <main>
-    <div id="productGrid">
-      <!-- JSで商品カードを挿入 -->
-    </div>
+    <div id="productGrid"></div>
 
-    <div id="cartSummary">
-      カートに商品は入っていません。
-    </div>
+    <div id="cartSummary">カートに商品は入っていません。</div>
 
     <div class="btn-row">
-      <button id="toAddressBtn" class="btn btn-primary">
-        住所入力へ進む
-      </button>
+      <button id="toAddressBtn" class="btn btn-primary">住所入力へ進む</button>
     </div>
 
     <div id="statusMsg"></div>
   </main>
 
-  <!-- 既存の products.js をそのまま利用 -->
-  <script src="./products.js"></script>
+  <!-- デバッグ：HTMLが読み込まれた確認 -->
+  <script>
+    console.log("products.html loaded:", location.href);
+  </script>
+
+  <!-- ★重要：相対ではなく絶対パスに（環境差で死ににくい） -->
+  <script src="/products.js?v=20251220_1"></script>
 </body>
 </html>

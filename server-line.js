@@ -5,6 +5,10 @@
  * - ボット起動キーワードは「直接注文」と「久助」だけ（それ以外は無反応）
  * - ただし、注文途中の入力（例：店頭名入力 / その他の商品名入力など）はセッション中のみ受け付ける
  *
+ * ✅ 追加要望（今回対応）
+ * - 公式アカウントにメッセージが届いたら管理者へ通知（ADMIN_USER_ID へPush）
+ *   - テキスト以外（スタンプ/位置/画像など）も通知（返信はしない）
+ *
  * ✅ 発送通知ができない問題の修正
  * - /api/admin/orders/notify-shipped を「他のルートの中」に書いていたのが原因
  * - ルート定義をトップレベルへ移動して正常化
@@ -1841,6 +1845,43 @@ function appendJsonl(filePath, obj) {
   } catch {}
 }
 
+/** =========================================================
+ *  ★ 管理者通知（公式アカウント受信 → ADMIN_USER_IDへPush）
+ *  - テキストもスタンプも通知（ユーザーへは返信しない）
+ * ========================================================= */
+function eventSourceText(ev) {
+  const s = ev?.source || {};
+  const type = s.type || "unknown";
+  if (type === "user") return `user:${s.userId || ""}`;
+  if (type === "group") return `group:${s.groupId || ""} user:${s.userId || ""}`;
+  if (type === "room") return `room:${s.roomId || ""} user:${s.userId || ""}`;
+  return `${type}:${s.userId || ""}`;
+}
+
+async function notifyAdminIncomingMessage(ev, bodyText, extra = {}) {
+  if (!ADMIN_USER_ID) return;
+
+  const userId = ev?.source?.userId || "";
+  const ts = ev?.timestamp ? new Date(ev.timestamp).toISOString() : new Date().toISOString();
+  const src = eventSourceText(ev);
+
+  const msg =
+    `📩【受信メッセージ】\n` +
+    `時刻：${ts}\n` +
+    `送信元：${src}\n` +
+    (userId ? `userId：${userId}\n` : "") +
+    (extra?.kind ? `種別：${extra.kind}\n` : "") +
+    (extra?.session ? `セッション：${extra.session}\n` : "") +
+    `\n` +
+    `${String(bodyText || "").slice(0, 1800)}`;
+
+  try {
+    await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg });
+  } catch (e) {
+    console.error("[ADMIN PUSH] incoming message failed:", e?.response?.data || e?.message || e);
+  }
+}
+
 // =============== handleEvent ===============
 async function handleEvent(ev) {
   const userId = ev?.source?.userId || "";
@@ -1862,15 +1903,52 @@ async function handleEvent(ev) {
   }
 
   // ===========================
+  // ★ テキスト以外も管理者へ通知（返信はしない）
+  // ===========================
+  if (ev.type === "message" && ev.message && ev.message.type && ev.message.type !== "text") {
+    const m = ev.message;
+
+    if (m.type === "sticker") {
+      await notifyAdminIncomingMessage(ev, `（スタンプ）packageId=${m.packageId} stickerId=${m.stickerId}`, { kind: "sticker" });
+      return null;
+    }
+    if (m.type === "location") {
+      const t =
+        `（位置情報）\n` +
+        `タイトル：${m.title || ""}\n` +
+        `住所：${m.address || ""}\n` +
+        `緯度経度：${m.latitude},${m.longitude}`;
+      await notifyAdminIncomingMessage(ev, t, { kind: "location" });
+      return null;
+    }
+    if (m.type === "image" || m.type === "video" || m.type === "audio" || m.type === "file") {
+      await notifyAdminIncomingMessage(ev, `（${m.type}）messageId=${m.id || ""}`, { kind: m.type });
+      return null;
+    }
+
+    // それ以外
+    await notifyAdminIncomingMessage(ev, `（${m.type}）受信`, { kind: m.type });
+    return null;
+  }
+
+  // ===========================
   // ✅ テキストメッセージ
   //  - 起動キーワードは2つだけ
   //  - ただしセッション中は入力を受ける
+  //  - ★全テキストは管理者に通知（ユーザーへは要件通り無反応）
   // ===========================
   if (ev.type === "message" && ev.message?.type === "text") {
     const text = String(ev.message.text || "").trim();
 
-    // --- セッション入力（起動キーワード以外でも、セッション中は受ける） ---
+    // 先にセッションを見て「セッション名」も通知に含める
     const sess = userId ? getSession(userId) : null;
+
+    // ★管理者通知：受信テキストは全部転送（返信は別ロジック）
+    try {
+      await notifyAdminIncomingMessage(ev, text, { kind: "text", session: sess?.mode || "" });
+    } catch {}
+
+    // --- セッション入力（起動キーワード以外でも、セッション中は受ける） ---
     if (sess?.mode === "pickup_name") {
       await touchUser(userId, "chat");
       const pickupName = text.slice(0, 40);
@@ -1969,7 +2047,7 @@ async function handleEvent(ev) {
       ]);
     }
 
-    // それ以外は無反応
+    // それ以外は無反応（要件通り）
     return null;
   }
 

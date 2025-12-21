@@ -1390,8 +1390,6 @@ app.get("/api/admin/orders-db", async (req, res) => {
 
 // =============== 管理：セグメント（管理HTML互換：preview / send） ===============
 function dayRangeJST(yyyymmdd) {
-  // yyyymmdd を JST の 00:00-24:00 として扱い、UTCへ変換した範囲を返す
-  // 簡易：Dateに "YYYY-MM-DDT00:00:00+09:00" を入れる
   const y = yyyymmdd.slice(0, 4);
   const m = yyyymmdd.slice(4, 6);
   const d = yyyymmdd.slice(6, 8);
@@ -1460,7 +1458,6 @@ app.post("/api/admin/segment/preview", async (req, res) => {
         return res.status(400).json({ ok: false, error: "type_invalid" });
       }
     } else {
-      // ファイル運用の簡易
       if (type === "orders") {
         const items = readLogLines(ORDERS_LOG, 5000);
         if (date && /^\d{8}$/.test(date)) {
@@ -1926,7 +1923,6 @@ async function handleEvent(ev) {
       return null;
     }
 
-    // それ以外
     await notifyAdminIncomingMessage(ev, `（${m.type}）受信`, { kind: m.type });
     return null;
   }
@@ -1940,10 +1936,9 @@ async function handleEvent(ev) {
   if (ev.type === "message" && ev.message?.type === "text") {
     const text = String(ev.message.text || "").trim();
 
-    // 先にセッションを見て「セッション名」も通知に含める
     const sess = userId ? getSession(userId) : null;
 
-    // ★管理者通知：受信テキストは全部転送（返信は別ロジック）
+    // ★管理者通知：受信テキストは全部転送
     try {
       await notifyAdminIncomingMessage(ev, text, { kind: "text", session: sess?.mode || "" });
     } catch {}
@@ -1983,7 +1978,6 @@ async function handleEvent(ev) {
       const otherName = String(sess.otherName || "その他");
       clearSession(userId);
 
-      // price 0 で「その他」を商品として扱う（価格未入力運用）
       const id = `other:${encodeURIComponent(otherName)}:0`;
       return client.replyMessage(ev.replyToken, [
         { type: "text", text: "受取方法を選択してください。" },
@@ -2000,7 +1994,7 @@ async function handleEvent(ev) {
       ]);
     }
 
-    // ② 久助 → 案内（数量入力を促す）
+    // ② 久助 → 案内
     if (text === "久助") {
       await touchUser(userId, "chat");
       const msg =
@@ -2040,14 +2034,13 @@ async function handleEvent(ev) {
         ]);
       }
 
-      // 久助：宅配/代引（住所未登録なら確認画面で住所入力を促す）
       return client.replyMessage(ev.replyToken, [
         { type: "text", text: "久助の注文内容です。" },
         confirmFlex(product, qty, "delivery", "cod", null, null),
       ]);
     }
 
-    // それ以外は無反応（要件通り）
+    // それ以外は無反応
     return null;
   }
 

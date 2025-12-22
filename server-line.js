@@ -1186,7 +1186,7 @@ app.post("/api/order/complete", async (req, res) => {
 
     const buyerId = String(order.lineUserId || "").trim();
     if (buyerId) {
-     const buyerMsg =
+    const buyerMsg =
   `ご注文ありがとうございます！\n` +
   `${itemsLines || ""}\n` +
   `\n支払：${payText}\n` +
@@ -1194,7 +1194,7 @@ app.post("/api/order/complete", async (req, res) => {
   `送料：${yen(shipping)}\n` +
   `代引手数料：${yen(codFee || 0)}\n` +
   `合計：${yen(finalTotal)}\n` +
-  `\n;
+  `\n（このメッセージは自動送信です）`;
 
 
       try {

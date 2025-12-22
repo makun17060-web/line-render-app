@@ -1,198 +1,278 @@
-// products.js（修正版）
-// - /api/products の volume を表示（.card-volume）
-// - 既存UI（画像/名前/説明/価格/在庫/数量）を維持
-// ※ サーバ側 /api/products は { ok:true, products:[ {id,name,price,stock,desc,volume,image} ] } を返す前提
+"use strict";
 
-(() => {
-  "use strict";
+/**
+ * products.js — 商品一覧（オンライン注文）
+ * - /api/products から商品を取得
+ * - 数量 + / - でカート作成
+ * - 「住所入力へ進む」で order/currentOrder に保存して address.html へ
+ *
+ * 重要：
+ * ✅ confirm.js / liff-address.js が確実に拾えるよう、保存キーを統一します
+ *   - sessionStorage: order / currentOrder / orderDraft / confirm_normalized_order
+ *   - localStorage  : order
+ */
 
-  const grid = document.getElementById("productGrid");
-  const cartSummary = document.getElementById("cartSummary");
-  const toAddressBtn = document.getElementById("toAddressBtn");
-  const statusMsg = document.getElementById("statusMsg");
+const grid = document.getElementById("productGrid");
+const cartSummary = document.getElementById("cartSummary");
+const toAddressBtn = document.getElementById("toAddressBtn");
+const statusMsg = document.getElementById("statusMsg");
 
-  const yen = (n) => Number(n || 0).toLocaleString("ja-JP") + "円";
+function setStatus(msg = "") {
+  if (statusMsg) statusMsg.textContent = msg;
+}
 
-  // カート：{ [productId]: qty }
-  const cart = {};
+function yen(n) {
+  const x = Number(n || 0);
+  return `${x.toLocaleString("ja-JP")}円`;
+}
 
-  function setStatus(text = "") {
-    statusMsg.textContent = text;
-  }
+function toNum(x, fallback = 0) {
+  const n = Number(String(x ?? "").replace(/,/g, "").trim());
+  return Number.isFinite(n) ? n : fallback;
+}
 
-  function sanitize(str) {
-    return String(str || "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
-  }
+function safeJsonParse(s) {
+  try { return JSON.parse(s); } catch { return null; }
+}
 
-  async function fetchProducts() {
-    setStatus("");
-    const res = await fetch("/api/products", { cache: "no-store" });
-    if (!res.ok) {
-      const t = await res.text().catch(() => "");
-      throw new Error(`商品取得に失敗しました (${res.status}) ${t}`);
-    }
-    const j = await res.json();
-    const products = Array.isArray(j.products) ? j.products : [];
-    return products;
-  }
+// ===== 商品/カート =====
+let products = [];
+// cart: { [productId]: qty }
+let cart = {};
 
-  function updateCartSummary(products) {
-    const lines = [];
-    let totalQty = 0;
-    let itemsTotal = 0;
-
-    for (const p of products) {
-      const q = Number(cart[p.id] || 0);
-      if (q <= 0) continue;
-      totalQty += q;
-      itemsTotal += Number(p.price || 0) * q;
-      lines.push(`・${p.name} x ${q} = ${yen(Number(p.price || 0) * q)}`);
-    }
-
-    if (!lines.length) {
-      cartSummary.textContent = "カートに商品は入っていません。";
-      toAddressBtn.disabled = true;
-      return;
-    }
-
-    cartSummary.textContent =
-      `カート内容（合計 ${totalQty} 点）\n` +
-      lines.join("\n") +
-      `\n\n商品合計：${yen(itemsTotal)}\n` +
-      "※送料・手数料は住所入力後に計算されます。";
-
-    toAddressBtn.disabled = false;
-  }
-
-  function changeQty(productId, delta, stock) {
-    const cur = Number(cart[productId] || 0);
-    let next = cur + delta;
-
-    if (next < 0) next = 0;
-    // 在庫が数値で入っている場合だけ上限をかける
-    const st = Number(stock);
-    if (!Number.isNaN(st) && st >= 0) {
-      if (next > st) next = st;
-    }
-
-    if (next === 0) delete cart[productId];
-    else cart[productId] = next;
-  }
-
-  function render(products) {
-    grid.innerHTML = "";
-
-    for (const p of products) {
-      const card = document.createElement("div");
-      card.className = "card";
-
-      const imgUrl = p.image || "";
-      if (imgUrl) {
-        const img = document.createElement("img");
-        img.src = imgUrl;
-        img.alt = p.name || "";
-        card.appendChild(img);
+// 既存のカート（もし以前の実装で入っていても拾う）
+function loadCartFromAny() {
+  const candidates = ["cart", "cartItems", "items", "currentOrder", "order", "orderDraft"];
+  for (const k of candidates) {
+    const v = sessionStorage.getItem(k);
+    if (!v) continue;
+    const j = safeJsonParse(v);
+    if (!j) continue;
+    // {items:[...]} 型
+    if (j.items && Array.isArray(j.items)) {
+      const out = {};
+      for (const it of j.items) {
+        const id = String(it.id ?? it.productId ?? "").trim();
+        const qty = toNum(it.qty ?? it.quantity ?? 0, 0);
+        if (id && qty > 0) out[id] = (out[id] || 0) + qty;
       }
-
-      const title = document.createElement("div");
-      title.className = "card-title";
-      title.textContent = p.name || "";
-      card.appendChild(title);
-
-      const desc = document.createElement("div");
-      desc.className = "card-desc";
-      desc.textContent = p.desc || "";
-      card.appendChild(desc);
-
-      // ✅ 内容量（volume）を表示
-      // - volume が空なら表示しない（余計な空行を作らない）
-      if (p.volume && String(p.volume).trim()) {
-        const vol = document.createElement("div");
-        vol.className = "card-volume";
-        vol.textContent = `内容量：${p.volume}`;
-        card.appendChild(vol);
+      if (Object.keys(out).length) return out;
+    }
+    // 配列型
+    if (Array.isArray(j)) {
+      const out = {};
+      for (const it of j) {
+        const id = String(it.id ?? it.productId ?? "").trim();
+        const qty = toNum(it.qty ?? it.quantity ?? 0, 0);
+        if (id && qty > 0) out[id] = (out[id] || 0) + qty;
       }
-
-      const price = document.createElement("div");
-      price.className = "card-price";
-      price.textContent = `価格：${yen(p.price)}`;
-      card.appendChild(price);
-
-      const stock = document.createElement("div");
-      stock.className = "card-stock";
-      const st = p.stock ?? 0;
-      stock.textContent = `在庫：${st} 個`;
-      card.appendChild(stock);
-
-      const qtyRow = document.createElement("div");
-      qtyRow.className = "qty-row";
-
-      const minus = document.createElement("button");
-      minus.type = "button";
-      minus.textContent = "−";
-
-      const qtySpan = document.createElement("span");
-      qtySpan.textContent = String(cart[p.id] || 0);
-
-      const plus = document.createElement("button");
-      plus.type = "button";
-      plus.textContent = "＋";
-
-      minus.addEventListener("click", () => {
-        changeQty(p.id, -1, p.stock);
-        qtySpan.textContent = String(cart[p.id] || 0);
-        updateCartSummary(products);
-      });
-
-      plus.addEventListener("click", () => {
-        changeQty(p.id, +1, p.stock);
-        qtySpan.textContent = String(cart[p.id] || 0);
-        updateCartSummary(products);
-      });
-
-      qtyRow.appendChild(minus);
-      qtyRow.appendChild(qtySpan);
-      qtyRow.appendChild(plus);
-      card.appendChild(qtyRow);
-
-      grid.appendChild(card);
+      if (Object.keys(out).length) return out;
     }
+    // { [id]: qty } 型
+    if (typeof j === "object" && j && !Array.isArray(j)) {
+      const keys = Object.keys(j);
+      const looksLikeQtyMap = keys.some((kk) => typeof j[kk] === "number" || /^\d+$/.test(String(j[kk] ?? "")));
+      if (looksLikeQtyMap) {
+        const out = {};
+        for (const kk of keys) {
+          const q = toNum(j[kk], 0);
+          if (q > 0) out[kk] = q;
+        }
+        if (Object.keys(out).length) return out;
+      }
+    }
+  }
+  return {};
+}
 
-    updateCartSummary(products);
+function buildOrderPayload() {
+  const items = [];
+  for (const [id, qty] of Object.entries(cart)) {
+    const q = toNum(qty, 0);
+    if (q <= 0) continue;
+    const p = products.find((x) => x.id === id);
+    if (!p) continue;
+    items.push({
+      id: p.id,
+      name: p.name,
+      price: toNum(p.price, 0),
+      qty: q,
+      volume: p.volume || "", // ★内容量
+    });
   }
 
-  function gotoAddress(products) {
-    // 既存の遷移仕様に合わせて、クエリにカートを載せる例
-    // もし既に別の仕様があるなら、ここだけあなたの既存ロジックに合わせてください。
-    const items = products
-      .map((p) => ({ id: p.id, qty: Number(cart[p.id] || 0) }))
-      .filter((x) => x.qty > 0);
+  const itemsTotal = items.reduce((s, it) => s + toNum(it.price) * toNum(it.qty), 0);
 
-    if (!items.length) return;
+  return {
+    items,
+    itemsTotal,
+    // 住所は住所画面で入る（ここでは空）
+    address: null,
+    createdAt: new Date().toISOString(),
+  };
+}
 
-    // 例：address.html に items を渡す（URL長くなる場合はlocalStorageに逃がす）
-    localStorage.setItem("iso_cart_items", JSON.stringify(items));
+function saveOrderForNext() {
+  const payload = buildOrderPayload();
 
-    // 例の遷移先（あなたの実ファイル名に合わせて変更）
-    location.href = "./liff-address.html";
+  // ✅ confirm / address が絶対に読めるキーへ保存（複数）
+  sessionStorage.setItem("order", JSON.stringify(payload));
+  sessionStorage.setItem("currentOrder", JSON.stringify(payload));
+  sessionStorage.setItem("orderDraft", JSON.stringify(payload));
+  sessionStorage.setItem("confirm_normalized_order", JSON.stringify(payload));
+  localStorage.setItem("order", JSON.stringify(payload));
+
+  // 互換として cart も残す（必要なら）
+  sessionStorage.setItem("cart", JSON.stringify(cart));
+}
+
+function renderSummary() {
+  const payload = buildOrderPayload();
+  if (!payload.items.length) {
+    cartSummary.textContent = "カートに商品は入っていません。";
+    toAddressBtn.disabled = true;
+    return;
   }
 
-  // 起動
-  (async () => {
-    try {
-      toAddressBtn.disabled = true;
-      const products = await fetchProducts();
-      render(products);
+  const lines = [];
+  for (const it of payload.items) {
+    const sub = toNum(it.price) * toNum(it.qty);
+    lines.push(`${it.name} ×${it.qty} = ${yen(sub)}`);
+  }
+  lines.push(`\n商品合計：${yen(payload.itemsTotal)}`);
 
-      toAddressBtn.addEventListener("click", () => gotoAddress(products));
-    } catch (e) {
-      console.error(e);
-      setStatus(e.message || "エラーが発生しました。");
+  cartSummary.textContent = lines.join("\n");
+  toAddressBtn.disabled = false;
+}
+
+function updateQty(id, delta) {
+  const cur = toNum(cart[id] || 0, 0);
+  const next = Math.max(0, cur + delta);
+  if (next === 0) delete cart[id];
+  else cart[id] = next;
+
+  // 途中でも保存しておく（戻っても復元）
+  saveOrderForNext();
+  renderCards();
+  renderSummary();
+}
+
+function renderCards() {
+  grid.innerHTML = "";
+
+  for (const p of products) {
+    const card = document.createElement("div");
+    card.className = "card";
+
+    const img = document.createElement("img");
+    img.alt = p.name || "商品画像";
+    img.src = p.image || ""; // 空でもOK
+    img.onerror = () => { img.style.display = "none"; };
+
+    const title = document.createElement("div");
+    title.className = "card-title";
+    title.textContent = p.name || "";
+
+    const desc = document.createElement("div");
+    desc.className = "card-desc";
+    desc.textContent = p.desc || "";
+
+    // ★内容量表示
+    const volume = document.createElement("div");
+    volume.className = "card-volume";
+    volume.textContent = p.volume ? `内容量：${p.volume}` : "";
+
+    const price = document.createElement("div");
+    price.className = "card-price";
+    price.textContent = `価格：${yen(p.price)}`;
+
+    const stock = document.createElement("div");
+    stock.className = "card-stock";
+    const st = toNum(p.stock ?? 0, 0);
+    stock.textContent = `在庫：${st}個`;
+
+    const qtyRow = document.createElement("div");
+    qtyRow.className = "qty-row";
+
+    const minus = document.createElement("button");
+    minus.textContent = "−";
+    minus.addEventListener("click", () => updateQty(p.id, -1));
+
+    const qty = document.createElement("span");
+    qty.textContent = String(toNum(cart[p.id] || 0, 0));
+
+    const plus = document.createElement("button");
+    plus.textContent = "+";
+    plus.addEventListener("click", () => updateQty(p.id, +1));
+
+    qtyRow.appendChild(minus);
+    qtyRow.appendChild(qty);
+    qtyRow.appendChild(plus);
+
+    if (p.image) card.appendChild(img);
+    card.appendChild(title);
+    card.appendChild(desc);
+    if (p.volume) card.appendChild(volume);
+    card.appendChild(price);
+    card.appendChild(stock);
+    card.appendChild(qtyRow);
+
+    grid.appendChild(card);
+  }
+}
+
+async function loadProducts() {
+  setStatus("商品を読み込み中...");
+  const r = await fetch("/api/products");
+  const j = await r.json().catch(() => null);
+  if (!r.ok || !j?.ok) throw new Error(j?.error || "商品取得に失敗しました");
+
+  // サーバは { id,name,price,stock,desc,volume,image } を返す想定
+  products = (j.products || []).map((p) => ({
+    id: String(p.id || "").trim(),
+    name: String(p.name || "").trim(),
+    price: toNum(p.price, 0),
+    stock: toNum(p.stock ?? 0, 0),
+    desc: String(p.desc || ""),
+    volume: String(p.volume || ""),  // ★内容量
+    image: String(p.image || ""),
+  })).filter((p) => p.id);
+
+  setStatus("");
+}
+
+function goToAddress() {
+  const payload = buildOrderPayload();
+  if (!payload.items.length) {
+    setStatus("商品を選んでください。");
+    return;
+  }
+  saveOrderForNext();
+
+  // 住所入力ページへ（ファイル名が違うならここだけ変更）
+  location.href = "./address.html";
+}
+
+// ===== 起動 =====
+(async function main() {
+  try {
+    cart = loadCartFromAny();
+
+    await loadProducts();
+    renderCards();
+
+    // 読み込んだ商品に対して、存在しないIDをカートから削除
+    const ids = new Set(products.map((p) => p.id));
+    for (const k of Object.keys(cart)) {
+      if (!ids.has(k)) delete cart[k];
     }
-  })();
+
+    saveOrderForNext();
+    renderSummary();
+
+    toAddressBtn.addEventListener("click", goToAddress);
+  } catch (e) {
+    setStatus(`エラー：${e?.message || e}`);
+    toAddressBtn.disabled = true;
+  }
 })();

@@ -179,7 +179,7 @@
     localStorage.setItem("iso_cart_items", JSON.stringify(items));
 
     // 例の遷移先（あなたの実ファイル名に合わせて変更）
-    location.href = "./address.html";
+    location.href = "./liff-address.html";
   }
 
   // 起動

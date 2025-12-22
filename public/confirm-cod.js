@@ -1,27 +1,53 @@
 "use strict";
 
+/**
+ * confirm-cod.js — 代金引換 明細（丸ごと版）
+ * ✅ 目的
+ * - order(items/address) を storage から確実に取得
+ * - 送料が未計算なら /api/shipping で計算
+ * - 明細に「送料」を必ず表示（sumShipping）
+ * - 合計(sumTotal) を (商品合計 + 送料 + 代引き手数料) で表示
+ * - 「代引きで注文を確定する」押下でサーバへ注文送信（複数エンドポイントを順に試す）
+ */
+
 const orderListEl   = document.getElementById("orderList");
 const sumItemsEl    = document.getElementById("sumItems");
 const sumShippingEl = document.getElementById("sumShipping");
-const sumCodEl      = document.getElementById("sumCod");
 const sumTotalEl    = document.getElementById("sumTotal");
 const statusMsgEl   = document.getElementById("statusMsg");
 
-const backBtn    = document.getElementById("backBtn");
-const confirmBtn = document.getElementById("confirmCod");
+const backBtn       = document.getElementById("backBtn");
+const confirmBtn    = document.getElementById("confirmCod");
 
 const COD_FEE = 330;
 
+// ---------- Utils ----------
 function yen(n) {
-  return `${Number(n || 0).toLocaleString("ja-JP")}円`;
+  const x = Number(n || 0);
+  return `${x.toLocaleString("ja-JP")}円`;
 }
 function setStatus(msg) {
   if (statusMsgEl) statusMsgEl.textContent = msg || "";
 }
 function safeJsonParse(s) { try { return JSON.parse(s); } catch { return null; } }
 
+function toStr(x) { return String(x ?? "").trim(); }
+function toNum(x, fallback = 0) {
+  const n = Number(String(x ?? "").replace(/,/g, "").trim());
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function hasAddress(a) {
+  if (!a) return false;
+  const pref = a.prefecture || a.pref || "";
+  const city = a.city || "";
+  const addr1 = a.address1 || a.addr1 || "";
+  const postal = a.postal || a.zip || "";
+  return toStr(pref) && toStr(city) && toStr(addr1) && toStr(postal);
+}
+
+// ---------- Storage ----------
 function getOrder() {
-  // liff-address.js / confirm.js が複数キーに保存している想定
   const keys = ["order", "currentOrder", "orderDraft", "confirm_normalized_order"];
   for (const k of keys) {
     const v = sessionStorage.getItem(k) || localStorage.getItem(k);
@@ -33,7 +59,6 @@ function getOrder() {
 }
 
 function saveOrder(order) {
-  // 次画面や戻った時も壊れないように複数キーへ保存
   const s = JSON.stringify(order);
   sessionStorage.setItem("order", s);
   sessionStorage.setItem("currentOrder", s);
@@ -42,130 +67,230 @@ function saveOrder(order) {
   localStorage.setItem("order", s);
 }
 
+// ---------- API ----------
+async function calcShipping(items, address) {
+  const r = await fetch("/api/shipping", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items, address }),
+  });
+  const j = await r.json().catch(() => null);
+  if (!r.ok || !j?.ok) throw new Error(j?.error || "shipping_error");
+  return j; // {ok, itemsTotal, region, size, shipping, finalTotal}
+}
+
+async function postOrderCOD(order) {
+  // いまサーバ実装がどれか不明でも動くように「順番に試す」
+  const payload = {
+    paymentMethod: "cod",
+    items: order.items || [],
+    address: order.address || null,
+    itemsTotal: toNum(order.itemsTotal, 0),
+    shipping: toNum(order.shipping, 0),
+    codFee: COD_FEE,
+    total: toNum(order.total, 0),
+    region: order.region || "",
+    size: order.size || "",
+    // LINE情報があれば同梱
+    lineUserId: order.lineUserId || "",
+    lineUserName: order.lineUserName || "",
+    memberCode: order.memberCode || "",
+    addressCode: order.addressCode || "",
+    clientAt: new Date().toISOString(),
+  };
+
+  const endpoints = [
+    "/api/order/cod",          // もし作ってある
+    "/api/order/confirm-cod",  // もし作ってある
+    "/api/order/complete",     // 既存の「注文完了」を流用してるケース
+    "/api/order/complete-cod", // もし作ってある
+  ];
+
+  let lastErr = null;
+
+  for (const url of endpoints) {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json().catch(() => null);
+      if (r.ok && (j?.ok === true || j?.success === true)) {
+        return { ok: true, url, res: j };
+      }
+      // サーバが「そのURLは無い」場合はHTML返しになることがある
+      // → okでも jsonが壊れる/okでない/ok:false なら次へ
+      lastErr = new Error(j?.error || `failed:${url}`);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+
+  throw lastErr || new Error("order_post_failed");
+}
+
+// ---------- Render ----------
 function renderItems(items) {
-  if (!orderListEl) return;
   orderListEl.innerHTML = items
     .map((it) => {
       const name = it.name || it.id || "商品";
-      const qty = Number(it.qty || 0);
-      const sub = Number(it.price || 0) * qty;
-      return `<div class="row">${name} ×${qty} = ${yen(sub)}</div>`;
+      const qty = toNum(it.qty, 0);
+      const sub = toNum(it.price, 0) * qty;
+      return `<div class="row">${escapeHtml(name)} ×${qty} = ${yen(sub)}</div>`;
     })
     .join("");
 }
 
-function normalizeItems(items) {
-  return (Array.isArray(items) ? items : [])
-    .map((it) => ({
-      id: String(it.id || it.productId || ""),
-      name: String(it.name || it.productName || it.id || "商品"),
-      price: Number(it.price || 0),
-      qty: Number(it.qty || it.quantity || 0),
-    }))
-    .filter((it) => it.qty > 0);
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
-async function postComplete(order, paymentMethod) {
-  // サーバは /api/order/complete を受けられる（あなたの server-line.js に実装済み）
-  const body = {
-    lineUserId: order.lineUserId || order.userId || "",
-    lineUserName: order.lineUserName || "",
-    items: order.items || [],
-    itemsTotal: Number(order.itemsTotal || 0),
-    shipping: Number(order.shippingFee ?? order.shipping ?? 0),
-    codFee: paymentMethod === "cod" ? COD_FEE : 0,
-    finalTotal: Number(order.finalTotal || 0),
-    paymentMethod, // "cod"
-    address: order.address || null,
-  };
-
-  const r = await fetch("/api/order/complete", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const j = await r.json().catch(() => null);
-  if (!r.ok || !j?.ok) throw new Error(j?.error || "注文確定に失敗しました");
-  return j;
+function go(url) {
+  // 通常遷移
+  try { location.href = url; } catch {}
+  // LIFF内での遷移補助（保険）
+  if (window.liff && typeof window.liff.openWindow === "function") {
+    try {
+      window.liff.openWindow({
+        url: new URL(url, location.href).toString(),
+        external: false
+      });
+    } catch {}
+  }
 }
 
+// ---------- Main ----------
 document.addEventListener("DOMContentLoaded", async () => {
-  const orderRaw = getOrder();
-  const items = normalizeItems(orderRaw.items);
+  const order = getOrder();
+  const items = Array.isArray(order.items) ? order.items : [];
 
   if (!items.length) {
-    renderItems([]);
-    sumItemsEl.textContent = yen(0);
-    sumShippingEl.textContent = yen(0);
-    sumCodEl.textContent = yen(COD_FEE);
-    sumTotalEl.textContent = yen(0);
-    setStatus("カートが空です。商品一覧に戻ってください。");
-    if (confirmBtn) confirmBtn.disabled = true;
+    orderListEl.innerHTML = `<div class="row">カートが空です。商品一覧に戻ってください。</div>`;
+    sumItemsEl.textContent = "0円";
+    sumShippingEl.textContent = "0円";
+    sumTotalEl.textContent = "0円";
+    confirmBtn.disabled = true;
+    setStatus("商品が入っていません。");
     return;
   }
 
-  renderItems(items);
-
   // 商品合計
   const itemsTotal =
-    Number(orderRaw.itemsTotal || 0) ||
-    items.reduce((s, it) => s + (Number(it.price || 0) * Number(it.qty || 0)), 0);
+    toNum(order.itemsTotal, 0) ||
+    items.reduce((s, it) => s + (toNum(it.price, 0) * toNum(it.qty, 0)), 0);
 
-  // ✅ 送料（confirm.js が保存した order.shipping を拾う）
-  const shipping = Number(orderRaw.shippingFee ?? orderRaw.shipping ?? 0);
+  renderItems(items);
+  sumItemsEl.textContent = yen(itemsTotal);
 
-  // 代引手数料
-  const codFee = COD_FEE;
+  // 送料（明細に必ず出す）
+  let shipping = toNum(order.shipping, 0);
+  let region = order.region || "";
+  let size = order.size || "";
 
-  // 合計
-  const total = itemsTotal + shipping + codFee;
+  try {
+    setStatus("送料を確認しています…");
 
-  // 画面へ反映
-  if (sumItemsEl) sumItemsEl.textContent = yen(itemsTotal);
-  if (sumShippingEl) sumShippingEl.textContent = yen(shipping);
-  if (sumCodEl) sumCodEl.textContent = yen(codFee);
-  if (sumTotalEl) sumTotalEl.textContent = yen(total);
+    const address = order.address || null;
+    if (!hasAddress(address)) {
+      // 住所が無い → 送料計算不可
+      sumShippingEl.textContent = "0円（住所未登録）";
+      const total = itemsTotal + 0 + COD_FEE;
+      sumTotalEl.textContent = yen(total);
 
-  // 次画面/確定時のために order に確定値を保存
-  const order = {
-    ...orderRaw,
-    items,
-    itemsTotal,
-    shippingFee: shipping,     // 明細ページでは shippingFee を正として持つ
-    shipping,                  // 互換
-    codFee,
-    finalTotal: total,
-    paymentMethod: "cod",
-  };
-  saveOrder(order);
+      // orderにも入れておく（明細の一貫性）
+      order.itemsTotal = itemsTotal;
+      order.shipping = 0;
+      order.total = total;
+      saveOrder(order);
 
-  // ステータス（地域/サイズがあるなら出す）
-  const region = orderRaw.region || "";
-  const size = orderRaw.size || "";
-  if (shipping > 0) {
-    setStatus(region || size ? `送料：${yen(shipping)}（${region || "地域不明"} / ${size || "サイズ不明"}）` : `送料：${yen(shipping)}`);
-  } else {
-    setStatus("送料：0円（※住所未登録、または送料計算結果が保存されていません）");
+      setStatus("住所が未登録のため送料を計算できません。住所入力へ戻って保存してください。");
+      confirmBtn.disabled = true;
+    } else {
+      // 既に送料が入っていなければ計算
+      if (!shipping) {
+        const result = await calcShipping(items, address);
+        shipping = toNum(result.shipping, 0);
+        region = result.region || region;
+        size = result.size || size;
+
+        // 保存して次画面でも使えるように
+        order.itemsTotal = toNum(result.itemsTotal, itemsTotal);
+        order.shipping = shipping;
+        order.region = region;
+        order.size = size;
+      } else {
+        // 送料が既に入っている場合も itemsTotal を揃える
+        order.itemsTotal = itemsTotal;
+      }
+
+      sumShippingEl.textContent = yen(shipping);
+      const total = order.itemsTotal + shipping + COD_FEE;
+      sumTotalEl.textContent = yen(total);
+
+      order.total = total;
+      saveOrder(order);
+
+      setStatus(`送料OK（地域：${region || "不明"} / サイズ：${size || "?"}）`);
+      confirmBtn.disabled = false;
+    }
+  } catch (e) {
+    // 送料計算エラーでも明細は崩さない
+    sumShippingEl.textContent = "0円（計算エラー）";
+    const total = itemsTotal + 0 + COD_FEE;
+    sumTotalEl.textContent = yen(total);
+
+    order.itemsTotal = itemsTotal;
+    order.shipping = 0;
+    order.total = total;
+    saveOrder(order);
+
+    setStatus(`送料計算に失敗しました：${e?.message || e}`);
+    confirmBtn.disabled = true;
   }
 
-  // 戻る
-  backBtn?.addEventListener("click", () => {
-    location.href = "./confirm.html";
-  });
+  // 戻る：confirm.htmlへ
+  backBtn?.addEventListener("click", () => go("./confirm.html"));
 
-  // ✅ 確定（/api/order/complete へ送る）
+  // 注文確定（代引き）
   confirmBtn?.addEventListener("click", async () => {
     confirmBtn.disabled = true;
     try {
-      setStatus("注文を確定しています…");
-      await postComplete(order, "cod");
-      setStatus("注文を確定しました。トークへ戻ります。");
-      // LIFFなら closeWindow できる
-      if (window.liff && typeof window.liff.closeWindow === "function") {
-        try { window.liff.closeWindow(); } catch {}
+      setStatus("代引き注文を確定しています…");
+
+      const fresh = getOrder(); // 念のため最新を読む
+      if (!fresh?.items?.length) throw new Error("items_missing");
+
+      // 送料が0で住所があるのに「本当は必要」な場合もあるのでガード
+      if (hasAddress(fresh.address) && toNum(fresh.shipping, 0) === 0) {
+        // confirm.htmlで計算済みのはずだが念のため再計算
+        const result = await calcShipping(fresh.items, fresh.address);
+        fresh.itemsTotal = toNum(result.itemsTotal, fresh.itemsTotal || 0);
+        fresh.shipping = toNum(result.shipping, 0);
+        fresh.region = result.region || fresh.region || "";
+        fresh.size = result.size || fresh.size || "";
+        fresh.total = toNum(fresh.itemsTotal, 0) + toNum(fresh.shipping, 0) + COD_FEE;
+        saveOrder(fresh);
+
+        sumShippingEl.textContent = yen(fresh.shipping);
+        sumTotalEl.textContent = yen(fresh.total);
       }
+
+      const posted = await postOrderCOD(fresh);
+
+      setStatus(`注文を確定しました。\n（送信先：${posted.url}）`);
+
+      // 完了画面があるならここを変更
+      // location.href = "./thanks.html";
+      // とりあえず confirm.html に戻す（運用に合わせて変更OK）
+      setTimeout(() => go("./confirm.html"), 700);
     } catch (e) {
-      setStatus(`失敗：${e?.message || e}`);
+      setStatus(`注文確定に失敗しました：${e?.message || e}\n※サーバ側の注文受付APIのURLが違う可能性があります。`);
       confirmBtn.disabled = false;
     }
   });

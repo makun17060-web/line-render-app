@@ -234,7 +234,7 @@ async function fetchShipping(items, address) {
   if (codBtn) {
     codBtn.addEventListener("click", () => {
       // 例：代引き明細ページへ（あなたのファイル名に合わせて変更）
-      // location.href = "./confirm-cod.html";
+      // location.href = "./confirm-cod.html;
       setStatus("代引き明細ページのURLをconfirm.js内で設定してください（例：confirm-cod.html）");
     });
   }

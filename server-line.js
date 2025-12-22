@@ -1568,28 +1568,49 @@ function parseQuery(data) {
   return o;
 }
 
-function productsFlex() {
+ function productsFlex() {
   const all = readProducts().filter((p) => !HIDE_PRODUCT_IDS.has(p.id));
+
   const bubbles = all.map((p) => {
     const img = toPublicImageUrl(p.image || "");
+    const vol = String(p.volume || "").trim(); // ✅内容量
+
     return {
       type: "bubble",
-      hero: img ? { type: "image", url: img, size: "full", aspectRatio: "1:1", aspectMode: "cover" } : undefined,
+      hero: img
+        ? { type: "image", url: img, size: "full", aspectRatio: "1:1", aspectMode: "cover" }
+        : undefined,
       body: {
         type: "box",
         layout: "vertical",
         spacing: "sm",
         contents: [
           { type: "text", text: p.name, weight: "bold", size: "md", wrap: true },
+
+          // ✅ 内容量（あれば表示）
+          ...(vol ? [{ type: "text", text: `内容量：${vol}`, size: "sm", wrap: true }] : []),
+
           { type: "text", text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`, size: "sm", wrap: true },
-          p.desc ? { type: "text", text: p.desc, size: "sm", wrap: true } : null,
-        ].filter(Boolean),
+
+          // 説明（あれば表示）
+          ...(p.desc ? [{ type: "text", text: p.desc, size: "sm", wrap: true }] : []),
+        ],
       },
       footer: {
         type: "box",
         layout: "horizontal",
         spacing: "md",
-        contents: [{ type: "button", style: "primary", action: { type: "postback", label: "数量を選ぶ", data: `order_qty?${qstr({ id: p.id, qty: 1 })}` } }],
+        contents: [
+          {
+            type: "button",
+            style: "primary",
+            action: {
+              type: "postback",
+              label: "数量を選ぶ",
+              data: `order_qty?${qstr({ id: p.id, qty: 1 })}`,
+            },
+          },
+        ],
       },
     };
   });

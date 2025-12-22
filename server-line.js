@@ -2,20 +2,16 @@
  * server-line.js — フル機能版（Stripe + ミニアプリ + 画像管理 + 住所DB + セグメント配信 + 注文DB永続化）
  *
  * ✅ 重要（今回の要望）
- * - ボット起動キーワードは「直接注文」と「久助」だけ（それ以外は無反応）
- * - ただし、注文途中の入力（例：店頭名入力 / その他の商品名入力など）はセッション中のみ受け付ける
+ * - Flexにも「内容量（volume）」を表示
+ *   - 商品一覧Flex：内容量行を追加
+ *   - 最終確認Flex：内容量行を追加
+ *   - 管理API：/api/admin/products/update で volume を保存できるように追加
  *
- * ✅ 追加要望（今回対応）
- * - 公式アカウントにメッセージが届いたら管理者へ通知（ADMIN_USER_ID へPush）
- *   - テキスト以外（スタンプ/位置/画像など）も通知（返信はしない）
- *
- * ✅ 発送通知ができない問題の修正
- * - /api/admin/orders/notify-shipped を「他のルートの中」に書いていたのが原因
- * - ルート定義をトップレベルへ移動して正常化
- *
- * ✅ 今回の“修正版”で入れた追加FIX
- * - 「久助 3」などの久助注文でも、DBに住所があるなら自動で取り込んで送料計算できるように修正
- * - /api/order/complete のDB保存で memberCode を可能なら保存するように修正
+ * ✅ 既存仕様（維持）
+ * - 起動キーワードは「直接注文」と「久助」だけ（それ以外は無反応）
+ * - セッション中の入力は受け付ける
+ * - 公式アカウント受信は管理者へ通知（返信はしない）
+ * - /api/admin/orders/notify-shipped はトップレベル
  *
  * --- 必須 .env ---
  * LINE_CHANNEL_ACCESS_TOKEN
@@ -43,12 +39,6 @@ const line = require("@line/bot-sdk");
 const multer = require("multer");
 const stripeLib = require("stripe");
 const { Pool } = require("pg");
-
-// Node 18+ では fetch が標準。念のため存在しない場合だけ落とす（追加依存なし）
-if (typeof globalThis.fetch !== "function") {
-  console.error("ERROR: fetch is not available. Please use Node.js 18+.");
-  process.exit(1);
-}
 
 // =============== 基本 ===============
 const app = express();
@@ -160,11 +150,43 @@ function safeWriteJSON(p, obj) {
 
 if (!fs.existsSync(PRODUCTS_PATH)) {
   const sample = [
-    { id: "original-set-2100", name: "磯屋オリジナルセット", price: 2100, stock: 10, desc: "人気の詰め合わせ。", image: "" },
-    { id: "nori-square-300", name: "四角のりせん", price: 300, stock: 10, desc: "のり香る角せん。", image: "" },
-    { id: "premium-ebi-400", name: "プレミアムえびせん", price: 400, stock: 5, desc: "贅沢な旨み。", image: "" },
+    {
+      id: "original-set-2100",
+      name: "磯屋オリジナルセット",
+      price: 2100,
+      stock: 10,
+      desc: "人気の詰め合わせ。",
+      volume: "（例）8袋入り",
+      image: "",
+    },
+    {
+      id: "nori-square-300",
+      name: "四角のりせん",
+      price: 300,
+      stock: 10,
+      desc: "のり香る角せん。",
+      volume: "（例）1袋 80g",
+      image: "",
+    },
+    {
+      id: "premium-ebi-400",
+      name: "プレミアムえびせん",
+      price: 400,
+      stock: 5,
+      desc: "贅沢な旨み。",
+      volume: "（例）1袋 70g",
+      image: "",
+    },
     // 久助はミニアプリ一覧から除外。チャット購入専用（単価250固定）
-    { id: "kusuke-250", name: "久助（えびせん）", price: KUSUKE_UNIT_PRICE, stock: 20, desc: "お得な割れせん。", image: "" },
+    {
+      id: "kusuke-250",
+      name: "久助（えびせん）",
+      price: KUSUKE_UNIT_PRICE,
+      stock: 20,
+      desc: "お得な割れせん。",
+      volume: "",
+      image: "",
+    },
   ];
   safeWriteJSON(PRODUCTS_PATH, sample);
 }
@@ -966,7 +988,7 @@ app.get("/api/products", (_req, res) => {
         price: p.price,
         stock: p.stock ?? 0,
         desc: p.desc || "",
-        volume: p.volume || "",
+        volume: p.volume || "", // ★内容量
         image: toPublicImageUrl(p.image || ""),
       }));
     return res.json({ ok: true, products: items });
@@ -1109,14 +1131,8 @@ app.post("/api/order/complete", async (req, res) => {
     const codFee = Number(order.codFee || 0);
     const finalTotal = Number(order.finalTotal ?? order.total ?? 0) || (itemsTotal + shipping + codFee);
 
-    // ★FIX: memberCode を可能なら保存
     try {
-      let memberCode = null;
-      if (pool && order.lineUserId) {
-        const c = await dbGetCodesByUserId(order.lineUserId);
-        memberCode = c?.member_code ? String(c.member_code).trim() : null;
-      }
-
+      const memberCode = null;
       const addrLineForDb = `${a.city || ""}${a.addr1 || a.address1 || ""}${(a.addr2 || a.address2) ? " " + (a.addr2 || a.address2) : ""}`.trim();
 
       await dbInsertOrder({
@@ -1235,6 +1251,9 @@ app.get("/api/admin/products", (req, res) => {
   return res.json({ ok: true, products: items });
 });
 
+/**
+ * ★変更点：volume を保存できるように追加
+ */
 app.post("/api/admin/products/update", (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
@@ -1248,10 +1267,13 @@ app.post("/api/admin/products/update", (req, res) => {
     const desc = req.body?.desc != null ? String(req.body.desc) : product.desc;
     const image = req.body?.image != null ? String(req.body.image) : product.image;
 
+    // ★追加：内容量（volume）
+    const volume = req.body?.volume != null ? String(req.body.volume) : (product.volume || "");
+
     const price = id === "kusuke-250" ? KUSUKE_UNIT_PRICE : req.body?.price != null ? Number(req.body.price) : product.price;
     const stock = req.body?.stock != null ? Number(req.body.stock) : product.stock;
 
-    products[idx] = { ...product, name, desc, image, price, stock };
+    products[idx] = { ...product, name, desc, image, volume, price, stock };
     writeProducts(products);
 
     return res.json({ ok: true, product: products[idx] });
@@ -1330,7 +1352,7 @@ app.get("/api/admin/orders", (req, res) => {
   return res.json({ ok: true, items });
 });
 
-// ✅ 発送通知API（管理画面→顧客へPush）【トップレベル配置】
+// ✅ 発送通知API（管理画面→顧客へPush）【トップレベル】
 app.post("/api/admin/orders/notify-shipped", async (req, res) => {
   if (!requireAdmin(req, res)) return;
 
@@ -1429,7 +1451,10 @@ app.post("/api/admin/segment/preview", async (req, res) => {
           );
           userIds = r.rows.map((x) => x.user_id).filter(Boolean);
         } else {
-          const r = await p.query(`SELECT DISTINCT user_id FROM orders WHERE user_id IS NOT NULL ORDER BY user_id ASC LIMIT $1`, [SEGMENT_PUSH_LIMIT]);
+          const r = await p.query(
+            `SELECT DISTINCT user_id FROM orders WHERE user_id IS NOT NULL ORDER BY user_id ASC LIMIT $1`,
+            [SEGMENT_PUSH_LIMIT]
+          );
           userIds = r.rows.map((x) => x.user_id).filter(Boolean);
         }
       } else if (type === "activeChatters") {
@@ -1441,7 +1466,10 @@ app.post("/api/admin/segment/preview", async (req, res) => {
           );
           userIds = r.rows.map((x) => x.user_id).filter(Boolean);
         } else {
-          const r = await p.query(`SELECT user_id FROM segment_users WHERE last_chat_at IS NOT NULL ORDER BY user_id ASC LIMIT $1`, [SEGMENT_PUSH_LIMIT]);
+          const r = await p.query(
+            `SELECT user_id FROM segment_users WHERE last_chat_at IS NOT NULL ORDER BY user_id ASC LIMIT $1`,
+            [SEGMENT_PUSH_LIMIT]
+          );
           userIds = r.rows.map((x) => x.user_id).filter(Boolean);
         }
       } else if (type === "addresses") {
@@ -1453,7 +1481,10 @@ app.post("/api/admin/segment/preview", async (req, res) => {
           );
           userIds = r.rows.map((x) => x.user_id).filter(Boolean);
         } else {
-          const r = await p.query(`SELECT DISTINCT user_id FROM addresses WHERE user_id IS NOT NULL ORDER BY user_id ASC LIMIT $1`, [SEGMENT_PUSH_LIMIT]);
+          const r = await p.query(
+            `SELECT DISTINCT user_id FROM addresses WHERE user_id IS NOT NULL ORDER BY user_id ASC LIMIT $1`,
+            [SEGMENT_PUSH_LIMIT]
+          );
           userIds = r.rows.map((x) => x.user_id).filter(Boolean);
         }
       } else {
@@ -1527,7 +1558,7 @@ app.post("/api/admin/segment/send", async (req, res) => {
   }
 });
 
-// 互換：旧エンドポイント（使ってる場合に備えて残す）
+// 互換：旧エンドポイント
 app.get("/api/admin/segment/users", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
@@ -1570,6 +1601,9 @@ function parseQuery(data) {
   return o;
 }
 
+/**
+ * ★変更点：商品一覧Flexに内容量（volume）表示
+ */
 function productsFlex() {
   const all = readProducts().filter((p) => !HIDE_PRODUCT_IDS.has(p.id));
   const bubbles = all.map((p) => {
@@ -1584,6 +1618,10 @@ function productsFlex() {
         contents: [
           { type: "text", text: p.name, weight: "bold", size: "md", wrap: true },
           { type: "text", text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`, size: "sm", wrap: true },
+
+          // ★追加：内容量
+          p.volume ? { type: "text", text: `内容量：${String(p.volume)}`, size: "sm", wrap: true } : null,
+
           p.desc ? { type: "text", text: p.desc, size: "sm", wrap: true } : null,
         ].filter(Boolean),
       },
@@ -1728,6 +1766,9 @@ function paymentFlex(id, qty, method) {
   };
 }
 
+/**
+ * ★変更点：最終確認Flexにも内容量（volume）表示
+ */
 function confirmFlex(product, qty, method, payment, address, pickupName) {
   const subtotal = Number(product.price) * Number(qty);
 
@@ -1756,6 +1797,10 @@ function confirmFlex(product, qty, method, payment, address, pickupName) {
     `受取方法：${method === "pickup" ? "店頭受取（送料0円）" : "宅配（送料あり）"}`,
     `支払い：${payText}`,
     `商品：${product.name}`,
+
+    // ★追加：内容量
+    ...(product.volume ? [`内容量：${String(product.volume)}`] : []),
+
     `数量：${qty}個`,
     `小計：${yen(subtotal)}`,
   ];
@@ -1931,9 +1976,6 @@ async function handleEvent(ev) {
 
   // ===========================
   // ✅ テキストメッセージ
-  //  - 起動キーワードは2つだけ
-  //  - ただしセッション中は入力を受ける
-  //  - ★全テキストは管理者に通知（ユーザーへは要件通り無反応）
   // ===========================
   if (ev.type === "message" && ev.message?.type === "text") {
     const text = String(ev.message.text || "").trim();
@@ -1945,7 +1987,7 @@ async function handleEvent(ev) {
       await notifyAdminIncomingMessage(ev, text, { kind: "text", session: sess?.mode || "" });
     } catch {}
 
-    // --- セッション入力（起動キーワード以外でも、セッション中は受ける） ---
+    // --- セッション入力 ---
     if (sess?.mode === "pickup_name") {
       await touchUser(userId, "chat");
       const pickupName = text.slice(0, 40);
@@ -1981,22 +2023,16 @@ async function handleEvent(ev) {
       clearSession(userId);
 
       const id = `other:${encodeURIComponent(otherName)}:0`;
-      return client.replyMessage(ev.replyToken, [
-        { type: "text", text: "受取方法を選択してください。" },
-        methodFlex(id, qty),
-      ]);
+      return client.replyMessage(ev.replyToken, [{ type: "text", text: "受取方法を選択してください。" }, methodFlex(id, qty)]);
     }
 
-    // ① 直接注文 → 通常商品ボット起動
+    // ① 直接注文
     if (text === "直接注文") {
       await touchUser(userId, "chat");
-      return client.replyMessage(ev.replyToken, [
-        { type: "text", text: "直接注文を開始します。商品一覧です。" },
-        productsFlex(),
-      ]);
+      return client.replyMessage(ev.replyToken, [{ type: "text", text: "直接注文を開始します。商品一覧です。" }, productsFlex()]);
     }
 
-    // ② 久助 → 案内
+    // ② 久助
     if (text === "久助") {
       await touchUser(userId, "chat");
       const msg =
@@ -2006,7 +2042,7 @@ async function handleEvent(ev) {
       return client.replyMessage(ev.replyToken, { type: "text", text: msg });
     }
 
-    // ③ 久助 数量（例: 久助 3）
+    // ③ 久助 数量
     const m = /^久助\s*(\d{1,2})$/.exec(text.replace(/[　]+/g, " "));
     if (m) {
       await touchUser(userId, "chat");
@@ -2036,29 +2072,7 @@ async function handleEvent(ev) {
         ]);
       }
 
-      // ★FIX: DBに住所があるなら取り込んで送料計算できるようにする
-      let address = null;
-      if (pool) {
-        try {
-          const row = await dbGetAddressByUserId(userId);
-          if (row) {
-            address = {
-              name: row.name || "",
-              phone: row.phone || "",
-              postal: row.postal || "",
-              prefecture: row.prefecture || "",
-              city: row.city || "",
-              address1: row.address1 || "",
-              address2: row.address2 || "",
-            };
-          }
-        } catch {}
-      }
-
-      return client.replyMessage(ev.replyToken, [
-        { type: "text", text: "久助の注文内容です。" },
-        confirmFlex(product, qty, "delivery", "cod", address, null),
-      ]);
+      return client.replyMessage(ev.replyToken, [{ type: "text", text: "久助の注文内容です。" }, confirmFlex(product, qty, "delivery", "cod", null, null)]);
     }
 
     // それ以外は無反応
@@ -2334,11 +2348,11 @@ function loadProductByOrderId(id) {
     const parts = String(id).split(":");
     const encName = parts[1] || "";
     const priceStr = parts[2] || "0";
-    return { id, name: decodeURIComponent(encName || "その他"), price: Number(priceStr || 0), stock: 9999, image: "" };
+    return { id, name: decodeURIComponent(encName || "その他"), price: Number(priceStr || 0), stock: 9999, image: "", volume: "" };
   }
 
   const { product } = findProductById(id);
-  if (!product) return { id, name: id, price: 0, stock: 0, image: "" };
+  if (!product) return { id, name: id, price: 0, stock: 0, image: "", volume: "" };
 
   if (id === "kusuke-250") return { ...product, price: KUSUKE_UNIT_PRICE };
   return product;

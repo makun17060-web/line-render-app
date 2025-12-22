@@ -13,6 +13,10 @@
  * - /api/admin/orders/notify-shipped を「他のルートの中」に書いていたのが原因
  * - ルート定義をトップレベルへ移動して正常化
  *
+ * ✅ 今回の“修正版”で入れた追加FIX
+ * - 「久助 3」などの久助注文でも、DBに住所があるなら自動で取り込んで送料計算できるように修正
+ * - /api/order/complete のDB保存で memberCode を可能なら保存するように修正
+ *
  * --- 必須 .env ---
  * LINE_CHANNEL_ACCESS_TOKEN
  * LINE_CHANNEL_SECRET
@@ -39,6 +43,12 @@ const line = require("@line/bot-sdk");
 const multer = require("multer");
 const stripeLib = require("stripe");
 const { Pool } = require("pg");
+
+// Node 18+ では fetch が標準。念のため存在しない場合だけ落とす（追加依存なし）
+if (typeof globalThis.fetch !== "function") {
+  console.error("ERROR: fetch is not available. Please use Node.js 18+.");
+  process.exit(1);
+}
 
 // =============== 基本 ===============
 const app = express();
@@ -1099,8 +1109,14 @@ app.post("/api/order/complete", async (req, res) => {
     const codFee = Number(order.codFee || 0);
     const finalTotal = Number(order.finalTotal ?? order.total ?? 0) || (itemsTotal + shipping + codFee);
 
+    // ★FIX: memberCode を可能なら保存
     try {
-      const memberCode = null;
+      let memberCode = null;
+      if (pool && order.lineUserId) {
+        const c = await dbGetCodesByUserId(order.lineUserId);
+        memberCode = c?.member_code ? String(c.member_code).trim() : null;
+      }
+
       const addrLineForDb = `${a.city || ""}${a.addr1 || a.address1 || ""}${(a.addr2 || a.address2) ? " " + (a.addr2 || a.address2) : ""}`.trim();
 
       await dbInsertOrder({
@@ -1314,7 +1330,7 @@ app.get("/api/admin/orders", (req, res) => {
   return res.json({ ok: true, items });
 });
 
-// ✅ 発送通知API（管理画面→顧客へPush）【ここが修正点：トップレベルに配置】
+// ✅ 発送通知API（管理画面→顧客へPush）【トップレベル配置】
 app.post("/api/admin/orders/notify-shipped", async (req, res) => {
   if (!requireAdmin(req, res)) return;
 
@@ -1328,14 +1344,9 @@ app.post("/api/admin/orders/notify-shipped", async (req, res) => {
 
     await client.pushMessage(userId, { type: "text", text: message });
 
-    // サーバ側で通知済み保存（別PCでも二重送信防止の基礎）
     try {
       const st = readNotifyState();
-      st[orderKey || `${userId}:${Date.now()}`] = {
-        status: "ok",
-        userId,
-        ts: new Date().toISOString(),
-      };
+      st[orderKey || `${userId}:${Date.now()}`] = { status: "ok", userId, ts: new Date().toISOString() };
       writeNotifyState(st);
     } catch (e) {
       console.warn("notify_state save skipped:", e?.message || e);
@@ -1418,10 +1429,7 @@ app.post("/api/admin/segment/preview", async (req, res) => {
           );
           userIds = r.rows.map((x) => x.user_id).filter(Boolean);
         } else {
-          const r = await p.query(
-            `SELECT DISTINCT user_id FROM orders WHERE user_id IS NOT NULL ORDER BY user_id ASC LIMIT $1`,
-            [SEGMENT_PUSH_LIMIT]
-          );
+          const r = await p.query(`SELECT DISTINCT user_id FROM orders WHERE user_id IS NOT NULL ORDER BY user_id ASC LIMIT $1`, [SEGMENT_PUSH_LIMIT]);
           userIds = r.rows.map((x) => x.user_id).filter(Boolean);
         }
       } else if (type === "activeChatters") {
@@ -1433,10 +1441,7 @@ app.post("/api/admin/segment/preview", async (req, res) => {
           );
           userIds = r.rows.map((x) => x.user_id).filter(Boolean);
         } else {
-          const r = await p.query(
-            `SELECT user_id FROM segment_users WHERE last_chat_at IS NOT NULL ORDER BY user_id ASC LIMIT $1`,
-            [SEGMENT_PUSH_LIMIT]
-          );
+          const r = await p.query(`SELECT user_id FROM segment_users WHERE last_chat_at IS NOT NULL ORDER BY user_id ASC LIMIT $1`, [SEGMENT_PUSH_LIMIT]);
           userIds = r.rows.map((x) => x.user_id).filter(Boolean);
         }
       } else if (type === "addresses") {
@@ -1448,10 +1453,7 @@ app.post("/api/admin/segment/preview", async (req, res) => {
           );
           userIds = r.rows.map((x) => x.user_id).filter(Boolean);
         } else {
-          const r = await p.query(
-            `SELECT DISTINCT user_id FROM addresses WHERE user_id IS NOT NULL ORDER BY user_id ASC LIMIT $1`,
-            [SEGMENT_PUSH_LIMIT]
-          );
+          const r = await p.query(`SELECT DISTINCT user_id FROM addresses WHERE user_id IS NOT NULL ORDER BY user_id ASC LIMIT $1`, [SEGMENT_PUSH_LIMIT]);
           userIds = r.rows.map((x) => x.user_id).filter(Boolean);
         }
       } else {
@@ -2034,9 +2036,28 @@ async function handleEvent(ev) {
         ]);
       }
 
+      // ★FIX: DBに住所があるなら取り込んで送料計算できるようにする
+      let address = null;
+      if (pool) {
+        try {
+          const row = await dbGetAddressByUserId(userId);
+          if (row) {
+            address = {
+              name: row.name || "",
+              phone: row.phone || "",
+              postal: row.postal || "",
+              prefecture: row.prefecture || "",
+              city: row.city || "",
+              address1: row.address1 || "",
+              address2: row.address2 || "",
+            };
+          }
+        } catch {}
+      }
+
       return client.replyMessage(ev.replyToken, [
         { type: "text", text: "久助の注文内容です。" },
-        confirmFlex(product, qty, "delivery", "cod", null, null),
+        confirmFlex(product, qty, "delivery", "cod", address, null),
       ]);
     }
 

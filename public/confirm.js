@@ -1,10 +1,10 @@
 "use strict";
 
-const orderListEl = document.getElementById("orderList");
-const sumItemsEl = document.getElementById("sumItems");
-const sumShippingEl = document.getElementById("sumShipping");
-const sumTotalCodEl = document.getElementById("sumTotalCod");
-const statusMsgEl = document.getElementById("statusMsg");
+const orderListEl     = document.getElementById("orderList");
+const sumItemsEl      = document.getElementById("sumItems");
+const sumShippingEl   = document.getElementById("sumShipping");
+const sumTotalCodEl   = document.getElementById("sumTotalCod");
+const statusMsgEl     = document.getElementById("statusMsg");
 
 const cardBtn = document.getElementById("cardBtn");
 const codBtn  = document.getElementById("codBtn");
@@ -33,7 +33,6 @@ function getOrder() {
 }
 
 function saveOrder(order) {
-  // confirm / 次画面で必ず拾えるように複数キーに保存
   sessionStorage.setItem("order", JSON.stringify(order));
   sessionStorage.setItem("currentOrder", JSON.stringify(order));
   sessionStorage.setItem("orderDraft", JSON.stringify(order));
@@ -43,8 +42,8 @@ function saveOrder(order) {
 
 function hasAddress(a) {
   if (!a) return false;
-  const pref = a.prefecture || a.pref || "";
-  const city = a.city || "";
+  const pref  = a.prefecture || a.pref || "";
+  const city  = a.city || "";
   const addr1 = a.address1 || a.addr1 || "";
   return String(pref).trim() && String(city).trim() && String(addr1).trim();
 }
@@ -65,17 +64,23 @@ function renderItems(items) {
   orderListEl.innerHTML = items
     .map((it) => {
       const name = it.name || it.id || "商品";
-      const qty = Number(it.qty || 0);
-      const sub = Number(it.price || 0) * qty;
+      const qty  = Number(it.qty || 0);
+      const sub  = Number(it.price || 0) * qty;
       return `<div class="order-row">${name} ×${qty} = ${yen(sub)}</div>`;
     })
     .join("");
 }
 
+/**
+ * ✅ 遷移は二重でやらない（LIFF内なら openWindow、通常ブラウザなら location.href）
+ */
 function go(url) {
-  try { location.href = url; } catch {}
-  if (window.liff && typeof window.liff.openWindow === "function") {
-    try { window.liff.openWindow({ url: new URL(url, location.href).toString(), external: false }); } catch {}
+  const abs = new URL(url, location.href).toString();
+  const inLiff = !!(window.liff && typeof window.liff.isInClient === "function" && window.liff.isInClient());
+  if (inLiff && typeof window.liff.openWindow === "function") {
+    window.liff.openWindow({ url: abs, external: false });
+  } else {
+    location.href = url;
   }
 }
 
@@ -89,7 +94,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     sumShippingEl.textContent = "0円";
     sumTotalCodEl.textContent = "0円";
     cardBtn.disabled = true;
-    codBtn.disabled = true;
+    codBtn.disabled  = true;
     setStatus("商品が入っていません。");
     return;
   }
@@ -109,26 +114,24 @@ document.addEventListener("DOMContentLoaded", async () => {
     const address = order.address || null;
 
     if (!hasAddress(address)) {
-      // 住所が order に入っていない
       sumShippingEl.textContent = "0円（住所未登録）";
       sumTotalCodEl.textContent = yen(itemsTotal + COD_FEE);
       setStatus("住所が未登録のため、送料を計算できません。住所入力へ戻って保存してください。");
-
-      // 住所入力に戻すボタン（任意）
-      // backBtn は address.html に戻る想定
     } else {
       const result = await calcShipping(items, address);
-      const shipping = Number(result.shipping || 0);
+      const shippingFee = Number(result.shipping || 0);
 
-      // order に送料情報も保存（次画面へ渡す）
-      order.itemsTotal = Number(result.itemsTotal || itemsTotal);
-      order.shipping = shipping;
-      order.region = result.region || "";
-      order.size = result.size || "";
+      // ✅ キー統一：明細ページが必ず拾えるように shippingFee に保存
+      order.itemsTotal   = Number(result.itemsTotal || itemsTotal);
+      order.shippingFee  = shippingFee;   // ←統一キー（推奨）
+      order.shipping     = shippingFee;   // ←互換（古い明細が shipping を見てもOK）
+      order.region       = result.region || "";
+      order.size         = result.size || "";
+
       saveOrder(order);
 
-      sumShippingEl.textContent = yen(shipping);
-      sumTotalCodEl.textContent = yen(Number(result.itemsTotal || itemsTotal) + shipping + COD_FEE);
+      sumShippingEl.textContent = yen(shippingFee);
+      sumTotalCodEl.textContent = yen(order.itemsTotal + shippingFee + COD_FEE);
       setStatus(`送料OK（地域：${order.region || "不明"} / サイズ：${order.size || "?"}）`);
     }
   } catch (e) {
@@ -139,7 +142,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // ボタン遷移
   cardBtn.disabled = false;
-  codBtn.disabled = false;
+  codBtn.disabled  = false;
 
   cardBtn.addEventListener("click", () => go("./confirm-card.html"));
   codBtn.addEventListener("click",  () => go("./confirm-cod.html"));

@@ -1,200 +1,172 @@
-(function () {
-  "use strict";
+"use strict";
 
-  const orderListEl   = document.getElementById("orderList");
-  const sumItemsEl    = document.getElementById("sumItems");
-  const sumShippingEl = document.getElementById("sumShipping");
-  const sumCodEl      = document.getElementById("sumCod");
-  const sumTotalEl    = document.getElementById("sumTotal");
-  const statusEl      = document.getElementById("statusMsg");
-  const backBtn       = document.getElementById("backBtn");
-  const confirmBtn    = document.getElementById("confirmCod");
+const orderListEl   = document.getElementById("orderList");
+const sumItemsEl    = document.getElementById("sumItems");
+const sumShippingEl = document.getElementById("sumShipping");
+const sumCodEl      = document.getElementById("sumCod");
+const sumTotalEl    = document.getElementById("sumTotal");
+const statusMsgEl   = document.getElementById("statusMsg");
 
-  // server-line.js 側と合わせる（envにしているならHTMLへ埋め込む形でもOK）
-  const COD_FEE = 330;
+const backBtn    = document.getElementById("backBtn");
+const confirmBtn = document.getElementById("confirmCod");
 
-  function setStatus(msg) {
-    if (!statusEl) return;
-    statusEl.textContent = msg || "";
+const COD_FEE = 330;
+
+function yen(n) {
+  return `${Number(n || 0).toLocaleString("ja-JP")}円`;
+}
+function setStatus(msg) {
+  if (statusMsgEl) statusMsgEl.textContent = msg || "";
+}
+function safeJsonParse(s) { try { return JSON.parse(s); } catch { return null; } }
+
+function getOrder() {
+  // liff-address.js / confirm.js が複数キーに保存している想定
+  const keys = ["order", "currentOrder", "orderDraft", "confirm_normalized_order"];
+  for (const k of keys) {
+    const v = sessionStorage.getItem(k) || localStorage.getItem(k);
+    if (!v) continue;
+    const j = safeJsonParse(v);
+    if (j && Array.isArray(j.items)) return j;
+  }
+  return { items: [], address: null };
+}
+
+function saveOrder(order) {
+  // 次画面や戻った時も壊れないように複数キーへ保存
+  const s = JSON.stringify(order);
+  sessionStorage.setItem("order", s);
+  sessionStorage.setItem("currentOrder", s);
+  sessionStorage.setItem("orderDraft", s);
+  sessionStorage.setItem("confirm_normalized_order", s);
+  localStorage.setItem("order", s);
+}
+
+function renderItems(items) {
+  if (!orderListEl) return;
+  orderListEl.innerHTML = items
+    .map((it) => {
+      const name = it.name || it.id || "商品";
+      const qty = Number(it.qty || 0);
+      const sub = Number(it.price || 0) * qty;
+      return `<div class="row">${name} ×${qty} = ${yen(sub)}</div>`;
+    })
+    .join("");
+}
+
+function normalizeItems(items) {
+  return (Array.isArray(items) ? items : [])
+    .map((it) => ({
+      id: String(it.id || it.productId || ""),
+      name: String(it.name || it.productName || it.id || "商品"),
+      price: Number(it.price || 0),
+      qty: Number(it.qty || it.quantity || 0),
+    }))
+    .filter((it) => it.qty > 0);
+}
+
+async function postComplete(order, paymentMethod) {
+  // サーバは /api/order/complete を受けられる（あなたの server-line.js に実装済み）
+  const body = {
+    lineUserId: order.lineUserId || order.userId || "",
+    lineUserName: order.lineUserName || "",
+    items: order.items || [],
+    itemsTotal: Number(order.itemsTotal || 0),
+    shipping: Number(order.shippingFee ?? order.shipping ?? 0),
+    codFee: paymentMethod === "cod" ? COD_FEE : 0,
+    finalTotal: Number(order.finalTotal || 0),
+    paymentMethod, // "cod"
+    address: order.address || null,
+  };
+
+  const r = await fetch("/api/order/complete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => null);
+  if (!r.ok || !j?.ok) throw new Error(j?.error || "注文確定に失敗しました");
+  return j;
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  const orderRaw = getOrder();
+  const items = normalizeItems(orderRaw.items);
+
+  if (!items.length) {
+    renderItems([]);
+    sumItemsEl.textContent = yen(0);
+    sumShippingEl.textContent = yen(0);
+    sumCodEl.textContent = yen(COD_FEE);
+    sumTotalEl.textContent = yen(0);
+    setStatus("カートが空です。商品一覧に戻ってください。");
+    if (confirmBtn) confirmBtn.disabled = true;
+    return;
   }
 
-  function yen(n) {
-    return (Number(n) || 0).toLocaleString("ja-JP") + "円";
+  renderItems(items);
+
+  // 商品合計
+  const itemsTotal =
+    Number(orderRaw.itemsTotal || 0) ||
+    items.reduce((s, it) => s + (Number(it.price || 0) * Number(it.qty || 0)), 0);
+
+  // ✅ 送料（confirm.js が保存した order.shipping を拾う）
+  const shipping = Number(orderRaw.shippingFee ?? orderRaw.shipping ?? 0);
+
+  // 代引手数料
+  const codFee = COD_FEE;
+
+  // 合計
+  const total = itemsTotal + shipping + codFee;
+
+  // 画面へ反映
+  if (sumItemsEl) sumItemsEl.textContent = yen(itemsTotal);
+  if (sumShippingEl) sumShippingEl.textContent = yen(shipping);
+  if (sumCodEl) sumCodEl.textContent = yen(codFee);
+  if (sumTotalEl) sumTotalEl.textContent = yen(total);
+
+  // 次画面/確定時のために order に確定値を保存
+  const order = {
+    ...orderRaw,
+    items,
+    itemsTotal,
+    shippingFee: shipping,     // 明細ページでは shippingFee を正として持つ
+    shipping,                  // 互換
+    codFee,
+    finalTotal: total,
+    paymentMethod: "cod",
+  };
+  saveOrder(order);
+
+  // ステータス（地域/サイズがあるなら出す）
+  const region = orderRaw.region || "";
+  const size = orderRaw.size || "";
+  if (shipping > 0) {
+    setStatus(region || size ? `送料：${yen(shipping)}（${region || "地域不明"} / ${size || "サイズ不明"}）` : `送料：${yen(shipping)}`);
+  } else {
+    setStatus("送料：0円（※住所未登録、または送料計算結果が保存されていません）");
   }
 
-  function safeNumber(n, def = 0) {
-    const x = Number(n);
-    return Number.isFinite(x) ? x : def;
-  }
+  // 戻る
+  backBtn?.addEventListener("click", () => {
+    location.href = "./confirm.html";
+  });
 
-  function normalizeAddress(addr) {
-    const a = addr || {};
-    return {
-      // サーバー側は a.zip/a.postal, a.prefecture/a.pref, a.city, a.addr1/a.address1, a.addr2/a.address2, a.tel/a.phone を見る
-      name: String(a.name || "").trim(),
-      phone: String(a.phone || a.tel || "").trim(),
-      postal: String(a.postal || a.zip || "").trim(),
-      prefecture: String(a.prefecture || a.pref || "").trim(),
-      city: String(a.city || "").trim(),
-      address1: String(a.address1 || a.addr1 || "").trim(),
-      address2: String(a.address2 || a.addr2 || "").trim(),
-    };
-  }
-
-  function buildOrderRows(items) {
-    if (!orderListEl) return;
-    orderListEl.innerHTML = "";
-    items.forEach((it) => {
-      const row = document.createElement("div");
-      row.className = "row";
-      const name = String(it.name || it.id || "商品");
-      const price = safeNumber(it.price, 0);
-      const qty = safeNumber(it.qty, 0);
-      const subtotal = price * qty;
-      row.textContent = `${name} × ${qty} = ${yen(subtotal)}`;
-      orderListEl.appendChild(row);
-    });
-  }
-
-  async function fetchShippingIfNeeded(items, address, shipping) {
-    // shipping が 0 の場合のみ再計算（住所が空ならそもそも計算できないのでスキップ）
-    if (shipping > 0) return shipping;
-
-    const hasPref = !!String(address?.prefecture || address?.pref || "").trim();
-    if (!hasPref) return shipping;
-
+  // ✅ 確定（/api/order/complete へ送る）
+  confirmBtn?.addEventListener("click", async () => {
+    confirmBtn.disabled = true;
     try {
-      const res = await fetch("/api/shipping", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items, address }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data && data.ok) {
-        return safeNumber(data.shipping, shipping);
+      setStatus("注文を確定しています…");
+      await postComplete(order, "cod");
+      setStatus("注文を確定しました。トークへ戻ります。");
+      // LIFFなら closeWindow できる
+      if (window.liff && typeof window.liff.closeWindow === "function") {
+        try { window.liff.closeWindow(); } catch {}
       }
     } catch (e) {
-      console.error("shipping fetch error:", e);
+      setStatus(`失敗：${e?.message || e}`);
+      confirmBtn.disabled = false;
     }
-    return shipping;
-  }
-
-  async function main() {
-    const raw = sessionStorage.getItem("orderDraft");
-    if (!raw) {
-      setStatus("注文情報が見つかりませんでした。\n商品一覧からやり直してください。");
-      if (confirmBtn) confirmBtn.disabled = true;
-      return;
-    }
-
-    let order;
-    try {
-      order = JSON.parse(raw);
-    } catch (e) {
-      console.error("orderDraft parse error:", e);
-      setStatus("注文情報の読み込みに失敗しました。");
-      if (confirmBtn) confirmBtn.disabled = true;
-      return;
-    }
-
-    const itemsRaw = Array.isArray(order.items) ? order.items : [];
-    const items = itemsRaw
-      .map((it) => ({
-        id: String(it.id || "").trim(),
-        name: String(it.name || it.id || "商品").trim(),
-        price: safeNumber(it.price, 0),
-        qty: safeNumber(it.qty, 0),
-      }))
-      .filter((it) => it.qty > 0);
-
-    const address = normalizeAddress(order.address || {});
-    let itemsTotal = safeNumber(order.itemsTotal, 0);
-    let shipping = safeNumber(order.shipping, 0);
-
-    if (!items.length) {
-      setStatus("カートに商品が入っていません。");
-      if (confirmBtn) confirmBtn.disabled = true;
-      return;
-    }
-
-    buildOrderRows(items);
-
-    // itemsTotal が無ければ再計算
-    if (!itemsTotal) {
-      itemsTotal = items.reduce((sum, it) => sum + it.price * it.qty, 0);
-    }
-
-    // shipping が 0 の場合は /api/shipping で確認（住所がある時だけ）
-    shipping = await fetchShippingIfNeeded(items, address, shipping);
-
-    const finalTotal = itemsTotal + shipping + COD_FEE;
-
-    if (sumItemsEl)    sumItemsEl.textContent    = yen(itemsTotal);
-    if (sumShippingEl) sumShippingEl.textContent = yen(shipping);
-    if (sumCodEl)      sumCodEl.textContent      = yen(COD_FEE);
-    if (sumTotalEl)    sumTotalEl.textContent    = yen(finalTotal);
-
-    setStatus("内容をご確認のうえ「代引きで注文を確定する」を押してください。");
-
-    if (backBtn) {
-      backBtn.addEventListener("click", () => history.back());
-    }
-
-    if (confirmBtn) {
-      // 二重送信防止（複数回 addEventListener されるのも防ぐ）
-      confirmBtn.addEventListener("click", async () => {
-        if (confirmBtn.disabled) return;
-
-        confirmBtn.disabled = true;
-        setStatus("ご注文を確定しています…");
-
-        // ★重要：server-line.js の /api/order/complete は paymentMethod / payment を見て
-        // cod/bank/stripe を判定しているので、必ず cod を送る
-        const orderForCod = {
-          items,
-          itemsTotal,
-          shipping,
-          codFee: COD_FEE,
-          finalTotal,
-
-          // ★ここが修正点（最重要）
-          paymentMethod: "cod",   // serverが order.paymentMethod を読む
-          payment: "cod",         // 念のため互換で両方入れる
-
-          // LINE情報（あれば）
-          lineUserId: String(order.lineUserId || "").trim(),
-          lineUserName: String(order.lineUserName || "").trim(),
-
-          address,
-        };
-
-        sessionStorage.setItem("lastOrder", JSON.stringify(orderForCod));
-
-        try {
-          const res = await fetch("/api/order/complete", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(orderForCod),
-          });
-          const data = await res.json().catch(() => ({}));
-
-          if (!res.ok || !data || !data.ok) {
-            console.error("/api/order/complete error:", data);
-            setStatus("ご注文の確定に失敗しました。\n時間をおいて再度お試しください。");
-            confirmBtn.disabled = false;
-            return;
-          }
-
-          // 成功 → 完了画面へ
-          location.href = "./cod-complete.html";
-        } catch (e) {
-          console.error("/api/order/complete exception:", e);
-          setStatus("通信エラーが発生しました。\n時間をおいて再度お試しください。");
-          confirmBtn.disabled = false;
-        }
-      }, { once: true }); // ★同一ページで再実行されても多重登録しない
-    }
-  }
-
-  main();
-})();
+  });
+});

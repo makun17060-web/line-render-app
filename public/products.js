@@ -250,7 +250,7 @@ function goToAddress() {
   saveOrderForNext();
 
   // 住所入力ページへ（ファイル名が違うならここだけ変更）
-  location.href = "./address.html";
+  location.href = "./liff-address.html";
 }
 
 // ===== 起動 =====

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Flexセグメント配信管理</title>
+
+<style>
+body {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background:#f5f5f5;
+  margin:0; padding:12px;
+}
+.card {
+  background:#fff;
+  border-radius:10px;
+  padding:14px;
+  margin-bottom:12px;
+  box-shadow:0 1px 4px rgba(0,0,0,.08);
+}
+h1 { font-size:18px; margin:0 0 10px; }
+label { font-size:13px; display:block; margin-bottom:4px; }
+select, textarea, input {
+  width:100%;
+  padding:8px;
+  font-size:14px;
+  border-radius:6px;
+  border:1px solid #ccc;
+}
+textarea { min-height:160px; font-family:monospace; }
+button {
+  width:100%;
+  margin-top:8px;
+  padding:10px;
+  font-size:15px;
+  border-radius:8px;
+  border:none;
+  background:#06c755;
+  color:#fff;
+}
+button.secondary {
+  background:#888;
+}
+#count {
+  font-size:14px;
+  font-weight:bold;
+}
+.status {
+  font-size:13px;
+  margin-top:6px;
+}
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h1>Flex セグメント配信</h1>
+
+  <label>管理トークン</label>
+  <input id="token" placeholder="ADMIN_API_TOKEN" />
+
+  <label>配信セグメント</label>
+  <select id="segment">
+    <option value="liff_open">LIFF起動済み</option>
+    <option value="address">住所登録済み</option>
+    <option value="order">注文経験あり</option>
+    <option value="no_order">未購入者</option>
+  </select>
+
+  <button class="secondary" onclick="loadCount()">対象人数を確認</button>
+  <div id="count"></div>
+</div>
+
+<div class="card">
+  <label>Flex JSON</label>
+  <textarea id="flexJson" placeholder="Flex Message JSON を貼り付け"></textarea>
+
+  <button onclick="sendTest()">テスト送信（自分）</button>
+  <button onclick="sendBulk()">本番一括配信</button>
+
+  <div class="status" id="status"></div>
+</div>
+
+<script>
+const API_BASE = "";
+
+function headers() {
+  return {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer " + document.getElementById("token").value
+  };
+}
+
+async function loadCount() {
+  const seg = document.getElementById("segment").value;
+  const res = await fetch(`/api/admin/segment/count?segment=${seg}`, {
+    headers: headers()
+  });
+  const data = await res.json();
+  document.getElementById("count").textContent =
+    `対象人数：${data.count}人`;
+}
+
+async function sendTest() {
+  send(true);
+}
+async function sendBulk() {
+  if (!confirm("本当に一括配信しますか？")) return;
+  send(false);
+}
+
+async function send(isTest) {
+  const body = {
+    segment: document.getElementById("segment").value,
+    flex: JSON.parse(document.getElementById("flexJson").value),
+    test: isTest
+  };
+
+  const res = await fetch("/api/admin/segment/push-flex", {
+    method:"POST",
+    headers: headers(),
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  document.getElementById("status").textContent =
+    data.ok ? "送信完了" : "エラー：" + data.error;
+}
+</script>
+
+</body>
+</html>

@@ -2,6 +2,7 @@
  * server-line.js — フル機能版（Stripe + ミニアプリ + 画像管理 + 住所DB + セグメント配信 + 注文DB永続化）
  *
  * ✅ 重要（今回の要望）
+ * - UPLOAD_DIR だけ Disk（永続）に保存（再デプロイしても画像が消えない）
  * - Flexにも「内容量（volume）」を表示
  *   - 商品一覧Flex：内容量行を追加
  *   - 最終確認Flex：内容量行を追加
@@ -26,6 +27,9 @@
  * STRIPE_SECRET_KEY（Stripe使うなら）
  * LINE_CHANNEL_ID（LIFF idToken検証するなら）
  * PUBLIC_ADDRESS_LOOKUP_TOKEN（公開住所取得APIを使うなら）
+ *
+ * --- ★今回追加（任意） ---
+ * UPLOAD_DIR=/var/data/uploads  （画像保存先。未指定なら /var/data/uploads）
  */
 
 "use strict";
@@ -116,13 +120,25 @@ app.use((req, _res, next) => {
 // =============== ディレクトリ & ファイル ===============
 const DATA_DIR = path.join(__dirname, "data");
 const PUBLIC_DIR = path.join(__dirname, "public");
-const UPLOAD_DIR = path.join(PUBLIC_DIR, "uploads");
+
+/**
+ * ★変更点：UPLOAD_DIR（画像）だけ Disk へ
+ * - Render Disk mount を /var/data に設定している前提で、
+ *   画像は /var/data/uploads に保存されます（再デプロイでも残る）
+ */
+const UPLOAD_DIR =
+  (process.env.UPLOAD_DIR || "").trim() ||
+  path.join(process.env.RENDER_DISK_MOUNT_PATH || "/var/data", "uploads");
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
+// public（HTML/JS/CSS）は従来通り
 app.use("/public", express.static(PUBLIC_DIR));
+
+// ★重要：/public/uploads は Disk 側を配信
+app.use("/public/uploads", express.static(UPLOAD_DIR));
 
 const PRODUCTS_PATH = path.join(DATA_DIR, "products.json");
 const ORDERS_LOG = path.join(DATA_DIR, "orders.log");
@@ -854,6 +870,7 @@ app.get("/api/health", async (_req, res) => {
       DATABASE_URL: !!process.env.DATABASE_URL,
       STRIPE_SECRET_KEY: !!process.env.STRIPE_SECRET_KEY,
       PUBLIC_BASE_URL: !!PUBLIC_BASE_URL,
+      UPLOAD_DIR,
     },
   });
 });
@@ -1186,16 +1203,12 @@ app.post("/api/order/complete", async (req, res) => {
 
     const buyerId = String(order.lineUserId || "").trim();
     if (buyerId) {
-    const buyerMsg =
-  `ご注文ありがとうございます！\n` +
-  `${itemsLines || ""}\n` +
-  `\n支払：${payText}\n` +
-  `商品計：${yen(itemsTotal)}\n` +
-  `送料：${yen(shipping)}\n` +
-  `代引手数料：${yen(codFee || 0)}\n` +
-  `合計：${yen(finalTotal)}\n` +
-  `\n（このメッセージは自動送信です）`;
-
+      const buyerMsg =
+        `ご注文ありがとうございます！\n` +
+        `${itemsLines || ""}\n` +
+        `\n支払：${payText}\n` +
+        `合計：${yen(finalTotal)}\n` +
+        `\n（このメッセージは自動送信です）`;
 
       try {
         await client.pushMessage(buyerId, { type: "text", text: buyerMsg });
@@ -2373,6 +2386,7 @@ async function start() {
 
   app.listen(PORT, () => {
     console.log(`[BOOT] server listening on ${PORT}`);
+    console.log(`[BOOT] UPLOAD_DIR (disk) = ${UPLOAD_DIR}`);
   });
 }
 

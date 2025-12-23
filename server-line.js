@@ -2,7 +2,10 @@
  * server-line.js — フル機能版（Stripe + ミニアプリ + 画像管理 + 住所DB + セグメント配信 + 注文DB永続化）
  *
  * ✅ 重要（今回の要望）
- * - UPLOAD_DIR だけ Disk（永続）に保存（再デプロイしても画像が消えない）
+ * - UPLOAD_DIR だけ Disk に保存（再デプロイで画像が消えない）
+ *   - 画像保存先：UPLOAD_DIR=/var/data/uploads（デフォルト）
+ *   - 静的配信：/public/uploads → Disk の UPLOAD_DIR を参照（重要）
+ *
  * - Flexにも「内容量（volume）」を表示
  *   - 商品一覧Flex：内容量行を追加
  *   - 最終確認Flex：内容量行を追加
@@ -28,8 +31,8 @@
  * LINE_CHANNEL_ID（LIFF idToken検証するなら）
  * PUBLIC_ADDRESS_LOOKUP_TOKEN（公開住所取得APIを使うなら）
  *
- * --- ★今回追加（任意） ---
- * UPLOAD_DIR=/var/data/uploads  （画像保存先。未指定なら /var/data/uploads）
+ * --- 今回追加（推奨） .env ---
+ * UPLOAD_DIR=/var/data/uploads
  */
 
 "use strict";
@@ -122,23 +125,22 @@ const DATA_DIR = path.join(__dirname, "data");
 const PUBLIC_DIR = path.join(__dirname, "public");
 
 /**
- * ★変更点：UPLOAD_DIR（画像）だけ Disk へ
- * - Render Disk mount を /var/data に設定している前提で、
- *   画像は /var/data/uploads に保存されます（再デプロイでも残る）
+ * ★今回の修正点：
+ * - UPLOAD_DIR は Disk を見る（デフォルト /var/data/uploads）
+ * - 画像は /public/uploads/... でアクセスされるが、その実体は Disk の UPLOAD_DIR を配信する
  */
-const UPLOAD_DIR =
-  (process.env.UPLOAD_DIR || "").trim() ||
-  path.join(process.env.RENDER_DISK_MOUNT_PATH || "/var/data", "uploads");
+const UPLOAD_DIR = (process.env.UPLOAD_DIR || "/var/data/uploads").trim();
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-// public（HTML/JS/CSS）は従来通り
-app.use("/public", express.static(PUBLIC_DIR));
-
-// ★重要：/public/uploads は Disk 側を配信
+/**
+ * ★重要：uploads は Disk の UPLOAD_DIR を配信する
+ * これにより toPublicImageUrl() が返す /public/uploads/<file> が再デプロイ後も生きる
+ */
 app.use("/public/uploads", express.static(UPLOAD_DIR));
+app.use("/public", express.static(PUBLIC_DIR));
 
 const PRODUCTS_PATH = path.join(DATA_DIR, "products.json");
 const ORDERS_LOG = path.join(DATA_DIR, "orders.log");
@@ -2386,7 +2388,7 @@ async function start() {
 
   app.listen(PORT, () => {
     console.log(`[BOOT] server listening on ${PORT}`);
-    console.log(`[BOOT] UPLOAD_DIR (disk) = ${UPLOAD_DIR}`);
+    console.log(`[BOOT] UPLOAD_DIR=${UPLOAD_DIR}`);
   });
 }
 

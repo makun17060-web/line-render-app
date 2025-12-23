@@ -124,23 +124,19 @@ app.use((req, _res, next) => {
 const DATA_DIR = path.join(__dirname, "data");
 const PUBLIC_DIR = path.join(__dirname, "public");
 
-/**
- * ★今回の修正点：
- * - UPLOAD_DIR は Disk を見る（デフォルト /var/data/uploads）
- * - 画像は /public/uploads/... でアクセスされるが、その実体は Disk の UPLOAD_DIR を配信する
- */
-const UPLOAD_DIR = (process.env.UPLOAD_DIR || "/var/data/uploads").trim();
+// ★ここが重要：UPLOAD_DIRは env を優先（Disk）
+// Render Disk の Mount Path を /var/data にしている前提
+const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || "/var/data/uploads");
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-/**
- * ★重要：uploads は Disk の UPLOAD_DIR を配信する
- * これにより toPublicImageUrl() が返す /public/uploads/<file> が再デプロイ後も生きる
- */
-app.use("/public/uploads", express.static(UPLOAD_DIR));
+// 既存の public 配信（HTML/JS/CSS 等）
 app.use("/public", express.static(PUBLIC_DIR));
+
+// ★ここが重要：/public/uploads は Disk の UPLOAD_DIR を配信する
+app.use("/public/uploads", express.static(UPLOAD_DIR));
 
 const PRODUCTS_PATH = path.join(DATA_DIR, "products.json");
 const ORDERS_LOG = path.join(DATA_DIR, "orders.log");

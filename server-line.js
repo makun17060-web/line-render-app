@@ -1435,6 +1435,184 @@ app.get("/api/admin/orders-db", async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || "server_error" });
   }
 });
+// =====================================================
+// 追記：Flex セグメント配信（最小API）
+//  - GET  /api/admin/segment/count?segment=...
+//  - POST /api/admin/segment/push-flex   { segment, flex, test? }
+// segment: "liff_open" | "address" | "order" | "no_order"
+// =====================================================
+
+// あなたのDBテーブル名（確定）
+const SEG_FLEX_TABLES = {
+  addresses: "addresses",
+  orders: "orders",
+  liffOpenLogs: "liff_open_logs",
+  liffLogs: "liff_logs",           // 既存にある場合の保険（無ければ catch で無視）
+  segmentUsers: "segment_users",
+};
+
+// kind 統一運用（あなたの設定：LIFF_OPEN_KIND_MODE が all なら基本 "all"）
+const SEG_FLEX_KIND = "all";
+
+function segFlexNormalizeFlexPayload(flex) {
+  if (!flex || typeof flex !== "object") throw new Error("flex must be an object");
+
+  // 完成形
+  if (flex.type === "flex" && flex.contents) {
+    if (!flex.altText) flex.altText = "磯屋からのお知らせ";
+    return flex;
+  }
+
+  // contentsだけ（bubble/carousel）
+  return { type: "flex", altText: "磯屋からのお知らせ", contents: flex };
+}
+
+async function segFlexGetUserIds(segment) {
+  if (!pool) throw new Error("db_not_configured (DATABASE_URL not set)");
+
+  const A  = SEG_FLEX_TABLES.addresses;
+  const O  = SEG_FLEX_TABLES.orders;
+  const LO = SEG_FLEX_TABLES.liffOpenLogs;
+  const LL = SEG_FLEX_TABLES.liffLogs;
+  const SU = SEG_FLEX_TABLES.segmentUsers;
+
+  // 1) LIFF起動済み（open_logs優先、liff_logsは存在すれば UNION）
+  if (segment === "liff_open") {
+    // liff_logs が無い環境でも落ちないように分岐
+    let ids = [];
+
+    const r1 = await mustPool().query(
+      `SELECT DISTINCT user_id FROM ${LO} WHERE user_id IS NOT NULL AND user_id <> ''`
+    );
+    ids = ids.concat(r1.rows.map(x => x.user_id));
+
+    try {
+      const r2 = await mustPool().query(
+        `SELECT DISTINCT user_id FROM ${LL}
+          WHERE user_id IS NOT NULL AND user_id <> ''
+            AND (kind = $1 OR kind IS NULL)`,
+        [SEG_FLEX_KIND]
+      );
+      ids = ids.concat(r2.rows.map(x => x.user_id));
+    } catch (e) {
+      // liff_logs が無い / カラム違い は無視（open_logsで十分）
+      console.warn("[segFlex] liff_logs skipped:", e?.message || e);
+    }
+
+    return Array.from(new Set(ids.filter(Boolean)));
+  }
+
+  // 2) 住所登録済み
+  if (segment === "address") {
+    const r = await mustPool().query(
+      `SELECT DISTINCT user_id FROM ${A} WHERE user_id IS NOT NULL AND user_id <> ''`
+    );
+    return r.rows.map(x => x.user_id);
+  }
+
+  // 3) 注文経験あり
+  if (segment === "order") {
+    const r = await mustPool().query(
+      `SELECT DISTINCT user_id FROM ${O} WHERE user_id IS NOT NULL AND user_id <> ''`
+    );
+    return r.rows.map(x => x.user_id);
+  }
+
+  // 4) 未購入者（母集団＝segment_users + liff_open + addresses から orders を除外）
+  if (segment === "no_order") {
+    const r = await mustPool().query(
+      `
+      WITH base AS (
+        SELECT user_id FROM ${SU} WHERE user_id IS NOT NULL AND user_id <> ''
+        UNION
+        SELECT user_id FROM ${LO} WHERE user_id IS NOT NULL AND user_id <> ''
+        UNION
+        SELECT user_id FROM ${A}  WHERE user_id IS NOT NULL AND user_id <> ''
+      ),
+      bought AS (
+        SELECT DISTINCT user_id FROM ${O} WHERE user_id IS NOT NULL AND user_id <> ''
+      )
+      SELECT DISTINCT b.user_id
+        FROM base b
+        LEFT JOIN bought o ON o.user_id = b.user_id
+       WHERE o.user_id IS NULL
+      `
+    );
+    return r.rows.map(x => x.user_id);
+  }
+
+  throw new Error("unknown_segment");
+}
+
+// --- 対象人数 ---
+app.get("/api/admin/segment/count", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const segment = String(req.query.segment || "").trim();
+    if (!segment) return res.status(400).json({ ok: false, error: "segment_required" });
+
+    const userIds = await segFlexGetUserIds(segment);
+    return res.json({ ok: true, segment, count: userIds.length });
+  } catch (e) {
+    console.error("/api/admin/segment/count error:", e);
+    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
+  }
+});
+
+// --- Flex配信（test:true なら ADMIN_USER_ID へ1通だけ） ---
+app.post("/api/admin/segment/push-flex", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const segment = String(req.body?.segment || "").trim();
+    const flexRaw = req.body?.flex;
+    const test = !!req.body?.test;
+
+    if (!segment) return res.status(400).json({ ok: false, error: "segment_required" });
+    if (!flexRaw) return res.status(400).json({ ok: false, error: "flex_required" });
+
+    const flexMessage = segFlexNormalizeFlexPayload(flexRaw);
+
+    // テスト送信
+    if (test) {
+      if (!ADMIN_USER_ID) return res.status(400).json({ ok: false, error: "ADMIN_USER_ID_not_set" });
+      await client.pushMessage(ADMIN_USER_ID, flexMessage);
+      return res.json({ ok: true, mode: "test", sent: 1 });
+    }
+
+    // 本番：一括 push（レート対策で少し間隔）
+    const userIds = await segFlexGetUserIds(segment);
+    if (!userIds.length) return res.json({ ok: true, mode: "bulk", segment, total: 0, sent: 0, failed: 0 });
+
+    const delayMs = 120; // 必要なら調整
+    let sent = 0, failed = 0;
+    const errors = [];
+
+    for (const uid of userIds.slice(0, SEGMENT_PUSH_LIMIT)) {
+      try {
+        await client.pushMessage(uid, flexMessage);
+        sent++;
+      } catch (err) {
+        failed++;
+        errors.push({ user_id: uid, error: err?.message ? err.message : String(err) });
+      }
+      // LINEレート対策
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+
+    return res.json({
+      ok: true,
+      mode: "bulk",
+      segment,
+      total: Math.min(userIds.length, SEGMENT_PUSH_LIMIT),
+      sent,
+      failed,
+      errors: errors.slice(0, 30),
+    });
+  } catch (e) {
+    console.error("/api/admin/segment/push-flex error:", e);
+    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
+  }
+});
 
 // =============== 管理：セグメント（管理HTML互換：preview / send） ===============
 function dayRangeJST(yyyymmdd) {

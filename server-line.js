@@ -120,7 +120,7 @@ app.use((req, _res, next) => {
   next();
   // /liff を叩いたら LIFFへ飛ばす（トレーリングスラッシュも対応）
 app.get(["/liff", "/liff/"], (req, res) => {
-  const id = process.env.LIFF_ID; // または LIFF_ID_ORDER など
+  const id = process.env.LIFF_ID_MINIAPP; // または LIFF_ID_ORDER など
   if (!id) return res.status(500).send("LIFF_ID is not set");
   return res.redirect(302, `https://liff.line.me/${id}`);
 });

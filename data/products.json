@@ -14,6 +14,7 @@
     "stock": 20,
     "volume": "80g",
     "desc": "海苔の風味豊かなえびせんべい"
+     "image": "1766470818363_noriakasya90.png"
   },
   {
     "id": "uzu-akasha-340",
@@ -22,6 +23,7 @@
     "stock": 10,
     "volume": "80g",
     "desc": "渦を巻いたえびせんべい"
+     "image":"1766470864228__.jpg"
   },
   {
     "id": "shio-akasha-340",
@@ -30,6 +32,7 @@
     "stock": 5,
     "volume": "80g",
     "desc": "えびせんべいにあおさをトッピング"
+     "image":"1766470752238_1201_IMG_0076.jpg"
   },
   {
     "id": "matsu-akasha-340",
@@ -38,6 +41,7 @@
     "stock": 30,
     "volume": "80g",
     "desc": "海老をたっぷり使用した高級えびせんべい"
+     "image":"766470721680_2_000000000002.png"
   },
   {
     "id": "iso-akasha-340",
@@ -46,6 +50,7 @@
     "stock": 30,
     "volume": "80g",
     "desc": "海老せんべいに高級海苔をトッピング"
+     "image":"766470910323__.jpg"
   },
   {
     "id": "goma-akasha-340",
@@ -54,6 +59,7 @@
     "stock": 30,
     "volume": "80g",
     "desc": "海老せんべいに風味豊かなごまをトッピング"
+    "image":"1766470974602__.jpg"
   },
   {
     "id": "original-set-2000",
@@ -62,5 +68,6 @@
     "stock": 30,
     "volume": "",
     "desc": "6袋をセットにしたオリジナル"
+    "image":"1766470786708_akashi_item.jpg"
   }
 ]

@@ -54,7 +54,7 @@ async function lineMulticast(to, messages) {
       type: "text",
       text:
 `ミニアプリをご利用ありがとうございます😊
-人気の「久助」は在庫限りです
+本格派えびせんべいをぜひご賞味ください
 👇今すぐ注文できます`
     }
   ];

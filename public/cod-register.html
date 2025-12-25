@@ -74,7 +74,6 @@
   </div>
 
   <div class="btn-row">
-    <!-- ✅ form誤爆防止 -->
     <button id="saveBtn" type="button" class="btn btn-primary" disabled>住所を保存する</button>
     <button id="closeBtn" type="button" class="btn btn-secondary">この画面を閉じる</button>
   </div>
@@ -90,10 +89,6 @@
     (function () {
       "use strict";
 
-      /**
-       * ✅同一ドメインで配信しているなら API_BASE は "" のままでOK（CORSなし）
-       * ✅別ドメインなら ?api=https://line-render-app-1.onrender.com を付ける
-       */
       const qs = new URLSearchParams(location.search);
       const API_BASE_RAW = (qs.get("api") || "").trim().replace(/\/+$/, "");
       const API_BASE = API_BASE_RAW || "";
@@ -145,7 +140,6 @@
         return { res, data };
       }
 
-      // ✅ セグメントログ送信（失敗しても止めない）
       async function logLiffOpen(userId) {
         if (!userId) return;
         try {
@@ -168,7 +162,6 @@
         setStatus("LIFF 初期化中…", "");
         saveBtn.disabled = true;
 
-        // リッチメニュー側は order を使う（電話用codと混ざりにくい）
         const { res: cfgRes, data: cfg } =
           await fetchJson(apiUrl("/api/liff/config?kind=order"), { cache: "no-store" });
 
@@ -184,12 +177,10 @@
           return;
         }
 
-        // userId取得
         try {
           const profile = await liff.getProfile();
           lineUserId = profile?.userId || "";
         } catch (e) {
-          // まれに getProfile が落ちる場合の保険（IDトークンsub）
           const idt = liff.getDecodedIDToken?.();
           lineUserId = (idt && idt.sub) ? String(idt.sub) : "";
         }
@@ -199,8 +190,6 @@
           return;
         }
 
-        // ✅ ここが追加：起動ログ（セグメント用）
-        // 住所登録を開いたユーザーを liff_open_logs に貯める
         await logLiffOpen(lineUserId);
 
         setStatus(
@@ -249,18 +238,14 @@
 
           console.log("SAVE RESPONSE:", res.status, data);
 
-          // ✅ どのキーでも拾えるようにする
+          // ✅ 会員コードだけ拾う（住所コードは表示しない）
           const memberCode = (data && (data.memberCode || data.member_code || data.code || data.member))
             ? String(data.memberCode || data.member_code || data.code || data.member)
             : "";
 
-          const addressCode = (data && (data.addressCode || data.address_code))
-            ? String(data.addressCode || data.address_code)
-            : "";
-
           if (!res.ok || !data?.ok || !memberCode) {
             setStatus(
-              "住所の保存に失敗しました（コードが取得できません）。\n" +
+              "住所の保存に失敗しました（会員コードが取得できません）。\n" +
               `status=${res.status}\n` +
               `response=${JSON.stringify(data)}`,
               "err"
@@ -272,7 +257,6 @@
           codeBox.innerHTML =
             `✅ 住所を保存しました。\n` +
             `会員コード：\n<strong>${memberCode}</strong>\n` +
-            (addressCode ? `\n住所コード：${addressCode}\n` : "") +
             `\n（この数字を控えてください）`;
 
           codeBox.scrollIntoView({ behavior: "smooth", block: "start" });

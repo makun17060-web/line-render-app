@@ -55,7 +55,7 @@ async function lineMulticast(to, messages) {
       text:
 `ミニアプリをご利用ありがとうございます😊
 本格派えびせんべいをぜひご賞味ください
-👇今すぐ注文できます`
+👇https://liff.line.me/2008406620-G5j1gjzM
     }
   ];
 

@@ -2128,11 +2128,54 @@ async function notifyAdminIncomingMessage(ev, bodyText, extra = {}) {
 
 // =============== handleEvent ===============
 async function handleEvent(ev) {
-  const userId = ev?.source?.userId || "";
+    const userId = ev?.source?.userId || "";
   if (userId) {
     try {
       await touchUser(userId, "seen");
     } catch {}
+  }
+  // ==============================
+  // 会員コード照会（チャット）
+  // ==============================
+  if (
+    ev.type === 'message' &&
+    ev.message?.type === 'text' &&
+    ev.message.text.trim() === '会員コード'
+  ) {
+    try {
+      const { rows } = await pool.query(
+        `
+        SELECT member_code
+        FROM addresses
+        WHERE user_id = $1
+        ORDER BY updated_at DESC
+        LIMIT 1
+        `,
+        [userId]
+      );
+
+      if (rows.length === 0) {
+        return client.replyMessage(ev.replyToken, {
+          type: 'text',
+          text:
+            'まだ会員コードが発行されていません。\n' +
+            '先にミニアプリから住所登録をお願いします。',
+        });
+      }
+
+      return client.replyMessage(ev.replyToken, {
+        type: 'text',
+        text:
+          `あなたの会員コードは【${rows[0].member_code}】です。\n\n` +
+          '📞 電話注文の際にお伝えください。',
+      });
+    } catch (err) {
+      console.error('会員コード取得エラー', err);
+      return client.replyMessage(ev.replyToken, {
+        type: 'text',
+        text: '会員コードの取得に失敗しました。時間をおいてお試しください。',
+      });
+    }
   }
 
   // 友だち追加

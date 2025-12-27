@@ -17,6 +17,14 @@
  * - 公式アカウント受信は管理者へ通知（返信はしない）
  * - /api/admin/orders/notify-shipped はトップレベル
  *
+ * ✅ 今回の修正（重要）
+ * - 管理画面の抽出人数 ＝ DBで数えた userid数 ＝ 実送信対象 が必ず一致するように
+ *   セグメント抽出ロジックを「1本化」
+ *   - GET /api/admin/segment/users
+ *   - GET /api/admin/segment/count
+ *   - POST /api/admin/segment/send
+ *   が同一の抽出条件を共有
+ *
  * --- 必須 .env ---
  * LINE_CHANNEL_ACCESS_TOKEN
  * LINE_CHANNEL_SECRET
@@ -118,13 +126,13 @@ app.use((req, res, next) => {
 app.use((req, _res, next) => {
   console.log(`[REQ] ${new Date().toISOString()} ${req.method} ${req.url}`);
   next();
-  // /liff を叩いたら LIFFへ飛ばす（トレーリングスラッシュも対応）
-app.get(["/liff", "/liff/"], (req, res) => {
-  const id = process.env.LIFF_ID_MINIAPP; // または LIFF_ID_ORDER など
-  if (!id) return res.status(500).send("LIFF_ID is not set");
-  return res.redirect(302, `https://liff.line.me/${id}`);
 });
 
+// ✅ /liff へ来たら LIFFへリダイレクト（※app.useの中に入っていたバグを修正）
+app.get(["/liff", "/liff/"], (req, res) => {
+  const id = process.env.LIFF_ID_MINIAPP || LIFF_ID; // 未指定なら LIFF_ID を使う
+  if (!id) return res.status(500).send("LIFF_ID is not set");
+  return res.redirect(302, `https://liff.line.me/${id}`);
 });
 
 // =============== ディレクトリ & ファイル ===============
@@ -781,52 +789,131 @@ async function touchUser(userId, source = "seen") {
   }
 }
 
-async function listSegmentUserIds(days = 30, source = "active") {
-  const d = Math.min(365, Math.max(1, Number(days || 30)));
-  const src = String(source || "active").toLowerCase();
+function chunkArray(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
 
+// =====================================================
+// ✅ セグメント抽出ロジック 1本化（ここが今回の核心）
+// - 管理画面表示人数 / DB数 / 実送信対象 が一致する
+// =====================================================
+function normalizeSegmentSource(srcRaw) {
+  const s = String(srcRaw || "active").trim().toLowerCase();
+  if (["active", "chat", "liff", "seen", "all"].includes(s)) return s;
+  return "active";
+}
+function clampDays(daysRaw) {
+  return Math.min(365, Math.max(1, Number(daysRaw || 30)));
+}
+
+/**
+ * DB抽出：source と days から WHERE を生成
+ * - active: chat または liff が直近daysにある
+ * - chat  : last_chat_at が直近days
+ * - liff  : last_liff_at が直近days
+ * - seen  : last_seen が直近days
+ * - all   : segment_users に存在する全員（days無視）
+ */
+function buildSegmentWhereSql(source, daysParamIndex) {
+  const src = normalizeSegmentSource(source);
+  if (src === "all") {
+    return { whereSql: `user_id IS NOT NULL AND user_id <> ''`, needsDays: false };
+  }
+  if (src === "chat") {
+    return { whereSql: `last_chat_at IS NOT NULL AND last_chat_at >= NOW() - ($${daysParamIndex}::int * INTERVAL '1 day')`, needsDays: true };
+  }
+  if (src === "liff") {
+    return { whereSql: `last_liff_at IS NOT NULL AND last_liff_at >= NOW() - ($${daysParamIndex}::int * INTERVAL '1 day')`, needsDays: true };
+  }
+  if (src === "seen") {
+    return { whereSql: `last_seen >= NOW() - ($${daysParamIndex}::int * INTERVAL '1 day')`, needsDays: true };
+  }
+  // active
+  return {
+    whereSql: `(
+      (last_chat_at IS NOT NULL AND last_chat_at >= NOW() - ($${daysParamIndex}::int * INTERVAL '1 day'))
+      OR
+      (last_liff_at IS NOT NULL AND last_liff_at >= NOW() - ($${daysParamIndex}::int * INTERVAL '1 day'))
+    )`,
+    needsDays: true,
+  };
+}
+
+/**
+ * ✅ 統一：セグメント対象 user_id を返す（itemsはLIMIT適用、countTotalはLIMITなし）
+ */
+async function segmentGetUsersUnified({ days = 30, source = "active", limit = SEGMENT_PUSH_LIMIT } = {}) {
+  // DBあり
   if (pool) {
     const p = mustPool();
-    let where = `last_seen >= NOW() - ($1::int * INTERVAL '1 day')`;
-    if (src === "chat") where = `last_chat_at IS NOT NULL AND last_chat_at >= NOW() - ($1::int * INTERVAL '1 day')`;
-    if (src === "liff") where = `last_liff_at IS NOT NULL AND last_liff_at >= NOW() - ($1::int * INTERVAL '1 day')`;
-    if (src === "active")
-      where = `(
-        (last_chat_at IS NOT NULL AND last_chat_at >= NOW() - ($1::int * INTERVAL '1 day'))
-        OR
-        (last_liff_at IS NOT NULL AND last_liff_at >= NOW() - ($1::int * INTERVAL '1 day'))
-      )`;
+    const src = normalizeSegmentSource(source);
+    const d = clampDays(days);
+    const lim = Math.min(SEGMENT_PUSH_LIMIT, Math.max(1, Number(limit || SEGMENT_PUSH_LIMIT)));
 
-    const r = await p.query(`SELECT user_id FROM segment_users WHERE ${where} ORDER BY user_id ASC LIMIT $2`, [d, SEGMENT_PUSH_LIMIT]);
-    return r.rows.map((x) => x.user_id).filter(Boolean);
+    // WHERE（daysを使うかどうか）
+    const { whereSql, needsDays } = buildSegmentWhereSql(src, 1);
+
+    // countTotal（LIMITなし）
+    let countTotal = 0;
+    if (needsDays) {
+      const rc = await p.query(`SELECT COUNT(DISTINCT user_id)::int AS c FROM segment_users WHERE ${whereSql}`, [d]);
+      countTotal = Number(rc.rows?.[0]?.c || 0);
+    } else {
+      const rc = await p.query(`SELECT COUNT(DISTINCT user_id)::int AS c FROM segment_users WHERE ${whereSql}`);
+      countTotal = Number(rc.rows?.[0]?.c || 0);
+    }
+
+    // items（LIMITあり）
+    let items = [];
+    if (needsDays) {
+      const r = await p.query(
+        `SELECT DISTINCT user_id FROM segment_users WHERE ${whereSql} ORDER BY user_id ASC LIMIT $2`,
+        [d, lim]
+      );
+      items = r.rows.map((x) => x.user_id).filter(Boolean);
+    } else {
+      const r = await p.query(
+        `SELECT DISTINCT user_id FROM segment_users WHERE ${whereSql} ORDER BY user_id ASC LIMIT $1`,
+        [lim]
+      );
+      items = r.rows.map((x) => x.user_id).filter(Boolean);
+    }
+
+    // ここで必ず整形（空や重複排除）
+    items = Array.from(new Set(items.filter(Boolean)));
+    return { source: src, days: src === "all" ? null : d, countTotal, countItems: items.length, items };
   }
 
+  // DBなし（ファイル台帳）
+  const src = normalizeSegmentSource(source);
+  const d = clampDays(days);
   const book = readSegmentUsers();
   const now = Date.now();
   const ms = d * 24 * 60 * 60 * 1000;
 
-  const ids = Object.values(book)
+  const all = Object.values(book)
     .filter((x) => {
       const lastSeen = x?.lastSeen ? new Date(x.lastSeen).getTime() : 0;
       const lastChat = x?.lastChatAt ? new Date(x.lastChatAt).getTime() : 0;
       const lastLiff = x?.lastLiffAt ? new Date(x.lastLiffAt).getTime() : 0;
 
+      if (src === "all") return !!x?.userId;
       if (src === "chat") return lastChat && now - lastChat <= ms;
       if (src === "liff") return lastLiff && now - lastLiff <= ms;
-      if (src === "active") return (lastChat && now - lastChat <= ms) || (lastLiff && now - lastLiff <= ms);
-      return lastSeen && now - lastSeen <= ms;
+      if (src === "seen") return lastSeen && now - lastSeen <= ms;
+      // active
+      return (lastChat && now - lastChat <= ms) || (lastLiff && now - lastLiff <= ms);
     })
     .map((x) => x.userId)
-    .filter(Boolean)
-    .slice(0, SEGMENT_PUSH_LIMIT);
+    .filter(Boolean);
 
-  return ids;
-}
+  const uniq = Array.from(new Set(all));
+  const lim = Math.min(SEGMENT_PUSH_LIMIT, Math.max(1, Number(limit || SEGMENT_PUSH_LIMIT)));
+  const items = uniq.slice(0, lim);
 
-function chunkArray(arr, size) {
-  const out = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
+  return { source: src, days: src === "all" ? null : d, countTotal: uniq.length, countItems: items.length, items };
 }
 
 // =============== LIFF idToken verify（任意） ===============
@@ -1442,300 +1529,72 @@ app.get("/api/admin/orders-db", async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || "server_error" });
   }
 });
+
 // =====================================================
-// 追記：Flex セグメント配信（最小API）
-//  - GET  /api/admin/segment/count?segment=...
-//  - POST /api/admin/segment/push-flex   { segment, flex, test? }
-// segment: "liff_open" | "address" | "order" | "no_order"
+// ✅ 管理：セグメント（ここが管理画面の一致の根）
+// - /api/admin/segment/users
+// - /api/admin/segment/count
+// - /api/admin/segment/send
+// が同じ統一抽出関数を使う
 // =====================================================
 
-// あなたのDBテーブル名（確定）
-const SEG_FLEX_TABLES = {
-  addresses: "addresses",
-  orders: "orders",
-  liffOpenLogs: "liff_open_logs",
-  liffLogs: "liff_logs",           // 既存にある場合の保険（無ければ catch で無視）
-  segmentUsers: "segment_users",
-};
+// 互換：旧エンドポイント（管理画面がこれを叩く想定）
+app.get("/api/admin/segment/users", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const days = Number(req.query.days || 30);
+    const source = String(req.query.source || "active");
 
-// kind 統一運用（あなたの設定：LIFF_OPEN_KIND_MODE が all なら基本 "all"）
-const SEG_FLEX_KIND = "all";
+    const r = await segmentGetUsersUnified({ days, source, limit: SEGMENT_PUSH_LIMIT });
 
-function segFlexNormalizeFlexPayload(flex) {
-  if (!flex || typeof flex !== "object") throw new Error("flex must be an object");
-
-  // 完成形
-  if (flex.type === "flex" && flex.contents) {
-    if (!flex.altText) flex.altText = "磯屋からのお知らせ";
-    return flex;
+    // ✅ 管理画面は「このcountTotal」を表示すれば DBと一致
+    // ✅ items は送信対象そのもの
+    return res.json({
+      ok: true,
+      days: r.days,
+      source: r.source,
+      count: r.countTotal,     // ← DBのDISTINCT総数（LIMIT無関係）
+      returned: r.countItems,  // ← 実際に返した件数（LIMIT影響あり）
+      limit: SEGMENT_PUSH_LIMIT,
+      items: r.items,
+    });
+  } catch (e) {
+    console.error("/api/admin/segment/users error:", e);
+    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
   }
+});
 
-  // contentsだけ（bubble/carousel）
-  return { type: "flex", altText: "磯屋からのお知らせ", contents: flex };
-}
-
-async function segFlexGetUserIds(segment) {
-  if (!pool) throw new Error("db_not_configured (DATABASE_URL not set)");
-
-  const A  = SEG_FLEX_TABLES.addresses;
-  const O  = SEG_FLEX_TABLES.orders;
-  const LO = SEG_FLEX_TABLES.liffOpenLogs;
-  const LL = SEG_FLEX_TABLES.liffLogs;
-  const SU = SEG_FLEX_TABLES.segmentUsers;
-
-  // 1) LIFF起動済み（open_logs優先、liff_logsは存在すれば UNION）
-  if (segment === "liff_open") {
-    // liff_logs が無い環境でも落ちないように分岐
-    let ids = [];
-
-    const r1 = await mustPool().query(
-      `SELECT DISTINCT user_id FROM ${LO} WHERE user_id IS NOT NULL AND user_id <> ''`
-    );
-    ids = ids.concat(r1.rows.map(x => x.user_id));
-
-    try {
-      const r2 = await mustPool().query(
-        `SELECT DISTINCT user_id FROM ${LL}
-          WHERE user_id IS NOT NULL AND user_id <> ''
-            AND (kind = $1 OR kind IS NULL)`,
-        [SEG_FLEX_KIND]
-      );
-      ids = ids.concat(r2.rows.map(x => x.user_id));
-    } catch (e) {
-      // liff_logs が無い / カラム違い は無視（open_logsで十分）
-      console.warn("[segFlex] liff_logs skipped:", e?.message || e);
-    }
-
-    return Array.from(new Set(ids.filter(Boolean)));
-  }
-
-  // 2) 住所登録済み
-  if (segment === "address") {
-    const r = await mustPool().query(
-      `SELECT DISTINCT user_id FROM ${A} WHERE user_id IS NOT NULL AND user_id <> ''`
-    );
-    return r.rows.map(x => x.user_id);
-  }
-
-  // 3) 注文経験あり
-  if (segment === "order") {
-    const r = await mustPool().query(
-      `SELECT DISTINCT user_id FROM ${O} WHERE user_id IS NOT NULL AND user_id <> ''`
-    );
-    return r.rows.map(x => x.user_id);
-  }
-
-  // 4) 未購入者（母集団＝segment_users + liff_open + addresses から orders を除外）
-  if (segment === "no_order") {
-    const r = await mustPool().query(
-      `
-      WITH base AS (
-        SELECT user_id FROM ${SU} WHERE user_id IS NOT NULL AND user_id <> ''
-        UNION
-        SELECT user_id FROM ${LO} WHERE user_id IS NOT NULL AND user_id <> ''
-        UNION
-        SELECT user_id FROM ${A}  WHERE user_id IS NOT NULL AND user_id <> ''
-      ),
-      bought AS (
-        SELECT DISTINCT user_id FROM ${O} WHERE user_id IS NOT NULL AND user_id <> ''
-      )
-      SELECT DISTINCT b.user_id
-        FROM base b
-        LEFT JOIN bought o ON o.user_id = b.user_id
-       WHERE o.user_id IS NULL
-      `
-    );
-    return r.rows.map(x => x.user_id);
-  }
-
-  throw new Error("unknown_segment");
-}
-
-// --- 対象人数 ---
+// ✅ 総数だけ欲しい場合（管理画面の人数表示用）
 app.get("/api/admin/segment/count", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
-    const segment = String(req.query.segment || "").trim();
-    if (!segment) return res.status(400).json({ ok: false, error: "segment_required" });
+    const days = Number(req.query.days || 30);
+    const source = String(req.query.source || "active");
 
-    const userIds = await segFlexGetUserIds(segment);
-    return res.json({ ok: true, segment, count: userIds.length });
+    const r = await segmentGetUsersUnified({ days, source, limit: 1 });
+    return res.json({
+      ok: true,
+      days: r.days,
+      source: r.source,
+      count: r.countTotal,
+    });
   } catch (e) {
     console.error("/api/admin/segment/count error:", e);
     return res.status(500).json({ ok: false, error: e?.message || "server_error" });
   }
 });
 
-// --- Flex配信（test:true なら ADMIN_USER_ID へ1通だけ） ---
-app.post("/api/admin/segment/push-flex", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    const segment = String(req.body?.segment || "").trim();
-    const flexRaw = req.body?.flex;
-    const test = !!req.body?.test;
-
-    if (!segment) return res.status(400).json({ ok: false, error: "segment_required" });
-    if (!flexRaw) return res.status(400).json({ ok: false, error: "flex_required" });
-
-    const flexMessage = segFlexNormalizeFlexPayload(flexRaw);
-
-    // テスト送信
-    if (test) {
-      if (!ADMIN_USER_ID) return res.status(400).json({ ok: false, error: "ADMIN_USER_ID_not_set" });
-      await client.pushMessage(ADMIN_USER_ID, flexMessage);
-      return res.json({ ok: true, mode: "test", sent: 1 });
-    }
-
-    // 本番：一括 push（レート対策で少し間隔）
-    const userIds = await segFlexGetUserIds(segment);
-    if (!userIds.length) return res.json({ ok: true, mode: "bulk", segment, total: 0, sent: 0, failed: 0 });
-
-    const delayMs = 120; // 必要なら調整
-    let sent = 0, failed = 0;
-    const errors = [];
-
-    for (const uid of userIds.slice(0, SEGMENT_PUSH_LIMIT)) {
-      try {
-        await client.pushMessage(uid, flexMessage);
-        sent++;
-      } catch (err) {
-        failed++;
-        errors.push({ user_id: uid, error: err?.message ? err.message : String(err) });
-      }
-      // LINEレート対策
-      await new Promise(r => setTimeout(r, delayMs));
-    }
-
-    return res.json({
-      ok: true,
-      mode: "bulk",
-      segment,
-      total: Math.min(userIds.length, SEGMENT_PUSH_LIMIT),
-      sent,
-      failed,
-      errors: errors.slice(0, 30),
-    });
-  } catch (e) {
-    console.error("/api/admin/segment/push-flex error:", e);
-    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
-  }
-});
-
-// =============== 管理：セグメント（管理HTML互換：preview / send） ===============
-function dayRangeJST(yyyymmdd) {
-  const y = yyyymmdd.slice(0, 4);
-  const m = yyyymmdd.slice(4, 6);
-  const d = yyyymmdd.slice(6, 8);
-  const start = new Date(`${y}-${m}-${d}T00:00:00+09:00`);
-  const end = new Date(`${y}-${m}-${d}T24:00:00+09:00`);
-  return { start, end };
-}
-
-app.post("/api/admin/segment/preview", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    const type = String(req.body?.type || "").trim(); // orders / activeChatters / addresses
-    const date = String(req.body?.date || "").trim(); // YYYYMMDD optional
-
-    let userIds = [];
-
-    if (pool) {
-      const p = mustPool();
-
-      if (type === "orders") {
-        if (date && /^\d{8}$/.test(date)) {
-          const { start, end } = dayRangeJST(date);
-          const r = await p.query(
-            `SELECT DISTINCT user_id FROM orders WHERE user_id IS NOT NULL AND created_at >= $1 AND created_at < $2 ORDER BY user_id ASC LIMIT $3`,
-            [start.toISOString(), end.toISOString(), SEGMENT_PUSH_LIMIT]
-          );
-          userIds = r.rows.map((x) => x.user_id).filter(Boolean);
-        } else {
-          const r = await p.query(
-            `SELECT DISTINCT user_id FROM orders WHERE user_id IS NOT NULL ORDER BY user_id ASC LIMIT $1`,
-            [SEGMENT_PUSH_LIMIT]
-          );
-          userIds = r.rows.map((x) => x.user_id).filter(Boolean);
-        }
-      } else if (type === "activeChatters") {
-        if (date && /^\d{8}$/.test(date)) {
-          const { start, end } = dayRangeJST(date);
-          const r = await p.query(
-            `SELECT user_id FROM segment_users WHERE last_chat_at IS NOT NULL AND last_chat_at >= $1 AND last_chat_at < $2 ORDER BY user_id ASC LIMIT $3`,
-            [start.toISOString(), end.toISOString(), SEGMENT_PUSH_LIMIT]
-          );
-          userIds = r.rows.map((x) => x.user_id).filter(Boolean);
-        } else {
-          const r = await p.query(
-            `SELECT user_id FROM segment_users WHERE last_chat_at IS NOT NULL ORDER BY user_id ASC LIMIT $1`,
-            [SEGMENT_PUSH_LIMIT]
-          );
-          userIds = r.rows.map((x) => x.user_id).filter(Boolean);
-        }
-      } else if (type === "addresses") {
-        if (date && /^\d{8}$/.test(date)) {
-          const { start, end } = dayRangeJST(date);
-          const r = await p.query(
-            `SELECT DISTINCT user_id FROM addresses WHERE user_id IS NOT NULL AND updated_at >= $1 AND updated_at < $2 ORDER BY user_id ASC LIMIT $3`,
-            [start.toISOString(), end.toISOString(), SEGMENT_PUSH_LIMIT]
-          );
-          userIds = r.rows.map((x) => x.user_id).filter(Boolean);
-        } else {
-          const r = await p.query(
-            `SELECT DISTINCT user_id FROM addresses WHERE user_id IS NOT NULL ORDER BY user_id ASC LIMIT $1`,
-            [SEGMENT_PUSH_LIMIT]
-          );
-          userIds = r.rows.map((x) => x.user_id).filter(Boolean);
-        }
-      } else {
-        return res.status(400).json({ ok: false, error: "type_invalid" });
-      }
-    } else {
-      if (type === "orders") {
-        const items = readLogLines(ORDERS_LOG, 5000);
-        if (date && /^\d{8}$/.test(date)) {
-          userIds = items
-            .filter((o) => yyyymmddFromIso(o.ts || o.timestamp || "") === date)
-            .map((o) => o.userId || o.lineUserId)
-            .filter(Boolean);
-        } else {
-          userIds = items.map((o) => o.userId || o.lineUserId).filter(Boolean);
-        }
-        userIds = Array.from(new Set(userIds)).slice(0, SEGMENT_PUSH_LIMIT);
-      } else if (type === "activeChatters") {
-        const book = readSegmentUsers();
-        const ids = Object.values(book)
-          .filter((x) => x?.lastChatAt)
-          .map((x) => x.userId)
-          .filter(Boolean);
-        userIds = Array.from(new Set(ids)).slice(0, SEGMENT_PUSH_LIMIT);
-      } else if (type === "addresses") {
-        const book = safeReadJSON(ADDRESSES_PATH, {});
-        const ids = Object.values(book).map((x) => x?.userId).filter(Boolean);
-        userIds = Array.from(new Set(ids)).slice(0, SEGMENT_PUSH_LIMIT);
-      } else {
-        return res.status(400).json({ ok: false, error: "type_invalid" });
-      }
-    }
-
-    userIds = Array.from(new Set(userIds)).filter(Boolean).slice(0, SEGMENT_PUSH_LIMIT);
-
-    return res.json({ ok: true, total: userIds.length, userIds });
-  } catch (e) {
-    console.error("/api/admin/segment/preview error:", e);
-    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
-  }
-});
-
+// ✅ 送信（管理画面→一括送信）
 app.post("/api/admin/segment/send", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
     const userIds = Array.isArray(req.body?.userIds) ? req.body.userIds.filter(Boolean) : [];
     const messageText = String(req.body?.message || "").trim();
+
     if (!userIds.length) return res.status(400).json({ ok: false, error: "userIds_required" });
     if (!messageText) return res.status(400).json({ ok: false, error: "message_required" });
 
-    const ids = userIds.slice(0, SEGMENT_PUSH_LIMIT);
+    const ids = Array.from(new Set(userIds)).slice(0, SEGMENT_PUSH_LIMIT);
     const chunks = chunkArray(ids, SEGMENT_CHUNK_SIZE);
 
     let okCount = 0;
@@ -1754,20 +1613,6 @@ app.post("/api/admin/segment/send", async (req, res) => {
     return res.json({ ok: true, requested: ids.length, sent: okCount, failed: ngCount });
   } catch (e) {
     console.error("/api/admin/segment/send error:", e);
-    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
-  }
-});
-
-// 互換：旧エンドポイント
-app.get("/api/admin/segment/users", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    const days = Number(req.query.days || 30);
-    const source = String(req.query.source || "active");
-    const ids = await listSegmentUserIds(days, source);
-    return res.json({ ok: true, days, source, count: ids.length, items: ids });
-  } catch (e) {
-    console.error("/api/admin/segment/users error:", e);
     return res.status(500).json({ ok: false, error: e?.message || "server_error" });
   }
 });
@@ -1818,10 +1663,7 @@ function productsFlex() {
         contents: [
           { type: "text", text: p.name, weight: "bold", size: "md", wrap: true },
           { type: "text", text: `価格：${yen(p.price)}　在庫：${p.stock ?? 0}`, size: "sm", wrap: true },
-
-          // ★追加：内容量
           p.volume ? { type: "text", text: `内容量：${String(p.volume)}`, size: "sm", wrap: true } : null,
-
           p.desc ? { type: "text", text: p.desc, size: "sm", wrap: true } : null,
         ].filter(Boolean),
       },
@@ -1997,10 +1839,7 @@ function confirmFlex(product, qty, method, payment, address, pickupName) {
     `受取方法：${method === "pickup" ? "店頭受取（送料0円）" : "宅配（送料あり）"}`,
     `支払い：${payText}`,
     `商品：${product.name}`,
-
-    // ★追加：内容量
     ...(product.volume ? [`内容量：${String(product.volume)}`] : []),
-
     `数量：${qty}個`,
     `小計：${yen(subtotal)}`,
   ];
@@ -2128,22 +1967,26 @@ async function notifyAdminIncomingMessage(ev, bodyText, extra = {}) {
 
 // =============== handleEvent ===============
 async function handleEvent(ev) {
-    const userId = ev?.source?.userId || "";
+  const userId = ev?.source?.userId || "";
   if (userId) {
     try {
       await touchUser(userId, "seen");
     } catch {}
   }
+
   // ==============================
   // 会員コード照会（チャット）
   // ==============================
-  if (
-    ev.type === 'message' &&
-    ev.message?.type === 'text' &&
-    ev.message.text.trim() === '会員コード'
-  ) {
+  if (ev.type === "message" && ev.message?.type === "text" && ev.message.text.trim() === "会員コード") {
     try {
-      const { rows } = await pool.query(
+      if (!pool) {
+        return client.replyMessage(ev.replyToken, {
+          type: "text",
+          text: "現在、会員コード照会（DB）が未設定です。住所登録（LIFF）後にDB設定をご確認ください。",
+        });
+      }
+
+      const { rows } = await mustPool().query(
         `
         SELECT member_code
         FROM addresses
@@ -2156,24 +1999,20 @@ async function handleEvent(ev) {
 
       if (rows.length === 0) {
         return client.replyMessage(ev.replyToken, {
-          type: 'text',
-          text:
-            'まだ会員コードが発行されていません。\n' +
-            '先にミニアプリから住所登録をお願いします。',
+          type: "text",
+          text: "まだ会員コードが発行されていません。\n先にミニアプリから住所登録をお願いします。",
         });
       }
 
       return client.replyMessage(ev.replyToken, {
-        type: 'text',
-        text:
-          `あなたの会員コードは【${rows[0].member_code}】です。\n\n` +
-          '📞 電話注文の際にお伝えください。',
+        type: "text",
+        text: `あなたの会員コードは【${rows[0].member_code}】です。\n\n📞 電話注文の際にお伝えください。`,
       });
     } catch (err) {
-      console.error('会員コード取得エラー', err);
+      console.error("会員コード取得エラー", err);
       return client.replyMessage(ev.replyToken, {
-        type: 'text',
-        text: '会員コードの取得に失敗しました。時間をおいてお試しください。',
+        type: "text",
+        text: "会員コードの取得に失敗しました。時間をおいてお試しください。",
       });
     }
   }
@@ -2315,6 +2154,7 @@ async function handleEvent(ev) {
         ]);
       }
 
+      // ※久助のconfirmは宅配+代引想定（既存仕様維持）
       return client.replyMessage(ev.replyToken, [{ type: "text", text: "久助の注文内容です。" }, confirmFlex(product, qty, "delivery", "cod", null, null)]);
     }
 

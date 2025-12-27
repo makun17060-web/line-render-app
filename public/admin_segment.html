@@ -48,6 +48,8 @@
     .pill b{color:var(--text)}
     .hint{font-size:12px;color:var(--muted);line-height:1.55}
     .danger-note{font-size:12px;color:#7f1d1d;background:#fff7ed;border:1px solid #fed7aa;padding:10px;border-radius:10px}
+    .mutedline{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.55}
+    code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
   </style>
 </head>
 <body>
@@ -59,7 +61,7 @@
       <div class="card">
         <div class="field">
           <label>管理トークン（Bearer）</label>
-          <input id="token" type="password" placeholder="ADMIN_TOKEN を貼り付け" autocomplete="off" />
+          <input id="token" type="password" placeholder="ADMIN_API_TOKEN を貼り付け" autocomplete="off" />
           <div class="row" style="margin-top:8px;">
             <button id="saveToken" class="secondary" type="button">保存</button>
             <button id="clearToken" class="ghost" type="button">消去</button>
@@ -76,12 +78,11 @@
           <div class="row">
             <div style="flex:1;min-width:160px;">
               <label class="small">source（種別）</label>
-              <!-- ★idは kind のまま（JSと一致） -->
               <select id="kind">
-                <option value="active" selected>active（最近アクティブ）</option>
+                <option value="active" selected>active（最近アクティブ：chat or liff）</option>
                 <option value="chat">chat（最近チャット）</option>
                 <option value="liff">liff（最近LIFF起動）</option>
-                <option value="all">all（全て統合）</option>
+                <option value="all">all（last_seen：全て）</option>
               </select>
             </div>
             <div style="width:140px;">
@@ -98,6 +99,11 @@
           <div class="danger-note" style="margin-top:10px;">
             ⚠ 一括Pushは対象人数に応じて送信量が増えます。まずは抽出→件数確認→文面確認を推奨。
           </div>
+
+          <div class="mutedline">
+            ※ この画面の <b>count</b> は、サーバーが返す <code>count</code> をそのまま表示します。<br/>
+            （管理画面で独自に数えない＝DB取得件数とズレない）
+          </div>
         </div>
 
         <hr style="border:0;border-top:1px solid var(--line);margin:12px 0;" />
@@ -107,7 +113,7 @@
           <div class="row">
             <div style="width:160px;">
               <label class="small">種別</label>
-              <select id="msgType">
+              <select id="msgType" disabled>
                 <option value="text" selected>text</option>
               </select>
             </div>
@@ -122,7 +128,7 @@
             <button id="sendPush" type="button">一括Push（本送信）</button>
           </div>
           <div class="hint" style="margin-top:8px;">
-            dryRun はサーバーが対応している場合、対象件数やプレビューを返します（安全確認用）。
+            dryRun はこの画面内で「対象件数・先頭userId・本文長」を表示するだけです（サーバーへ送信しません）。
           </div>
         </div>
 
@@ -135,7 +141,7 @@
           <span class="pill">source: <b id="kindEcho">-</b></span>
           <span class="pill">days: <b id="daysEcho">-</b></span>
           <span class="pill">count: <b id="count">0</b></span>
-          <span class="small">（表示は最大500件）</span>
+          <span class="small">（表の表示は最大500件）</span>
         </div>
 
         <div class="row" style="margin:10px 0;">
@@ -164,7 +170,7 @@
         <div class="hint" style="margin-top:10px;">
           API:
           <span class="mono">GET /api/admin/segment/users?source=...&days=...</span> /
-          <span class="mono">POST /api/admin/push/segment</span>
+          <span class="mono">POST /api/admin/segment/send</span>
           （Bearer 必須）
         </div>
       </div>
@@ -172,7 +178,6 @@
     </div>
   </div>
 
-  <!-- ★同階層のJSを読み込み -->
-  <script src="/public/admin_segment.js"></script>
+  <script src="/public/admin_segment.js?v=20251227_1"></script>
 </body>
 </html>

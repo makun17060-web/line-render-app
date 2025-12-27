@@ -1,339 +1,325 @@
-// admin_segment.js — 丸ごと版（server-line.js の /api/admin/segment/users + /api/admin/push/segment 対応）
-// - source: active / chat / liff / all
-// - token: Bearer ヘッダ
-// - HTMLの要素IDが不足していても落とさず警告表示で終了
-(() => {
-  const byId = (id) => document.getElementById(id);
+// admin_segment.js — 丸ごと版（管理HTMLとDB取得件数を一致させる版）
+// - 抽出: GET  /api/admin/segment/users?source=...&days=...
+// - 送信: POST /api/admin/segment/send  { userIds:[], message:"..." }
+// - count はサーバー応答の count をそのまま表示（=DB取得件数と一致）
+// - 表の表示は最大500件（UI都合）
+// - Bearer token は localStorage に保存
 
-  function showMissing(missing) {
-    const box = byId("toast");
-    if (!box) return;
-    box.style.display = "block";
-    box.className = "toast warn";
-    box.textContent =
-      "管理画面のHTMLとJSが一致していません。不足ID: " +
-      missing.join(", ") +
-      "（admin_segment.html を最新版に差し替えてください）";
+(() => {
+  const $ = (id) => document.getElementById(id);
+
+  const el = {
+    token: $("token"),
+    saveToken: $("saveToken"),
+    clearToken: $("clearToken"),
+
+    kind: $("kind"),
+    days: $("days"),
+    fetchSegment: $("fetchSegment"),
+    segmentStat: $("segmentStat"),
+
+    msgText: $("msgText"),
+    dryRun: $("dryRun"),
+    sendPush: $("sendPush"),
+
+    toast: $("toast"),
+
+    kindEcho: $("kindEcho"),
+    daysEcho: $("daysEcho"),
+    count: $("count"),
+    tbody: $("tbody"),
+
+    copyAll: $("copyAll"),
+    downloadCsv: $("downloadCsv"),
+  };
+
+  // ---- state ----
+  let last = {
+    source: "active",
+    days: 30,
+    count: 0,
+    userIds: [],
+  };
+
+  // ---- token storage ----
+  const LS_KEY = "ISOYA_ADMIN_BEARER_TOKEN";
+
+  function getToken() {
+    const t = (el.token?.value || "").trim();
+    if (t) return t;
+    return (localStorage.getItem(LS_KEY) || "").trim();
+  }
+  function loadTokenToInput() {
+    const saved = (localStorage.getItem(LS_KEY) || "").trim();
+    if (saved && el.token) el.token.value = saved;
   }
 
-  function init() {
-    // ===== 必須要素 =====
-    // ※HTML側は「kind」をsourceセレクトとして使う運用（idはそのまま kind）
-    const idsMust = [
-      "token",
-      "saveToken",
-      "clearToken",
-      "kind", // source セレクトに使う（active/chat/liff/all）
-      "days",
-      "fetchSegment",
-      "segmentStat",
-      "msgType",
-      "msgText",
-      "dryRun",
-      "sendPush",
-      "toast",
-      "tbody",
-      "count",
-      "kindEcho",
-      "daysEcho",
-      "copyAll",
-      "downloadCsv",
-    ];
+  // ---- ui helpers ----
+  function setToast(type, text) {
+    if (!el.toast) return;
+    el.toast.style.display = "block";
+    el.toast.className = `toast ${type === "ok" ? "ok" : "warn"}`;
+    el.toast.textContent = text || "";
+  }
+  function clearToast() {
+    if (!el.toast) return;
+    el.toast.style.display = "none";
+    el.toast.textContent = "";
+    el.toast.className = "toast";
+  }
 
-    const missing = idsMust.filter((id) => !byId(id));
-    if (missing.length) {
-      console.error("Missing elements:", missing);
-      showMissing(missing);
-      return; // ★落とさず終了
+  function setBusy(b) {
+    if (el.fetchSegment) el.fetchSegment.disabled = !!b;
+    if (el.sendPush) el.sendPush.disabled = !!b;
+    if (el.dryRun) el.dryRun.disabled = !!b;
+  }
+
+  function escapeCsvCell(s) {
+    const v = String(s ?? "");
+    if (/[",\n\r]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
+    return v;
+  }
+
+  function renderTable(userIds) {
+    const list = Array.isArray(userIds) ? userIds : [];
+    const show = list.slice(0, 500);
+
+    if (!el.tbody) return;
+
+    if (show.length === 0) {
+      el.tbody.innerHTML = `
+        <tr>
+          <td colspan="2" class="small" style="color:#666;padding:12px;">
+            該当 userId がありません。
+          </td>
+        </tr>`;
+      return;
     }
 
-    // ===== DOM =====
-    const tokenEl = byId("token");
-    const saveTokenBtn = byId("saveToken");
-    const clearTokenBtn = byId("clearToken");
+    el.tbody.innerHTML = show
+      .map(
+        (uid, i) => `
+        <tr>
+          <td>${i + 1}</td>
+          <td class="mono">${String(uid)}</td>
+        </tr>
+      `
+      )
+      .join("");
+  }
 
-    const sourceEl = byId("kind"); // ← idは kind だが中身は source
-    const daysEl = byId("days");
-    const fetchBtn = byId("fetchSegment");
-    const segmentStat = byId("segmentStat");
+  function renderStats({ source, days, count, userIds }) {
+    if (el.kindEcho) el.kindEcho.textContent = source ?? "-";
+    if (el.daysEcho) el.daysEcho.textContent = String(days ?? "-");
+    if (el.count) el.count.textContent = String(count ?? 0);
 
-    const msgTypeEl = byId("msgType");
-    const msgTextEl = byId("msgText");
+    const ok = Array.isArray(userIds) && userIds.length > 0;
+    if (el.copyAll) el.copyAll.disabled = !ok;
+    if (el.downloadCsv) el.downloadCsv.disabled = !ok;
 
-    const dryRunBtn = byId("dryRun");
-    const sendBtn = byId("sendPush");
+    if (el.segmentStat) {
+      el.segmentStat.textContent = ok
+        ? `抽出OK：${count}件（表示 ${Math.min(500, userIds.length)}件）`
+        : "抽出OK：0件";
+    }
+  }
 
-    const toast = byId("toast");
+  // ---- api ----
+  async function apiFetchSegment(source, days) {
+    const token = getToken();
+    if (!token) throw new Error("管理トークン（Bearer）が未設定です");
 
-    const tbody = byId("tbody");
-    const countEl = byId("count");
-    const kindEcho = byId("kindEcho");
-    const daysEcho = byId("daysEcho");
+    const qs = new URLSearchParams();
+    qs.set("source", String(source || "active"));
+    qs.set("days", String(days || 30));
 
-    const copyAllBtn = byId("copyAll");
-    const downloadCsvBtn = byId("downloadCsv");
+    const r = await fetch(`/api/admin/segment/users?${qs.toString()}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
 
-    const STORAGE_KEY = "iso_admin_token";
-
-    // 直近抽出結果
-    let lastSegment = { source: null, days: null, items: [] };
-
-    // ===== UI util =====
-    function showToast(text, type = "ok") {
-      toast.style.display = "block";
-      toast.textContent = text;
-      toast.className = "toast " + (type === "ok" ? "ok" : type === "warn" ? "warn" : "");
+    let j = null;
+    try {
+      j = await r.json();
+    } catch {
+      // 非JSONの時はそのまま
+      const t = await r.text().catch(() => "");
+      throw new Error(`API応答がJSONではありません（HTTP ${r.status}）: ${t.slice(0, 120)}`);
     }
 
-    function hideToast() {
-      toast.style.display = "none";
-      toast.textContent = "";
-      toast.className = "toast";
+    if (!r.ok || !j?.ok) {
+      const msg = j?.error || `HTTP ${r.status}`;
+      throw new Error(`抽出APIエラー: ${msg}`);
     }
 
-    function getToken() {
-      return (tokenEl.value || "").trim();
+    // サーバーが返す count/items をそのまま使う（ここが「一致」の肝）
+    const items = Array.isArray(j.items) ? j.items : [];
+    const count = Number(j.count ?? items.length) || 0;
+
+    // 念のためユニーク化（サーバー側でDISTINCTしていても安全）
+    const uniq = Array.from(new Set(items.filter(Boolean)));
+
+    return { source: j.source ?? source, days: j.days ?? days, count, userIds: uniq };
+  }
+
+  async function apiSendPush(userIds, message) {
+    const token = getToken();
+    if (!token) throw new Error("管理トークン（Bearer）が未設定です");
+    if (!Array.isArray(userIds) || userIds.length === 0) throw new Error("送信対象が0件です（先に抽出してください）");
+    const msg = String(message || "").trim();
+    if (!msg) throw new Error("本文が空です");
+
+    const r = await fetch(`/api/admin/segment/send`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ userIds, message: msg }),
+    });
+
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j?.ok) {
+      const msg2 = j?.error || `HTTP ${r.status}`;
+      throw new Error(`送信APIエラー: ${msg2}`);
     }
+    return j;
+  }
 
-    function setLoading(isLoading) {
-      fetchBtn.disabled = isLoading;
-      sendBtn.disabled = isLoading;
-      dryRunBtn.disabled = isLoading;
-      sourceEl.disabled = isLoading;
-      daysEl.disabled = isLoading;
+  // ---- events ----
+  function onSaveToken() {
+    clearToast();
+    const t = (el.token?.value || "").trim();
+    if (!t) return setToast("warn", "トークンが空です。ADMIN_API_TOKEN を貼り付けてください。");
+    localStorage.setItem(LS_KEY, t);
+    setToast("ok", "保存しました（localStorage）");
+  }
+
+  function onClearToken() {
+    clearToast();
+    localStorage.removeItem(LS_KEY);
+    if (el.token) el.token.value = "";
+    setToast("ok", "消去しました");
+  }
+
+  async function onFetchSegment() {
+    clearToast();
+    setBusy(true);
+    try {
+      const source = String(el.kind?.value || "active").trim();
+      const days = Math.min(365, Math.max(1, Number(el.days?.value || 30)));
+
+      const data = await apiFetchSegment(source, days);
+
+      last = { source: data.source, days: data.days, count: data.count, userIds: data.userIds };
+
+      renderStats(last);
+      renderTable(last.userIds);
+
+      setToast("ok", `抽出しました：${last.count}件（表示 ${Math.min(500, last.userIds.length)}件）`);
+    } catch (e) {
+      setToast("warn", e?.message || String(e));
+    } finally {
+      setBusy(false);
     }
+  }
 
-    function authHeaders() {
-      const t = getToken();
-      return t ? { Authorization: "Bearer " + t } : {};
-    }
+  function onDryRun() {
+    clearToast();
+    const msg = String(el.msgText?.value || "").trim();
+    if (!last.userIds.length) return setToast("warn", "まだ抽出していません。先に「対象者を抽出」を押してください。");
+    if (!msg) return setToast("warn", "本文が空です。");
 
-    function enableExportButtons(enabled) {
-      copyAllBtn.disabled = !enabled;
-      downloadCsvBtn.disabled = !enabled;
-    }
+    const head = last.userIds.slice(0, 3).join(", ");
+    setToast(
+      "ok",
+      `dryRun OK\n対象: ${last.count}件（現在保持 ${last.userIds.length}件）\n先頭: ${head}${last.userIds.length > 3 ? " ..." : ""}\n本文長: ${msg.length}文字`
+    );
+  }
 
-    // ===== API =====
-    async function apiGetSegment(source, days) {
-      const url = `/api/admin/segment/users?source=${encodeURIComponent(
-        source
-      )}&days=${encodeURIComponent(days)}`;
+  async function onSendPush() {
+    clearToast();
+    setBusy(true);
+    try {
+      const msg = String(el.msgText?.value || "").trim();
+      if (!msg) throw new Error("本文が空です。");
+      if (!last.userIds.length) throw new Error("送信対象が0件です（先に抽出してください）。");
 
-      const r = await fetch(url, { headers: { ...authHeaders() } });
-      const j = await r.json().catch(() => ({}));
-
-      if (!r.ok || !j.ok) {
-        throw new Error(j.error || `HTTP ${r.status}`);
-      }
-
-      // 期待形式：{ok:true, days, source, count, items:[...]}
-      return j;
-    }
-
-    async function apiPushSegment(source, days, message, dryRun = false) {
-      const r = await fetch(`/api/admin/push/segment`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ days, source, message, dryRun }),
-      });
-
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j.ok) {
-        throw new Error(j.error || `HTTP ${r.status}`);
-      }
-      return j;
-    }
-
-    // ===== render =====
-    function renderSegment(items) {
-      const max = 500;
-      const view = (items || []).slice(0, max);
-
-      if (!items || items.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="2" class="small" style="color:#666;padding:12px;">対象が0件でした。</td></tr>`;
+      // ここで最終確認を入れたい場合は confirm() を使っても良いが、
+      // 事故を避けるため、最低限の注意文だけ出す
+      const ok = window.confirm(`本当に送信しますか？\n対象: ${last.count}件\n本文先頭: ${msg.slice(0, 30)}${msg.length > 30 ? "..." : ""}`);
+      if (!ok) {
+        setToast("warn", "キャンセルしました。");
         return;
       }
 
-      const esc = (s) =>
-        String(s).replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
-
-      tbody.innerHTML = view
-        .map((uid, i) => `<tr><td class="mono">${i + 1}</td><td class="mono">${esc(uid)}</td></tr>`)
-        .join("");
-
-      if (items.length > max) {
-        tbody.innerHTML += `<tr><td colspan="2" class="small" style="color:#666;padding:12px;">表示は先頭${max}件まで（全件=${items.length}件）</td></tr>`;
-      }
+      const result = await apiSendPush(last.userIds, msg);
+      setToast("ok", `送信結果: requested=${result.requested} / sent=${result.sent} / failed=${result.failed}`);
+    } catch (e) {
+      setToast("warn", e?.message || String(e));
+    } finally {
+      setBusy(false);
     }
-
-    function makeTextMessage() {
-      const type = msgTypeEl.value;
-      if (type !== "text") throw new Error("未対応のメッセージ種別です（textのみ対応）");
-      const text = (msgTextEl.value || "").trim();
-      if (!text) throw new Error("配信テキストが空です");
-      return { type: "text", text };
-    }
-
-    async function copyAll() {
-      const text = (lastSegment.items || []).join("\n");
-      await navigator.clipboard.writeText(text);
-      showToast("userId をクリップボードにコピーしました", "ok");
-    }
-
-    function downloadCsvFile() {
-      const rows = [["userId"], ...(lastSegment.items || []).map((u) => [u])];
-      const csv = rows
-        .map((r) => r.map((x) => `"${String(x).replace(/"/g, '""')}"`).join(","))
-        .join("\n");
-
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `segment_${String(lastSegment.source || "source")}_days${String(lastSegment.days || "x")}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    }
-
-    // ===== init state =====
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) tokenEl.value = saved;
-
-    enableExportButtons(false);
-
-    saveTokenBtn.addEventListener("click", () => {
-      const t = getToken();
-      if (!t) return showToast("トークンが空です", "warn");
-      localStorage.setItem(STORAGE_KEY, t);
-      showToast("トークンを保存しました", "ok");
-    });
-
-    clearTokenBtn.addEventListener("click", () => {
-      tokenEl.value = "";
-      localStorage.removeItem(STORAGE_KEY);
-      showToast("トークンを消去しました", "ok");
-    });
-
-    // ===== 抽出 =====
-    fetchBtn.addEventListener("click", async () => {
-      hideToast();
-
-      const source = String(sourceEl.value || "active").trim().toLowerCase();
-      const days = Math.max(1, Math.min(365, Number(daysEl.value || 30)));
-
-      if (!getToken()) return showToast("管理トークンを入力してください", "warn");
-
-      setLoading(true);
-      segmentStat.textContent = "抽出中…";
-
-      try {
-        const j = await apiGetSegment(source, days);
-
-        lastSegment = {
-          source: j.source || source,
-          days: j.days || days,
-          items: j.items || [],
-        };
-
-        renderSegment(lastSegment.items);
-
-        countEl.textContent = String(j.count ?? lastSegment.items.length);
-        kindEcho.textContent = String(lastSegment.source);
-        daysEcho.textContent = String(lastSegment.days);
-
-        segmentStat.textContent = `抽出OK（${lastSegment.items.length}件）`;
-        enableExportButtons(lastSegment.items.length > 0);
-
-        showToast(`抽出しました：${lastSegment.items.length}件`, "ok");
-      } catch (e) {
-        segmentStat.textContent = "抽出NG";
-        enableExportButtons(false);
-        tbody.innerHTML = `<tr><td colspan="2" class="small" style="color:#b91c1c;padding:12px;">抽出に失敗：${String(
-          e.message || e
-        )}</td></tr>`;
-        showToast(`抽出に失敗：${String(e.message || e)}`, "warn");
-      } finally {
-        setLoading(false);
-      }
-    });
-
-    // ===== dryRun（プレビュー）=====
-    dryRunBtn.addEventListener("click", async () => {
-      hideToast();
-
-      const source = String(sourceEl.value || "active").trim().toLowerCase();
-      const days = Math.max(1, Math.min(365, Number(daysEl.value || 30)));
-
-      if (!getToken()) return showToast("管理トークンを入力してください", "warn");
-
-      let msg;
-      try {
-        msg = makeTextMessage();
-      } catch (e) {
-        return showToast(String(e.message || e), "warn");
-      }
-
-      setLoading(true);
-      try {
-        const j = await apiPushSegment(source, days, msg, true);
-        const pv = j.preview || [];
-        showToast(`dryRun OK：対象 ${j.target}件 / 先頭プレビュー ${pv.length}件`, "ok");
-      } catch (e) {
-        showToast(`dryRun 失敗：${String(e.message || e)}`, "warn");
-      } finally {
-        setLoading(false);
-      }
-    });
-
-    // ===== 配信 =====
-    sendBtn.addEventListener("click", async () => {
-      hideToast();
-
-      const source = String(sourceEl.value || "active").trim().toLowerCase();
-      const days = Math.max(1, Math.min(365, Number(daysEl.value || 30)));
-
-      if (!getToken()) return showToast("管理トークンを入力してください", "warn");
-      if (!lastSegment.items || lastSegment.items.length === 0) {
-        return showToast("先に「対象者を抽出」してください", "warn");
-      }
-
-      let msg;
-      try {
-        msg = makeTextMessage();
-      } catch (e) {
-        return showToast(String(e.message || e), "warn");
-      }
-
-      setLoading(true);
-      try {
-        const j = await apiPushSegment(source, days, msg, false);
-        showToast(`配信完了：成功 ${j.pushed} / 失敗 ${j.failed}（対象 ${j.target}）`, "ok");
-      } catch (e) {
-        showToast(`配信に失敗：${String(e.message || e)}`, "warn");
-      } finally {
-        setLoading(false);
-      }
-    });
-
-    // ===== export =====
-    copyAllBtn.addEventListener("click", () => {
-      if (!lastSegment.items || lastSegment.items.length === 0) return showToast("コピー対象がありません", "warn");
-      copyAll().catch((e) => showToast(`コピー失敗：${String(e.message || e)}`, "warn"));
-    });
-
-    downloadCsvBtn.addEventListener("click", () => {
-      if (!lastSegment.items || lastSegment.items.length === 0) return showToast("CSV対象がありません", "warn");
-      downloadCsvFile();
-      showToast("CSVをダウンロードしました", "ok");
-    });
   }
 
-  // DOMができてから初期化（timing起因のエラー回避）
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
+  function onCopyAll() {
+    clearToast();
+    if (!last.userIds.length) return setToast("warn", "コピー対象がありません。");
+    const text = last.userIds.join("\n");
+    navigator.clipboard
+      .writeText(text)
+      .then(() => setToast("ok", `コピーしました（${last.userIds.length}件）`))
+      .catch(() => setToast("warn", "コピーに失敗しました（ブラウザ権限を確認）"));
   }
+
+  function onDownloadCsv() {
+    clearToast();
+    if (!last.userIds.length) return setToast("warn", "CSV対象がありません。");
+
+    const header = ["userId"];
+    const rows = last.userIds.map((uid) => [escapeCsvCell(uid)].join(","));
+    const csv = [header.join(","), ...rows].join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+
+    const ts = new Date();
+    const y = ts.getFullYear();
+    const m = String(ts.getMonth() + 1).padStart(2, "0");
+    const d = String(ts.getDate()).padStart(2, "0");
+    a.download = `segment_${last.source}_${last.days}d_${y}${m}${d}.csv`;
+
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    setToast("ok", "CSVをダウンロードしました。");
+  }
+
+  // ---- init ----
+  function init() {
+    loadTokenToInput();
+
+    el.saveToken?.addEventListener("click", onSaveToken);
+    el.clearToken?.addEventListener("click", onClearToken);
+
+    el.fetchSegment?.addEventListener("click", onFetchSegment);
+    el.dryRun?.addEventListener("click", onDryRun);
+    el.sendPush?.addEventListener("click", onSendPush);
+
+    el.copyAll?.addEventListener("click", onCopyAll);
+    el.downloadCsv?.addEventListener("click", onDownloadCsv);
+
+    // 初期表示
+    renderStats(last);
+    renderTable([]);
+  }
+
+  init();
 })();

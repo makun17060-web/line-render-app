@@ -1,14 +1,26 @@
-// send_blast_once.js
-// Run: SEGMENT_KEY=... node send_blast_once.js
+// send_blast_once.js — コマンドだけで Text/Flex 切替版
+// Run:
+//   SEGMENT_KEY=... MESSAGE_FILE=... node send_blast_once.js
 // Requires: DATABASE_URL, LINE_CHANNEL_ACCESS_TOKEN
+//
+// MESSAGE_FILE の形式：
+//   - JSON配列: [ {message}, {message} ... ]
+//   - または: { "messages": [ ... ] }
+//
+// 例:
+//   MESSAGE_FILE=./messages/text.json
+//   MESSAGE_FILE=./messages/flex.json
 
 "use strict";
 
+const fs = require("fs");
+const path = require("path");
 const { Pool } = require("pg");
 
 const SEGMENT_KEY = process.env.SEGMENT_KEY || "liff_200_blast_20251223";
 const TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 const DBURL = process.env.DATABASE_URL;
+const MESSAGE_FILE = process.env.MESSAGE_FILE || ""; // ここが切替のキー
 
 if (!TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
 if (!DBURL) throw new Error("DATABASE_URL is required");
@@ -17,6 +29,67 @@ const pool = new Pool({
   connectionString: DBURL,
   ssl: { rejectUnauthorized: false },
 });
+
+function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+function mustString(x, name) {
+  if (typeof x !== "string" || x.trim() === "") throw new Error(`${name} must be a non-empty string`);
+  return x.trim();
+}
+
+// messages を外部JSONから読み込む（JS固定で切替）
+function loadMessages() {
+  // MESSAGE_FILE 未指定ならデフォルト（テキスト）
+  if (!MESSAGE_FILE) {
+    return [
+      {
+        type: "text",
+        text: "（デフォルト）テスト配信です。MESSAGE_FILEを指定すると内容を切替できます。",
+      },
+    ];
+  }
+
+  const fp = path.resolve(process.cwd(), MESSAGE_FILE);
+  if (!fs.existsSync(fp)) throw new Error(`MESSAGE_FILE not found: ${fp}`);
+
+  const raw = fs.readFileSync(fp, "utf8");
+  let json;
+  try {
+    json = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`MESSAGE_FILE JSON parse failed: ${e.message}`);
+  }
+
+  const msgs = Array.isArray(json) ? json : json?.messages;
+  if (!Array.isArray(msgs) || msgs.length === 0) {
+    throw new Error(`MESSAGE_FILE format invalid. Use: [..] or {"messages":[..]}`);
+  }
+
+  // 軽いバリデーション（事故防止）
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
+    if (!m || typeof m !== "object") throw new Error(`messages[${i}] must be an object`);
+    const type = mustString(m.type, `messages[${i}].type`);
+    if (type === "text") {
+      mustString(m.text, `messages[${i}].text`);
+    } else if (type === "flex") {
+      mustString(m.altText, `messages[${i}].altText`);
+      if (!m.contents || typeof m.contents !== "object") throw new Error(`messages[${i}].contents is required`);
+    } else if (type === "image") {
+      mustString(m.originalContentUrl, `messages[${i}].originalContentUrl`);
+      mustString(m.previewImageUrl, `messages[${i}].previewImageUrl`);
+    } else {
+      // 必要なら他のtypeも許可してOK。今は安全重視で拒否
+      throw new Error(`Unsupported message type: ${type} (allowed: text, flex, image)`);
+    }
+  }
+
+  return msgs;
+}
 
 async function lineMulticast(to, messages) {
   const res = await fetch("https://api.line.me/v2/bot/message/multicast", {
@@ -33,14 +106,14 @@ async function lineMulticast(to, messages) {
   return text;
 }
 
-function chunk(arr, size) {
-  const out = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
-
 (async () => {
-  // 未送信だけ取得（最大20000まで→500ずつ分割で送る）
+  // ✅ messages を確定（ここでファイル読み込み）
+  const messages = loadMessages();
+  console.log(`SEGMENT_KEY=${SEGMENT_KEY}`);
+  console.log(`MESSAGE_FILE=${MESSAGE_FILE || "(default)"}`);
+  console.log(`messages_count=${messages.length}, first_type=${messages[0]?.type}`);
+
+  // 未送信だけ取得（最大20000→500ずつ分割）
   const { rows } = await pool.query(
     `
     SELECT user_id
@@ -54,82 +127,13 @@ function chunk(arr, size) {
   );
 
   const ids = rows.map((r) => r.user_id).filter(Boolean);
-  console.log(`SEGMENT_KEY=${SEGMENT_KEY} unsent targets=${ids.length}`);
+  console.log(`unsent targets=${ids.length}`);
 
   if (ids.length === 0) {
     console.log("Nothing to send.");
     await pool.end();
     return;
   }
-
-  // ✅ Flexメッセージ（messages[0] がFlex本体）
-  const messages = [
-    {
-      type: "flex",
-      altText: "磯屋ミニアプリのご案内",
-      contents: {
-        type: "bubble",
-        hero: {
-          type: "image",
-          url: "https://line-render-app-1.onrender.com/public/uploads/1766470786708_akashi_item.jpg",
-          size: "full",
-          aspectRatio: "1:1",
-          aspectMode: "cover",
-        },
-        body: {
-          type: "box",
-          layout: "vertical",
-          spacing: "md",
-          contents: [
-            {
-              type: "text",
-              text: "手造りえびせんべい 磯屋",
-              weight: "bold",
-              size: "lg",
-              wrap: true,
-            },
-            {
-              type: "text",
-              text: "ミニアプリから簡単にご注文できます。見るだけでもOKです😊",
-              size: "sm",
-              color: "#666666",
-              wrap: true,
-            },
-            { type: "separator", margin: "md" },
-            {
-              type: "text",
-              text: "✔ 種類を選んで数量入力\n✔ 住所登録で次回からスムーズ",
-              size: "sm",
-              wrap: true,
-            },
-          ],
-        },
-        footer: {
-          type: "box",
-          layout: "vertical",
-          spacing: "sm",
-          contents: [
-            {
-              type: "button",
-              style: "primary",
-              action: {
-                type: "uri",
-                label: "ミニアプリを開く",
-                uri: "https://liff.line.me/2008406620-G5j1gjzM",
-              },
-            },
-            {
-              type: "text",
-              text: "※在庫・受取方法は画面で確認できます",
-              size: "xs",
-              color: "#888888",
-              wrap: true,
-            },
-          ],
-        },
-      },
-    },
-  ];
 
   const batches = chunk(ids, 500); // multicastは最大500
   let sent = 0;

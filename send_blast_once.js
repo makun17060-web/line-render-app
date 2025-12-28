@@ -63,16 +63,70 @@ function chunk(arr, size) {
   }
 
   // ★文面（まずは text が安全）
-  const messages = [
-    {
-      type: "text",
-      text:
-        "ミニアプリをご利用ありがとうございます😊\n" +
-        "本格派えびせんべいをぜひご賞味ください\n" +
-        "👇\n" +
-        "https://liff.line.me/2008406620-G5j1gjzM",
-    },
-  ];
+  {
+  "type": "bubble",
+  "hero": {
+    "type": "image",
+    "url": "https://line-render-app-1.onrender.com/public/uploads/1766470786708_akashi_item.jpg",
+    "size": "full",
+    "aspectRatio": "1:1",
+    "aspectMode": "cover"
+  },
+  "body": {
+    "type": "box",
+    "layout": "vertical",
+    "spacing": "md",
+    "contents": [
+      {
+        "type": "text",
+        "text": "手造りえびせんべい 磯屋",
+        "weight": "bold",
+        "size": "lg",
+        "wrap": true
+      },
+      {
+        "type": "text",
+        "text": "ミニアプリから簡単にご注文できます。見るだけでもOKです😊",
+        "size": "sm",
+        "color": "#666666",
+        "wrap": true
+      },
+      {
+        "type": "separator",
+        "margin": "md"
+      },
+      {
+        "type": "text",
+        "text": "✔ 種類を選んで数量入力\n✔ 住所登録で次回からスムーズ",
+        "size": "sm",
+        "wrap": true
+      }
+    ]
+  },
+  "footer": {
+    "type": "box",
+    "layout": "vertical",
+    "spacing": "sm",
+    "contents": [
+      {
+        "type": "button",
+        "style": "primary",
+        "action": {
+          "type": "uri",
+          "label": "ミニアプリを開く",
+          "uri": "https://liff.line.me/2008406620-G5j1gjzM"
+        }
+      },
+      {
+        "type": "text",
+        "text": "※在庫・受取方法は画面で確認できます",
+        "size": "xs",
+        "color": "#888888",
+        "wrap": true
+      }
+    ]
+  }
+}
 
   const batches = chunk(ids, 500); // multicastは最大500
   let sent = 0;

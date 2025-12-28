@@ -25,6 +25,13 @@
  *   - POST /api/admin/segment/send
  *   が同一の抽出条件を共有
  *
+ * ✅ 今回追加（プロフィール保存）
+ * - LINEプロフィール（display_name / picture_url / status_message）をDBへ保存
+ *   - テーブル：line_users
+ *   - follow は強制更新
+ *   - 通常イベントでは 30日以上古い/未登録の時だけ更新（取りすぎ防止）
+ * - 管理API：GET /api/admin/users（ユーザー一覧 + display_name）
+ *
  * --- 必須 .env ---
  * LINE_CHANNEL_ACCESS_TOKEN
  * LINE_CHANNEL_SECRET
@@ -86,6 +93,9 @@ const LIFF_OPEN_KIND_MODE = (process.env.LIFF_OPEN_KIND_MODE || "all").trim(); /
 const SEGMENT_PUSH_LIMIT = Math.min(20000, Math.max(1, Number(process.env.SEGMENT_PUSH_LIMIT || 5000)));
 const SEGMENT_CHUNK_SIZE = Math.min(500, Math.max(50, Number(process.env.SEGMENT_CHUNK_SIZE || 500)));
 
+// ★プロフィール更新の最小間隔（日）
+const PROFILE_REFRESH_DAYS = Math.min(365, Math.max(1, Number(process.env.PROFILE_REFRESH_DAYS || 30)));
+
 if (!config.channelAccessToken || !config.channelSecret || !LIFF_ID || (!ADMIN_API_TOKEN_ENV && !ADMIN_CODE_ENV)) {
   console.error(`ERROR: 必須envが不足しています
 - LINE_CHANNEL_ACCESS_TOKEN
@@ -128,9 +138,9 @@ app.use((req, _res, next) => {
   next();
 });
 
-// ✅ /liff へ来たら LIFFへリダイレクト（※app.useの中に入っていたバグを修正）
+// ✅ /liff へ来たら LIFFへリダイレクト
 app.get(["/liff", "/liff/"], (req, res) => {
-  const id = process.env.LIFF_ID_MINIAPP || LIFF_ID; // 未指定なら LIFF_ID を使う
+  const id = process.env.LIFF_ID_MINIAPP || LIFF_ID;
   if (!id) return res.status(500).send("LIFF_ID is not set");
   return res.redirect(302, `https://liff.line.me/${id}`);
 });
@@ -140,7 +150,6 @@ const DATA_DIR = path.join(__dirname, "data");
 const PUBLIC_DIR = path.join(__dirname, "public");
 
 // ★ここが重要：UPLOAD_DIRは env を優先（Disk）
-// Render Disk の Mount Path を /var/data にしている前提
 const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || "/var/data/uploads");
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -149,7 +158,6 @@ if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 // 既存の public 配信（HTML/JS/CSS 等）
 app.use("/public", express.static(PUBLIC_DIR));
-
 // ★ここが重要：/public/uploads は Disk の UPLOAD_DIR を配信する
 app.use("/public/uploads", express.static(UPLOAD_DIR));
 
@@ -161,6 +169,9 @@ const SESSIONS_PATH = path.join(DATA_DIR, "sessions.json");
 const NOTIFY_STATE_PATH = path.join(DATA_DIR, "notify_state.json");
 const STOCK_LOG = path.join(DATA_DIR, "stock.log");
 const SEGMENT_USERS_PATH = path.join(DATA_DIR, "segment_users.json");
+
+// ★プロフィール（DBが無い時の保険：ファイル）
+const LINE_USERS_PATH = path.join(DATA_DIR, "line_users.json");
 
 // 互換（旧JSON）
 const ADDRESSES_PATH = path.join(DATA_DIR, "addresses.json");
@@ -179,49 +190,18 @@ function safeWriteJSON(p, obj) {
 
 if (!fs.existsSync(PRODUCTS_PATH)) {
   const sample = [
-    {
-      id: "original-set-2100",
-      name: "磯屋オリジナルセット",
-      price: 2100,
-      stock: 10,
-      desc: "人気の詰め合わせ。",
-      volume: "（例）8袋入り",
-      image: "",
-    },
-    {
-      id: "nori-square-300",
-      name: "四角のりせん",
-      price: 300,
-      stock: 10,
-      desc: "のり香る角せん。",
-      volume: "（例）1袋 80g",
-      image: "",
-    },
-    {
-      id: "premium-ebi-400",
-      name: "プレミアムえびせん",
-      price: 400,
-      stock: 5,
-      desc: "贅沢な旨み。",
-      volume: "（例）1袋 70g",
-      image: "",
-    },
+    { id: "original-set-2100", name: "磯屋オリジナルセット", price: 2100, stock: 10, desc: "人気の詰め合わせ。", volume: "（例）8袋入り", image: "" },
+    { id: "nori-square-300", name: "四角のりせん", price: 300, stock: 10, desc: "のり香る角せん。", volume: "（例）1袋 80g", image: "" },
+    { id: "premium-ebi-400", name: "プレミアムえびせん", price: 400, stock: 5, desc: "贅沢な旨み。", volume: "（例）1袋 70g", image: "" },
     // 久助はミニアプリ一覧から除外。チャット購入専用（単価250固定）
-    {
-      id: "kusuke-250",
-      name: "久助（えびせん）",
-      price: KUSUKE_UNIT_PRICE,
-      stock: 20,
-      desc: "お得な割れせん。",
-      volume: "",
-      image: "",
-    },
+    { id: "kusuke-250", name: "久助（えびせん）", price: KUSUKE_UNIT_PRICE, stock: 20, desc: "お得な割れせん。", volume: "", image: "" },
   ];
   safeWriteJSON(PRODUCTS_PATH, sample);
 }
 if (!fs.existsSync(SESSIONS_PATH)) safeWriteJSON(SESSIONS_PATH, {});
 if (!fs.existsSync(NOTIFY_STATE_PATH)) safeWriteJSON(NOTIFY_STATE_PATH, {});
 if (!fs.existsSync(SEGMENT_USERS_PATH)) safeWriteJSON(SEGMENT_USERS_PATH, {});
+if (!fs.existsSync(LINE_USERS_PATH)) safeWriteJSON(LINE_USERS_PATH, {});
 if (!fs.existsSync(ADDRESSES_PATH)) safeWriteJSON(ADDRESSES_PATH, {});
 if (!fs.existsSync(PHONE_ADDRESSES_PATH)) safeWriteJSON(PHONE_ADDRESSES_PATH, {});
 
@@ -233,6 +213,8 @@ const readNotifyState = () => safeReadJSON(NOTIFY_STATE_PATH, {});
 const writeNotifyState = (obj) => safeWriteJSON(NOTIFY_STATE_PATH, obj);
 const readSegmentUsers = () => safeReadJSON(SEGMENT_USERS_PATH, {});
 const writeSegmentUsers = (obj) => safeWriteJSON(SEGMENT_USERS_PATH, obj);
+const readLineUsersFile = () => safeReadJSON(LINE_USERS_PATH, {});
+const writeLineUsersFile = (obj) => safeWriteJSON(LINE_USERS_PATH, obj);
 
 const yen = (n) => `${Number(n || 0).toLocaleString("ja-JP")}円`;
 
@@ -320,7 +302,7 @@ function toPublicImageUrl(raw) {
 }
 
 // =============== 商品・在庫 ===============
-const HIDE_PRODUCT_IDS = new Set(["kusuke-250"]); // ミニアプリ一覧から除外
+const HIDE_PRODUCT_IDS = new Set(["kusuke-250"]);
 const LOW_STOCK_THRESHOLD = 5;
 
 function findProductById(id) {
@@ -505,6 +487,23 @@ async function ensureDbSchema() {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_segment_users_last_chat ON segment_users(last_chat_at DESC);`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_segment_users_last_liff ON segment_users(last_liff_at DESC);`);
 
+  // ★追加：LINEプロフィール保存用
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS line_users (
+      user_id TEXT PRIMARY KEY,
+      display_name TEXT,
+      picture_url TEXT,
+      status_message TEXT,
+      language TEXT,
+      first_seen TIMESTAMPTZ DEFAULT NOW(),
+      last_seen  TIMESTAMPTZ DEFAULT NOW(),
+      profile_updated_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_line_users_last_seen ON line_users(last_seen DESC);`);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_line_users_profile_updated_at ON line_users(profile_updated_at DESC);`);
+
   await p.query(`
     CREATE TABLE IF NOT EXISTS orders (
       id BIGSERIAL PRIMARY KEY,
@@ -662,6 +661,172 @@ async function dbGetAddressByMemberCode(memberCode) {
   return r.rows[0] || null;
 }
 
+// ================================
+// ★プロフィール保存（DB / ファイル）
+// ================================
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function fileUpsertLineUser(userId, prof = {}, patch = {}) {
+  const uid = String(userId || "").trim();
+  if (!uid) return;
+  const book = readLineUsersFile();
+  const now = nowIso();
+  if (!book[uid]) {
+    book[uid] = {
+      user_id: uid,
+      display_name: "",
+      picture_url: "",
+      status_message: "",
+      language: "",
+      first_seen: now,
+      last_seen: now,
+      profile_updated_at: now,
+      updated_at: now,
+    };
+  }
+  const cur = book[uid];
+  book[uid] = {
+    ...cur,
+    display_name: prof.displayName != null ? String(prof.displayName || "").slice(0, 120) : cur.display_name,
+    picture_url: prof.pictureUrl != null ? String(prof.pictureUrl || "").slice(0, 512) : cur.picture_url,
+    status_message: prof.statusMessage != null ? String(prof.statusMessage || "").slice(0, 400) : cur.status_message,
+    language: prof.language != null ? String(prof.language || "").slice(0, 16) : cur.language,
+    last_seen: now,
+    profile_updated_at: patch.profileUpdatedAt || cur.profile_updated_at || now,
+    updated_at: now,
+  };
+  writeLineUsersFile(book);
+}
+
+async function dbGetLineUserMeta(userId) {
+  const p = mustPool();
+  const uid = String(userId || "").trim();
+  if (!uid) return null;
+  const r = await p.query(
+    `SELECT user_id, display_name, picture_url, status_message, language, first_seen, last_seen, profile_updated_at FROM line_users WHERE user_id=$1 LIMIT 1`,
+    [uid]
+  );
+  return r.rows[0] || null;
+}
+
+async function dbUpsertLineUser(userId, prof = {}, opts = {}) {
+  const p = mustPool();
+  const uid = String(userId || "").trim();
+  if (!uid) return;
+
+  const displayName = prof?.displayName != null ? String(prof.displayName || "").slice(0, 120) : null;
+  const pictureUrl = prof?.pictureUrl != null ? String(prof.pictureUrl || "").slice(0, 512) : null;
+  const statusMessage = prof?.statusMessage != null ? String(prof.statusMessage || "").slice(0, 400) : null;
+  const language = prof?.language != null ? String(prof.language || "").slice(0, 16) : null;
+
+  const forceProfile = !!opts.forceProfile;
+  // forceProfile の時は profile_updated_at を必ず更新
+  // 通常は display_name 等が取得できた時だけ更新
+  const hasProfileAny = !!(displayName || pictureUrl || statusMessage || language);
+
+  await p.query(
+    `
+    INSERT INTO line_users (user_id, display_name, picture_url, status_message, language, first_seen, last_seen, profile_updated_at, updated_at)
+    VALUES ($1,$2,$3,$4,$5, NOW(), NOW(),
+      CASE WHEN $6 THEN NOW() ELSE NOW() END,
+      NOW()
+    )
+    ON CONFLICT (user_id) DO UPDATE SET
+      display_name = COALESCE(EXCLUDED.display_name, line_users.display_name),
+      picture_url = COALESCE(EXCLUDED.picture_url, line_users.picture_url),
+      status_message = COALESCE(EXCLUDED.status_message, line_users.status_message),
+      language = COALESCE(EXCLUDED.language, line_users.language),
+      last_seen = NOW(),
+      profile_updated_at = CASE
+        WHEN $6 THEN NOW()
+        WHEN $7 THEN NOW()
+        ELSE line_users.profile_updated_at
+      END,
+      updated_at = NOW()
+    `,
+    [uid, displayName, pictureUrl, statusMessage, language, forceProfile, hasProfileAny]
+  );
+}
+
+function daysAgoMs(days) {
+  return Number(days || 0) * 24 * 60 * 60 * 1000;
+}
+
+async function getLineProfileByEvent(ev) {
+  const src = ev?.source || {};
+  const type = src.type || "user";
+  const userId = src.userId || "";
+  if (!userId) return null;
+
+  try {
+    if (type === "group" && src.groupId) {
+      // グループ内
+      if (typeof client.getGroupMemberProfile === "function") {
+        return await client.getGroupMemberProfile(src.groupId, userId);
+      }
+      return null;
+    }
+    if (type === "room" && src.roomId) {
+      // ルーム内
+      if (typeof client.getRoomMemberProfile === "function") {
+        return await client.getRoomMemberProfile(src.roomId, userId);
+      }
+      return null;
+    }
+    // 1:1
+    return await client.getProfile(userId);
+  } catch (e) {
+    // 友だちではない/権限不足/取得不可など
+    return null;
+  }
+}
+
+async function maybeRefreshLineProfile(userId, ev, opts = {}) {
+  const uid = String(userId || "").trim();
+  if (!uid) return;
+
+  const force = !!opts.force;
+
+  // DBが無いならファイルだけ更新（取得はできる範囲で）
+  if (!pool) {
+    const prof = await getLineProfileByEvent(ev);
+    if (prof) fileUpsertLineUser(uid, prof, { profileUpdatedAt: nowIso() });
+    else fileUpsertLineUser(uid, {}, {});
+    return;
+  }
+
+  try {
+    // 既存の profile_updated_at を見て更新要否を判断
+    const meta = await dbGetLineUserMeta(uid);
+    const last = meta?.profile_updated_at ? new Date(meta.profile_updated_at).getTime() : 0;
+    const need = force || !last || (Date.now() - last > daysAgoMs(PROFILE_REFRESH_DAYS));
+
+    // last_seen は常に更新したい（display_name 取れなくても）
+    // → prof が取れなければ空で upsert（last_seen 更新）
+    if (!need) {
+      await dbUpsertLineUser(uid, {}, { forceProfile: false });
+      return;
+    }
+
+    const prof = await getLineProfileByEvent(ev);
+    if (prof) {
+      await dbUpsertLineUser(uid, prof, { forceProfile: force });
+    } else {
+      // 取れない場合も last_seen は更新
+      await dbUpsertLineUser(uid, {}, { forceProfile: false });
+    }
+  } catch (e) {
+    // DB不調時はファイルに退避
+    try {
+      const prof = await getLineProfileByEvent(ev);
+      if (prof) fileUpsertLineUser(uid, prof, { profileUpdatedAt: nowIso() });
+      else fileUpsertLineUser(uid, {}, {});
+    } catch {}
+  }
+}
+
 // ★注文DB保存
 async function dbInsertOrder(payload) {
   if (!pool) return { ok: false, skipped: "db_not_configured" };
@@ -674,7 +839,7 @@ async function dbInsertOrder(payload) {
     items = [],
     total = 0,
     shippingFee = 0,
-    paymentMethod = null, // stripe/cod/bank/store/unknown
+    paymentMethod = null,
     status = "new",
     name = null,
     zip = null,
@@ -796,8 +961,7 @@ function chunkArray(arr, size) {
 }
 
 // =====================================================
-// ✅ セグメント抽出ロジック 1本化（ここが今回の核心）
-// - 管理画面表示人数 / DB数 / 実送信対象 が一致する
+// ✅ セグメント抽出ロジック 1本化
 // =====================================================
 function normalizeSegmentSource(srcRaw) {
   const s = String(srcRaw || "active").trim().toLowerCase();
@@ -808,14 +972,6 @@ function clampDays(daysRaw) {
   return Math.min(365, Math.max(1, Number(daysRaw || 30)));
 }
 
-/**
- * DB抽出：source と days から WHERE を生成
- * - active: chat または liff が直近daysにある
- * - chat  : last_chat_at が直近days
- * - liff  : last_liff_at が直近days
- * - seen  : last_seen が直近days
- * - all   : segment_users に存在する全員（days無視）
- */
 function buildSegmentWhereSql(source, daysParamIndex) {
   const src = normalizeSegmentSource(source);
   if (src === "all") {
@@ -830,7 +986,6 @@ function buildSegmentWhereSql(source, daysParamIndex) {
   if (src === "seen") {
     return { whereSql: `last_seen >= NOW() - ($${daysParamIndex}::int * INTERVAL '1 day')`, needsDays: true };
   }
-  // active
   return {
     whereSql: `(
       (last_chat_at IS NOT NULL AND last_chat_at >= NOW() - ($${daysParamIndex}::int * INTERVAL '1 day'))
@@ -841,21 +996,15 @@ function buildSegmentWhereSql(source, daysParamIndex) {
   };
 }
 
-/**
- * ✅ 統一：セグメント対象 user_id を返す（itemsはLIMIT適用、countTotalはLIMITなし）
- */
 async function segmentGetUsersUnified({ days = 30, source = "active", limit = SEGMENT_PUSH_LIMIT } = {}) {
-  // DBあり
   if (pool) {
     const p = mustPool();
     const src = normalizeSegmentSource(source);
     const d = clampDays(days);
     const lim = Math.min(SEGMENT_PUSH_LIMIT, Math.max(1, Number(limit || SEGMENT_PUSH_LIMIT)));
 
-    // WHERE（daysを使うかどうか）
     const { whereSql, needsDays } = buildSegmentWhereSql(src, 1);
 
-    // countTotal（LIMITなし）
     let countTotal = 0;
     if (needsDays) {
       const rc = await p.query(`SELECT COUNT(DISTINCT user_id)::int AS c FROM segment_users WHERE ${whereSql}`, [d]);
@@ -865,28 +1014,19 @@ async function segmentGetUsersUnified({ days = 30, source = "active", limit = SE
       countTotal = Number(rc.rows?.[0]?.c || 0);
     }
 
-    // items（LIMITあり）
     let items = [];
     if (needsDays) {
-      const r = await p.query(
-        `SELECT DISTINCT user_id FROM segment_users WHERE ${whereSql} ORDER BY user_id ASC LIMIT $2`,
-        [d, lim]
-      );
+      const r = await p.query(`SELECT DISTINCT user_id FROM segment_users WHERE ${whereSql} ORDER BY user_id ASC LIMIT $2`, [d, lim]);
       items = r.rows.map((x) => x.user_id).filter(Boolean);
     } else {
-      const r = await p.query(
-        `SELECT DISTINCT user_id FROM segment_users WHERE ${whereSql} ORDER BY user_id ASC LIMIT $1`,
-        [lim]
-      );
+      const r = await p.query(`SELECT DISTINCT user_id FROM segment_users WHERE ${whereSql} ORDER BY user_id ASC LIMIT $1`, [lim]);
       items = r.rows.map((x) => x.user_id).filter(Boolean);
     }
 
-    // ここで必ず整形（空や重複排除）
     items = Array.from(new Set(items.filter(Boolean)));
     return { source: src, days: src === "all" ? null : d, countTotal, countItems: items.length, items };
   }
 
-  // DBなし（ファイル台帳）
   const src = normalizeSegmentSource(source);
   const d = clampDays(days);
   const book = readSegmentUsers();
@@ -903,7 +1043,6 @@ async function segmentGetUsersUnified({ days = 30, source = "active", limit = SE
       if (src === "chat") return lastChat && now - lastChat <= ms;
       if (src === "liff") return lastLiff && now - lastLiff <= ms;
       if (src === "seen") return lastSeen && now - lastSeen <= ms;
-      // active
       return (lastChat && now - lastChat <= ms) || (lastLiff && now - lastLiff <= ms);
     })
     .map((x) => x.userId)
@@ -963,6 +1102,7 @@ app.get("/api/health", async (_req, res) => {
       STRIPE_SECRET_KEY: !!process.env.STRIPE_SECRET_KEY,
       PUBLIC_BASE_URL: !!PUBLIC_BASE_URL,
       UPLOAD_DIR,
+      PROFILE_REFRESH_DAYS,
     },
   });
 });
@@ -988,6 +1128,13 @@ app.post("/api/liff/open", async (req, res) => {
     if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
 
     await touchUser(userId, "liff");
+
+    // ★プロフィール更新（LIFF open でも userId が来るなら拾う）
+    // ただし ev が無いので 取得はできないことが多い → last_seen 更新目的
+    try {
+      if (pool) await dbUpsertLineUser(userId, {}, { forceProfile: false });
+      else fileUpsertLineUser(userId, {}, {});
+    } catch {}
 
     if (pool) {
       await mustPool().query(`INSERT INTO liff_open_logs (user_id, kind) VALUES ($1,$2)`, [userId, kind]);
@@ -1097,7 +1244,7 @@ app.get("/api/products", (_req, res) => {
         price: p.price,
         stock: p.stock ?? 0,
         desc: p.desc || "",
-        volume: p.volume || "", // ★内容量
+        volume: p.volume || "",
         image: toPublicImageUrl(p.image || ""),
       }));
     return res.json({ ok: true, products: items });
@@ -1158,25 +1305,15 @@ app.post("/api/pay-stripe", async (req, res) => {
       const qty = Number(it.qty) || 0;
       if (!qty || unit < 0) continue;
       line_items.push({
-        price_data: {
-          currency: "jpy",
-          product_data: { name: String(it.name || it.id || "商品") },
-          unit_amount: unit,
-        },
+        price_data: { currency: "jpy", product_data: { name: String(it.name || it.id || "商品") }, unit_amount: unit },
         quantity: qty,
       });
     }
     if (shipping > 0) {
-      line_items.push({
-        price_data: { currency: "jpy", product_data: { name: "送料" }, unit_amount: shipping },
-        quantity: 1,
-      });
+      line_items.push({ price_data: { currency: "jpy", product_data: { name: "送料" }, unit_amount: shipping }, quantity: 1 });
     }
     if (codFee > 0) {
-      line_items.push({
-        price_data: { currency: "jpy", product_data: { name: "代引き手数料" }, unit_amount: codFee },
-        quantity: 1,
-      });
+      line_items.push({ price_data: { currency: "jpy", product_data: { name: "代引き手数料" }, unit_amount: codFee }, quantity: 1 });
     }
     if (!line_items.length) return res.status(400).json({ ok: false, error: "no_valid_line_items" });
 
@@ -1360,9 +1497,6 @@ app.get("/api/admin/products", (req, res) => {
   return res.json({ ok: true, products: items });
 });
 
-/**
- * ★変更点：volume を保存できるように追加
- */
 app.post("/api/admin/products/update", (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
@@ -1375,8 +1509,6 @@ app.post("/api/admin/products/update", (req, res) => {
     const name = req.body?.name != null ? String(req.body.name) : product.name;
     const desc = req.body?.desc != null ? String(req.body.desc) : product.desc;
     const image = req.body?.image != null ? String(req.body.image) : product.image;
-
-    // ★追加：内容量（volume）
     const volume = req.body?.volume != null ? String(req.body.volume) : (product.volume || "");
 
     const price = id === "kusuke-250" ? KUSUKE_UNIT_PRICE : req.body?.price != null ? Number(req.body.price) : product.price;
@@ -1426,11 +1558,7 @@ function readLogLines(filePath, limit = 100) {
   const tail = lines.slice(-Math.min(Number(limit) || 100, lines.length));
   return tail
     .map((l) => {
-      try {
-        return JSON.parse(l);
-      } catch {
-        return null;
-      }
+      try { return JSON.parse(l); } catch { return null; }
     })
     .filter(Boolean);
 }
@@ -1447,7 +1575,7 @@ function yyyymmddFromIso(ts) {
 app.get("/api/admin/orders", (req, res) => {
   if (!requireAdmin(req, res)) return;
   const limit = Math.min(5000, Number(req.query.limit || 1000));
-  const date = String(req.query.date || "").trim(); // YYYYMMDD（任意）
+  const date = String(req.query.date || "").trim();
   let items = readLogLines(ORDERS_LOG, limit);
 
   if (date && /^\d{8}$/.test(date)) {
@@ -1461,7 +1589,7 @@ app.get("/api/admin/orders", (req, res) => {
   return res.json({ ok: true, items });
 });
 
-// ✅ 発送通知API（管理画面→顧客へPush）【トップレベル】
+// ✅ 発送通知API（管理画面→顧客へPush）
 app.post("/api/admin/orders/notify-shipped", async (req, res) => {
   if (!requireAdmin(req, res)) return;
 
@@ -1505,18 +1633,9 @@ app.get("/api/admin/orders-db", async (req, res) => {
     const params = [];
     let i = 1;
 
-    if (payment) {
-      wh.push(`payment_method = $${i++}`);
-      params.push(payment);
-    }
-    if (status) {
-      wh.push(`status = $${i++}`);
-      params.push(status);
-    }
-    if (source) {
-      wh.push(`LOWER(COALESCE(source,'')) LIKE $${i++}`);
-      params.push(`%${source}%`);
-    }
+    if (payment) { wh.push(`payment_method = $${i++}`); params.push(payment); }
+    if (status) { wh.push(`status = $${i++}`); params.push(status); }
+    if (source) { wh.push(`LOWER(COALESCE(source,'')) LIKE $${i++}`); params.push(`%${source}%`); }
 
     params.push(limit);
     const whereSql = wh.length ? `WHERE ${wh.join(" AND ")}` : "";
@@ -1530,33 +1649,94 @@ app.get("/api/admin/orders-db", async (req, res) => {
   }
 });
 
-// =====================================================
-// ✅ 管理：セグメント（ここが管理画面の一致の根）
-// - /api/admin/segment/users
-// - /api/admin/segment/count
-// - /api/admin/segment/send
-// が同じ統一抽出関数を使う
-// =====================================================
+// =====================================
+// ★管理：ユーザー一覧（display_name）
+// =====================================
+app.get("/api/admin/users", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const limit = Math.min(5000, Math.max(1, Number(req.query.limit || 500)));
+    const q = String(req.query.q || "").trim();
 
-// 互換：旧エンドポイント（管理画面がこれを叩く想定）
+    if (pool) {
+      const p = mustPool();
+      const params = [];
+      let where = "";
+      if (q) {
+        params.push(`%${q}%`);
+        where = `WHERE (display_name ILIKE $1 OR user_id ILIKE $1)`;
+      }
+      params.push(limit);
+
+      const sql =
+        `SELECT user_id, display_name, picture_url, status_message, language, first_seen, last_seen, profile_updated_at
+         FROM line_users
+         ${where}
+         ORDER BY last_seen DESC
+         LIMIT $${params.length}`;
+
+      const r = await p.query(sql, params);
+      return res.json({ ok: true, count: r.rows.length, items: r.rows });
+    }
+
+    // DBなし（ファイル）
+    const book = readLineUsersFile();
+    let items = Object.values(book);
+    if (q) {
+      const qq = q.toLowerCase();
+      items = items.filter((x) => String(x.display_name || "").toLowerCase().includes(qq) || String(x.user_id || "").toLowerCase().includes(qq));
+    }
+    items.sort((a, b) => String(b.last_seen || "").localeCompare(String(a.last_seen || "")));
+    items = items.slice(0, limit);
+    return res.json({ ok: true, count: items.length, items });
+  } catch (e) {
+    console.error("/api/admin/users error:", e);
+    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
+  }
+});
+
+// =====================================================
+// ✅ 管理：セグメント（統一抽出）
+// =====================================================
 app.get("/api/admin/segment/users", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
     const days = Number(req.query.days || 30);
     const source = String(req.query.source || "active");
+    const includeProfile = String(req.query.includeProfile || "0") === "1";
 
     const r = await segmentGetUsersUnified({ days, source, limit: SEGMENT_PUSH_LIMIT });
 
-    // ✅ 管理画面は「このcountTotal」を表示すれば DBと一致
-    // ✅ items は送信対象そのもの
+    // ★必要なら display_name を付与（表示/販促用）
+    let profiles = null;
+    if (includeProfile) {
+      profiles = {};
+      if (pool) {
+        const p = mustPool();
+        // IN が大きくなるので 1000 ずつ
+        const parts = chunkArray(r.items, 1000);
+        for (const part of parts) {
+          const rr = await p.query(
+            `SELECT user_id, display_name FROM line_users WHERE user_id = ANY($1::text[])`,
+            [part]
+          );
+          for (const row of rr.rows) profiles[row.user_id] = row.display_name || "";
+        }
+      } else {
+        const book = readLineUsersFile();
+        for (const uid of r.items) profiles[uid] = book?.[uid]?.display_name || "";
+      }
+    }
+
     return res.json({
       ok: true,
       days: r.days,
       source: r.source,
-      count: r.countTotal,     // ← DBのDISTINCT総数（LIMIT無関係）
-      returned: r.countItems,  // ← 実際に返した件数（LIMIT影響あり）
+      count: r.countTotal,
+      returned: r.countItems,
       limit: SEGMENT_PUSH_LIMIT,
       items: r.items,
+      profiles,
     });
   } catch (e) {
     console.error("/api/admin/segment/users error:", e);
@@ -1564,7 +1744,6 @@ app.get("/api/admin/segment/users", async (req, res) => {
   }
 });
 
-// ✅ 総数だけ欲しい場合（管理画面の人数表示用）
 app.get("/api/admin/segment/count", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
@@ -1572,19 +1751,13 @@ app.get("/api/admin/segment/count", async (req, res) => {
     const source = String(req.query.source || "active");
 
     const r = await segmentGetUsersUnified({ days, source, limit: 1 });
-    return res.json({
-      ok: true,
-      days: r.days,
-      source: r.source,
-      count: r.countTotal,
-    });
+    return res.json({ ok: true, days: r.days, source: r.source, count: r.countTotal });
   } catch (e) {
     console.error("/api/admin/segment/count error:", e);
     return res.status(500).json({ ok: false, error: e?.message || "server_error" });
   }
 });
 
-// ✅ 送信（管理画面→一括送信）
 app.post("/api/admin/segment/send", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
@@ -1646,9 +1819,6 @@ function parseQuery(data) {
   return o;
 }
 
-/**
- * ★変更点：商品一覧Flexに内容量（volume）表示
- */
 function productsFlex() {
   const all = readProducts().filter((p) => !HIDE_PRODUCT_IDS.has(p.id));
   const bubbles = all.map((p) => {
@@ -1676,7 +1846,6 @@ function productsFlex() {
     };
   });
 
-  // その他（自由入力＝価格入力なし）
   bubbles.push({
     type: "bubble",
     body: {
@@ -1808,9 +1977,6 @@ function paymentFlex(id, qty, method) {
   };
 }
 
-/**
- * ★変更点：最終確認Flexにも内容量（volume）表示
- */
 function confirmFlex(product, qty, method, payment, address, pickupName) {
   const subtotal = Number(product.price) * Number(qty);
 
@@ -1930,7 +2096,6 @@ function appendJsonl(filePath, obj) {
 
 /** =========================================================
  *  ★ 管理者通知（公式アカウント受信 → ADMIN_USER_IDへPush）
- *  - テキストもスタンプも通知（ユーザーへは返信しない）
  * ========================================================= */
 function eventSourceText(ev) {
   const s = ev?.source || {};
@@ -1968,9 +2133,14 @@ async function notifyAdminIncomingMessage(ev, bodyText, extra = {}) {
 // =============== handleEvent ===============
 async function handleEvent(ev) {
   const userId = ev?.source?.userId || "";
+
+  // ★まず台帳更新（seen）
   if (userId) {
+    try { await touchUser(userId, "seen"); } catch {}
+    // ★プロフィール保存（followは強制更新、通常は間引き）
     try {
-      await touchUser(userId, "seen");
+      const force = ev.type === "follow";
+      await maybeRefreshLineProfile(userId, ev, { force });
     } catch {}
   }
 
@@ -2029,7 +2199,7 @@ async function handleEvent(ev) {
   }
 
   // ===========================
-  // ★ テキスト以外も管理者へ通知（返信はしない）
+  // テキスト以外も管理者へ通知（返信はしない）
   // ===========================
   if (ev.type === "message" && ev.message && ev.message.type && ev.message.type !== "text") {
     const m = ev.message;
@@ -2061,13 +2231,10 @@ async function handleEvent(ev) {
   // ===========================
   if (ev.type === "message" && ev.message?.type === "text") {
     const text = String(ev.message.text || "").trim();
-
     const sess = userId ? getSession(userId) : null;
 
     // ★管理者通知：受信テキストは全部転送
-    try {
-      await notifyAdminIncomingMessage(ev, text, { kind: "text", session: sess?.mode || "" });
-    } catch {}
+    try { await notifyAdminIncomingMessage(ev, text, { kind: "text", session: sess?.mode || "" }); } catch {}
 
     // --- セッション入力 ---
     if (sess?.mode === "pickup_name") {
@@ -2154,7 +2321,6 @@ async function handleEvent(ev) {
         ]);
       }
 
-      // ※久助のconfirmは宅配+代引想定（既存仕様維持）
       return client.replyMessage(ev.replyToken, [{ type: "text", text: "久助の注文内容です。" }, confirmFlex(product, qty, "delivery", "cod", null, null)]);
     }
 
@@ -2212,15 +2378,7 @@ async function handleEvent(ev) {
       if (method === "delivery" && pool) {
         const row = await dbGetAddressByUserId(userId);
         if (row) {
-          address = {
-            name: row.name || "",
-            phone: row.phone || "",
-            postal: row.postal || "",
-            prefecture: row.prefecture || "",
-            city: row.city || "",
-            address1: row.address1 || "",
-            address2: row.address2 || "",
-          };
+          address = { name: row.name || "", phone: row.phone || "", postal: row.postal || "", prefecture: row.prefecture || "", city: row.city || "", address1: row.address1 || "", address2: row.address2 || "" };
         }
       }
 
@@ -2238,7 +2396,6 @@ async function handleEvent(ev) {
 
       const product = loadProductByOrderId(id);
 
-      // 在庫チェック（otherは除外）
       if (!String(product.id).startsWith("other:")) {
         const { product: p } = findProductById(product.id);
         if (!p) return client.replyMessage(ev.replyToken, { type: "text", text: "商品が見つかりません。" });
@@ -2267,24 +2424,14 @@ async function handleEvent(ev) {
         await maybeLowStockAlert(p.id, p.name, Math.max(0, stock - qty));
       }
 
-      // 住所取得（宅配なら）
       let address = null;
       if (method === "delivery" && pool) {
         const row = await dbGetAddressByUserId(userId);
         if (row) {
-          address = {
-            name: row.name || "",
-            phone: row.phone || "",
-            postal: row.postal || "",
-            prefecture: row.prefecture || "",
-            city: row.city || "",
-            address1: row.address1 || "",
-            address2: row.address2 || "",
-          };
+          address = { name: row.name || "", phone: row.phone || "", postal: row.postal || "", prefecture: row.prefecture || "", city: row.city || "", address1: row.address1 || "", address2: row.address2 || "" };
         }
       }
 
-      // 送料計算
       let shipping = 0;
       let region = "";
       let size = "";
@@ -2314,23 +2461,11 @@ async function handleEvent(ev) {
         size,
         codFee,
         total,
-        address: address
-          ? {
-              name: address.name || "",
-              phone: address.phone || "",
-              postal: address.postal || "",
-              prefecture: address.prefecture || "",
-              city: address.city || "",
-              address1: address.address1 || "",
-              address2: address.address2 || "",
-            }
-          : null,
+        address: address ? { name: address.name || "", phone: address.phone || "", postal: address.postal || "", prefecture: address.prefecture || "", city: address.city || "", address1: address.address1 || "", address2: address.address2 || "" } : null,
         note: String(product.id).startsWith("other:") ? "価格未入力（その他）" : "",
       };
 
-      try {
-        appendJsonl(ORDERS_LOG, { ...order, source: "line-postback" });
-      } catch {}
+      try { appendJsonl(ORDERS_LOG, { ...order, source: "line-postback" }); } catch {}
 
       try {
         let memberCode = null;
@@ -2384,9 +2519,7 @@ async function handleEvent(ev) {
           (order.note ? `※${order.note}\n` : "") +
           `\n${addrText}`;
 
-        try {
-          await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg });
-        } catch {}
+        try { await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg }); } catch {}
       }
 
       const userMsg =
@@ -2410,9 +2543,7 @@ async function handleEvent(ev) {
 
       if (ADMIN_USER_ID) {
         const msg = `📌【予約】\n商品：${product?.name || id}\n数量：${qty}\nuserId：${userId}`;
-        try {
-          await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg });
-        } catch {}
+        try { await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg }); } catch {}
       }
 
       return client.replyMessage(ev.replyToken, { type: "text", text: "予約を受け付けました。入荷次第ご案内します。" });
@@ -2453,6 +2584,7 @@ async function start() {
   app.listen(PORT, () => {
     console.log(`[BOOT] server listening on ${PORT}`);
     console.log(`[BOOT] UPLOAD_DIR=${UPLOAD_DIR}`);
+    console.log(`[BOOT] PROFILE_REFRESH_DAYS=${PROFILE_REFRESH_DAYS}`);
   });
 }
 

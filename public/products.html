@@ -55,7 +55,7 @@
       max-height: 260px;          /* お好みで高さは調整可 */
       border-radius: 8px;
       object-fit: contain;        /* ← 画像を全部表示（トリミングしない） */
-      background: transparent;          /* 余白部分の背景グレー */
+      background: transparent;    /* 余白部分の背景 */
       display: block;
     }
 
@@ -145,7 +145,23 @@
       font-weight: 600;
       white-space: pre-line;
     }
+
+    /* デバッグ表示（必要なときだけ見える） */
+    #debugBox {
+      margin-top: 8px;
+      font-size: 11px;
+      color: #111827;
+      background: #fff;
+      border: 1px dashed #e5e7eb;
+      border-radius: 10px;
+      padding: 8px;
+      display: none; /* ★必要なら block に */
+      white-space: pre-line;
+    }
   </style>
+
+  <!-- LIFF SDK（必須） -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
 <body>
   <header>
@@ -172,7 +188,69 @@
     </div>
 
     <div id="statusMsg"></div>
+    <div id="debugBox"></div>
   </main>
+
+  <script>
+    // ====== LIFF起動ログ（ここが今回の追加） ======
+    // サーバー側に POST /api/liff/open がある前提（curlでDBに入るのは確認済み）
+    // - userIdが取れない場合はログ送信をスキップ（画面は動かす）
+    // - kind は "all"（統一）
+    (async () => {
+      const debug = (msg) => {
+        const box = document.getElementById("debugBox");
+        if (!box) return;
+        // box.style.display = "block"; // デバッグしたい時だけON
+        box.textContent += (box.textContent ? "\n" : "") + msg;
+      };
+
+      // ★ LIFF_ID の供給：
+      // 1) サーバーが window.LIFF_ID を埋め込むならそれを使う
+      // 2) ない場合は下の "REPLACE_ME" を実IDに置換
+      const LIFF_ID = (window.LIFF_ID || "REPLACE_ME").trim();
+
+      try {
+        if (!LIFF_ID || LIFF_ID === "REPLACE_ME") {
+          debug("LIFF_ID が未設定です（window.LIFF_ID または直書き置換が必要）");
+          return;
+        }
+
+        await liff.init({ liffId: LIFF_ID });
+        debug("liff.init OK");
+
+        // LIFFブラウザでない場合はここで止める（PCブラウザ確認用）
+        if (!liff.isInClient()) {
+          debug("LIFFクライアント外（通常ブラウザ）なので profile 取得をスキップ");
+          return;
+        }
+
+        // 未ログインならログインへ（基本LIFF内はログイン済みだが保険）
+        if (!liff.isLoggedIn()) {
+          debug("liff not logged in → login()");
+          liff.login();
+          return;
+        }
+
+        const profile = await liff.getProfile();
+        const userId = profile?.userId;
+        debug("profile userId=" + (userId ? userId.slice(0, 6) + "..." : "NONE"));
+
+        if (!userId) return;
+
+        // 起動ログを送る（失敗しても画面は止めない）
+        const r = await fetch("/api/liff/open", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, kind: "all" })
+        });
+
+        const txt = await r.text().catch(() => "");
+        debug("POST /api/liff/open status=" + r.status + " body=" + txt.slice(0, 80));
+      } catch (e) {
+        debug("liff open log failed: " + (e?.message || e));
+      }
+    })();
+  </script>
 
   <!-- 既存の products.js をそのまま利用 -->
   <script src="./products.js"></script>

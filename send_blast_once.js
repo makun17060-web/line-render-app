@@ -40,7 +40,7 @@ function chunk(arr, size) {
 }
 
 (async () => {
-  // 未送信だけ取得（最大20000とかにしてもOKだが、LINEは1回500上限なので分割する）
+  // 未送信だけ取得（最大20000まで→500ずつ分割で送る）
   const { rows } = await pool.query(
     `
     SELECT user_id
@@ -62,71 +62,74 @@ function chunk(arr, size) {
     return;
   }
 
-  // ★文面（まずは text が安全）
-  {
-  "type": "bubble",
-  "hero": {
-    "type": "image",
-    "url": "https://line-render-app-1.onrender.com/public/uploads/1766470786708_akashi_item.jpg",
-    "size": "full",
-    "aspectRatio": "1:1",
-    "aspectMode": "cover"
-  },
-  "body": {
-    "type": "box",
-    "layout": "vertical",
-    "spacing": "md",
-    "contents": [
-      {
-        "type": "text",
-        "text": "手造りえびせんべい 磯屋",
-        "weight": "bold",
-        "size": "lg",
-        "wrap": true
+  // ✅ Flexメッセージ（messages[0] がFlex本体）
+  const messages = [
+    {
+      type: "flex",
+      altText: "磯屋ミニアプリのご案内",
+      contents: {
+        type: "bubble",
+        hero: {
+          type: "image",
+          url: "https://line-render-app-1.onrender.com/public/uploads/1766470786708_akashi_item.jpg",
+          size: "full",
+          aspectRatio: "1:1",
+          aspectMode: "cover",
+        },
+        body: {
+          type: "box",
+          layout: "vertical",
+          spacing: "md",
+          contents: [
+            {
+              type: "text",
+              text: "手造りえびせんべい 磯屋",
+              weight: "bold",
+              size: "lg",
+              wrap: true,
+            },
+            {
+              type: "text",
+              text: "ミニアプリから簡単にご注文できます。見るだけでもOKです😊",
+              size: "sm",
+              color: "#666666",
+              wrap: true,
+            },
+            { type: "separator", margin: "md" },
+            {
+              type: "text",
+              text: "✔ 種類を選んで数量入力\n✔ 住所登録で次回からスムーズ",
+              size: "sm",
+              wrap: true,
+            },
+          ],
+        },
+        footer: {
+          type: "box",
+          layout: "vertical",
+          spacing: "sm",
+          contents: [
+            {
+              type: "button",
+              style: "primary",
+              action: {
+                type: "uri",
+                label: "ミニアプリを開く",
+                uri: "https://liff.line.me/2008406620-G5j1gjzM",
+              },
+            },
+            {
+              type: "text",
+              text: "※在庫・受取方法は画面で確認できます",
+              size: "xs",
+              color: "#888888",
+              wrap: true,
+            },
+          ],
+        },
       },
-      {
-        "type": "text",
-        "text": "ミニアプリから簡単にご注文できます。見るだけでもOKです😊",
-        "size": "sm",
-        "color": "#666666",
-        "wrap": true
-      },
-      {
-        "type": "separator",
-        "margin": "md"
-      },
-      {
-        "type": "text",
-        "text": "✔ 種類を選んで数量入力\n✔ 住所登録で次回からスムーズ",
-        "size": "sm",
-        "wrap": true
-      }
-    ]
-  },
-  "footer": {
-    "type": "box",
-    "layout": "vertical",
-    "spacing": "sm",
-    "contents": [
-      {
-        "type": "button",
-        "style": "primary",
-        "action": {
-          "type": "uri",
-          "label": "ミニアプリを開く",
-          "uri": "https://liff.line.me/2008406620-G5j1gjzM"
-        }
-      },
-      {
-        "type": "text",
-        "text": "※在庫・受取方法は画面で確認できます",
-        "size": "xs",
-        "color": "#888888",
-        "wrap": true
-      }
-    ]
-  }
-}
+    },
+  ];
 
   const batches = chunk(ids, 500); // multicastは最大500
   let sent = 0;
@@ -161,9 +164,6 @@ function chunk(arr, size) {
         `,
         [SEGMENT_KEY, part, String(e.message).slice(0, 500)]
       );
-
-      // 連続失敗を避けるならここで break でもOK
-      // break;
     }
 
     // レート対策（軽く間隔）

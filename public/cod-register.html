@@ -24,9 +24,11 @@
     #statusMsg { margin-top:8px; font-size:12px; color:#555; white-space:pre-line; }
     #statusMsg.err { color:#d00; }
     #statusMsg.ok  { color:#0a7b19; }
+    #statusMsg.warn{ color:#b26a00; }
     .codeBox { margin-top:10px; padding:10px; background:#fff8e1; border:1px solid #ffe08a; border-radius:10px; font-size:14px; line-height:1.6; white-space:pre-line; }
     .codeBox strong { font-size:22px; letter-spacing:2px; display:inline-block; margin-top:4px; }
     small.note { display:block; margin-top:10px; font-size:11px; color:#777; line-height:1.6; }
+    .mini { font-size:11px; color:#666; margin-top:6px; }
   </style>
 </head>
 
@@ -71,6 +73,7 @@
     </div>
 
     <div id="codeBox" class="codeBox" style="display:none;"></div>
+    <div id="envMsg" class="mini"></div>
   </div>
 
   <div class="btn-row">
@@ -82,7 +85,7 @@
 
   <small class="note">
     ※保存後に表示される「会員コード（4桁）」を控えてください。<br>
-    ※LINEアプリ内（LIFF）で開いてください。
+    ※できるだけ LINEアプリ内（LIFF）で開いてください（外部ブラウザだとログイン表示が出やすいです）。
   </small>
 
   <script>
@@ -93,13 +96,15 @@
       const API_BASE_RAW = (qs.get("api") || "").trim().replace(/\/+$/, "");
       const API_BASE = API_BASE_RAW || "";
 
-      // ✅ セグメント用：kind を URL で上書きできる（例: ?kind=address）
-      const SEG_KIND = (qs.get("kind") || "order").trim().slice(0, 32);
+      // ✅ kind を URL で上書き（住所登録は kind=cod 推奨）
+      // 例）/public/cod-register.html?kind=cod
+      const KIND = (qs.get("kind") || "cod").trim().slice(0, 32);
 
       const statusEl = document.getElementById("statusMsg");
       const saveBtn  = document.getElementById("saveBtn");
       const closeBtn = document.getElementById("closeBtn");
       const codeBox  = document.getElementById("codeBox");
+      const envMsg   = document.getElementById("envMsg");
 
       let lineUserId = "";
 
@@ -110,22 +115,23 @@
 
       function setStatus(msg, kind) {
         statusEl.textContent = msg || "";
-        statusEl.classList.remove("err", "ok");
+        statusEl.classList.remove("err", "ok", "warn");
         if (kind === "err") statusEl.classList.add("err");
         if (kind === "ok")  statusEl.classList.add("ok");
+        if (kind === "warn")statusEl.classList.add("warn");
       }
 
       function getVal(id) { return (document.getElementById(id)?.value || "").trim(); }
       function setVal(id, v) { const el = document.getElementById(id); if (el) el.value = (v || "").toString(); }
 
       function buildAddressFromForm() {
-        const postal   = getVal("postal");
+        const postal     = getVal("postal");
         const prefecture = getVal("prefecture");
-        const city     = getVal("city");
-        const address1 = getVal("address1");
-        const address2 = getVal("address2");
-        const name     = getVal("name");
-        const phone    = getVal("phone");
+        const city       = getVal("city");
+        const address1   = getVal("address1");
+        const address2   = getVal("address2");
+        const name       = getVal("name");
+        const phone      = getVal("phone");
 
         if (!postal || !prefecture || !city || !address1 || !name || !phone) {
           setStatus("郵便番号・都道府県・市区町村・番地/建物・お名前・電話番号は必須です。", "err");
@@ -140,19 +146,23 @@
         return { res, data };
       }
 
+      function showEnvHint() {
+        const inClient = (window.liff && typeof liff.isInClient === "function") ? liff.isInClient() : false;
+        // 参考表示（原因切り分けに便利）
+        envMsg.textContent =
+          `kind=${KIND} / inClient=${inClient} / api=${API_BASE ? API_BASE : "(same-origin)"}`;
+      }
+
       async function logLiffOpen(userId) {
         if (!userId) return;
         try {
+          // 台帳用 kind は KIND をそのまま送る
           const { res, data } = await fetchJson(apiUrl("/api/liff/open"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ userId, kind: SEG_KIND }),
+            body: JSON.stringify({ userId, kind: KIND }),
           });
-          if (!res.ok || !data?.ok) {
-            console.warn("liff open log not ok:", res.status, data);
-          } else {
-            console.log("liff open logged:", userId, "kind=", SEG_KIND);
-          }
+          if (!res.ok || !data?.ok) console.warn("liff open log not ok:", res.status, data);
         } catch (e) {
           console.warn("liff open log failed:", e);
         }
@@ -162,18 +172,25 @@
         setStatus("LIFF 初期化中…", "");
         saveBtn.disabled = true;
 
+        // ✅ 修正ポイント：kind=order 固定をやめ、URL指定の kind を使う
         const { res: cfgRes, data: cfg } =
-          await fetchJson(apiUrl("/api/liff/config?kind=order"), { cache: "no-store" });
+          await fetchJson(apiUrl(`/api/liff/config?kind=${encodeURIComponent(KIND)}`), { cache: "no-store" });
 
         if (!cfgRes.ok || !cfg?.liffId) {
-          throw new Error("LIFF ID 取得失敗（/api/liff/config?kind=order）");
+          throw new Error(`LIFF ID 取得失敗（/api/liff/config?kind=${KIND}）`);
         }
 
         await liff.init({ liffId: cfg.liffId });
+        showEnvHint();
 
+        // ✅ 未ログインならログインへ（この時に「ログインしました」が出ることがある＝正常）
         if (!liff.isLoggedIn()) {
-          setStatus("LINEログインに移動します…", "");
-          liff.login();
+          setStatus(
+            "LINEログインに移動します…\n" +
+            "（外部ブラウザで開いている時や初回は「ログインしました」と表示されることがあります）",
+            "warn"
+          );
+          liff.login(); // 戻ってきたら再度 initLiff が走る
           return;
         }
 
@@ -193,7 +210,7 @@
         await logLiffOpen(lineUserId);
 
         setStatus(
-          `userId取得OK（kind=${SEG_KIND}）。住所を入力して「住所を保存する」を押してください。`,
+          `userId取得OK（kind=${KIND}）。住所を入力して「住所を保存する」を押してください。`,
           "ok"
         );
         saveBtn.disabled = false;
@@ -238,7 +255,7 @@
 
           console.log("SAVE RESPONSE:", res.status, data);
 
-          // ✅ 会員コードだけ拾う（住所コードは表示しない）
+          // ✅ 会員コードだけ拾う
           const memberCode = (data && (data.memberCode || data.member_code || data.code || data.member))
             ? String(data.memberCode || data.member_code || data.code || data.member)
             : "";
@@ -277,7 +294,7 @@
 
       function handleClose() {
         try {
-          if (window.liff && liff.isInClient()) liff.closeWindow();
+          if (window.liff && typeof liff.isInClient === "function" && liff.isInClient()) liff.closeWindow();
           else window.close();
         } catch {
           setStatus("閉じられない場合は、戻るボタンで閉じてください。", "");

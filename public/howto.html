@@ -215,13 +215,17 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("btnOrder").onclick =
     () => openUrl(LINKS.ORDER_URL, false);
 
-  // ★住所登録は external=false（同一遷移）
-  document.getElementById("btnAddress").onclick =
-    () => openUrl(LINKS.ADDRESS_URL, false);
+  // ★住所登録：戻り先(return)を付けて LIFF内で開く
+  document.getElementById("btnAddress").onclick = () => {
+    const ret = encodeURIComponent(location.href);
+    openUrl(`${LINKS.ADDRESS_URL}?return=${ret}`, false);
+  };
 
-  // 送料ページは external=true（外部ブラウザのままでOK）
-  document.getElementById("btnShipping").onclick =
-    () => openUrl(LINKS.SHIPPING_URL, true);
+  // ★配送・送料：LIFF内で開く（external=false）＋戻り先(return)を付ける
+  document.getElementById("btnShipping").onclick = () => {
+    const ret = encodeURIComponent(location.href);
+    openUrl(`${LINKS.SHIPPING_URL}?return=${ret}`, false);
+  };
 
   document.getElementById("btnChat").onclick = async () => {
     if (!inClient){

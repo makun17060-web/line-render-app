@@ -14,9 +14,7 @@ const {
   PRODUCTS_URL,
   HOWTO_URL,
   SHIPPING_URL,
-
-  ADDRESS_LIFF_ID,
-  ADDRESS_LIFF_URL,
+  CONTACT_URL,
 } = process.env;
 
 if (!LINE_CHANNEL_ACCESS_TOKEN) {
@@ -39,24 +37,20 @@ const sanitizeBase = (u) =>
 
 const baseUrl = sanitizeBase(PUBLIC_BASE_URL || "https://line-render-app-1.onrender.com");
 
-// 画像 左上：ご注文はこちら（注文LIFF）
+// 左上：ご注文はこちら（LIFFを開く）
 const ORDER_LIFF_URL = `https://liff.line.me/${LIFF_ID_MINIAPP}`;
 
-// 画像 左下：住所登録（住所登録LIFF）
-let addressLiffUrl = (ADDRESS_LIFF_URL || "").trim();
-if (!addressLiffUrl) {
-  if (ADDRESS_LIFF_ID) addressLiffUrl = `https://liff.line.me/${LIFF_ID}`;
-  else addressLiffUrl = `${baseUrl}/public/cod-register.html`; // 最終手段
-}
+// 中央上：商品一覧
+const productsUrl = String(PRODUCTS_URL || `${baseUrl}/public/shop.html`).trim();
 
-// 画像 中央上：商品一覧
-const productsUrl = (PRODUCTS_URL || `${baseUrl}/public/shop.html`).trim();
+// 右上：ご利用方法
+const howtoUrl = String(HOWTO_URL || `${baseUrl}/public/howto.html`).trim();
 
-// 画像 右上：ご利用方法
-const howtoUrl = (HOWTO_URL || `${baseUrl}/public/howto.html`).trim();
+// 中央下：配送・送料
+const shippingUrl = String(SHIPPING_URL || `${baseUrl}/public/shipping-calc.html`).trim();
 
-// 画像 中央下：配送・送料
-const shippingUrl = (SHIPPING_URL || `${baseUrl}/public/shipping.html`).trim();
+// 右下：お問い合わせ
+const contactUrl = String(CONTACT_URL || `${baseUrl}/public/contact.html`).trim();
 
 (async () => {
   try {
@@ -67,49 +61,53 @@ const shippingUrl = (SHIPPING_URL || `${baseUrl}/public/shipping.html`).trim();
       chatBarText: "メニュー",
       areas: [
         // 1行目
-        { // 左上：ご注文はこちら
+        {
           bounds: { x: 0, y: 0, width: 833, height: 843 },
           action: { type: "uri", label: "ご注文はこちら", uri: ORDER_LIFF_URL },
         },
-       { // 中央上：商品一覧
-  bounds: { x: 833, y: 0, width: 834, height: 843 },
-  action: { type: "uri", label: "商品一覧", uri: "https://isoya-shop.com"},
-},
-
-        { // 右上：ご利用方法
+        {
+          bounds: { x: 833, y: 0, width: 834, height: 843 },
+          action: { type: "uri", label: "商品一覧", uri: productsUrl },
+        },
+        {
           bounds: { x: 1667, y: 0, width: 833, height: 843 },
-          action: { type: "uri", label: "ご利用方法", uri: "https://liff.line.me/2008406620-QQFfWP1w"},
+          action: { type: "uri", label: "ご利用方法", uri: howtoUrl },
         },
 
         // 2行目
-        { // 左下：住所登録
+        {
+          // ✅ 左下：直接注文（ポストバックで開始）
           bounds: { x: 0, y: 843, width: 833, height: 843 },
-          action: { type: "message", label: "住所登録", text:  "直接注文"},
+          action: {
+            type: "postback",
+            label: "直接注文",
+            data: "start_order",
+            displayText: "直接注文",
+          },
         },
-        { // 中央下：配送・送料
+        {
           bounds: { x: 833, y: 843, width: 834, height: 843 },
-          action: { type: "uri", label: "配送・送料", uri: "https://line-render-app-1.onrender.com/public/shipping-calc.html"},
+          action: { type: "uri", label: "配送・送料", uri: shippingUrl },
         },
-        { // 右下：お問い合わせ（LINEで質問）
+        {
           bounds: { x: 1667, y: 843, width: 833, height: 843 },
-          action: { type: "uri", label: "お問い合わせ", uri: "https://liff.line.me/2008406620-LUJ3dURd" },
+          action: { type: "uri", label: "お問い合わせ", uri: contactUrl },
         },
       ],
     };
-
 
     console.log("=== createRichMenu start ===");
     console.log("BASE:", baseUrl);
     console.log("ORDER(LIFF):", ORDER_LIFF_URL);
     console.log("PRODUCTS:", productsUrl);
     console.log("HOWTO:", howtoUrl);
-    console.log("ADDRESS:", addressLiffUrl);
     console.log("SHIPPING:", shippingUrl);
+    console.log("CONTACT:", contactUrl);
 
     const richMenuId = await client.createRichMenu(richMenu);
     console.log("✅ richMenuId:", richMenuId);
 
-    const imageFile = (RICHMENU_IMAGE || "createRichMenu_6areas.jpg").trim();
+    const imageFile = String(RICHMENU_IMAGE || "createRichMenu_6areas.jpg").trim();
     const imagePath = path.join(__dirname, "public", imageFile);
 
     if (!fs.existsSync(imagePath)) {
@@ -125,7 +123,7 @@ const shippingUrl = (SHIPPING_URL || `${baseUrl}/public/shipping.html`).trim();
 
     const imageBuffer = fs.readFileSync(imagePath);
     const ext = path.extname(imageFile).toLowerCase();
-    const contentType = (ext === ".jpg" || ext === ".jpeg") ? "image/jpeg" : "image/png";
+    const contentType = ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : "image/png";
 
     await client.setRichMenuImage(richMenuId, imageBuffer, contentType);
     console.log("✅ setRichMenuImage OK");

@@ -5,25 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>お支払い総額の目安（梱包・発送込み）</title>
 
-<!-- LIFFで開く可能性がある場合は読み込み（通常ブラウザでも問題なし） -->
-<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-
 <style>
-  body {
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    background:#f7f7f7;
-    margin:0;
-    padding:16px;
-    color:#333;
-  }
+  body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:#f7f7f7; margin:0; padding:16px; color:#333; }
   .wrap { max-width:720px; margin:0 auto; }
 
-  /* ===== 上部バー ===== */
-  .topbar {
-    display:flex;
-    justify-content:flex-end;
-    margin-bottom:8px;
-  }
+  /* ===== 上部バー（戻る） ===== */
+  .topbar { display:flex; justify-content:flex-end; margin-bottom:8px; }
   .closeBtn{
     width:auto;
     padding:10px 12px;
@@ -39,32 +26,10 @@
 
   h1 { font-size:20px; margin:0 0 8px; }
   .lead { font-size:13px; color:#555; line-height:1.7; margin:0 0 12px; }
-  .card {
-    background:#fff;
-    border-radius:12px;
-    padding:14px;
-    margin-bottom:12px;
-    box-shadow:0 1px 3px rgba(0,0,0,.08);
-  }
+  .card { background:#fff; border-radius:12px; padding:14px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
   label { font-size:14px; font-weight:700; display:block; margin-bottom:4px; }
-  select, input {
-    width:100%;
-    padding:10px;
-    font-size:15px;
-    border-radius:8px;
-    border:1px solid #ccc;
-  }
-  button.main {
-    width:100%;
-    padding:12px;
-    font-size:16px;
-    border:0;
-    border-radius:10px;
-    background:#0b3a53;
-    color:#fff;
-    font-weight:700;
-    cursor:pointer;
-  }
+  select, input { width:100%; padding:10px; font-size:15px; border-radius:8px; border:1px solid #ccc; }
+  button.main { width:100%; padding:12px; font-size:16px; border:0; border-radius:10px; background:#0b3a53; color:#fff; font-weight:700; cursor:pointer; }
   .result { font-size:15px; line-height:1.75; }
   .result .big { font-size:18px; font-weight:800; }
   .note { font-size:13px; color:#666; line-height:1.7; }
@@ -76,9 +41,9 @@
 <body>
 <div class="wrap">
 
-  <!-- 閉じるボタン -->
+  <!-- 「閉じる」＝前の画面へ戻る（ご利用方法に戻る想定） -->
   <div class="topbar">
-    <button class="closeBtn" type="button" onclick="closePage()">閉じる</button>
+    <button class="closeBtn" type="button" onclick="goBack()">戻る</button>
   </div>
 
   <h1>お支払い総額の目安</h1>
@@ -133,20 +98,13 @@
 </div>
 
 <script>
-/* ===== 閉じる処理 ===== */
-function closePage() {
-  if (window.liff && typeof liff.closeWindow === "function") {
-    liff.closeWindow();
-    return;
-  }
-  if (history.length > 1) {
-    history.back();
-    return;
-  }
-  window.close();
+/* 戻る（closeWindowは使わない） */
+function goBack() {
+  // 前の画面（ご利用方法）に戻す。戻れない場合は何もしない（勝手に閉じない）
+  if (history.length > 1) history.back();
 }
 
-/* ===== ヤマト 中部発 送料（税込） ===== */
+/* ヤマト 中部発 送料（税込） */
 const YAMATO_CHUBU_TAXED = {
   "60":  { 北海道:1610, 東北:1190, 関東: 940, 中部: 940, 近畿: 940, 中国:1060, 四国:1060, 九州:1190, 沖縄:1460 },
   "80":  { 北海道:1900, 東北:1480, 関東:1230, 中部:1230, 近畿:1230, 中国:1350, 四国:1350, 九州:1480, 沖縄:2070 },
@@ -156,6 +114,7 @@ const YAMATO_CHUBU_TAXED = {
   "160": { 北海道:3820, 東北:3320, 関東:3020, 中部:3020, 近畿:3020, 中国:3160, 四国:3160, 九州:3320, 沖縄:4680 }
 };
 
+/* 概算の商品価格（調整OK） */
 const PRICE = {
   AKASHA_PER_BAG: 340,
   ORIGINAL_SET_PER: 2000
@@ -174,6 +133,7 @@ function detectRegion(pref) {
   return "";
 }
 
+/* 袋数 → サイズ（あかしゃ） */
 function sizeFromAkashaQty(q) {
   if (q <= 4) return "60";
   if (q <= 8) return "80";
@@ -182,6 +142,7 @@ function sizeFromAkashaQty(q) {
   return "140";
 }
 
+/* 個数 → サイズ（オリジナルセット） */
 function sizeFromOriginalSetQty(q) {
   if (q === 1) return "80";
   if (q === 2) return "100";
@@ -190,10 +151,9 @@ function sizeFromOriginalSetQty(q) {
   return "160";
 }
 
-function yen(n) {
-  return Number(n || 0).toLocaleString("ja-JP") + "円";
-}
+function yen(n) { return Number(n || 0).toLocaleString("ja-JP") + "円"; }
 
+/* UI切替 */
 function updateUiByType() {
   const type = document.getElementById("productType").value;
   const label = document.getElementById("qtyLabel");
@@ -212,6 +172,7 @@ function updateUiByType() {
   }
 }
 
+/* 計算 */
 function calc() {
   const pref = document.getElementById("pref").value;
   const qty  = Number(document.getElementById("qty").value);
@@ -223,6 +184,7 @@ function calc() {
   }
 
   const region = detectRegion(pref);
+
   let size = "";
   let itemTotal = 0;
 

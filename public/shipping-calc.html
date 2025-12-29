@@ -41,7 +41,7 @@
 <body>
 <div class="wrap">
 
-  <!-- 「閉じる」＝前の画面へ戻る（ご利用方法に戻る想定） -->
+  <!-- 「戻る」＝ return優先で確実に戻す -->
   <div class="topbar">
     <button class="closeBtn" type="button" onclick="goBack()">戻る</button>
   </div>
@@ -98,10 +98,33 @@
 </div>
 
 <script>
-/* 戻る（closeWindowは使わない） */
+/* ======================================================
+   戻る（履歴が無くてもOK）
+   - ?return=（URL） があればそこへ戻る
+   - なければ history.back
+   - それも無理なら referrer に戻る
+   - それでも無理なら安全な固定戻り先（任意）へ
+====================================================== */
+const FALLBACK_RETURN_URL = "https://line-render-app-1.onrender.com/public/usage.html"; // ←ご利用方法URLに合わせて変更OK
+
 function goBack() {
-  // 前の画面（ご利用方法）に戻す。戻れない場合は何もしない（勝手に閉じない）
-  if (history.length > 1) history.back();
+  const params = new URLSearchParams(location.search);
+  const returnUrl = params.get("return");
+
+  if (returnUrl) {
+    location.href = returnUrl;
+    return;
+  }
+  if (history.length > 1) {
+    history.back();
+    return;
+  }
+  if (document.referrer) {
+    location.href = document.referrer;
+    return;
+  }
+  // 最後の手段：固定の戻り先（閉じない）
+  location.href = FALLBACK_RETURN_URL;
 }
 
 /* ヤマト 中部発 送料（税込） */
@@ -133,7 +156,6 @@ function detectRegion(pref) {
   return "";
 }
 
-/* 袋数 → サイズ（あかしゃ） */
 function sizeFromAkashaQty(q) {
   if (q <= 4) return "60";
   if (q <= 8) return "80";
@@ -142,7 +164,6 @@ function sizeFromAkashaQty(q) {
   return "140";
 }
 
-/* 個数 → サイズ（オリジナルセット） */
 function sizeFromOriginalSetQty(q) {
   if (q === 1) return "80";
   if (q === 2) return "100";
@@ -153,7 +174,6 @@ function sizeFromOriginalSetQty(q) {
 
 function yen(n) { return Number(n || 0).toLocaleString("ja-JP") + "円"; }
 
-/* UI切替 */
 function updateUiByType() {
   const type = document.getElementById("productType").value;
   const label = document.getElementById("qtyLabel");
@@ -172,7 +192,6 @@ function updateUiByType() {
   }
 }
 
-/* 計算 */
 function calc() {
   const pref = document.getElementById("pref").value;
   const qty  = Number(document.getElementById("qty").value);

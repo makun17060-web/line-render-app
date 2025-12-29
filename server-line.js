@@ -1,37 +1,52 @@
 /**
  * server-line.js — フル機能版（Stripe + ミニアプリ + 画像管理 + 住所DB + セグメント配信 + 注文DB永続化）
- * ★店頭受取専用（固定化）＋「リッチメニューのポストバックだけで開始」版
  *
- * ✅ 今回の変更点（“開始”はポストバックのみ）
- * - 「直接注文」「久助」など “開始用キーワード” は無効（テキストで送っても開始しない）
- * - リッチメニューの postback でのみ開始
- *   - data="start_order"  → 商品一覧（店頭受取）
- *   - data="start_kusuke" → 久助開始（数量入力の案内）
- *   - data="start_other"  → その他（商品名入力）
- * - ただし、注文途中の入力（受取名 / その他の商品名 / その他の個数）はテキスト入力を使う（セッション中のみ）
+ * ✅ 重要（今回の要望）
+ * - UPLOAD_DIR だけ Disk に保存（再デプロイで画像が消えない）
+ *   - 画像保存先：UPLOAD_DIR=/var/data/uploads（デフォルト）
+ *   - 静的配信：/public/uploads → Disk の UPLOAD_DIR を参照（重要）
  *
- * ✅ 既存（維持）
- * - UPLOAD_DIR をDiskへ（画像永続）
- * - Flexに内容量表示
- * - 管理API（商品/在庫/画像/注文ログ/DB注文検索/ユーザー一覧）
- * - セグメント抽出ロジック1本化
- * - LINEプロフィールをDB保存（line_users）
+ * - Flexにも「内容量（volume）」を表示
+ *   - 商品一覧Flex：内容量行を追加
+ *   - 最終確認Flex：内容量行を追加
+ *   - 管理API：/api/admin/products/update で volume を保存できるように追加
+ *
+ * ✅ 既存仕様（維持）
+ * - 起動キーワードは「直接注文」と「久助」だけ（それ以外は無反応）
+ * - セッション中の入力は受け付ける
+ * - 公式アカウント受信は管理者へ通知（返信はしない）
+ * - /api/admin/orders/notify-shipped はトップレベル
+ *
+ * ✅ 今回の修正（重要）
+ * - 管理画面の抽出人数 ＝ DBで数えた userid数 ＝ 実送信対象 が必ず一致するように
+ *   セグメント抽出ロジックを「1本化」
+ *   - GET /api/admin/segment/users
+ *   - GET /api/admin/segment/count
+ *   - POST /api/admin/segment/send
+ *   が同一の抽出条件を共有
+ *
+ * ✅ 今回追加（プロフィール保存）
+ * - LINEプロフィール（display_name / picture_url / status_message）をDBへ保存
+ *   - テーブル：line_users
+ *   - follow は強制更新
+ *   - 通常イベントでは 30日以上古い/未登録の時だけ更新（取りすぎ防止）
+ * - 管理API：GET /api/admin/users（ユーザー一覧 + display_name）
  *
  * --- 必須 .env ---
  * LINE_CHANNEL_ACCESS_TOKEN
  * LINE_CHANNEL_SECRET
  * LIFF_ID
  * ADMIN_API_TOKEN  (推奨) もしくは ADMIN_CODE
+ * DATABASE_URL     (住所DB/注文DBを使うなら推奨)
  *
  * --- 推奨 .env ---
- * DATABASE_URL
- * ADMIN_USER_ID
- * PUBLIC_BASE_URL
- * STRIPE_SECRET_KEY（任意）
- * LINE_CHANNEL_ID（任意）
- * PUBLIC_ADDRESS_LOOKUP_TOKEN（任意）
+ * ADMIN_USER_ID（管理者へ通知）
+ * PUBLIC_BASE_URL（Renderの https://xxxx.onrender.com ）
+ * STRIPE_SECRET_KEY（Stripe使うなら）
+ * LINE_CHANNEL_ID（LIFF idToken検証するなら）
+ * PUBLIC_ADDRESS_LOOKUP_TOKEN（公開住所取得APIを使うなら）
  *
- * --- 推奨（今回） ---
+ * --- 今回追加（推奨） .env ---
  * UPLOAD_DIR=/var/data/uploads
  */
 
@@ -68,7 +83,6 @@ const ADMIN_CODE_ENV = (process.env.ADMIN_CODE || "").trim();
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "");
 const PUBLIC_ADDRESS_LOOKUP_TOKEN = (process.env.PUBLIC_ADDRESS_LOOKUP_TOKEN || "").trim();
 
-// 店頭受取固定なので通常は使わないが、管理/表示の互換のため残す
 const COD_FEE = Number(process.env.COD_FEE || 330);
 
 // 久助は 250円固定（運用メモに合わせる）
@@ -204,6 +218,33 @@ const writeLineUsersFile = (obj) => safeWriteJSON(LINE_USERS_PATH, obj);
 
 const yen = (n) => `${Number(n || 0).toLocaleString("ja-JP")}円`;
 
+function formatAddressText(a = {}) {
+  const postal = a.postal || a.zip || "";
+  const pref = a.prefecture || a.pref || "";
+  const city = a.city || "";
+  const addr1 = a.addr1 || a.address1 || "";
+  const addr2 = a.addr2 || a.address2 || "";
+  const line = `${pref}${city}${addr1}${addr2 ? " " + addr2 : ""}`.trim();
+  return `${postal ? postal + " " : ""}${line}`.trim();
+}
+
+function pickNameFromAddress(a = {}) {
+  const n = a.name || "";
+  if (n) return String(n).trim();
+  const ln = a.lastName || "";
+  const fn = a.firstName || "";
+  return `${ln}${fn}`.trim();
+}
+
+function normalizePaymentMethodFromOrder(order = {}) {
+  const raw = String(order.paymentMethod || order.payment || order.method || "").trim().toLowerCase();
+  if (raw === "cod" || raw === "daibiki" || raw === "代引" || raw === "代引き") return "cod";
+  if (raw === "bank" || raw === "furikomi" || raw === "振込" || raw === "銀行振込") return "bank";
+  if (raw === "store" || raw === "cash" || raw === "pickup" || raw === "店頭" || raw === "現金") return "store";
+  if (raw === "stripe" || raw === "card" || raw === "credit") return "stripe";
+  return "stripe";
+}
+
 // =============== 管理認証 ===============
 function bearerToken(req) {
   const h = req.headers?.authorization || req.headers?.Authorization || "";
@@ -304,6 +345,89 @@ function setStock(productId, qty, actor = "system") {
   writeProducts(products);
   writeStockLog({ action: "set", productId, before, after: q, delta: q - before, actor });
   return { before, after: q };
+}
+
+// =============== 送料（ヤマト中部 税込） ===============
+const YAMATO_CHUBU_TAXED = {
+  "60": { 北海道: 1610, 東北: 1190, 関東: 940, 中部: 940, 近畿: 940, 中国: 1060, 四国: 1060, 九州: 1190, 沖縄: 1460 },
+  "80": { 北海道: 1900, 東北: 1480, 関東: 1230, 中部: 1230, 近畿: 1230, 中国: 1350, 四国: 1350, 九州: 1480, 沖縄: 2070 },
+  "100": { 北海道: 2200, 東北: 1790, 関東: 1530, 中部: 1530, 近畿: 1530, 中国: 1650, 四国: 1650, 九州: 1790, 沖縄: 2710 },
+  "120": { 北海道: 2780, 東北: 2310, 関東: 2040, 中部: 2040, 近畿: 2040, 中国: 2170, 四国: 2170, 九州: 2310, 沖縄: 3360 },
+  "140": { 北海道: 3440, 東北: 2930, 関東: 2630, 中部: 2630, 近畿: 2630, 中国: 2780, 四国: 2780, 九州: 2930, 沖縄: 4030 },
+  "160": { 北海道: 3820, 東北: 3320, 関東: 3020, 中部: 3020, 近畿: 3020, 中国: 3160, 四国: 3160, 九州: 3320, 沖縄: 4680 },
+};
+const SIZE_ORDER = ["60", "80", "100", "120", "140", "160"];
+const ORIGINAL_SET_PRODUCT_ID = (process.env.ORIGINAL_SET_PRODUCT_ID || "original-set-2100").trim();
+
+function detectRegionFromAddress(address = {}) {
+  const pref = String(address.prefecture || address.pref || "").trim();
+  const addr1 = String(address.addr1 || address.address1 || "").trim();
+  const hay = pref || addr1;
+
+  if (/北海道/.test(hay)) return "北海道";
+  if (/(青森|岩手|宮城|秋田|山形|福島|東北)/.test(hay)) return "東北";
+  if (/(茨城|栃木|群馬|埼玉|千葉|東京|神奈川|山梨|関東)/.test(hay)) return "関東";
+  if (/(新潟|富山|石川|福井|長野|岐阜|静岡|愛知|三重|中部)/.test(hay)) return "中部";
+  if (/(滋賀|京都|大阪|兵庫|奈良|和歌山|近畿|関西)/.test(hay)) return "近畿";
+  if (/(鳥取|島根|岡山|広島|山口|中国)/.test(hay)) return "中国";
+  if (/(徳島|香川|愛媛|高知|四国)/.test(hay)) return "四国";
+  if (/(福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|九州)/.test(hay)) return "九州";
+  if (/(沖縄)/.test(hay)) return "沖縄";
+  return "";
+}
+
+function isAkasha6(item) {
+  const name = String(item?.name || "");
+  return /(のりあかしゃ|うずあかしゃ|潮あかしゃ|松あかしゃ|ごまあかしゃ|磯あかしゃ|いそあかしゃ)/.test(name);
+}
+function sizeFromAkasha6Qty(qty) {
+  const q = Number(qty) || 0;
+  if (q <= 0) return null;
+  if (q <= 4) return "60";
+  if (q <= 8) return "80";
+  if (q <= 13) return "100";
+  if (q <= 18) return "120";
+  return "140";
+}
+function sizeFromOriginalSetQty(qty) {
+  const q = Number(qty) || 0;
+  if (q <= 0) return null;
+  if (q === 1) return "80";
+  if (q === 2) return "100";
+  if (q <= 4) return "120";
+  if (q <= 6) return "140";
+  return "160";
+}
+function sizeFromTotalQty(totalQty) {
+  const q = Number(totalQty) || 0;
+  if (q <= 1) return "60";
+  if (q === 2) return "80";
+  if (q === 3) return "100";
+  if (q <= 4) return "120";
+  if (q <= 6) return "140";
+  return "160";
+}
+function calcYamatoShipping(region, size) {
+  if (!region) return 0;
+  const table = YAMATO_CHUBU_TAXED[String(size)] || null;
+  if (!table) return 0;
+  return Number(table[region] || 0);
+}
+function calcShippingUnified(items = [], address = {}) {
+  const region = detectRegionFromAddress(address);
+  const totalQty = items.reduce((s, it) => s + Number(it.qty || 0), 0);
+  const akasha6Qty = items.reduce((s, it) => s + (isAkasha6(it) ? Number(it.qty || 0) : 0), 0);
+  const originalQty = items.reduce((s, it) => {
+    return s + ((it.id === ORIGINAL_SET_PRODUCT_ID || /磯屋.?オリジナルセ/.test(it.name || "")) ? Number(it.qty || 0) : 0);
+  }, 0);
+
+  let size;
+  if (akasha6Qty > 0) size = sizeFromAkasha6Qty(akasha6Qty);
+  else if (originalQty > 0) size = sizeFromOriginalSetQty(originalQty);
+  else size = sizeFromTotalQty(totalQty);
+
+  const shipping = calcYamatoShipping(region, size);
+  return { region, size, shipping };
 }
 
 // =============== DBスキーマ ===============
@@ -598,6 +722,8 @@ async function dbUpsertLineUser(userId, prof = {}, opts = {}) {
   const language = prof?.language != null ? String(prof.language || "").slice(0, 16) : null;
 
   const forceProfile = !!opts.forceProfile;
+  // forceProfile の時は profile_updated_at を必ず更新
+  // 通常は display_name 等が取得できた時だけ更新
   const hasProfileAny = !!(displayName || pictureUrl || statusMessage || language);
 
   await p.query(
@@ -636,19 +762,23 @@ async function getLineProfileByEvent(ev) {
 
   try {
     if (type === "group" && src.groupId) {
+      // グループ内
       if (typeof client.getGroupMemberProfile === "function") {
         return await client.getGroupMemberProfile(src.groupId, userId);
       }
       return null;
     }
     if (type === "room" && src.roomId) {
+      // ルーム内
       if (typeof client.getRoomMemberProfile === "function") {
         return await client.getRoomMemberProfile(src.roomId, userId);
       }
       return null;
     }
+    // 1:1
     return await client.getProfile(userId);
-  } catch {
+  } catch (e) {
+    // 友だちではない/権限不足/取得不可など
     return null;
   }
 }
@@ -659,6 +789,7 @@ async function maybeRefreshLineProfile(userId, ev, opts = {}) {
 
   const force = !!opts.force;
 
+  // DBが無いならファイルだけ更新（取得はできる範囲で）
   if (!pool) {
     const prof = await getLineProfileByEvent(ev);
     if (prof) fileUpsertLineUser(uid, prof, { profileUpdatedAt: nowIso() });
@@ -667,19 +798,27 @@ async function maybeRefreshLineProfile(userId, ev, opts = {}) {
   }
 
   try {
+    // 既存の profile_updated_at を見て更新要否を判断
     const meta = await dbGetLineUserMeta(uid);
     const last = meta?.profile_updated_at ? new Date(meta.profile_updated_at).getTime() : 0;
-    const need = force || !last || Date.now() - last > daysAgoMs(PROFILE_REFRESH_DAYS);
+    const need = force || !last || (Date.now() - last > daysAgoMs(PROFILE_REFRESH_DAYS));
 
+    // last_seen は常に更新したい（display_name 取れなくても）
+    // → prof が取れなければ空で upsert（last_seen 更新）
     if (!need) {
       await dbUpsertLineUser(uid, {}, { forceProfile: false });
       return;
     }
 
     const prof = await getLineProfileByEvent(ev);
-    if (prof) await dbUpsertLineUser(uid, prof, { forceProfile: force });
-    else await dbUpsertLineUser(uid, {}, { forceProfile: false });
-  } catch {
+    if (prof) {
+      await dbUpsertLineUser(uid, prof, { forceProfile: force });
+    } else {
+      // 取れない場合も last_seen は更新
+      await dbUpsertLineUser(uid, {}, { forceProfile: false });
+    }
+  } catch (e) {
+    // DB不調時はファイルに退避
     try {
       const prof = await getLineProfileByEvent(ev);
       if (prof) fileUpsertLineUser(uid, prof, { profileUpdatedAt: nowIso() });
@@ -710,8 +849,17 @@ async function dbInsertOrder(payload) {
     rawEvent = null,
   } = payload || {};
 
-  let pm = String(paymentMethod || "").toLowerCase().trim();
-  if (!pm) pm = "store";
+  const src = String(source || rawEvent?.source || "").toLowerCase().trim();
+  const payFromEvent = String(rawEvent?.payment_method || rawEvent?.paymentMethod || rawEvent?.payment || "").toLowerCase().trim();
+
+  let pm = String(paymentMethod || payFromEvent || "").toLowerCase().trim();
+  if (!pm) {
+    if (src.includes("stripe")) pm = "stripe";
+    else if (src.includes("cod")) pm = "cod";
+    else if (src.includes("bank")) pm = "bank";
+    else if (src.includes("store") || src.includes("pickup") || src.includes("cash")) pm = "store";
+    else pm = "unknown";
+  }
   if (!["stripe", "cod", "bank", "store", "unknown"].includes(pm)) pm = "unknown";
 
   let st = String(status || "").toLowerCase().trim();
@@ -823,12 +971,21 @@ function normalizeSegmentSource(srcRaw) {
 function clampDays(daysRaw) {
   return Math.min(365, Math.max(1, Number(daysRaw || 30)));
 }
+
 function buildSegmentWhereSql(source, daysParamIndex) {
   const src = normalizeSegmentSource(source);
-  if (src === "all") return { whereSql: `user_id IS NOT NULL AND user_id <> ''`, needsDays: false };
-  if (src === "chat") return { whereSql: `last_chat_at IS NOT NULL AND last_chat_at >= NOW() - ($${daysParamIndex}::int * INTERVAL '1 day')`, needsDays: true };
-  if (src === "liff") return { whereSql: `last_liff_at IS NOT NULL AND last_liff_at >= NOW() - ($${daysParamIndex}::int * INTERVAL '1 day')`, needsDays: true };
-  if (src === "seen") return { whereSql: `last_seen >= NOW() - ($${daysParamIndex}::int * INTERVAL '1 day')`, needsDays: true };
+  if (src === "all") {
+    return { whereSql: `user_id IS NOT NULL AND user_id <> ''`, needsDays: false };
+  }
+  if (src === "chat") {
+    return { whereSql: `last_chat_at IS NOT NULL AND last_chat_at >= NOW() - ($${daysParamIndex}::int * INTERVAL '1 day')`, needsDays: true };
+  }
+  if (src === "liff") {
+    return { whereSql: `last_liff_at IS NOT NULL AND last_liff_at >= NOW() - ($${daysParamIndex}::int * INTERVAL '1 day')`, needsDays: true };
+  }
+  if (src === "seen") {
+    return { whereSql: `last_seen >= NOW() - ($${daysParamIndex}::int * INTERVAL '1 day')`, needsDays: true };
+  }
   return {
     whereSql: `(
       (last_chat_at IS NOT NULL AND last_chat_at >= NOW() - ($${daysParamIndex}::int * INTERVAL '1 day'))
@@ -845,6 +1002,7 @@ async function segmentGetUsersUnified({ days = 30, source = "active", limit = SE
     const src = normalizeSegmentSource(source);
     const d = clampDays(days);
     const lim = Math.min(SEGMENT_PUSH_LIMIT, Math.max(1, Number(limit || SEGMENT_PUSH_LIMIT)));
+
     const { whereSql, needsDays } = buildSegmentWhereSql(src, 1);
 
     let countTotal = 0;
@@ -945,8 +1103,6 @@ app.get("/api/health", async (_req, res) => {
       PUBLIC_BASE_URL: !!PUBLIC_BASE_URL,
       UPLOAD_DIR,
       PROFILE_REFRESH_DAYS,
-      mode: "store_pickup_only",
-      start_mode: "postback_only",
     },
   });
 });
@@ -973,6 +1129,8 @@ app.post("/api/liff/open", async (req, res) => {
 
     await touchUser(userId, "liff");
 
+    // ★プロフィール更新（LIFF open でも userId が来るなら拾う）
+    // ただし ev が無いので 取得はできないことが多い → last_seen 更新目的
     try {
       if (pool) await dbUpsertLineUser(userId, {}, { forceProfile: false });
       else fileUpsertLineUser(userId, {}, {});
@@ -992,7 +1150,7 @@ app.post("/api/liff/open", async (req, res) => {
   }
 });
 
-// =============== 住所（DB）※店頭運用でも保存は可能（使わないだけ） ===============
+// =============== 住所（DB） ===============
 app.post("/api/liff/address", async (req, res) => {
   try {
     const userId = String(req.body?.userId || "").trim();
@@ -1096,13 +1254,17 @@ app.get("/api/products", (_req, res) => {
   }
 });
 
-// =============== ミニアプリ：送料計算（店頭運用でも互換のため残す） ===============
+// =============== ミニアプリ：送料計算 ===============
 app.post("/api/shipping", (req, res) => {
   try {
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    const address = req.body?.address || {};
+
     const itemsTotal = items.reduce((sum, it) => sum + (Number(it.price) || 0) * (Number(it.qty) || 0), 0);
-    // ★店頭運用固定：送料0
-    return res.json({ ok: true, itemsTotal, region: "", size: "", shipping: 0, finalTotal: itemsTotal });
+    const { region, size, shipping } = calcShippingUnified(items, address);
+    const finalTotal = itemsTotal + shipping;
+
+    return res.json({ ok: true, itemsTotal, region, size, shipping, finalTotal });
   } catch (e) {
     console.error("/api/shipping error:", e);
     return res.status(400).json({ ok: false, error: e?.message || "shipping_error" });
@@ -1113,14 +1275,16 @@ app.get("/api/shipping/config", (_req, res) => {
   return res.json({
     ok: true,
     config: {
-      mode: "store_pickup_only",
-      shippingAlwaysZero: true,
+      origin: "yamato_chubu_taxed",
+      originalSetProductId: ORIGINAL_SET_PRODUCT_ID,
+      sizeOrder: SIZE_ORDER,
+      yamatoChubuTaxed: YAMATO_CHUBU_TAXED,
       codFee: COD_FEE,
     },
   });
 });
 
-// =============== Stripe（互換のため残す） ===============
+// =============== Stripe ===============
 const stripeSecretKey = (process.env.STRIPE_SECRET_KEY || process.env.STRIPE_SECRET || "").trim();
 const stripe = stripeSecretKey ? stripeLib(stripeSecretKey) : null;
 
@@ -1132,6 +1296,9 @@ app.post("/api/pay-stripe", async (req, res) => {
     const items = Array.isArray(order.items) ? order.items : [];
     if (!items.length) return res.status(400).json({ ok: false, error: "no_items" });
 
+    const shipping = Number(order.shipping || 0);
+    const codFee = Number(order.codFee || 0);
+
     const line_items = [];
     for (const it of items) {
       const unit = Number(it.price) || 0;
@@ -1141,6 +1308,12 @@ app.post("/api/pay-stripe", async (req, res) => {
         price_data: { currency: "jpy", product_data: { name: String(it.name || it.id || "商品") }, unit_amount: unit },
         quantity: qty,
       });
+    }
+    if (shipping > 0) {
+      line_items.push({ price_data: { currency: "jpy", product_data: { name: "送料" }, unit_amount: shipping }, quantity: 1 });
+    }
+    if (codFee > 0) {
+      line_items.push({ price_data: { currency: "jpy", product_data: { name: "代引き手数料" }, unit_amount: codFee }, quantity: 1 });
     }
     if (!line_items.length) return res.status(400).json({ ok: false, error: "no_valid_line_items" });
 
@@ -1170,16 +1343,20 @@ app.post("/api/pay-stripe", async (req, res) => {
   }
 });
 
-// Stripe/代引/振込の完了通知（互換のため残す）
+// Stripe/代引/振込の完了通知（管理者/購入者） + ★DB保存
 app.post("/api/order/complete", async (req, res) => {
   try {
     const order = req.body || {};
     const items = Array.isArray(order.items) ? order.items : [];
     if (!items.length) return res.json({ ok: false, error: "no_items" });
 
-    const paymentMethod = String(order.paymentMethod || order.payment || "stripe").toLowerCase();
+    const paymentMethod = normalizePaymentMethodFromOrder(order);
     const status = paymentMethod === "stripe" ? "paid" : "new";
-    const source = "liff";
+    const source =
+      paymentMethod === "cod" ? "liff-cod" :
+      paymentMethod === "bank" ? "liff-bank" :
+      paymentMethod === "store" ? "liff-store" :
+      "liff-stripe";
 
     try {
       fs.appendFileSync(
@@ -1189,23 +1366,34 @@ app.post("/api/order/complete", async (req, res) => {
       );
     } catch {}
 
+    const a = order.address || {};
+    const name = pickNameFromAddress(a) || order.lineUserName || "";
+    const zip = a.zip || a.postal || "";
+    const pref = a.prefecture || a.pref || "";
+    const addrText = formatAddressText(a);
+    const tel = a.tel || a.phone || "";
     const itemsTotal = Number(order.itemsTotal || 0) || items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 0), 0);
-    const finalTotal = Number(order.finalTotal ?? order.total ?? 0) || itemsTotal;
+    const shipping = Number(order.shipping || 0);
+    const codFee = Number(order.codFee || 0);
+    const finalTotal = Number(order.finalTotal ?? order.total ?? 0) || (itemsTotal + shipping + codFee);
 
     try {
+      const memberCode = null;
+      const addrLineForDb = `${a.city || ""}${a.addr1 || a.address1 || ""}${(a.addr2 || a.address2) ? " " + (a.addr2 || a.address2) : ""}`.trim();
+
       await dbInsertOrder({
         userId: order.lineUserId || null,
-        memberCode: null,
-        phone: null,
+        memberCode,
+        phone: tel || null,
         items: items.map((it) => ({ id: it.id || "", name: it.name || "", price: Number(it.price || 0), qty: Number(it.qty || 0) })),
         total: finalTotal,
-        shippingFee: 0,
-        paymentMethod: paymentMethod === "stripe" ? "stripe" : "store",
+        shippingFee: shipping,
+        paymentMethod,
         status,
-        name: order.lineUserName || null,
-        zip: null,
-        pref: null,
-        address: null,
+        name: name || null,
+        zip: zip || null,
+        pref: pref || null,
+        address: addrLineForDb || null,
         source,
         rawEvent: order,
       });
@@ -1213,29 +1401,49 @@ app.post("/api/order/complete", async (req, res) => {
       console.error("orders db insert skipped:", e?.message || e);
     }
 
+    const payText =
+      paymentMethod === "cod" ? `代引（+${yen(codFee || COD_FEE)}）` :
+      paymentMethod === "bank" ? "銀行振込" :
+      paymentMethod === "store" ? "店頭現金" :
+      "カード(Stripe)";
+
+    const itemsLines = items
+      .map((it) => `${it.name || it.id || "商品"} ×${Number(it.qty || 0)} = ${yen((Number(it.price) || 0) * (Number(it.qty) || 0))}`)
+      .join("\n");
+
+    const adminMsg =
+      `🧾【注文完了（ミニアプリ）】\n` +
+      `${itemsLines || "（明細なし）"}\n` +
+      `\n支払：${payText}\n` +
+      `商品計：${yen(itemsTotal)}\n` +
+      `送料：${yen(shipping)}\n` +
+      `代引手数料：${yen(codFee)}\n` +
+      `合計：${yen(finalTotal)}\n` +
+      `\n氏名：${name || ""}\nTEL：${tel || ""}\n住所：${addrText || "（未入力）"}\n` +
+      `userId：${order.lineUserId || ""}\nsource：${source}`;
+
     if (ADMIN_USER_ID) {
-      const itemsLines = items
-        .map((it) => `${it.name || it.id || "商品"} ×${Number(it.qty || 0)} = ${yen((Number(it.price) || 0) * (Number(it.qty) || 0))}`)
-        .join("\n");
-
-      const adminMsg =
-        `🧾【注文完了（ミニアプリ）】\n` +
-        `${itemsLines || "（明細なし）"}\n` +
-        `\n支払：${paymentMethod === "stripe" ? "カード(Stripe)" : "店頭現金"}\n` +
-        `合計：${yen(finalTotal)}\n` +
-        `userId：${order.lineUserId || ""}\nsource：${source}`;
-
       try {
         await client.pushMessage(ADMIN_USER_ID, { type: "text", text: adminMsg });
-      } catch {}
+      } catch (e) {
+        console.error("[ADMIN PUSH] /api/order/complete failed:", e?.response?.data || e?.message || e);
+      }
     }
 
     const buyerId = String(order.lineUserId || "").trim();
     if (buyerId) {
-      const buyerMsg = `ご注文ありがとうございます！\n合計：${yen(finalTotal)}\n（このメッセージは自動送信です）`;
+      const buyerMsg =
+        `ご注文ありがとうございます！\n` +
+        `${itemsLines || ""}\n` +
+        `\n支払：${payText}\n` +
+        `合計：${yen(finalTotal)}\n` +
+        `\n（このメッセージは自動送信です）`;
+
       try {
         await client.pushMessage(buyerId, { type: "text", text: buyerMsg });
-      } catch {}
+      } catch (e) {
+        console.warn("[BUYER PUSH] skipped/failed:", e?.response?.data || e?.message || e);
+      }
     }
 
     return res.json({ ok: true, paymentMethod, status, source });
@@ -1301,7 +1509,7 @@ app.post("/api/admin/products/update", (req, res) => {
     const name = req.body?.name != null ? String(req.body.name) : product.name;
     const desc = req.body?.desc != null ? String(req.body.desc) : product.desc;
     const image = req.body?.image != null ? String(req.body.image) : product.image;
-    const volume = req.body?.volume != null ? String(req.body.volume) : product.volume || "";
+    const volume = req.body?.volume != null ? String(req.body.volume) : (product.volume || "");
 
     const price = id === "kusuke-250" ? KUSUKE_UNIT_PRICE : req.body?.price != null ? Number(req.body.price) : product.price;
     const stock = req.body?.stock != null ? Number(req.body.stock) : product.stock;
@@ -1350,11 +1558,7 @@ function readLogLines(filePath, limit = 100) {
   const tail = lines.slice(-Math.min(Number(limit) || 100, lines.length));
   return tail
     .map((l) => {
-      try {
-        return JSON.parse(l);
-      } catch {
-        return null;
-      }
+      try { return JSON.parse(l); } catch { return null; }
     })
     .filter(Boolean);
 }
@@ -1385,7 +1589,7 @@ app.get("/api/admin/orders", (req, res) => {
   return res.json({ ok: true, items });
 });
 
-// ✅ 発送通知API（管理画面→顧客へPush）※店頭運用でも“受取準備完了”通知に使える
+// ✅ 発送通知API（管理画面→顧客へPush）
 app.post("/api/admin/orders/notify-shipped", async (req, res) => {
   if (!requireAdmin(req, res)) return;
 
@@ -1429,18 +1633,9 @@ app.get("/api/admin/orders-db", async (req, res) => {
     const params = [];
     let i = 1;
 
-    if (payment) {
-      wh.push(`payment_method = $${i++}`);
-      params.push(payment);
-    }
-    if (status) {
-      wh.push(`status = $${i++}`);
-      params.push(status);
-    }
-    if (source) {
-      wh.push(`LOWER(COALESCE(source,'')) LIKE $${i++}`);
-      params.push(`%${source}%`);
-    }
+    if (payment) { wh.push(`payment_method = $${i++}`); params.push(payment); }
+    if (status) { wh.push(`status = $${i++}`); params.push(status); }
+    if (source) { wh.push(`LOWER(COALESCE(source,'')) LIKE $${i++}`); params.push(`%${source}%`); }
 
     params.push(limit);
     const whereSql = wh.length ? `WHERE ${wh.join(" AND ")}` : "";
@@ -1484,6 +1679,7 @@ app.get("/api/admin/users", async (req, res) => {
       return res.json({ ok: true, count: r.rows.length, items: r.rows });
     }
 
+    // DBなし（ファイル）
     const book = readLineUsersFile();
     let items = Object.values(book);
     if (q) {
@@ -1511,14 +1707,19 @@ app.get("/api/admin/segment/users", async (req, res) => {
 
     const r = await segmentGetUsersUnified({ days, source, limit: SEGMENT_PUSH_LIMIT });
 
+    // ★必要なら display_name を付与（表示/販促用）
     let profiles = null;
     if (includeProfile) {
       profiles = {};
       if (pool) {
         const p = mustPool();
+        // IN が大きくなるので 1000 ずつ
         const parts = chunkArray(r.items, 1000);
         for (const part of parts) {
-          const rr = await p.query(`SELECT user_id, display_name FROM line_users WHERE user_id = ANY($1::text[])`, [part]);
+          const rr = await p.query(
+            `SELECT user_id, display_name FROM line_users WHERE user_id = ANY($1::text[])`,
+            [part]
+          );
           for (const row of rr.rows) profiles[row.user_id] = row.display_name || "";
         }
       } else {
@@ -1674,16 +1875,7 @@ function qtyFlex(id, qty = 1) {
     altText: "数量を選択してください",
     contents: {
       type: "bubble",
-      body: {
-        type: "box",
-        layout: "vertical",
-        spacing: "md",
-        contents: [
-          { type: "text", text: "数量選択", weight: "bold", size: "lg" },
-          { type: "text", text: `現在の数量：${q} 個`, size: "md" },
-          { type: "text", text: "※店頭受取（現金）のみです。", size: "sm", wrap: true },
-        ],
-      },
+      body: { type: "box", layout: "vertical", spacing: "md", contents: [{ type: "text", text: "数量選択", weight: "bold", size: "lg" }, { type: "text", text: `現在の数量：${q} 個`, size: "md" }] },
       footer: {
         type: "box",
         layout: "vertical",
@@ -1708,8 +1900,7 @@ function qtyFlex(id, qty = 1) {
               action: { type: "postback", label: `${n}個`, data: `order_qty?${qstr({ id, qty: n })}` },
             })),
           },
-          // ★固定化：受取方法へは行かず、店頭へ直行
-          { type: "button", style: "primary", action: { type: "postback", label: "店頭受取へ", data: `order_pickup_payment?${qstr({ id, qty: q })}` } },
+          { type: "button", style: "primary", action: { type: "postback", label: "受取方法へ", data: `order_method?${qstr({ id, qty: q })}` } },
           { type: "button", style: "secondary", action: { type: "postback", label: "← 商品一覧", data: "order_back" } },
         ],
       },
@@ -1717,10 +1908,50 @@ function qtyFlex(id, qty = 1) {
   };
 }
 
-function paymentFlex(id, qty) {
+function methodFlex(id, qty) {
   return {
     type: "flex",
-    altText: "店頭受取（現金のみ）",
+    altText: "受取方法を選択してください",
+    contents: {
+      type: "bubble",
+      body: { type: "box", layout: "vertical", spacing: "md", contents: [{ type: "text", text: "受取方法", weight: "bold", size: "lg" }, { type: "text", text: "宅配 または 店頭受取 を選択してください。", wrap: true }] },
+      footer: {
+        type: "box",
+        layout: "horizontal",
+        spacing: "md",
+        contents: [
+          { type: "button", style: "primary", action: { type: "postback", label: "宅配（送料あり）", data: `order_payment?${qstr({ id, qty, method: "delivery" })}` } },
+          { type: "button", style: "secondary", action: { type: "postback", label: "店頭受取（送料0円）", data: `order_payment?${qstr({ id, qty, method: "pickup" })}` } },
+        ],
+      },
+    },
+  };
+}
+
+function paymentFlex(id, qty, method) {
+  if (method === "pickup") {
+    return {
+      type: "flex",
+      altText: "店頭受取（現金のみ）",
+      contents: {
+        type: "bubble",
+        body: { type: "box", layout: "vertical", spacing: "md", contents: [{ type: "text", text: "お支払い方法", weight: "bold", size: "lg" }, { type: "text", text: "店頭受取は現金のみです。", wrap: true }] },
+        footer: {
+          type: "box",
+          layout: "vertical",
+          spacing: "md",
+          contents: [
+            { type: "button", style: "primary", action: { type: "postback", label: "現金で支払う（店頭）", data: `order_pickup_name?${qstr({ id, qty, method: "pickup", payment: "cash" })}` } },
+            { type: "button", style: "secondary", action: { type: "postback", label: "← 戻る", data: `order_method?${qstr({ id, qty })}` } },
+          ],
+        },
+      },
+    };
+  }
+
+  return {
+    type: "flex",
+    altText: "お支払い方法を選択してください",
     contents: {
       type: "bubble",
       body: {
@@ -1729,47 +1960,81 @@ function paymentFlex(id, qty) {
         spacing: "md",
         contents: [
           { type: "text", text: "お支払い方法", weight: "bold", size: "lg" },
-          { type: "text", text: "店頭受取は現金のみです。", wrap: true },
+          { type: "text", text: "送料は登録住所から自動計算します。", wrap: true },
+          { type: "text", text: `代引きは +${yen(COD_FEE)}`, wrap: true },
         ],
       },
       footer: {
         type: "box",
-        layout: "vertical",
+        layout: "horizontal",
         spacing: "md",
         contents: [
-          { type: "button", style: "primary", action: { type: "postback", label: "現金で支払う（店頭）", data: `order_pickup_name?${qstr({ id, qty, method: "pickup", payment: "store" })}` } },
-          { type: "button", style: "secondary", action: { type: "postback", label: "← 戻る", data: `order_qty?${qstr({ id, qty })}` } },
+          { type: "button", style: "primary", action: { type: "postback", label: `代金引換（+${yen(COD_FEE)}）`, data: `order_confirm_view?${qstr({ id, qty, method: "delivery", payment: "cod" })}` } },
+          { type: "button", style: "secondary", action: { type: "postback", label: "銀行振込", data: `order_confirm_view?${qstr({ id, qty, method: "delivery", payment: "bank" })}` } },
         ],
       },
     },
   };
 }
 
-function confirmFlex(product, qty, pickupName = "") {
+function confirmFlex(product, qty, method, payment, address, pickupName) {
   const subtotal = Number(product.price) * Number(qty);
-  const total = subtotal;
+
+  let region = "";
+  let size = "";
+  let shipping = 0;
+  let addressOk = true;
+
+  if (method === "delivery") {
+    if (!address) addressOk = false;
+    else {
+      const r = calcShippingUnified([{ id: product.id, name: product.name, qty }], address);
+      region = r.region;
+      size = r.size;
+      shipping = r.shipping;
+      if (!region) addressOk = false;
+    }
+  }
+
+  const codFee = payment === "cod" ? COD_FEE : 0;
+  const total = subtotal + (method === "delivery" ? shipping : 0) + codFee;
+
+  const payText = payment === "cod" ? `代金引換（+${yen(COD_FEE)}）` : payment === "bank" ? "銀行振込" : "現金（店頭）";
 
   const lines = [
-    `受取方法：店頭受取（送料0円）`,
-    `支払い：店頭現金`,
+    `受取方法：${method === "pickup" ? "店頭受取（送料0円）" : "宅配（送料あり）"}`,
+    `支払い：${payText}`,
     `商品：${product.name}`,
     ...(product.volume ? [`内容量：${String(product.volume)}`] : []),
     `数量：${qty}個`,
     `小計：${yen(subtotal)}`,
-    `送料：0円`,
-    `合計：${yen(total)}`,
   ];
 
-  if (pickupName) lines.push(`お名前：${pickupName}`);
+  if (method === "delivery") {
+    if (addressOk) {
+      lines.push(`配送地域：${region}`);
+      lines.push(`サイズ：${size}`);
+      lines.push(`送料：${yen(shipping)}`);
+    } else {
+      lines.push("送料：住所未登録（または都道府県が不明）のため計算できません");
+    }
+  } else {
+    lines.push("送料：0円");
+  }
+
+  lines.push(`代引き手数料：${yen(codFee)}`);
+  lines.push(`合計：${yen(total)}`);
+
+  if (method === "pickup" && pickupName) lines.push(`お名前：${pickupName}`);
 
   const img = toPublicImageUrl(product.image || "");
 
   const footerButtons = [];
-  if (!pickupName) {
+  if (method === "delivery" && !addressOk) {
     footerButtons.push({
       type: "button",
       style: "primary",
-      action: { type: "postback", label: "お名前を入力する", data: `order_pickup_name?${qstr({ id: product.id, qty, method: "pickup", payment: "store" })}` },
+      action: { type: "uri", label: "住所を入力（LIFF）", uri: `https://liff.line.me/${LIFF_ID_DIRECT_ADDRESS || LIFF_ID}?from=address&need=shipping` },
     });
     footerButtons.push({ type: "button", style: "secondary", action: { type: "postback", label: "← 商品一覧へ", data: "order_back" } });
   } else {
@@ -1777,7 +2042,7 @@ function confirmFlex(product, qty, pickupName = "") {
     footerButtons.push({
       type: "button",
       style: "primary",
-      action: { type: "postback", label: "この内容で確定", data: `order_confirm?${qstr({ id: product.id, qty, method: "pickup", payment: "store", pickupName })}` },
+      action: { type: "postback", label: "この内容で確定", data: `order_confirm?${qstr({ id: product.id, qty, method, payment, pickupName: pickupName || "" })}` },
     });
   }
 
@@ -1871,9 +2136,8 @@ async function handleEvent(ev) {
 
   // ★まず台帳更新（seen）
   if (userId) {
-    try {
-      await touchUser(userId, "seen");
-    } catch {}
+    try { await touchUser(userId, "seen"); } catch {}
+    // ★プロフィール保存（followは強制更新、通常は間引き）
     try {
       const force = ev.type === "follow";
       await maybeRefreshLineProfile(userId, ev, { force });
@@ -1923,14 +2187,14 @@ async function handleEvent(ev) {
     }
   }
 
-  // 友だち追加（開始キーワードは案内しない）
+  // 友だち追加
   if (ev.type === "follow") {
     if (userId) await touchUser(userId, "seen");
     const msg =
       "友だち追加ありがとうございます！\n\n" +
-      "ご注文はリッチメニューから開始してください（店頭受取・現金のみ）。\n" +
-      "※注文途中の入力（お名前など）は案内に沿って送信してください。\n" +
-      "住所登録（LIFF）もできます（※店頭運用でも登録可）";
+      "・「直接注文」→ 商品一覧（通常商品）\n" +
+      "・「久助」→ 久助の注文（「久助 3」のように入力）\n" +
+      "・住所登録（LIFF）もできます";
     return client.replyMessage(ev.replyToken, { type: "text", text: msg });
   }
 
@@ -1946,7 +2210,10 @@ async function handleEvent(ev) {
     }
     if (m.type === "location") {
       const t =
-        `（位置情報）\n` + `タイトル：${m.title || ""}\n` + `住所：${m.address || ""}\n` + `緯度経度：${m.latitude},${m.longitude}`;
+        `（位置情報）\n` +
+        `タイトル：${m.title || ""}\n` +
+        `住所：${m.address || ""}\n` +
+        `緯度経度：${m.latitude},${m.longitude}`;
       await notifyAdminIncomingMessage(ev, t, { kind: "location" });
       return null;
     }
@@ -1967,26 +2234,25 @@ async function handleEvent(ev) {
     const sess = userId ? getSession(userId) : null;
 
     // ★管理者通知：受信テキストは全部転送
-    try {
-      await notifyAdminIncomingMessage(ev, text, { kind: "text", session: sess?.mode || "" });
-    } catch {}
+    try { await notifyAdminIncomingMessage(ev, text, { kind: "text", session: sess?.mode || "" }); } catch {}
 
-    // --- セッション入力：店頭受取名 ---
+    // --- セッション入力 ---
     if (sess?.mode === "pickup_name") {
       await touchUser(userId, "chat");
       const pickupName = text.slice(0, 40);
       const id = sess.id;
       const qty = Number(sess.qty || 1);
+      const method = sess.method || "pickup";
+      const payment = sess.payment || "cash";
       clearSession(userId);
 
       const product = loadProductByOrderId(id);
       return client.replyMessage(ev.replyToken, [
         { type: "text", text: `店頭受取のお名前「${pickupName}」で進めます。` },
-        confirmFlex(product, qty, pickupName),
+        confirmFlex(product, qty, method, payment === "cash" ? "store" : payment, null, pickupName),
       ]);
     }
 
-    // --- セッション入力：その他（商品名） ---
     if (sess?.mode === "other_name") {
       await touchUser(userId, "chat");
       const name = text.replace(/\s+/g, " ").slice(0, 60);
@@ -2006,43 +2272,68 @@ async function handleEvent(ev) {
       clearSession(userId);
 
       const id = `other:${encodeURIComponent(otherName)}:0`;
-      return client.replyMessage(ev.replyToken, [{ type: "text", text: "数量を選んでください。" }, qtyFlex(id, qty)]);
+      return client.replyMessage(ev.replyToken, [{ type: "text", text: "受取方法を選択してください。" }, methodFlex(id, qty)]);
     }
 
-    // ★開始キーワードは無効化（ポストバックのみで開始）
-    // それ以外は無反応（仕様）
+    // ① 直接注文
+    if (text === "直接注文") {
+      await touchUser(userId, "chat");
+      return client.replyMessage(ev.replyToken, [{ type: "text", text: "直接注文を開始します。商品一覧です。" }, productsFlex()]);
+    }
+
+    // ② 久助
+    if (text === "久助") {
+      await touchUser(userId, "chat");
+      const msg =
+        "久助のご注文を開始します。\n" +
+        `単価：${yen(KUSUKE_UNIT_PRICE)}（税込）\n\n` +
+        "「久助 3」のように数量を入力してください。";
+      return client.replyMessage(ev.replyToken, { type: "text", text: msg });
+    }
+
+    // ③ 久助 数量
+    const m = /^久助\s*(\d{1,2})$/.exec(text.replace(/[　]+/g, " "));
+    if (m) {
+      await touchUser(userId, "chat");
+      const qty = Number(m[1]);
+      if (qty < 1 || qty > 99) return client.replyMessage(ev.replyToken, { type: "text", text: "個数は 1〜99 で入力してください。" });
+
+      const { product } = findProductById("kusuke-250");
+      if (!product) return client.replyMessage(ev.replyToken, { type: "text", text: "久助の商品データが見つかりません。" });
+
+      const stock = Number(product.stock || 0);
+      if (stock < qty) {
+        appendJsonl(RESERVATIONS_LOG, { ts: new Date().toISOString(), userId, productId: product.id, productName: product.name, qty, reason: "stock_shortage" });
+        return client.replyMessage(ev.replyToken, [
+          { type: "text", text: `在庫不足です（在庫${stock}個）。予約しますか？` },
+          {
+            type: "template",
+            altText: "予約",
+            template: {
+              type: "confirm",
+              text: "予約しますか？",
+              actions: [
+                { type: "postback", label: "予約する", data: `order_reserve?${qstr({ id: product.id, qty })}` },
+                { type: "postback", label: "やめる", data: "order_cancel" },
+              ],
+            },
+          },
+        ]);
+      }
+
+      return client.replyMessage(ev.replyToken, [{ type: "text", text: "久助の注文内容です。" }, confirmFlex(product, qty, "delivery", "cod", null, null)]);
+    }
+
+    // それ以外は無反応
     return null;
   }
 
   // ===========================
-  // Postback（開始もここだけ）
+  // Postback
   // ===========================
   if (ev.type === "postback") {
     const data = String(ev.postback?.data || "");
 
-    // ✅ リッチメニュー開始（ここだけで開始）
-    if (data === "start_order") {
-      await touchUser(userId, "chat");
-      return client.replyMessage(ev.replyToken, [
-        { type: "text", text: "店頭受取でのご注文を開始します。商品を選んでください。" },
-        productsFlex(),
-      ]);
-    }
-    if (data === "start_kusuke") {
-      await touchUser(userId, "chat");
-      const msg =
-        "久助のご注文を開始します。（店頭受取のみ）\n" +
-        `単価：${yen(KUSUKE_UNIT_PRICE)}（税込）\n\n` +
-        "久助は「テキストで数量」を送ってください。\n例：\n久助 3";
-      return client.replyMessage(ev.replyToken, { type: "text", text: msg });
-    }
-    if (data === "start_other") {
-      if (!userId) return null;
-      setSession(userId, { mode: "other_name" });
-      return client.replyMessage(ev.replyToken, { type: "text", text: "商品名を入力してください（例：えびせん詰め合わせ）" });
-    }
-
-    // 既存の戻る/その他開始
     if (data === "order_back") {
       return client.replyMessage(ev.replyToken, [{ type: "text", text: "商品一覧に戻ります。" }, productsFlex()]);
     }
@@ -2058,49 +2349,53 @@ async function handleEvent(ev) {
       return client.replyMessage(ev.replyToken, qtyFlex(q.id, q.qty));
     }
 
-    // ★店頭固定：数量→店頭支払へ
-    if (data.startsWith("order_pickup_payment?")) {
+    if (data.startsWith("order_method?")) {
       const q = parseQuery(data);
-      return client.replyMessage(ev.replyToken, paymentFlex(q.id, Number(q.qty || 1)));
+      return client.replyMessage(ev.replyToken, methodFlex(q.id, Number(q.qty || 1)));
+    }
+
+    if (data.startsWith("order_payment?")) {
+      const q = parseQuery(data);
+      return client.replyMessage(ev.replyToken, paymentFlex(q.id, Number(q.qty || 1), q.method));
     }
 
     if (data.startsWith("order_pickup_name?")) {
       const q = parseQuery(data);
-      setSession(userId, { mode: "pickup_name", id: q.id, qty: Number(q.qty || 1) });
+      setSession(userId, { mode: "pickup_name", id: q.id, qty: Number(q.qty || 1), method: q.method, payment: q.payment });
       return client.replyMessage(ev.replyToken, { type: "text", text: "店頭で受け取るお名前を入力してください。" });
     }
 
-    // ★保険：confirm_view が呼ばれても店頭固定で表示
     if (data.startsWith("order_confirm_view?")) {
       const q = parseQuery(data);
       const id = q.id;
       const qty = Number(q.qty || 1);
-      const pickupName = String(q.pickupName || "").trim();
+      const method = q.method;
+      const payment = q.payment;
+
       const product = loadProductByOrderId(id);
-      return client.replyMessage(ev.replyToken, confirmFlex(product, qty, pickupName));
+
+      let address = null;
+      if (method === "delivery" && pool) {
+        const row = await dbGetAddressByUserId(userId);
+        if (row) {
+          address = { name: row.name || "", phone: row.phone || "", postal: row.postal || "", prefecture: row.prefecture || "", city: row.city || "", address1: row.address1 || "", address2: row.address2 || "" };
+        }
+      }
+
+      const flex = confirmFlex(product, qty, method, payment, address, null);
+      return client.replyMessage(ev.replyToken, flex);
     }
 
     if (data.startsWith("order_confirm?")) {
       const q = parseQuery(data);
       const id = q.id;
       const qty = Number(q.qty || 1);
-
-      // ★店頭固定（強制）
-      const method = "pickup";
-      const payment = "store";
+      const method = q.method;
+      const payment = q.payment;
       const pickupName = String(q.pickupName || "").trim();
-
-      if (!pickupName) {
-        const product = loadProductByOrderId(id);
-        return client.replyMessage(ev.replyToken, [
-          { type: "text", text: "お名前が未入力です。先に入力してください。" },
-          confirmFlex(product, qty, ""),
-        ]);
-      }
 
       const product = loadProductByOrderId(id);
 
-      // 在庫チェック（otherは在庫無限扱い）
       if (!String(product.id).startsWith("other:")) {
         const { product: p } = findProductById(product.id);
         if (!p) return client.replyMessage(ev.replyToken, { type: "text", text: "商品が見つかりません。" });
@@ -2129,9 +2424,27 @@ async function handleEvent(ev) {
         await maybeLowStockAlert(p.id, p.name, Math.max(0, stock - qty));
       }
 
-      const shipping = 0;
+      let address = null;
+      if (method === "delivery" && pool) {
+        const row = await dbGetAddressByUserId(userId);
+        if (row) {
+          address = { name: row.name || "", phone: row.phone || "", postal: row.postal || "", prefecture: row.prefecture || "", city: row.city || "", address1: row.address1 || "", address2: row.address2 || "" };
+        }
+      }
+
+      let shipping = 0;
+      let region = "";
+      let size = "";
+      if (method === "delivery") {
+        const r = calcShippingUnified([{ id: product.id, name: product.name, qty }], address || {});
+        shipping = r.shipping;
+        region = r.region;
+        size = r.size;
+      }
+
       const subtotal = Number(product.price || 0) * qty;
-      const total = subtotal;
+      const codFee = payment === "cod" ? COD_FEE : 0;
+      const total = subtotal + (method === "delivery" ? shipping : 0) + codFee;
 
       const order = {
         ts: new Date().toISOString(),
@@ -2142,17 +2455,18 @@ async function handleEvent(ev) {
         qty,
         method,
         payment,
-        pickupName,
+        pickupName: method === "pickup" ? pickupName : "",
         shipping,
+        region,
+        size,
+        codFee,
         total,
+        address: address ? { name: address.name || "", phone: address.phone || "", postal: address.postal || "", prefecture: address.prefecture || "", city: address.city || "", address1: address.address1 || "", address2: address.address2 || "" } : null,
         note: String(product.id).startsWith("other:") ? "価格未入力（その他）" : "",
       };
 
-      try {
-        appendJsonl(ORDERS_LOG, { ...order, source: "line-postback" });
-      } catch {}
+      try { appendJsonl(ORDERS_LOG, { ...order, source: "line-postback" }); } catch {}
 
-      // DB保存
       try {
         let memberCode = null;
         if (pool) {
@@ -2160,19 +2474,24 @@ async function handleEvent(ev) {
           memberCode = c?.member_code ? String(c.member_code).trim() : null;
         }
 
+        const nameForDb = method === "pickup" ? pickupName || null : address?.name || null;
+        const zip = address?.postal || null;
+        const pref = address?.prefecture || null;
+        const addrLine = address ? `${address.city || ""}${address.address1 || ""}${address.address2 ? " " + address.address2 : ""}`.trim() || null : null;
+
         await dbInsertOrder({
           userId,
           memberCode,
-          phone: null,
+          phone: address?.phone || null,
           items: [{ id: product.id, name: product.name, price: Number(product.price || 0), qty }],
           total,
-          shippingFee: 0,
-          paymentMethod: "store",
+          shippingFee: method === "delivery" ? shipping : 0,
+          paymentMethod: payment === "cod" ? "cod" : payment === "bank" ? "bank" : "store",
           status: "new",
-          name: pickupName || null,
-          zip: null,
-          pref: null,
-          address: null,
+          name: nameForDb,
+          zip,
+          pref,
+          address: addrLine,
           source: "line-postback",
           rawEvent: { ...order, source: "line-postback" },
         });
@@ -2180,29 +2499,37 @@ async function handleEvent(ev) {
         console.error("orders db insert skipped:", e?.message || e);
       }
 
-      // 管理者通知
       if (ADMIN_USER_ID) {
+        const addrText =
+          method === "delivery" && address
+            ? `住所：${address.postal || ""} ${address.prefecture || ""}${address.city || ""}${address.address1 || ""}${address.address2 ? " " + address.address2 : ""}\n氏名：${address.name || ""}\nTEL：${address.phone || ""}`
+            : method === "pickup"
+            ? `店頭受取：${pickupName || ""}`
+            : "住所：未登録";
+
         const msg =
-          `🧾【新規注文（店頭受取）】\n` +
+          `🧾【新規注文】\n` +
           `商品：${product.name}\n` +
           `数量：${qty}\n` +
-          `支払：店頭現金\n` +
+          `受取：${method === "pickup" ? "店頭" : "宅配"}\n` +
+          `支払：${payment === "cod" ? "代引" : payment === "bank" ? "振込" : "店頭現金"}\n` +
+          (method === "delivery" ? `送料：${yen(shipping)}（${region || "不明"} / ${size || "?"}）\n` : "送料：0円\n") +
+          (codFee ? `代引手数料：${yen(codFee)}\n` : "") +
           `合計：${yen(total)}\n` +
           (order.note ? `※${order.note}\n` : "") +
-          `\n店頭受取名：${pickupName}\nuserId：${userId}`;
+          `\n${addrText}`;
 
-        try {
-          await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg });
-        } catch {}
+        try { await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg }); } catch {}
       }
 
       const userMsg =
-        "ご注文ありがとうございます！（店頭受取）\n\n" +
+        "ご注文ありがとうございます！\n\n" +
         `商品：${product.name}\n` +
         `数量：${qty}\n` +
+        (method === "delivery" ? `送料：${yen(shipping)}\n` + (codFee ? `代引手数料：${yen(codFee)}\n` : "") : "送料：0円\n") +
         `合計：${yen(total)}\n` +
-        `\n店頭受取のお名前：${pickupName}\n` +
-        "※店頭でお声がけください。";
+        (method === "pickup" ? `\n店頭受取のお名前：${pickupName || ""}\n` : "") +
+        (method === "delivery" && !address ? "\n※住所が未登録です。住所登録（LIFF）をお願いします。\n" : "");
 
       return client.replyMessage(ev.replyToken, { type: "text", text: userMsg });
     }
@@ -2216,9 +2543,7 @@ async function handleEvent(ev) {
 
       if (ADMIN_USER_ID) {
         const msg = `📌【予約】\n商品：${product?.name || id}\n数量：${qty}\nuserId：${userId}`;
-        try {
-          await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg });
-        } catch {}
+        try { await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg }); } catch {}
       }
 
       return client.replyMessage(ev.replyToken, { type: "text", text: "予約を受け付けました。入荷次第ご案内します。" });
@@ -2260,8 +2585,6 @@ async function start() {
     console.log(`[BOOT] server listening on ${PORT}`);
     console.log(`[BOOT] UPLOAD_DIR=${UPLOAD_DIR}`);
     console.log(`[BOOT] PROFILE_REFRESH_DAYS=${PROFILE_REFRESH_DAYS}`);
-    console.log(`[BOOT] MODE=store_pickup_only`);
-    console.log(`[BOOT] START=postback_only`);
   });
 }
 

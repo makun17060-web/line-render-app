@@ -179,10 +179,20 @@ async function ensureLiff(){
   }
 }
 
+/**
+ * ★重要：戻るが効くようにする
+ * - LIFF内の通常遷移は window.location.href（同一WebView遷移 → 履歴が残る）
+ * - external=true のときだけ liff.openWindow({external:true})（外部ブラウザ）
+ */
 function openUrl(url, external=false){
-  if (isInLiff()){
-    try { liff.openWindow({ url, external }); return; } catch {}
+  const inClient = isInLiff();
+
+  // 外部ブラウザで開きたい場合だけ openWindow
+  if (inClient && external){
+    try { liff.openWindow({ url, external:true }); return; } catch {}
   }
+
+  // それ以外は同一画面遷移（履歴が残る）
   window.location.href = url;
 }
 
@@ -196,17 +206,20 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   if (inClient) await ensureLiff();
 
+  // ご利用方法は「閉じる」でLINEへ戻すのが自然
   document.getElementById("btnClose").onclick = () => {
-    if (inClient) liff.closeWindow();
-    else history.back();
+    if (inClient && window.liff && liff.closeWindow) liff.closeWindow();
+    else window.location.href = LINKS.ORDER_URL; // ブラウザの場合は適当な戻り先（任意）
   };
 
   document.getElementById("btnOrder").onclick =
     () => openUrl(LINKS.ORDER_URL, false);
 
+  // ★住所登録は external=false（同一遷移）
   document.getElementById("btnAddress").onclick =
     () => openUrl(LINKS.ADDRESS_URL, false);
 
+  // 送料ページは external=true（外部ブラウザのままでOK）
   document.getElementById("btnShipping").onclick =
     () => openUrl(LINKS.SHIPPING_URL, true);
 

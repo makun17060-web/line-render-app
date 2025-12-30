@@ -1308,6 +1308,79 @@ app.get("/api/shipping/config", (_req, res) => {
     },
   });
 });
+// =============== 送料見積（商品選択式：pref + items） ===============
+// HTML側: POST /api/shipping/quote { pref, items:[{product_id, qty}] }
+// - original-set: オリジナルセット（あなたのサイズロジック適用）
+// - akasha: あかしゃシリーズ合計（akasha6判定でサイズロジック適用）
+// - other: その他（合計個数ロジック）
+//
+// 返却: { region, size, shipping_fee, items_total, total }
+app.post("/api/shipping/quote", (req, res) => {
+  try {
+    const pref = String(req.body?.pref || "").trim();
+    const itemsIn = Array.isArray(req.body?.items) ? req.body.items : [];
+
+    if (!pref) return res.status(400).json({ ok: false, error: "pref_required" });
+    if (!itemsIn.length) return res.status(400).json({ ok: false, error: "items_required" });
+
+    // region判定は既存 detectRegionFromAddress を使うので、prefだけ入れた仮住所にする
+    const address = { prefecture: pref };
+
+    // products.json から「オリジナルセット」の単価を拾う（他はこの簡易見積では0円扱い）
+    const products = readProducts();
+    const originalProduct =
+      products.find((p) => p.id === ORIGINAL_SET_PRODUCT_ID) ||
+      products.find((p) => /磯屋.?オリジナルセ/.test(String(p.name || ""))) ||
+      null;
+
+    // items を calcShippingUnified が理解できる形へ変換
+    const items = itemsIn
+      .map((it) => {
+        const pid = String(it?.product_id || "").trim();
+        const qty = Math.max(0, Number(it?.qty || 0));
+        if (!pid || !qty) return null;
+
+        if (pid === "original-set") {
+          return {
+            id: ORIGINAL_SET_PRODUCT_ID,
+            name: originalProduct?.name || "磯屋オリジナルセット",
+            qty,
+            price: Number(originalProduct?.price || 0),
+          };
+        }
+        if (pid === "akasha") {
+          // isAkasha6() は name の正規表現で判定しているので、あかしゃ系の名前を入れる
+          return { id: "akasha_bundle", name: "のりあかしゃ", qty, price: 0 };
+        }
+        // other
+        return { id: "other_bundle", name: "その他商品", qty, price: 0 };
+      })
+      .filter(Boolean);
+
+    if (!items.length) return res.status(400).json({ ok: false, error: "no_valid_items" });
+
+    const itemsTotal = items.reduce((s, it) => s + (Number(it.price || 0) * Number(it.qty || 0)), 0);
+
+    // 既存ロジックで送料計算
+    const { region, size, shipping } = calcShippingUnified(items, address);
+
+    // region が空だと送料0になるので、ここは明示エラーでもOKだが、いったん返す
+    const shippingFee = Number(shipping || 0);
+    const total = itemsTotal + shippingFee;
+
+    return res.json({
+      ok: true,
+      region: region || "(不明)",
+      size: size || "(不明)",
+      shipping_fee: shippingFee,
+      items_total: itemsTotal,
+      total,
+    });
+  } catch (e) {
+    console.error("/api/shipping/quote error:", e);
+    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
+  }
+});
 
 // =============== Stripe ===============
 const stripeSecretKey = (process.env.STRIPE_SECRET_KEY || process.env.STRIPE_SECRET || "").trim();

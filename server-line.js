@@ -2120,6 +2120,20 @@ async function notifyAdminIncomingMessage(ev, bodyText, extra = {}) {
 // =============== handleEvent ===============
 async function handleEvent(ev) {
   const userId = ev?.source?.userId || "";
+  
+// ★友だち追加（follow）をDBに正式保存
+if (ev.type === "follow") {
+  const userId = ev?.source?.userId;
+  if (userId && pool) {
+    await pool.query(
+      `
+      INSERT INTO follow_events (user_id, event_ts, raw_event)
+      VALUES ($1, NOW(), $2::jsonb)
+      `,
+      [userId, JSON.stringify(ev)]
+    );
+  }
+}
 
   // ★まず台帳更新（seen）＋プロフィール保存（followは強制更新）
   if (userId) {

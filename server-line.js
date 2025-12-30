@@ -34,7 +34,12 @@
  *
  * ✅ 今回追加（あなたの要望）：友だち追加＝DBでも100%一致（“以後”）
  * - follow/unfollow をDBに正式保存：follow_events / unfollow_events
- * - 管理API：GET /api/admin/follow/stats（今日/昨日/7日/30日）
+ * - 管理API：GET /api/admin/follow/stats（今日/昨日/7日/30日 + 純増）
+ *
+ * ✅ 今回追加（リッチメニュー：店頭受取を postback で開始）
+ * - リッチメニューの「店頭受取」ボタンを postback にして “トークに文字を出さず” 開始
+ *   postback data: action=pickup_start
+ * - pickup_start で「直接注文」を内部開始しつつ “店頭受取に固定”
  *
  * --- 必須 .env ---
  * LINE_CHANNEL_ACCESS_TOKEN
@@ -106,6 +111,9 @@ const SEGMENT_CHUNK_SIZE = Math.min(500, Math.max(50, Number(process.env.SEGMENT
 
 // ★プロフィール更新の最小間隔（日）
 const PROFILE_REFRESH_DAYS = Math.min(365, Math.max(1, Number(process.env.PROFILE_REFRESH_DAYS || 30)));
+
+// ★店頭受取 postback の data（リッチメニュー）
+const PICKUP_POSTBACK_DATA = "action=pickup_start";
 
 if (!config.channelAccessToken || !config.channelSecret || !LIFF_ID || (!ADMIN_API_TOKEN_ENV && !ADMIN_CODE_ENV)) {
   console.error(`ERROR: 必須envが不足しています
@@ -515,7 +523,7 @@ async function ensureDbSchema() {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_line_users_last_seen ON line_users(last_seen DESC);`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_line_users_profile_updated_at ON line_users(profile_updated_at DESC);`);
 
-  // ★友だち追加/ブロック ログ（今回追加）
+  // ★友だち追加/ブロック ログ（event_ts + raw_event）
   await p.query(`
     CREATE TABLE IF NOT EXISTS follow_events (
       id        BIGSERIAL PRIMARY KEY,
@@ -1797,90 +1805,37 @@ app.post("/api/admin/segment/send", async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || "server_error" });
   }
 });
+
 // =====================================
-// ★管理：今日の友だち追加 / 純増（follow - unfollow）
+// ★管理：友だち追加/ブロック 統計（event_tsで集計）
 // =====================================
 app.get("/api/admin/follow/stats", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
     if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
 
+    const p = mustPool();
     const tz = String(req.query.tz || "Asia/Tokyo").trim();
-
-    // 今日の 00:00〜24:00（TZ基準）
-    const sqlTodayFollow = `
-      SELECT COUNT(*)::int AS c
-      FROM follow_events
-      WHERE followed_at >= (date_trunc('day', now() AT TIME ZONE $1) AT TIME ZONE $1)
-        AND followed_at <  ((date_trunc('day', now() AT TIME ZONE $1) + interval '1 day') AT TIME ZONE $1)
-    `;
-
-    const sqlTodayUnfollow = `
-      SELECT COUNT(*)::int AS c
-      FROM unfollow_events
-      WHERE unfollowed_at >= (date_trunc('day', now() AT TIME ZONE $1) AT TIME ZONE $1)
-        AND unfollowed_at <  ((date_trunc('day', now() AT TIME ZONE $1) + interval '1 day') AT TIME ZONE $1)
-    `;
-
-    const p = mustPool();
-    const rf = await p.query(sqlTodayFollow, [tz]);
-
-    // unfollow_events が未作成でも落ちないように保険
-    let ru;
-    try {
-      ru = await p.query(sqlTodayUnfollow, [tz]);
-    } catch {
-      ru = { rows: [{ c: 0 }] };
-    }
-
-    const todayFollow = Number(rf.rows?.[0]?.c || 0);
-    const todayUnfollow = Number(ru.rows?.[0]?.c || 0);
-
-    return res.json({
-      ok: true,
-      tz,
-      today: {
-        follow: todayFollow,
-        unfollow: todayUnfollow,
-        net: todayFollow - todayUnfollow,
-      },
-    });
-  } catch (e) {
-    console.error("/api/admin/follow/stats error:", e);
-    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
-  }
-});
-
-// =====================================
-// ★管理：友だち追加/ブロック 統計（今回追加）
-// =====================================
-app.get("/api/admin/follow/stats", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
-
-    const p = mustPool();
 
     const sql = `
       WITH
       t AS (
-        SELECT
-          (date_trunc('day', now() AT TIME ZONE 'Asia/Tokyo'))::timestamp AS jst_today_start
+        SELECT (date_trunc('day', now() AT TIME ZONE $1))::timestamp AS jst_today_start
       ),
       f AS (
         SELECT
           COUNT(*)::int AS follow_total_events,
           COUNT(DISTINCT user_id)::int AS follow_total_unique,
 
-          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t))::int AS follow_today,
-          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t) - INTERVAL '1 day'
-                           AND (event_ts AT TIME ZONE 'Asia/Tokyo') <  (SELECT jst_today_start FROM t))::int AS follow_yesterday,
-          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t) - INTERVAL '7 day')::int AS follow_last7,
-          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t) - INTERVAL '30 day')::int AS follow_last30,
+          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE $1) >= (SELECT jst_today_start FROM t))::int AS follow_today,
+          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE $1) >= (SELECT jst_today_start FROM t) - INTERVAL '1 day'
+                           AND (event_ts AT TIME ZONE $1) <  (SELECT jst_today_start FROM t))::int AS follow_yesterday,
+          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE $1) >= (SELECT jst_today_start FROM t) - INTERVAL '7 day')::int AS follow_last7,
+          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE $1) >= (SELECT jst_today_start FROM t) - INTERVAL '30 day')::int AS follow_last30,
 
-          COUNT(DISTINCT user_id) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t))::int AS follow_today_unique,
-          COUNT(DISTINCT user_id) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t) - INTERVAL '7 day')::int AS follow_last7_unique,
-          COUNT(DISTINCT user_id) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t) - INTERVAL '30 day')::int AS follow_last30_unique
+          COUNT(DISTINCT user_id) FILTER (WHERE (event_ts AT TIME ZONE $1) >= (SELECT jst_today_start FROM t))::int AS follow_today_unique,
+          COUNT(DISTINCT user_id) FILTER (WHERE (event_ts AT TIME ZONE $1) >= (SELECT jst_today_start FROM t) - INTERVAL '7 day')::int AS follow_last7_unique,
+          COUNT(DISTINCT user_id) FILTER (WHERE (event_ts AT TIME ZONE $1) >= (SELECT jst_today_start FROM t) - INTERVAL '30 day')::int AS follow_last30_unique
         FROM follow_events
       ),
       u AS (
@@ -1888,11 +1843,11 @@ app.get("/api/admin/follow/stats", async (req, res) => {
           COUNT(*)::int AS unfollow_total_events,
           COUNT(DISTINCT user_id)::int AS unfollow_total_unique,
 
-          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t))::int AS unfollow_today,
-          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t) - INTERVAL '1 day'
-                           AND (event_ts AT TIME ZONE 'Asia/Tokyo') <  (SELECT jst_today_start FROM t))::int AS unfollow_yesterday,
-          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t) - INTERVAL '7 day')::int AS unfollow_last7,
-          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t) - INTERVAL '30 day')::int AS unfollow_last30
+          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE $1) >= (SELECT jst_today_start FROM t))::int AS unfollow_today,
+          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE $1) >= (SELECT jst_today_start FROM t) - INTERVAL '1 day'
+                           AND (event_ts AT TIME ZONE $1) <  (SELECT jst_today_start FROM t))::int AS unfollow_yesterday,
+          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE $1) >= (SELECT jst_today_start FROM t) - INTERVAL '7 day')::int AS unfollow_last7,
+          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE $1) >= (SELECT jst_today_start FROM t) - INTERVAL '30 day')::int AS unfollow_last30
         FROM unfollow_events
       )
       SELECT
@@ -1904,8 +1859,8 @@ app.get("/api/admin/follow/stats", async (req, res) => {
       FROM f, u
     `;
 
-    const r = await p.query(sql);
-    return res.json({ ok: true, stats: r.rows?.[0] || null });
+    const r = await p.query(sql, [tz]);
+    return res.json({ ok: true, tz, stats: r.rows?.[0] || null });
   } catch (e) {
     console.error("/api/admin/follow/stats error:", e);
     return res.status(500).json({ ok: false, error: e?.message || "server_error" });
@@ -1939,6 +1894,19 @@ function parseQuery(data) {
       if (k) o[decodeURIComponent(k)] = decodeURIComponent(v || "");
     });
   return o;
+}
+
+// ★postback data を URLSearchParams で解析（action=pickup_start など）
+function parsePostbackParams(data) {
+  try {
+    const s = String(data || "").trim();
+    // 例: "action=pickup_start" / "action=pickup_start&x=1"
+    // 例: "foo?x=1&action=pickup_start" でも動く
+    const qs = s.includes("?") ? s.split("?")[1] : s;
+    return new URLSearchParams(qs);
+  } catch {
+    return new URLSearchParams();
+  }
 }
 
 function productsFlex() {
@@ -2253,7 +2221,7 @@ async function notifyAdminIncomingMessage(ev, bodyText, extra = {}) {
 }
 
 // ================================
-// ★ follow/unfollow をDBに正式保存（確定版）
+// ★ follow/unfollow をDBに正式保存（event_ts + raw_event）
 // ================================
 async function logFollowUnfollow(ev) {
   if (!pool) return;
@@ -2262,24 +2230,27 @@ async function logFollowUnfollow(ev) {
   if (!userId) return;
 
   try {
+    const tsMs = Number(ev.timestamp || Date.now());
+    const eventTs = new Date(tsMs).toISOString();
+    const raw = ev || {};
+
     if (ev.type === "follow") {
       await mustPool().query(
         `
-        INSERT INTO follow_events (user_id, followed_at)
-        VALUES ($1, to_timestamp($2::double precision / 1000.0))
-        ON CONFLICT DO NOTHING
+        INSERT INTO follow_events (user_id, event_ts, raw_event)
+        VALUES ($1, $2::timestamptz, $3::jsonb)
         `,
-        [userId, Number(ev.timestamp || Date.now())]
+        [userId, eventTs, JSON.stringify(raw)]
       );
       console.log("[follow_events] inserted:", userId);
 
     } else if (ev.type === "unfollow") {
       await mustPool().query(
         `
-        INSERT INTO unfollow_events (user_id, unfollowed_at)
-        VALUES ($1, to_timestamp($2::double precision / 1000.0))
+        INSERT INTO unfollow_events (user_id, event_ts, raw_event)
+        VALUES ($1, $2::timestamptz, $3::jsonb)
         `,
-        [userId, Number(ev.timestamp || Date.now())]
+        [userId, eventTs, JSON.stringify(raw)]
       );
       console.log("[unfollow_events] inserted:", userId);
     }
@@ -2443,15 +2414,18 @@ async function handleEvent(ev) {
       if (qty < 1 || qty > 99) return client.replyMessage(ev.replyToken, { type: "text", text: "個数は 1〜99 で入力してください。" });
 
       const otherName = String(sess.otherName || "その他");
-      clearSession(userId);
+      // “その他”系は pickupOnly を残しておきたい場合があるので、modeだけ消す
+      setSession(userId, { mode: "", otherName: "" });
 
       const id = `other:${encodeURIComponent(otherName)}:0`;
       return client.replyMessage(ev.replyToken, [{ type: "text", text: "受取方法を選択してください。" }, methodFlex(id, qty)]);
     }
 
-    // ① 直接注文
+    // ① 直接注文（通常）
     if (text === "直接注文") {
       await touchUser(userId, "chat");
+      // ★リッチメニュー店頭受取の強制フラグを消す（通常ルート）
+      clearSession(userId);
       return client.replyMessage(ev.replyToken, [{ type: "text", text: "直接注文を開始します。商品一覧です。" }, productsFlex()]);
     }
 
@@ -2508,6 +2482,25 @@ async function handleEvent(ev) {
   if (ev.type === "postback") {
     const data = String(ev.postback?.data || "");
 
+    // ★リッチメニュー：店頭受取開始（postback）
+    // data: "action=pickup_start"
+    {
+      const params = parsePostbackParams(data);
+      const action = params.get("action") || "";
+      if (action === "pickup_start") {
+        if (!userId) return null;
+
+        // ★pickupOnly フラグを立てる（この注文中は店頭受取固定）
+        setSession(userId, { pickupOnly: true });
+
+        // トークに文字を出さず開始（replyだけ出す）
+        return client.replyMessage(ev.replyToken, [
+          { type: "text", text: "店頭受取でご注文を開始します。商品を選んでください。" },
+          productsFlex(),
+        ]);
+      }
+    }
+
     if (data === "order_back") {
       return client.replyMessage(ev.replyToken, [{ type: "text", text: "商品一覧に戻ります。" }, productsFlex()]);
     }
@@ -2525,12 +2518,25 @@ async function handleEvent(ev) {
 
     if (data.startsWith("order_method?")) {
       const q = parseQuery(data);
-      return client.replyMessage(ev.replyToken, methodFlex(q.id, Number(q.qty || 1)));
+      const qty = Number(q.qty || 1);
+
+      // ★pickupOnly のときは「受取方法」を出さず、店頭受取へ固定して次へ
+      const sess = userId ? getSession(userId) : null;
+      if (sess?.pickupOnly) {
+        return client.replyMessage(ev.replyToken, paymentFlex(q.id, qty, "pickup"));
+      }
+      return client.replyMessage(ev.replyToken, methodFlex(q.id, qty));
     }
 
     if (data.startsWith("order_payment?")) {
       const q = parseQuery(data);
-      return client.replyMessage(ev.replyToken, paymentFlex(q.id, Number(q.qty || 1), q.method));
+      const qty = Number(q.qty || 1);
+
+      // ★pickupOnly のときは method を強制 pickup
+      const sess = userId ? getSession(userId) : null;
+      const method = sess?.pickupOnly ? "pickup" : q.method;
+
+      return client.replyMessage(ev.replyToken, paymentFlex(q.id, qty, method));
     }
 
     if (data.startsWith("order_pickup_name?")) {
@@ -2543,8 +2549,11 @@ async function handleEvent(ev) {
       const q = parseQuery(data);
       const id = q.id;
       const qty = Number(q.qty || 1);
-      const method = q.method;
-      const payment = q.payment;
+
+      // ★pickupOnly のときは method/payment を固定
+      const sess = userId ? getSession(userId) : null;
+      const method = sess?.pickupOnly ? "pickup" : q.method;
+      const payment = sess?.pickupOnly ? "cash" : q.payment;
 
       const product = loadProductByOrderId(id);
 
@@ -2564,12 +2573,16 @@ async function handleEvent(ev) {
       const q = parseQuery(data);
       const id = q.id;
       const qty = Number(q.qty || 1);
-      const method = q.method;
-      const payment = q.payment;
-      const pickupName = String(q.pickupName || "").trim();
 
+      // ★pickupOnly のときは method/payment を固定
+      const sess = userId ? getSession(userId) : null;
+      const method = sess?.pickupOnly ? "pickup" : q.method;
+      const payment = sess?.pickupOnly ? "cash" : q.payment;
+
+      const pickupName = String(q.pickupName || "").trim();
       const product = loadProductByOrderId(id);
 
+      // （在庫処理）
       if (!String(product.id).startsWith("other:")) {
         const { product: p } = findProductById(product.id);
         if (!p) return client.replyMessage(ev.replyToken, { type: "text", text: "商品が見つかりません。" });
@@ -2705,6 +2718,9 @@ async function handleEvent(ev) {
         (method === "pickup" ? `\n店頭受取のお名前：${pickupName || ""}\n` : "") +
         (method === "delivery" && !address ? "\n※住所が未登録です。住所登録（LIFF）をお願いします。\n" : "");
 
+      // ★注文完了で pickupOnly を含むセッションを終了
+      clearSession(userId);
+
       return client.replyMessage(ev.replyToken, { type: "text", text: userMsg });
     }
 
@@ -2720,10 +2736,14 @@ async function handleEvent(ev) {
         try { await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg }); } catch {}
       }
 
+      // ★予約でいったんセッション終了
+      clearSession(userId);
+
       return client.replyMessage(ev.replyToken, { type: "text", text: "予約を受け付けました。入荷次第ご案内します。" });
     }
 
     if (data === "order_cancel") {
+      clearSession(userId);
       return client.replyMessage(ev.replyToken, { type: "text", text: "キャンセルしました。" });
     }
   }
@@ -2759,6 +2779,7 @@ async function start() {
     console.log(`[BOOT] server listening on ${PORT}`);
     console.log(`[BOOT] UPLOAD_DIR=${UPLOAD_DIR}`);
     console.log(`[BOOT] PROFILE_REFRESH_DAYS=${PROFILE_REFRESH_DAYS}`);
+    console.log(`[BOOT] PICKUP_POSTBACK_DATA=${PICKUP_POSTBACK_DATA}`);
   });
 }
 

@@ -26,158 +26,117 @@
     textarea{min-height:110px;resize:vertical}
     .field{margin:10px 0}
     .small{font-size:12px;color:var(--muted)}
-    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
     button{
       border:0; border-radius:10px; padding:10px 12px; cursor:pointer;
       background:var(--btn); color:#fff; font-weight:600;
     }
     button.secondary{background:var(--btn2)}
     button.ghost{background:#fff;color:var(--text);border:1px solid var(--line)}
-    button:disabled{opacity:.45;cursor:not-allowed}
-    .toast{
-      display:none; margin:10px 0 0; padding:10px 12px; border-radius:10px;
-      border:1px solid var(--line); background:#fff;
-    }
-    .toast.ok{border-color:#bbf7d0;background:#f0fdf4;color:#166534}
-    .toast.warn{border-color:#fecaca;background:#fef2f2;color:#991b1b}
+    .toast{display:none;margin-top:10px;padding:10px;border-radius:10px;border:1px solid var(--line)}
     table{width:100%;border-collapse:collapse}
-    th,td{border-bottom:1px solid var(--line);padding:8px;text-align:left;font-size:13px}
-    th{color:var(--muted);font-weight:700}
+    th,td{border-bottom:1px solid var(--line);padding:8px;font-size:13px}
+    th{color:var(--muted)}
     .stat{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-    .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 10px;font-size:12px;color:var(--muted)}
+    .pill{
+      display:inline-flex;align-items:center;gap:6px;
+      border:1px solid var(--line);background:#fff;
+      border-radius:999px;padding:6px 10px;
+      font-size:12px;color:var(--muted)
+    }
     .pill b{color:var(--text)}
-    .hint{font-size:12px;color:var(--muted);line-height:1.55}
-    .danger-note{font-size:12px;color:#7f1d1d;background:#fff7ed;border:1px solid #fed7aa;padding:10px;border-radius:10px}
-    .mutedline{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.55}
-    code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
   </style>
 </head>
+
 <body>
-  <div class="wrap">
-    <h1>管理：セグメント抽出 & 一括Push</h1>
-    <div class="grid">
+<div class="wrap">
+  <h1>管理：セグメント抽出 & 一括Push</h1>
 
-      <!-- 左：操作 -->
-      <div class="card">
-        <div class="field">
-          <label>管理トークン（Bearer）</label>
-          <input id="token" type="password" placeholder="ADMIN_API_TOKEN を貼り付け" autocomplete="off" />
-          <div class="row" style="margin-top:8px;">
-            <button id="saveToken" class="secondary" type="button">保存</button>
-            <button id="clearToken" class="ghost" type="button">消去</button>
-          </div>
-          <div class="hint" style="margin-top:6px;">
-            サーバー側の管理認証（Bearer）に合わせています。ブラウザの localStorage に保存します。
-          </div>
-        </div>
+  <div class="grid">
 
-        <hr style="border:0;border-top:1px solid var(--line);margin:12px 0;" />
-
-        <div class="field">
-          <label>抽出条件</label>
-          <div class="row">
-            <div style="flex:1;min-width:160px;">
-              <label class="small">source（種別）</label>
-              <select id="kind">
-                <option value="active" selected>active（最近アクティブ：chat or liff）</option>
-                <option value="chat">chat（最近チャット）</option>
-                <option value="liff">liff（最近LIFF起動）</option>
-                <option value="all">all（last_seen：全て）</option>
-              </select>
-            </div>
-            <div style="width:140px;">
-              <label class="small">days（日数）</label>
-              <input id="days" type="number" min="1" max="365" value="30" />
-            </div>
-          </div>
-
-          <div class="row" style="margin-top:10px;">
-            <button id="fetchSegment" type="button">対象者を抽出</button>
-            <span id="segmentStat" class="small">未抽出</span>
-          </div>
-
-          <div class="danger-note" style="margin-top:10px;">
-            ⚠ 一括Pushは対象人数に応じて送信量が増えます。まずは抽出→件数確認→文面確認を推奨。
-          </div>
-
-          <div class="mutedline">
-            ※ この画面の <b>count</b> は、サーバーが返す <code>count</code> をそのまま表示します。<br/>
-            （管理画面で独自に数えない＝DB取得件数とズレない）
-          </div>
-        </div>
-
-        <hr style="border:0;border-top:1px solid var(--line);margin:12px 0;" />
-
-        <div class="field">
-          <label>配信メッセージ</label>
-          <div class="row">
-            <div style="width:160px;">
-              <label class="small">種別</label>
-              <select id="msgType" disabled>
-                <option value="text" selected>text</option>
-              </select>
-            </div>
-          </div>
-          <div class="field" style="margin-top:8px;">
-            <label class="small">本文（text）</label>
-            <textarea id="msgText" placeholder="例）年末のご挨拶／新商品のお知らせ など"></textarea>
-          </div>
-
-          <div class="row">
-            <button id="dryRun" class="secondary" type="button">dryRun（送らずに確認）</button>
-            <button id="sendPush" type="button">一括Push（本送信）</button>
-          </div>
-          <div class="hint" style="margin-top:8px;">
-            dryRun はこの画面内で「対象件数・先頭userId・本文長」を表示するだけです（サーバーへ送信しません）。
-          </div>
-        </div>
-
-        <div id="toast" class="toast"></div>
-      </div>
-
-      <!-- 右：結果 -->
-      <div class="card">
-        <div class="stat">
-          <span class="pill">source: <b id="kindEcho">-</b></span>
-          <span class="pill">days: <b id="daysEcho">-</b></span>
-          <span class="pill">count: <b id="count">0</b></span>
-          <span class="small">（表の表示は最大500件）</span>
-        </div>
-
-        <div class="row" style="margin:10px 0;">
-          <button id="copyAll" class="ghost" type="button" disabled>userId を全コピー</button>
-          <button id="downloadCsv" class="ghost" type="button" disabled>CSV ダウンロード</button>
-        </div>
-
-        <div style="overflow:auto;border:1px solid var(--line);border-radius:12px;">
-          <table>
-            <thead>
-              <tr>
-                <th style="width:70px;">#</th>
-                <th>userId</th>
-              </tr>
-            </thead>
-            <tbody id="tbody">
-              <tr>
-                <td colspan="2" class="small" style="color:#666;padding:12px;">
-                  ここに抽出結果が表示されます。
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="hint" style="margin-top:10px;">
-          API:
-          <span class="mono">GET /api/admin/segment/users?source=...&days=...</span> /
-          <span class="mono">POST /api/admin/segment/send</span>
-          （Bearer 必須）
+    <!-- 左：操作 -->
+    <div class="card">
+      <div class="field">
+        <label>管理トークン（Bearer）</label>
+        <input id="token" type="password" placeholder="ADMIN_API_TOKEN を貼り付け" />
+        <div class="row" style="margin-top:8px;">
+          <button id="saveToken" class="secondary">保存</button>
+          <button id="clearToken" class="ghost">消去</button>
         </div>
       </div>
-
     </div>
-  </div>
 
-  <script src="/public/admin_segment.js?v=20251227_1"></script>
+    <!-- 右：結果 -->
+    <div class="card">
+      <div class="stat">
+        <span class="pill">source: <b id="kindEcho">-</b></span>
+        <span class="pill">days: <b id="daysEcho">-</b></span>
+        <span class="pill">count: <b id="count">0</b></span>
+
+        <!-- ★追加 -->
+        <span class="pill">今日の友だち追加: <b id="todayFollow">-</b></span>
+        <span class="pill">今日の純増: <b id="todayNet">-</b></span>
+      </div>
+
+      <div style="margin-top:12px;overflow:auto;border:1px solid var(--line);border-radius:12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>userId</th>
+            </tr>
+          </thead>
+          <tbody id="tbody">
+            <tr>
+              <td colspan="2" class="small">ここに抽出結果が表示されます。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+/* ===============================
+   ★ 今日の友だち追加 / 純増 取得
+   =============================== */
+async function fetchTodayFollowStats(){
+  const token = localStorage.getItem("ADMIN_API_TOKEN");
+  if(!token) return;
+
+  try{
+    const res = await fetch("/api/admin/follow/stats?tz=Asia/Tokyo",{
+      headers:{ Authorization:`Bearer ${token}` }
+    });
+    const j = await res.json();
+    if(!j.ok) return;
+
+    document.getElementById("todayFollow").textContent = j.today.follow;
+    document.getElementById("todayNet").textContent    = j.today.net;
+  }catch(e){
+    console.warn("follow stats error", e);
+  }
+}
+
+/* ===============================
+   トークン保存
+   =============================== */
+document.getElementById("saveToken").onclick = () => {
+  const v = document.getElementById("token").value.trim();
+  if(v){
+    localStorage.setItem("ADMIN_API_TOKEN", v);
+    fetchTodayFollowStats();
+    alert("保存しました");
+  }
+};
+document.getElementById("clearToken").onclick = () => {
+  localStorage.removeItem("ADMIN_API_TOKEN");
+  alert("削除しました");
+};
+
+/* 初回ロード */
+fetchTodayFollowStats();
+</script>
 </body>
 </html>

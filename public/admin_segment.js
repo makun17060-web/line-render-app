@@ -1,325 +1,376 @@
-// admin_segment.js — 丸ごと版（管理HTMLとDB取得件数を一致させる版）
-// - 抽出: GET  /api/admin/segment/users?source=...&days=...
-// - 送信: POST /api/admin/segment/send  { userIds:[], message:"..." }
-// - count はサーバー応答の count をそのまま表示（=DB取得件数と一致）
-// - 表の表示は最大500件（UI都合）
-// - Bearer token は localStorage に保存
+/* public/admin_segment.js
+ * 管理：セグメント抽出 & 一括Push（丸ごと版）
+ * - 既存：抽出 / 表表示 / 全コピー / CSV / dryRun / 送信
+ * - 追加：今日の友だち追加 / 純増（follow_events / unfollow_events をサーバAPIで集計）
+ *
+ * 必要API：
+ *  - GET  /api/admin/segment/users?source=...&days=...         (Bearer)
+ *  - POST /api/admin/segment/send                              (Bearer) { userIds, message }
+ *  - GET  /api/admin/follow/stats?tz=Asia/Tokyo               (Bearer) -> { ok, today:{follow,unfollow,net} }
+ */
 
 (() => {
-  const $ = (id) => document.getElementById(id);
+  "use strict";
 
-  const el = {
-    token: $("token"),
-    saveToken: $("saveToken"),
-    clearToken: $("clearToken"),
+  // ====== DOM ======
+  const el = (id) => document.getElementById(id);
 
-    kind: $("kind"),
-    days: $("days"),
-    fetchSegment: $("fetchSegment"),
-    segmentStat: $("segmentStat"),
+  const $token = el("token");
+  const $saveToken = el("saveToken");
+  const $clearToken = el("clearToken");
 
-    msgText: $("msgText"),
-    dryRun: $("dryRun"),
-    sendPush: $("sendPush"),
+  const $kind = el("kind");
+  const $days = el("days");
 
-    toast: $("toast"),
+  const $fetchSegment = el("fetchSegment");
+  const $segmentStat = el("segmentStat");
 
-    kindEcho: $("kindEcho"),
-    daysEcho: $("daysEcho"),
-    count: $("count"),
-    tbody: $("tbody"),
+  const $msgText = el("msgText");
+  const $dryRun = el("dryRun");
+  const $sendPush = el("sendPush");
 
-    copyAll: $("copyAll"),
-    downloadCsv: $("downloadCsv"),
-  };
+  const $toast = el("toast");
 
-  // ---- state ----
-  let last = {
-    source: "active",
-    days: 30,
+  const $kindEcho = el("kindEcho");
+  const $daysEcho = el("daysEcho");
+  const $count = el("count");
+
+  const $tbody = el("tbody");
+  const $copyAll = el("copyAll");
+  const $downloadCsv = el("downloadCsv");
+
+  // ★追加 pill
+  const $todayFollow = el("todayFollow");
+  const $todayNet = el("todayNet");
+
+  // ====== State ======
+  const STORE_KEY = "ADMIN_API_TOKEN";
+  const MAX_TABLE_ROWS = 500;
+
+  let lastSegment = {
+    source: null,
+    days: null,
     count: 0,
-    userIds: [],
+    returned: 0,
+    items: [],
   };
 
-  // ---- token storage ----
-  const LS_KEY = "ISOYA_ADMIN_BEARER_TOKEN";
-
+  // ====== Helpers ======
   function getToken() {
-    const t = (el.token?.value || "").trim();
-    if (t) return t;
-    return (localStorage.getItem(LS_KEY) || "").trim();
+    return (localStorage.getItem(STORE_KEY) || "").trim();
   }
-  function loadTokenToInput() {
-    const saved = (localStorage.getItem(LS_KEY) || "").trim();
-    if (saved && el.token) el.token.value = saved;
+  function setToken(tok) {
+    localStorage.setItem(STORE_KEY, String(tok || "").trim());
   }
-
-  // ---- ui helpers ----
-  function setToast(type, text) {
-    if (!el.toast) return;
-    el.toast.style.display = "block";
-    el.toast.className = `toast ${type === "ok" ? "ok" : "warn"}`;
-    el.toast.textContent = text || "";
-  }
-  function clearToast() {
-    if (!el.toast) return;
-    el.toast.style.display = "none";
-    el.toast.textContent = "";
-    el.toast.className = "toast";
+  function clearToken() {
+    localStorage.removeItem(STORE_KEY);
   }
 
-  function setBusy(b) {
-    if (el.fetchSegment) el.fetchSegment.disabled = !!b;
-    if (el.sendPush) el.sendPush.disabled = !!b;
-    if (el.dryRun) el.dryRun.disabled = !!b;
+  function toast(msg, type = "ok") {
+    if (!$toast) return;
+    $toast.className = `toast ${type === "warn" ? "warn" : "ok"}`;
+    $toast.textContent = msg;
+    $toast.style.display = "block";
+    setTimeout(() => {
+      $toast.style.display = "none";
+    }, 3500);
   }
 
-  function escapeCsvCell(s) {
-    const v = String(s ?? "");
-    if (/[",\n\r]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
-    return v;
-  }
+  async function apiFetch(url, options = {}) {
+    const tok = getToken();
+    if (!tok) throw new Error("管理トークンが未設定です（左で保存してください）");
 
-  function renderTable(userIds) {
-    const list = Array.isArray(userIds) ? userIds : [];
-    const show = list.slice(0, 500);
+    const headers = {
+      ...(options.headers || {}),
+      Authorization: `Bearer ${tok}`,
+    };
 
-    if (!el.tbody) return;
+    const res = await fetch(url, { ...options, headers });
+    const text = await res.text();
 
-    if (show.length === 0) {
-      el.tbody.innerHTML = `
-        <tr>
-          <td colspan="2" class="small" style="color:#666;padding:12px;">
-            該当 userId がありません。
-          </td>
-        </tr>`;
-      return;
-    }
-
-    el.tbody.innerHTML = show
-      .map(
-        (uid, i) => `
-        <tr>
-          <td>${i + 1}</td>
-          <td class="mono">${String(uid)}</td>
-        </tr>
-      `
-      )
-      .join("");
-  }
-
-  function renderStats({ source, days, count, userIds }) {
-    if (el.kindEcho) el.kindEcho.textContent = source ?? "-";
-    if (el.daysEcho) el.daysEcho.textContent = String(days ?? "-");
-    if (el.count) el.count.textContent = String(count ?? 0);
-
-    const ok = Array.isArray(userIds) && userIds.length > 0;
-    if (el.copyAll) el.copyAll.disabled = !ok;
-    if (el.downloadCsv) el.downloadCsv.disabled = !ok;
-
-    if (el.segmentStat) {
-      el.segmentStat.textContent = ok
-        ? `抽出OK：${count}件（表示 ${Math.min(500, userIds.length)}件）`
-        : "抽出OK：0件";
-    }
-  }
-
-  // ---- api ----
-  async function apiFetchSegment(source, days) {
-    const token = getToken();
-    if (!token) throw new Error("管理トークン（Bearer）が未設定です");
-
-    const qs = new URLSearchParams();
-    qs.set("source", String(source || "active"));
-    qs.set("days", String(days || 30));
-
-    const r = await fetch(`/api/admin/segment/users?${qs.toString()}`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    let j = null;
+    let json = null;
     try {
-      j = await r.json();
+      json = text ? JSON.parse(text) : null;
     } catch {
-      // 非JSONの時はそのまま
-      const t = await r.text().catch(() => "");
-      throw new Error(`API応答がJSONではありません（HTTP ${r.status}）: ${t.slice(0, 120)}`);
+      // JSONでなくてもOK（エラー表示用に残す）
     }
 
-    if (!r.ok || !j?.ok) {
-      const msg = j?.error || `HTTP ${r.status}`;
-      throw new Error(`抽出APIエラー: ${msg}`);
+    if (!res.ok) {
+      const errMsg =
+        (json && (json.error || json.message)) ||
+        `${res.status} ${res.statusText}` ||
+        "request_failed";
+      const e = new Error(errMsg);
+      e.status = res.status;
+      e.body = text;
+      throw e;
     }
-
-    // サーバーが返す count/items をそのまま使う（ここが「一致」の肝）
-    const items = Array.isArray(j.items) ? j.items : [];
-    const count = Number(j.count ?? items.length) || 0;
-
-    // 念のためユニーク化（サーバー側でDISTINCTしていても安全）
-    const uniq = Array.from(new Set(items.filter(Boolean)));
-
-    return { source: j.source ?? source, days: j.days ?? days, count, userIds: uniq };
+    return json;
   }
 
-  async function apiSendPush(userIds, message) {
-    const token = getToken();
-    if (!token) throw new Error("管理トークン（Bearer）が未設定です");
-    if (!Array.isArray(userIds) || userIds.length === 0) throw new Error("送信対象が0件です（先に抽出してください）");
-    const msg = String(message || "").trim();
-    if (!msg) throw new Error("本文が空です");
-
-    const r = await fetch(`/api/admin/segment/send`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ userIds, message: msg }),
-    });
-
-    const j = await r.json().catch(() => null);
-    if (!r.ok || !j?.ok) {
-      const msg2 = j?.error || `HTTP ${r.status}`;
-      throw new Error(`送信APIエラー: ${msg2}`);
-    }
-    return j;
+  function escapeCsv(v) {
+    const s = String(v ?? "");
+    if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
   }
 
-  // ---- events ----
-  function onSaveToken() {
-    clearToast();
-    const t = (el.token?.value || "").trim();
-    if (!t) return setToast("warn", "トークンが空です。ADMIN_API_TOKEN を貼り付けてください。");
-    localStorage.setItem(LS_KEY, t);
-    setToast("ok", "保存しました（localStorage）");
-  }
-
-  function onClearToken() {
-    clearToast();
-    localStorage.removeItem(LS_KEY);
-    if (el.token) el.token.value = "";
-    setToast("ok", "消去しました");
-  }
-
-  async function onFetchSegment() {
-    clearToast();
-    setBusy(true);
-    try {
-      const source = String(el.kind?.value || "active").trim();
-      const days = Math.min(365, Math.max(1, Number(el.days?.value || 30)));
-
-      const data = await apiFetchSegment(source, days);
-
-      last = { source: data.source, days: data.days, count: data.count, userIds: data.userIds };
-
-      renderStats(last);
-      renderTable(last.userIds);
-
-      setToast("ok", `抽出しました：${last.count}件（表示 ${Math.min(500, last.userIds.length)}件）`);
-    } catch (e) {
-      setToast("warn", e?.message || String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function onDryRun() {
-    clearToast();
-    const msg = String(el.msgText?.value || "").trim();
-    if (!last.userIds.length) return setToast("warn", "まだ抽出していません。先に「対象者を抽出」を押してください。");
-    if (!msg) return setToast("warn", "本文が空です。");
-
-    const head = last.userIds.slice(0, 3).join(", ");
-    setToast(
-      "ok",
-      `dryRun OK\n対象: ${last.count}件（現在保持 ${last.userIds.length}件）\n先頭: ${head}${last.userIds.length > 3 ? " ..." : ""}\n本文長: ${msg.length}文字`
-    );
-  }
-
-  async function onSendPush() {
-    clearToast();
-    setBusy(true);
-    try {
-      const msg = String(el.msgText?.value || "").trim();
-      if (!msg) throw new Error("本文が空です。");
-      if (!last.userIds.length) throw new Error("送信対象が0件です（先に抽出してください）。");
-
-      // ここで最終確認を入れたい場合は confirm() を使っても良いが、
-      // 事故を避けるため、最低限の注意文だけ出す
-      const ok = window.confirm(`本当に送信しますか？\n対象: ${last.count}件\n本文先頭: ${msg.slice(0, 30)}${msg.length > 30 ? "..." : ""}`);
-      if (!ok) {
-        setToast("warn", "キャンセルしました。");
-        return;
-      }
-
-      const result = await apiSendPush(last.userIds, msg);
-      setToast("ok", `送信結果: requested=${result.requested} / sent=${result.sent} / failed=${result.failed}`);
-    } catch (e) {
-      setToast("warn", e?.message || String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function onCopyAll() {
-    clearToast();
-    if (!last.userIds.length) return setToast("warn", "コピー対象がありません。");
-    const text = last.userIds.join("\n");
-    navigator.clipboard
-      .writeText(text)
-      .then(() => setToast("ok", `コピーしました（${last.userIds.length}件）`))
-      .catch(() => setToast("warn", "コピーに失敗しました（ブラウザ権限を確認）"));
-  }
-
-  function onDownloadCsv() {
-    clearToast();
-    if (!last.userIds.length) return setToast("warn", "CSV対象がありません。");
-
-    const header = ["userId"];
-    const rows = last.userIds.map((uid) => [escapeCsvCell(uid)].join(","));
-    const csv = [header.join(","), ...rows].join("\n");
-
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  function downloadText(filename, content, mime = "text/plain") {
+    const blob = new Blob([content], { type: mime });
     const url = URL.createObjectURL(blob);
-
     const a = document.createElement("a");
     a.href = url;
-
-    const ts = new Date();
-    const y = ts.getFullYear();
-    const m = String(ts.getMonth() + 1).padStart(2, "0");
-    const d = String(ts.getDate()).padStart(2, "0");
-    a.download = `segment_${last.source}_${last.days}d_${y}${m}${d}.csv`;
-
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(url);
-
-    setToast("ok", "CSVをダウンロードしました。");
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  // ---- init ----
-  function init() {
-    loadTokenToInput();
+  function setButtonsEnabled(enabled) {
+    $copyAll.disabled = !enabled;
+    $downloadCsv.disabled = !enabled;
+    $sendPush.disabled = !enabled;
+  }
 
-    el.saveToken?.addEventListener("click", onSaveToken);
-    el.clearToken?.addEventListener("click", onClearToken);
+  function renderTable(userIds = []) {
+    const ids = Array.isArray(userIds) ? userIds : [];
+    const show = ids.slice(0, MAX_TABLE_ROWS);
 
-    el.fetchSegment?.addEventListener("click", onFetchSegment);
-    el.dryRun?.addEventListener("click", onDryRun);
-    el.sendPush?.addEventListener("click", onSendPush);
+    if (!$tbody) return;
+    $tbody.innerHTML = "";
 
-    el.copyAll?.addEventListener("click", onCopyAll);
-    el.downloadCsv?.addEventListener("click", onDownloadCsv);
+    if (!show.length) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 2;
+      td.className = "small";
+      td.style.color = "#666";
+      td.style.padding = "12px";
+      td.textContent = "対象者がいません（条件を変えて抽出してください）。";
+      tr.appendChild(td);
+      $tbody.appendChild(tr);
+      return;
+    }
+
+    show.forEach((uid, i) => {
+      const tr = document.createElement("tr");
+
+      const td1 = document.createElement("td");
+      td1.textContent = String(i + 1);
+      td1.style.width = "70px";
+
+      const td2 = document.createElement("td");
+      td2.textContent = uid;
+      td2.style.fontFamily =
+        'ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace';
+
+      tr.appendChild(td1);
+      tr.appendChild(td2);
+      $tbody.appendChild(tr);
+    });
+  }
+
+  function updateStatsUI(seg) {
+    $kindEcho.textContent = seg.source ?? "-";
+    $daysEcho.textContent = seg.days ?? "-";
+    $count.textContent = String(seg.count ?? 0);
+
+    $segmentStat.textContent = `count=${seg.count ?? 0} / returned=${seg.returned ?? 0}`;
+  }
+
+  // ====== Follow Stats (★追加) ======
+  async function fetchTodayFollowStats() {
+    if (!$todayFollow || !$todayNet) return;
+
+    const tok = getToken();
+    if (!tok) {
+      $todayFollow.textContent = "-";
+      $todayNet.textContent = "-";
+      return;
+    }
+
+    try {
+      const j = await apiFetch("/api/admin/follow/stats?tz=Asia%2FTokyo");
+      if (!j?.ok) return;
+
+      const follow = Number(j?.today?.follow ?? 0);
+      const net = Number(j?.today?.net ?? 0);
+
+      $todayFollow.textContent = String(follow);
+      $todayNet.textContent = String(net);
+    } catch (e) {
+      // サーバ未実装でも管理画面は動かす
+      $todayFollow.textContent = "-";
+      $todayNet.textContent = "-";
+      console.warn("[follow/stats] failed:", e?.message || e);
+    }
+  }
+
+  // ====== Segment ======
+  async function fetchSegment() {
+    const source = String($kind.value || "active").trim();
+    const days = Number($days.value || 30);
+
+    $fetchSegment.disabled = true;
+    setButtonsEnabled(false);
+    $segmentStat.textContent = "抽出中…";
+
+    try {
+      const qs =
+        `source=${encodeURIComponent(source)}` +
+        `&days=${encodeURIComponent(days)}`;
+      const j = await apiFetch(`/api/admin/segment/users?${qs}`);
+
+      if (!j?.ok) throw new Error("segment_api_failed");
+
+      lastSegment = {
+        source: j.source ?? source,
+        days: j.days ?? days,
+        count: Number(j.count ?? 0),
+        returned: Number(j.returned ?? 0),
+        items: Array.isArray(j.items) ? j.items.filter(Boolean) : [],
+      };
+
+      updateStatsUI(lastSegment);
+      renderTable(lastSegment.items);
+
+      const has = lastSegment.items.length > 0;
+      setButtonsEnabled(has);
+      toast(`抽出しました：${lastSegment.count}人（返却 ${lastSegment.returned}件）`, "ok");
+    } catch (e) {
+      console.error(e);
+      $segmentStat.textContent = "抽出失敗";
+      renderTable([]);
+      toast(`抽出に失敗：${e.message || e}`, "warn");
+    } finally {
+      $fetchSegment.disabled = false;
+    }
+  }
+
+  // ====== Actions ======
+  async function copyAllUserIds() {
+    try {
+      const ids = Array.isArray(lastSegment.items) ? lastSegment.items : [];
+      if (!ids.length) return toast("コピー対象がありません", "warn");
+      await navigator.clipboard.writeText(ids.join("\n"));
+      toast(`userId をコピーしました（${ids.length}件）`, "ok");
+    } catch (e) {
+      toast("コピーに失敗しました（ブラウザ権限をご確認ください）", "warn");
+    }
+  }
+
+  function downloadCsv() {
+    const ids = Array.isArray(lastSegment.items) ? lastSegment.items : [];
+    if (!ids.length) return toast("CSV対象がありません", "warn");
+
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    const hh = String(now.getHours()).padStart(2, "0");
+    const mm = String(now.getMinutes()).padStart(2, "0");
+
+    const filename = `segment_${lastSegment.source || "source"}_${y}${m}${d}_${hh}${mm}.csv`;
+    const header = "user_id\n";
+    const body = ids.map((x) => escapeCsv(x)).join("\n") + "\n";
+    downloadText(filename, header + body, "text/csv");
+    toast(`CSVをダウンロードしました（${ids.length}件）`, "ok");
+  }
+
+  function dryRun() {
+    const ids = Array.isArray(lastSegment.items) ? lastSegment.items : [];
+    const msg = String($msgText.value || "").trim();
+
+    if (!ids.length) return toast("先に対象者を抽出してください", "warn");
+    if (!msg) return toast("本文が空です", "warn");
+
+    const head = ids.slice(0, 3).join(", ");
+    toast(
+      `dryRun OK：対象 ${ids.length}件 / 先頭 ${head || "-"} / 本文 ${msg.length}文字`,
+      "ok"
+    );
+  }
+
+  async function sendPush() {
+    const ids = Array.isArray(lastSegment.items) ? lastSegment.items : [];
+    const msg = String($msgText.value || "").trim();
+
+    if (!ids.length) return toast("先に対象者を抽出してください", "warn");
+    if (!msg) return toast("本文を入力してください", "warn");
+
+    const ok = confirm(
+      `一括Pushを送信します。\n対象：${ids.length}人\n\n本当に送信しますか？`
+    );
+    if (!ok) return;
+
+    $sendPush.disabled = true;
+
+    try {
+      const j = await apiFetch("/api/admin/segment/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userIds: ids, message: msg }),
+      });
+
+      if (!j?.ok) throw new Error(j?.error || "send_failed");
+
+      const sent = Number(j.sent ?? 0);
+      const failed = Number(j.failed ?? 0);
+      toast(`送信完了：成功 ${sent} / 失敗 ${failed}`, failed ? "warn" : "ok");
+    } catch (e) {
+      console.error(e);
+      toast(`送信失敗：${e.message || e}`, "warn");
+    } finally {
+      $sendPush.disabled = false;
+    }
+  }
+
+  // ====== Init ======
+  function initTokenUi() {
+    const tok = getToken();
+    if ($token) $token.value = tok ? tok : "";
+  }
+
+  function bind() {
+    // token
+    $saveToken.addEventListener("click", () => {
+      const v = String($token.value || "").trim();
+      if (!v) return toast("トークンが空です", "warn");
+      setToken(v);
+      toast("トークンを保存しました", "ok");
+      fetchTodayFollowStats();
+    });
+
+    $clearToken.addEventListener("click", () => {
+      clearToken();
+      if ($token) $token.value = "";
+      toast("トークンを消去しました", "ok");
+      fetchTodayFollowStats();
+    });
+
+    // segment
+    $fetchSegment.addEventListener("click", fetchSegment);
+
+    // buttons
+    $copyAll.addEventListener("click", copyAllUserIds);
+    $downloadCsv.addEventListener("click", downloadCsv);
+    $dryRun.addEventListener("click", dryRun);
+    $sendPush.addEventListener("click", sendPush);
+  }
+
+  function boot() {
+    initTokenUi();
+    bind();
 
     // 初期表示
-    renderStats(last);
+    updateStatsUI(lastSegment);
     renderTable([]);
+    setButtonsEnabled(false);
+    fetchTodayFollowStats();
+
+    // 60秒ごとに follow stats を更新（トークンがある時だけ）
+    setInterval(fetchTodayFollowStats, 60 * 1000);
   }
 
-  init();
+  boot();
 })();

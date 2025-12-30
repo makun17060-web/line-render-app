@@ -1,325 +1,183 @@
-// admin_segment.js — 丸ごと版（管理HTMLとDB取得件数を一致させる版）
-// - 抽出: GET  /api/admin/segment/users?source=...&days=...
-// - 送信: POST /api/admin/segment/send  { userIds:[], message:"..." }
-// - count はサーバー応答の count をそのまま表示（=DB取得件数と一致）
-// - 表の表示は最大500件（UI都合）
-// - Bearer token は localStorage に保存
-
-(() => {
-  const $ = (id) => document.getElementById(id);
-
-  const el = {
-    token: $("token"),
-    saveToken: $("saveToken"),
-    clearToken: $("clearToken"),
-
-    kind: $("kind"),
-    days: $("days"),
-    fetchSegment: $("fetchSegment"),
-    segmentStat: $("segmentStat"),
-
-    msgText: $("msgText"),
-    dryRun: $("dryRun"),
-    sendPush: $("sendPush"),
-
-    toast: $("toast"),
-
-    kindEcho: $("kindEcho"),
-    daysEcho: $("daysEcho"),
-    count: $("count"),
-    tbody: $("tbody"),
-
-    copyAll: $("copyAll"),
-    downloadCsv: $("downloadCsv"),
-  };
-
-  // ---- state ----
-  let last = {
-    source: "active",
-    days: 30,
-    count: 0,
-    userIds: [],
-  };
-
-  // ---- token storage ----
-  const LS_KEY = "ISOYA_ADMIN_BEARER_TOKEN";
-
-  function getToken() {
-    const t = (el.token?.value || "").trim();
-    if (t) return t;
-    return (localStorage.getItem(LS_KEY) || "").trim();
-  }
-  function loadTokenToInput() {
-    const saved = (localStorage.getItem(LS_KEY) || "").trim();
-    if (saved && el.token) el.token.value = saved;
-  }
-
-  // ---- ui helpers ----
-  function setToast(type, text) {
-    if (!el.toast) return;
-    el.toast.style.display = "block";
-    el.toast.className = `toast ${type === "ok" ? "ok" : "warn"}`;
-    el.toast.textContent = text || "";
-  }
-  function clearToast() {
-    if (!el.toast) return;
-    el.toast.style.display = "none";
-    el.toast.textContent = "";
-    el.toast.className = "toast";
-  }
-
-  function setBusy(b) {
-    if (el.fetchSegment) el.fetchSegment.disabled = !!b;
-    if (el.sendPush) el.sendPush.disabled = !!b;
-    if (el.dryRun) el.dryRun.disabled = !!b;
-  }
-
-  function escapeCsvCell(s) {
-    const v = String(s ?? "");
-    if (/[",\n\r]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
-    return v;
-  }
-
-  function renderTable(userIds) {
-    const list = Array.isArray(userIds) ? userIds : [];
-    const show = list.slice(0, 500);
-
-    if (!el.tbody) return;
-
-    if (show.length === 0) {
-      el.tbody.innerHTML = `
-        <tr>
-          <td colspan="2" class="small" style="color:#666;padding:12px;">
-            該当 userId がありません。
-          </td>
-        </tr>`;
-      return;
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>管理：セグメント抽出 & 一括Push</title>
+  <style>
+    :root{
+      --bg:#f5f6f8; --card:#fff; --text:#111827; --muted:#6b7280;
+      --line:#e5e7eb; --ok:#16a34a; --warn:#b91c1c;
+      --btn:#111827; --btn2:#374151;
     }
-
-    el.tbody.innerHTML = show
-      .map(
-        (uid, i) => `
-        <tr>
-          <td>${i + 1}</td>
-          <td class="mono">${String(uid)}</td>
-        </tr>
-      `
-      )
-      .join("");
-  }
-
-  function renderStats({ source, days, count, userIds }) {
-    if (el.kindEcho) el.kindEcho.textContent = source ?? "-";
-    if (el.daysEcho) el.daysEcho.textContent = String(days ?? "-");
-    if (el.count) el.count.textContent = String(count ?? 0);
-
-    const ok = Array.isArray(userIds) && userIds.length > 0;
-    if (el.copyAll) el.copyAll.disabled = !ok;
-    if (el.downloadCsv) el.downloadCsv.disabled = !ok;
-
-    if (el.segmentStat) {
-      el.segmentStat.textContent = ok
-        ? `抽出OK：${count}件（表示 ${Math.min(500, userIds.length)}件）`
-        : "抽出OK：0件";
+    *{box-sizing:border-box}
+    body{margin:0;padding:16px;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    h1{margin:0 0 10px;font-size:20px}
+    .wrap{max-width:980px;margin:0 auto}
+    .grid{display:grid;grid-template-columns:1fr;gap:12px}
+    @media(min-width:920px){ .grid{grid-template-columns:380px 1fr} }
+    .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    label{font-size:12px;color:var(--muted)}
+    input,select,textarea{
+      width:100%; padding:10px; border:1px solid var(--line); border-radius:10px;
+      font-size:14px; background:#fff;
     }
-  }
-
-  // ---- api ----
-  async function apiFetchSegment(source, days) {
-    const token = getToken();
-    if (!token) throw new Error("管理トークン（Bearer）が未設定です");
-
-    const qs = new URLSearchParams();
-    qs.set("source", String(source || "active"));
-    qs.set("days", String(days || 30));
-
-    const r = await fetch(`/api/admin/segment/users?${qs.toString()}`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    let j = null;
-    try {
-      j = await r.json();
-    } catch {
-      // 非JSONの時はそのまま
-      const t = await r.text().catch(() => "");
-      throw new Error(`API応答がJSONではありません（HTTP ${r.status}）: ${t.slice(0, 120)}`);
+    textarea{min-height:110px;resize:vertical}
+    .field{margin:10px 0}
+    .small{font-size:12px;color:var(--muted)}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+    button{
+      border:0; border-radius:10px; padding:10px 12px; cursor:pointer;
+      background:var(--btn); color:#fff; font-weight:600;
     }
-
-    if (!r.ok || !j?.ok) {
-      const msg = j?.error || `HTTP ${r.status}`;
-      throw new Error(`抽出APIエラー: ${msg}`);
+    button.secondary{background:var(--btn2)}
+    button.ghost{background:#fff;color:var(--text);border:1px solid var(--line)}
+    button:disabled{opacity:.45;cursor:not-allowed}
+    .toast{
+      display:none; margin:10px 0 0; padding:10px 12px; border-radius:10px;
+      border:1px solid var(--line); background:#fff;
     }
+    .toast.ok{border-color:#bbf7d0;background:#f0fdf4;color:#166534}
+    .toast.warn{border-color:#fecaca;background:#fef2f2;color:#991b1b}
+    table{width:100%;border-collapse:collapse}
+    th,td{border-bottom:1px solid var(--line);padding:8px;text-align:left;font-size:13px}
+    th{color:var(--muted);font-weight:700}
+    .stat{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 10px;font-size:12px;color:var(--muted)}
+    .pill b{color:var(--text)}
+    .hint{font-size:12px;color:var(--muted);line-height:1.55}
+    .danger-note{font-size:12px;color:#7f1d1d;background:#fff7ed;border:1px solid #fed7aa;padding:10px;border-radius:10px}
+    .mutedline{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.55}
+    code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>管理：セグメント抽出 & 一括Push</h1>
+    <div class="grid">
 
-    // サーバーが返す count/items をそのまま使う（ここが「一致」の肝）
-    const items = Array.isArray(j.items) ? j.items : [];
-    const count = Number(j.count ?? items.length) || 0;
+      <!-- 左：操作 -->
+      <div class="card">
+        <div class="field">
+          <label>管理トークン（Bearer）</label>
+          <input id="token" type="password" placeholder="ADMIN_API_TOKEN を貼り付け" autocomplete="off" />
+          <div class="row" style="margin-top:8px;">
+            <button id="saveToken" class="secondary" type="button">保存</button>
+            <button id="clearToken" class="ghost" type="button">消去</button>
+          </div>
+          <div class="hint" style="margin-top:6px;">
+            サーバー側の管理認証（Bearer）に合わせています。ブラウザの localStorage に保存します。
+          </div>
+        </div>
 
-    // 念のためユニーク化（サーバー側でDISTINCTしていても安全）
-    const uniq = Array.from(new Set(items.filter(Boolean)));
+        <hr style="border:0;border-top:1px solid var(--line);margin:12px 0;" />
 
-    return { source: j.source ?? source, days: j.days ?? days, count, userIds: uniq };
-  }
+        <div class="field">
+          <label>抽出条件</label>
+          <div class="row">
+            <div style="flex:1;min-width:160px;">
+              <label class="small">source（種別）</label>
+              <select id="kind">
+                <option value="active" selected>active（最近アクティブ：chat or liff）</option>
+                <option value="chat">chat（最近チャット）</option>
+                <option value="liff">liff（最近LIFF起動）</option>
+                <option value="all">all（last_seen：全て）</option>
+              </select>
+            </div>
+            <div style="width:140px;">
+              <label class="small">days（日数）</label>
+              <input id="days" type="number" min="1" max="365" value="30" />
+            </div>
+          </div>
 
-  async function apiSendPush(userIds, message) {
-    const token = getToken();
-    if (!token) throw new Error("管理トークン（Bearer）が未設定です");
-    if (!Array.isArray(userIds) || userIds.length === 0) throw new Error("送信対象が0件です（先に抽出してください）");
-    const msg = String(message || "").trim();
-    if (!msg) throw new Error("本文が空です");
+          <div class="row" style="margin-top:10px;">
+            <button id="fetchSegment" type="button">対象者を抽出</button>
+            <span id="segmentStat" class="small">未抽出</span>
+          </div>
 
-    const r = await fetch(`/api/admin/segment/send`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ userIds, message: msg }),
-    });
+          <div class="danger-note" style="margin-top:10px;">
+            ⚠ 一括Pushは対象人数に応じて送信量が増えます。まずは抽出→件数確認→文面確認を推奨。
+          </div>
 
-    const j = await r.json().catch(() => null);
-    if (!r.ok || !j?.ok) {
-      const msg2 = j?.error || `HTTP ${r.status}`;
-      throw new Error(`送信APIエラー: ${msg2}`);
-    }
-    return j;
-  }
+          <div class="mutedline">
+            ※ この画面の <b>count</b> は、サーバーが返す <code>count</code> をそのまま表示します。<br/>
+            （管理画面で独自に数えない＝DB取得件数とズレない）
+          </div>
+        </div>
 
-  // ---- events ----
-  function onSaveToken() {
-    clearToast();
-    const t = (el.token?.value || "").trim();
-    if (!t) return setToast("warn", "トークンが空です。ADMIN_API_TOKEN を貼り付けてください。");
-    localStorage.setItem(LS_KEY, t);
-    setToast("ok", "保存しました（localStorage）");
-  }
+        <hr style="border:0;border-top:1px solid var(--line);margin:12px 0;" />
 
-  function onClearToken() {
-    clearToast();
-    localStorage.removeItem(LS_KEY);
-    if (el.token) el.token.value = "";
-    setToast("ok", "消去しました");
-  }
+        <div class="field">
+          <label>配信メッセージ</label>
+          <div class="row">
+            <div style="width:160px;">
+              <label class="small">種別</label>
+              <select id="msgType" disabled>
+                <option value="text" selected>text</option>
+              </select>
+            </div>
+          </div>
+          <div class="field" style="margin-top:8px;">
+            <label class="small">本文（text）</label>
+            <textarea id="msgText" placeholder="例）年末のご挨拶／新商品のお知らせ など"></textarea>
+          </div>
 
-  async function onFetchSegment() {
-    clearToast();
-    setBusy(true);
-    try {
-      const source = String(el.kind?.value || "active").trim();
-      const days = Math.min(365, Math.max(1, Number(el.days?.value || 30)));
+          <div class="row">
+            <button id="dryRun" class="secondary" type="button">dryRun（送らずに確認）</button>
+            <button id="sendPush" type="button">一括Push（本送信）</button>
+          </div>
+          <div class="hint" style="margin-top:8px;">
+            dryRun はこの画面内で「対象件数・先頭userId・本文長」を表示するだけです（サーバーへ送信しません）。
+          </div>
+        </div>
 
-      const data = await apiFetchSegment(source, days);
+        <div id="toast" class="toast"></div>
+      </div>
 
-      last = { source: data.source, days: data.days, count: data.count, userIds: data.userIds };
+      <!-- 右：結果 -->
+      <div class="card">
+        <div class="stat">
+          <span class="pill">source: <b id="kindEcho">-</b></span>
+          <span class="pill">days: <b id="daysEcho">-</b></span>
+          <span class="pill">count: <b id="count">0</b></span>
+          <span class="small">（表の表示は最大500件）</span>
+        </div>
 
-      renderStats(last);
-      renderTable(last.userIds);
+        <div class="row" style="margin:10px 0;">
+          <button id="copyAll" class="ghost" type="button" disabled>userId を全コピー</button>
+          <button id="downloadCsv" class="ghost" type="button" disabled>CSV ダウンロード</button>
+        </div>
 
-      setToast("ok", `抽出しました：${last.count}件（表示 ${Math.min(500, last.userIds.length)}件）`);
-    } catch (e) {
-      setToast("warn", e?.message || String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
+        <div style="overflow:auto;border:1px solid var(--line);border-radius:12px;">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:70px;">#</th>
+                <th>userId</th>
+              </tr>
+            </thead>
+            <tbody id="tbody">
+              <tr>
+                <td colspan="2" class="small" style="color:#666;padding:12px;">
+                  ここに抽出結果が表示されます。
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
-  function onDryRun() {
-    clearToast();
-    const msg = String(el.msgText?.value || "").trim();
-    if (!last.userIds.length) return setToast("warn", "まだ抽出していません。先に「対象者を抽出」を押してください。");
-    if (!msg) return setToast("warn", "本文が空です。");
+        <div class="hint" style="margin-top:10px;">
+          API:
+          <span class="mono">GET /api/admin/segment/users?source=...&days=...</span> /
+          <span class="mono">POST /api/admin/segment/send</span>
+          （Bearer 必須）
+        </div>
+      </div>
 
-    const head = last.userIds.slice(0, 3).join(", ");
-    setToast(
-      "ok",
-      `dryRun OK\n対象: ${last.count}件（現在保持 ${last.userIds.length}件）\n先頭: ${head}${last.userIds.length > 3 ? " ..." : ""}\n本文長: ${msg.length}文字`
-    );
-  }
+    </div>
+  </div>
 
-  async function onSendPush() {
-    clearToast();
-    setBusy(true);
-    try {
-      const msg = String(el.msgText?.value || "").trim();
-      if (!msg) throw new Error("本文が空です。");
-      if (!last.userIds.length) throw new Error("送信対象が0件です（先に抽出してください）。");
-
-      // ここで最終確認を入れたい場合は confirm() を使っても良いが、
-      // 事故を避けるため、最低限の注意文だけ出す
-      const ok = window.confirm(`本当に送信しますか？\n対象: ${last.count}件\n本文先頭: ${msg.slice(0, 30)}${msg.length > 30 ? "..." : ""}`);
-      if (!ok) {
-        setToast("warn", "キャンセルしました。");
-        return;
-      }
-
-      const result = await apiSendPush(last.userIds, msg);
-      setToast("ok", `送信結果: requested=${result.requested} / sent=${result.sent} / failed=${result.failed}`);
-    } catch (e) {
-      setToast("warn", e?.message || String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function onCopyAll() {
-    clearToast();
-    if (!last.userIds.length) return setToast("warn", "コピー対象がありません。");
-    const text = last.userIds.join("\n");
-    navigator.clipboard
-      .writeText(text)
-      .then(() => setToast("ok", `コピーしました（${last.userIds.length}件）`))
-      .catch(() => setToast("warn", "コピーに失敗しました（ブラウザ権限を確認）"));
-  }
-
-  function onDownloadCsv() {
-    clearToast();
-    if (!last.userIds.length) return setToast("warn", "CSV対象がありません。");
-
-    const header = ["userId"];
-    const rows = last.userIds.map((uid) => [escapeCsvCell(uid)].join(","));
-    const csv = [header.join(","), ...rows].join("\n");
-
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-
-    const a = document.createElement("a");
-    a.href = url;
-
-    const ts = new Date();
-    const y = ts.getFullYear();
-    const m = String(ts.getMonth() + 1).padStart(2, "0");
-    const d = String(ts.getDate()).padStart(2, "0");
-    a.download = `segment_${last.source}_${last.days}d_${y}${m}${d}.csv`;
-
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-
-    setToast("ok", "CSVをダウンロードしました。");
-  }
-
-  // ---- init ----
-  function init() {
-    loadTokenToInput();
-
-    el.saveToken?.addEventListener("click", onSaveToken);
-    el.clearToken?.addEventListener("click", onClearToken);
-
-    el.fetchSegment?.addEventListener("click", onFetchSegment);
-    el.dryRun?.addEventListener("click", onDryRun);
-    el.sendPush?.addEventListener("click", onSendPush);
-
-    el.copyAll?.addEventListener("click", onCopyAll);
-    el.downloadCsv?.addEventListener("click", onDownloadCsv);
-
-    // 初期表示
-    renderStats(last);
-    renderTable([]);
-  }
-
-  init();
-})();
+  <script src="/public/admin_segment.js?v=20251227_1"></script>
+</body>
+</html>

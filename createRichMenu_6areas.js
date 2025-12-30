@@ -66,36 +66,35 @@ const shippingUrl = (SHIPPING_URL || `${baseUrl}/public/shipping.html`).trim();
       name: "磯屋_3x2_6areas",
       chatBarText: "メニュー",
       areas: [
-        // 1行目
-        { // 左上：ご注文はこちら
-          bounds: { x: 0, y: 0, width: 833, height: 843 },
-          action: { type: "uri", label: "ご注文はこちら", uri: ORDER_LIFF_URL },
-        },
-       { // 中央上：商品一覧
-  bounds: { x: 833, y: 0, width: 834, height: 843 },
-  action: { type: "uri", label: "商品一覧", uri: "https://isoya-shop.com"},
-},
+  // 1行目
+  { // 左上：ご注文はこちら（URIでOK：最短で注文LIFFが開く）
+    bounds: { x: 0, y: 0, width: 833, height: 843 },
+    action: { type: "uri", label: "ご注文はこちら", uri: ORDER_LIFF_URL },
+  },
+  { // 中央上：ECショップ
+    bounds: { x: 833, y: 0, width: 834, height: 843 },
+    action: { type: "uri", label: "ECショップ", uri: "https://isoya-shop.com" },
+  },
+  { // 右上：ご利用方法
+    bounds: { x: 1667, y: 0, width: 833, height: 843 },
+    action: { type: "uri", label: "ご利用方法", uri: "https://liff.line.me/2008406620-QQFfWP1w" },
+  },
 
-        { // 右上：ご利用方法
-          bounds: { x: 1667, y: 0, width: 833, height: 843 },
-          action: { type: "uri", label: "ご利用方法", uri: "https://liff.line.me/2008406620-QQFfWP1w"},
-        },
+  // 2行目
+  { // 左下：店頭受取（★postback：トークに文字が出ない）
+    bounds: { x: 0, y: 843, width: 833, height: 843 },
+    action: { type: "postback", data: "action=pickup_start", displayText: "店頭受取を開きます" },
+  },
+  { // 中央下：配送・送料
+    bounds: { x: 833, y: 843, width: 834, height: 843 },
+    action: { type: "uri", label: "配送・送料", uri: "https://line-render-app-1.onrender.com/public/shipping-calc.html" },
+  },
+  { // 右下：お問い合わせ
+    bounds: { x: 1667, y: 843, width: 833, height: 843 },
+    action: { type: "uri", label: "お問い合わせ", uri: "https://liff.line.me/2008406620-LUJ3dURd" },
+  },
+]
 
-        // 2行目
-        { // 左下：住所登録
-          bounds: { x: 0, y: 843, width: 833, height: 843 },
-          action: { type: "message", label: "住所登録", text:  "直接注文"},
-        },
-        { // 中央下：配送・送料
-          bounds: { x: 833, y: 843, width: 834, height: 843 },
-          action: { type: "uri", label: "配送・送料", uri: "https://line-render-app-1.onrender.com/public/shipping-calc.html"},
-        },
-        { // 右下：お問い合わせ（LINEで質問）
-          bounds: { x: 1667, y: 843, width: 833, height: 843 },
-          action: { type: "uri", label: "お問い合わせ", uri: "https://liff.line.me/2008406620-LUJ3dURd" },
-        },
-      ],
-    };
 
 
     console.log("=== createRichMenu start ===");

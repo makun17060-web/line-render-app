@@ -1797,6 +1797,59 @@ app.post("/api/admin/segment/send", async (req, res) => {
     return res.status(500).json({ ok: false, error: e?.message || "server_error" });
   }
 });
+// =====================================
+// ★管理：今日の友だち追加 / 純増（follow - unfollow）
+// =====================================
+app.get("/api/admin/follow/stats", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
+
+    const tz = String(req.query.tz || "Asia/Tokyo").trim();
+
+    // 今日の 00:00〜24:00（TZ基準）
+    const sqlTodayFollow = `
+      SELECT COUNT(*)::int AS c
+      FROM follow_events
+      WHERE followed_at >= (date_trunc('day', now() AT TIME ZONE $1) AT TIME ZONE $1)
+        AND followed_at <  ((date_trunc('day', now() AT TIME ZONE $1) + interval '1 day') AT TIME ZONE $1)
+    `;
+
+    const sqlTodayUnfollow = `
+      SELECT COUNT(*)::int AS c
+      FROM unfollow_events
+      WHERE unfollowed_at >= (date_trunc('day', now() AT TIME ZONE $1) AT TIME ZONE $1)
+        AND unfollowed_at <  ((date_trunc('day', now() AT TIME ZONE $1) + interval '1 day') AT TIME ZONE $1)
+    `;
+
+    const p = mustPool();
+    const rf = await p.query(sqlTodayFollow, [tz]);
+
+    // unfollow_events が未作成でも落ちないように保険
+    let ru;
+    try {
+      ru = await p.query(sqlTodayUnfollow, [tz]);
+    } catch {
+      ru = { rows: [{ c: 0 }] };
+    }
+
+    const todayFollow = Number(rf.rows?.[0]?.c || 0);
+    const todayUnfollow = Number(ru.rows?.[0]?.c || 0);
+
+    return res.json({
+      ok: true,
+      tz,
+      today: {
+        follow: todayFollow,
+        unfollow: todayUnfollow,
+        net: todayFollow - todayUnfollow,
+      },
+    });
+  } catch (e) {
+    console.error("/api/admin/follow/stats error:", e);
+    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
+  }
+});
 
 // =====================================
 // ★管理：友だち追加/ブロック 統計（今回追加）

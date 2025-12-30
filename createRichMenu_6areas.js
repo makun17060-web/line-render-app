@@ -94,7 +94,7 @@ const shippingUrl = (SHIPPING_URL || `${baseUrl}/public/shipping.html`).trim();
     action: { type: "uri", label: "お問い合わせ", uri: "https://liff.line.me/2008406620-LUJ3dURd" },
   },
 ]
-
+    };
 
 
     console.log("=== createRichMenu start ===");

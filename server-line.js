@@ -32,6 +32,12 @@
  *   - 通常イベントでは 30日以上古い/未登録の時だけ更新（取りすぎ防止）
  * - 管理API：GET /api/admin/users（ユーザー一覧 + display_name）
  *
+ * ✅ 今回追加（あなたの要望）：友だち追加時に userId を確実に取得してDBへ保持
+ * - follow イベント受信時点で：
+ *   - segment_users / line_users を更新（first_seen/last_seen）
+ *   - codes（member_code/address_code）を即発行（DBがある場合）
+ *   - 管理者へ「友だち追加 userId」通知（任意）
+ *
  * --- 必須 .env ---
  * LINE_CHANNEL_ACCESS_TOKEN
  * LINE_CHANNEL_SECRET
@@ -62,6 +68,12 @@ const multer = require("multer");
 const stripeLib = require("stripe");
 const { Pool } = require("pg");
 
+// Node18+ は fetch が標準。万一無い環境の保険（Renderは通常Node18+）
+const fetchFn =
+  typeof fetch === "function"
+    ? fetch
+    : (...args) => import("node-fetch").then(({ default: f }) => f(...args));
+
 // =============== 基本 ===============
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -72,6 +84,7 @@ const config = {
 };
 
 const LIFF_ID = (process.env.LIFF_ID || "").trim();
+const LIFF_ID_MINIAPP = (process.env.LIFF_ID_MINIAPP || LIFF_ID).trim(); // /liff redirect 用（任意）
 const LIFF_ID_DIRECT_ADDRESS = (process.env.LIFF_ID_DIRECT_ADDRESS || LIFF_ID).trim();
 const LIFF_ID_SHOP = (process.env.LIFF_ID_SHOP || "").trim(); // 任意
 const LINE_CHANNEL_ID = (process.env.LINE_CHANNEL_ID || "").trim(); // 任意（idToken verify）
@@ -139,8 +152,8 @@ app.use((req, _res, next) => {
 });
 
 // ✅ /liff へ来たら LIFFへリダイレクト
-app.get(["/liff", "/liff/"], (req, res) => {
-  const id = process.env.LIFF_ID_MINIAPP || LIFF_ID;
+app.get(["/liff", "/liff/"], (_req, res) => {
+  const id = LIFF_ID_MINIAPP || LIFF_ID;
   if (!id) return res.status(500).send("LIFF_ID is not set");
   return res.redirect(302, `https://liff.line.me/${id}`);
 });
@@ -487,7 +500,7 @@ async function ensureDbSchema() {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_segment_users_last_chat ON segment_users(last_chat_at DESC);`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_segment_users_last_liff ON segment_users(last_liff_at DESC);`);
 
-  // ★追加：LINEプロフィール保存用
+  // ★LINEプロフィール保存
   await p.query(`
     CREATE TABLE IF NOT EXISTS line_users (
       user_id TEXT PRIMARY KEY,
@@ -722,17 +735,12 @@ async function dbUpsertLineUser(userId, prof = {}, opts = {}) {
   const language = prof?.language != null ? String(prof.language || "").slice(0, 16) : null;
 
   const forceProfile = !!opts.forceProfile;
-  // forceProfile の時は profile_updated_at を必ず更新
-  // 通常は display_name 等が取得できた時だけ更新
   const hasProfileAny = !!(displayName || pictureUrl || statusMessage || language);
 
   await p.query(
     `
     INSERT INTO line_users (user_id, display_name, picture_url, status_message, language, first_seen, last_seen, profile_updated_at, updated_at)
-    VALUES ($1,$2,$3,$4,$5, NOW(), NOW(),
-      CASE WHEN $6 THEN NOW() ELSE NOW() END,
-      NOW()
-    )
+    VALUES ($1,$2,$3,$4,$5, NOW(), NOW(), NOW(), NOW())
     ON CONFLICT (user_id) DO UPDATE SET
       display_name = COALESCE(EXCLUDED.display_name, line_users.display_name),
       picture_url = COALESCE(EXCLUDED.picture_url, line_users.picture_url),
@@ -762,23 +770,19 @@ async function getLineProfileByEvent(ev) {
 
   try {
     if (type === "group" && src.groupId) {
-      // グループ内
       if (typeof client.getGroupMemberProfile === "function") {
         return await client.getGroupMemberProfile(src.groupId, userId);
       }
       return null;
     }
     if (type === "room" && src.roomId) {
-      // ルーム内
       if (typeof client.getRoomMemberProfile === "function") {
         return await client.getRoomMemberProfile(src.roomId, userId);
       }
       return null;
     }
-    // 1:1
     return await client.getProfile(userId);
-  } catch (e) {
-    // 友だちではない/権限不足/取得不可など
+  } catch {
     return null;
   }
 }
@@ -789,7 +793,6 @@ async function maybeRefreshLineProfile(userId, ev, opts = {}) {
 
   const force = !!opts.force;
 
-  // DBが無いならファイルだけ更新（取得はできる範囲で）
   if (!pool) {
     const prof = await getLineProfileByEvent(ev);
     if (prof) fileUpsertLineUser(uid, prof, { profileUpdatedAt: nowIso() });
@@ -798,27 +801,19 @@ async function maybeRefreshLineProfile(userId, ev, opts = {}) {
   }
 
   try {
-    // 既存の profile_updated_at を見て更新要否を判断
     const meta = await dbGetLineUserMeta(uid);
     const last = meta?.profile_updated_at ? new Date(meta.profile_updated_at).getTime() : 0;
-    const need = force || !last || (Date.now() - last > daysAgoMs(PROFILE_REFRESH_DAYS));
+    const need = force || !last || Date.now() - last > daysAgoMs(PROFILE_REFRESH_DAYS);
 
-    // last_seen は常に更新したい（display_name 取れなくても）
-    // → prof が取れなければ空で upsert（last_seen 更新）
     if (!need) {
       await dbUpsertLineUser(uid, {}, { forceProfile: false });
       return;
     }
 
     const prof = await getLineProfileByEvent(ev);
-    if (prof) {
-      await dbUpsertLineUser(uid, prof, { forceProfile: force });
-    } else {
-      // 取れない場合も last_seen は更新
-      await dbUpsertLineUser(uid, {}, { forceProfile: false });
-    }
-  } catch (e) {
-    // DB不調時はファイルに退避
+    if (prof) await dbUpsertLineUser(uid, prof, { forceProfile: force });
+    else await dbUpsertLineUser(uid, {}, { forceProfile: false });
+  } catch {
     try {
       const prof = await getLineProfileByEvent(ev);
       if (prof) fileUpsertLineUser(uid, prof, { profileUpdatedAt: nowIso() });
@@ -1063,7 +1058,7 @@ async function verifyLineIdToken(idToken) {
     params.set("id_token", idToken);
     params.set("client_id", LINE_CHANNEL_ID);
 
-    const r = await fetch("https://api.line.me/oauth2/v2.1/verify", {
+    const r = await fetchFn("https://api.line.me/oauth2/v2.1/verify", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: params.toString(),
@@ -1130,7 +1125,7 @@ app.post("/api/liff/open", async (req, res) => {
     await touchUser(userId, "liff");
 
     // ★プロフィール更新（LIFF open でも userId が来るなら拾う）
-    // ただし ev が無いので 取得はできないことが多い → last_seen 更新目的
+    // ev が無いので profile取得はできないことが多い → last_seen 更新目的
     try {
       if (pool) await dbUpsertLineUser(userId, {}, { forceProfile: false });
       else fileUpsertLineUser(userId, {}, {});
@@ -1309,12 +1304,8 @@ app.post("/api/pay-stripe", async (req, res) => {
         quantity: qty,
       });
     }
-    if (shipping > 0) {
-      line_items.push({ price_data: { currency: "jpy", product_data: { name: "送料" }, unit_amount: shipping }, quantity: 1 });
-    }
-    if (codFee > 0) {
-      line_items.push({ price_data: { currency: "jpy", product_data: { name: "代引き手数料" }, unit_amount: codFee }, quantity: 1 });
-    }
+    if (shipping > 0) line_items.push({ price_data: { currency: "jpy", product_data: { name: "送料" }, unit_amount: shipping }, quantity: 1 });
+    if (codFee > 0) line_items.push({ price_data: { currency: "jpy", product_data: { name: "代引き手数料" }, unit_amount: codFee }, quantity: 1 });
     if (!line_items.length) return res.status(400).json({ ok: false, error: "no_valid_line_items" });
 
     const proto = req.headers["x-forwarded-proto"] || req.protocol || "https";
@@ -1372,7 +1363,9 @@ app.post("/api/order/complete", async (req, res) => {
     const pref = a.prefecture || a.pref || "";
     const addrText = formatAddressText(a);
     const tel = a.tel || a.phone || "";
-    const itemsTotal = Number(order.itemsTotal || 0) || items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 0), 0);
+    const itemsTotal =
+      Number(order.itemsTotal || 0) ||
+      items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 0), 0);
     const shipping = Number(order.shipping || 0);
     const codFee = Number(order.codFee || 0);
     const finalTotal = Number(order.finalTotal ?? order.total ?? 0) || (itemsTotal + shipping + codFee);
@@ -1679,7 +1672,6 @@ app.get("/api/admin/users", async (req, res) => {
       return res.json({ ok: true, count: r.rows.length, items: r.rows });
     }
 
-    // DBなし（ファイル）
     const book = readLineUsersFile();
     let items = Object.values(book);
     if (q) {
@@ -1707,19 +1699,14 @@ app.get("/api/admin/segment/users", async (req, res) => {
 
     const r = await segmentGetUsersUnified({ days, source, limit: SEGMENT_PUSH_LIMIT });
 
-    // ★必要なら display_name を付与（表示/販促用）
     let profiles = null;
     if (includeProfile) {
       profiles = {};
       if (pool) {
         const p = mustPool();
-        // IN が大きくなるので 1000 ずつ
         const parts = chunkArray(r.items, 1000);
         for (const part of parts) {
-          const rr = await p.query(
-            `SELECT user_id, display_name FROM line_users WHERE user_id = ANY($1::text[])`,
-            [part]
-          );
+          const rr = await p.query(`SELECT user_id, display_name FROM line_users WHERE user_id = ANY($1::text[])`, [part]);
           for (const row of rr.rows) profiles[row.user_id] = row.display_name || "";
         }
       } else {
@@ -2134,10 +2121,9 @@ async function notifyAdminIncomingMessage(ev, bodyText, extra = {}) {
 async function handleEvent(ev) {
   const userId = ev?.source?.userId || "";
 
-  // ★まず台帳更新（seen）
+  // ★まず台帳更新（seen）＋プロフィール保存（followは強制更新）
   if (userId) {
     try { await touchUser(userId, "seen"); } catch {}
-    // ★プロフィール保存（followは強制更新、通常は間引き）
     try {
       const force = ev.type === "follow";
       await maybeRefreshLineProfile(userId, ev, { force });
@@ -2180,16 +2166,34 @@ async function handleEvent(ev) {
       });
     } catch (err) {
       console.error("会員コード取得エラー", err);
-      return client.replyMessage(ev.replyToken, {
-        type: "text",
-        text: "会員コードの取得に失敗しました。時間をおいてお試しください。",
-      });
+      return client.replyMessage(ev.replyToken, { type: "text", text: "会員コードの取得に失敗しました。時間をおいてお試しください。" });
     }
   }
 
-  // 友だち追加
+  // ===========================
+  // ★友だち追加（follow）— userId をこの時点で確実にDBへ保持
+  // ===========================
   if (ev.type === "follow") {
-    if (userId) await touchUser(userId, "seen");
+    // ここに来た時点で userId は取れてる（ev.source.userId）
+    if (userId) {
+      // segment_users / line_users は上の共通処理で更新済み
+      // ★codes をこの時点で発行（DBありの場合）
+      if (pool) {
+        try { await dbEnsureCodes(userId); } catch {}
+      }
+      // 管理者へ「友だち追加」通知（欲しければ）
+      if (ADMIN_USER_ID) {
+        try {
+          await client.pushMessage(ADMIN_USER_ID, {
+            type: "text",
+            text:
+              `➕【友だち追加】\nuserId：${userId}\n` +
+              `時刻：${ev?.timestamp ? new Date(ev.timestamp).toISOString() : new Date().toISOString()}`,
+          });
+        } catch {}
+      }
+    }
+
     const msg =
       "友だち追加ありがとうございます！\n\n" +
       "・「直接注文」→ 商品一覧（通常商品）\n" +

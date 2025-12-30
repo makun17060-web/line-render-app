@@ -1127,6 +1127,7 @@ app.get("/api/health", async (_req, res) => {
       PUBLIC_BASE_URL: !!PUBLIC_BASE_URL,
       UPLOAD_DIR,
       PROFILE_REFRESH_DAYS,
+      PICKUP_POSTBACK_DATA,
     },
   });
 });
@@ -1587,7 +1588,7 @@ function readLogLines(filePath, limit = 100) {
 
 function yyyymmddFromIso(ts) {
   const d = new Date(ts);
-  if (isNaN(d.getTime())) return "";
+  if knowing(d.getTime())) return "";
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
@@ -1900,8 +1901,6 @@ function parseQuery(data) {
 function parsePostbackParams(data) {
   try {
     const s = String(data || "").trim();
-    // 例: "action=pickup_start" / "action=pickup_start&x=1"
-    // 例: "foo?x=1&action=pickup_start" でも動く
     const qs = s.includes("?") ? s.split("?")[1] : s;
     return new URLSearchParams(qs);
   } catch {
@@ -2243,7 +2242,6 @@ async function logFollowUnfollow(ev) {
         [userId, eventTs, JSON.stringify(raw)]
       );
       console.log("[follow_events] inserted:", userId);
-
     } else if (ev.type === "unfollow") {
       await mustPool().query(
         `
@@ -2310,12 +2308,9 @@ async function handleEvent(ev) {
   // ===========================
   if (ev.type === "follow") {
     if (userId) {
-      // segment_users / line_users は上の共通処理で更新済み
-      // ★codes をこの時点で発行（DBありの場合）
       if (pool) {
         try { await dbEnsureCodes(userId); } catch {}
       }
-      // 管理者へ「友だち追加」通知（任意）
       if (ADMIN_USER_ID) {
         try {
           await client.pushMessage(ADMIN_USER_ID, {
@@ -2387,14 +2382,14 @@ async function handleEvent(ev) {
       const pickupName = text.slice(0, 40);
       const id = sess.id;
       const qty = Number(sess.qty || 1);
-      const method = sess.method || "pickup";
-      const payment = sess.payment || "cash";
+      const method = "pickup";
+      const payment = "cash";
       clearSession(userId);
 
       const product = loadProductByOrderId(id);
       return client.replyMessage(ev.replyToken, [
         { type: "text", text: `店頭受取のお名前「${pickupName}」で進めます。` },
-        confirmFlex(product, qty, method, payment === "cash" ? "store" : payment, null, pickupName),
+        confirmFlex(product, qty, method, payment, null, pickupName),
       ]);
     }
 
@@ -2414,7 +2409,6 @@ async function handleEvent(ev) {
       if (qty < 1 || qty > 99) return client.replyMessage(ev.replyToken, { type: "text", text: "個数は 1〜99 で入力してください。" });
 
       const otherName = String(sess.otherName || "その他");
-      // “その他”系は pickupOnly を残しておきたい場合があるので、modeだけ消す
       setSession(userId, { mode: "", otherName: "" });
 
       const id = `other:${encodeURIComponent(otherName)}:0`;
@@ -2424,7 +2418,6 @@ async function handleEvent(ev) {
     // ① 直接注文（通常）
     if (text === "直接注文") {
       await touchUser(userId, "chat");
-      // ★リッチメニュー店頭受取の強制フラグを消す（通常ルート）
       clearSession(userId);
       return client.replyMessage(ev.replyToken, [{ type: "text", text: "直接注文を開始します。商品一覧です。" }, productsFlex()]);
     }
@@ -2481,19 +2474,19 @@ async function handleEvent(ev) {
   // ===========================
   if (ev.type === "postback") {
     const data = String(ev.postback?.data || "");
+    if (!userId) return null;
 
     // ★リッチメニュー：店頭受取開始（postback）
     // data: "action=pickup_start"
     {
       const params = parsePostbackParams(data);
       const action = params.get("action") || "";
-      if (action === "pickup_start") {
-        if (!userId) return null;
 
+      // どちらでも拾えるように（完全一致 or パラメータ解析）
+      if (data.trim() === PICKUP_POSTBACK_DATA || action === "pickup_start") {
         // ★pickupOnly フラグを立てる（この注文中は店頭受取固定）
         setSession(userId, { pickupOnly: true });
 
-        // トークに文字を出さず開始（replyだけ出す）
         return client.replyMessage(ev.replyToken, [
           { type: "text", text: "店頭受取でご注文を開始します。商品を選んでください。" },
           productsFlex(),
@@ -2506,7 +2499,6 @@ async function handleEvent(ev) {
     }
 
     if (data === "other_start") {
-      if (!userId) return null;
       setSession(userId, { mode: "other_name" });
       return client.replyMessage(ev.replyToken, { type: "text", text: "商品名を入力してください（例：えびせん詰め合わせ）" });
     }
@@ -2521,7 +2513,7 @@ async function handleEvent(ev) {
       const qty = Number(q.qty || 1);
 
       // ★pickupOnly のときは「受取方法」を出さず、店頭受取へ固定して次へ
-      const sess = userId ? getSession(userId) : null;
+      const sess = getSession(userId);
       if (sess?.pickupOnly) {
         return client.replyMessage(ev.replyToken, paymentFlex(q.id, qty, "pickup"));
       }
@@ -2533,7 +2525,7 @@ async function handleEvent(ev) {
       const qty = Number(q.qty || 1);
 
       // ★pickupOnly のときは method を強制 pickup
-      const sess = userId ? getSession(userId) : null;
+      const sess = getSession(userId);
       const method = sess?.pickupOnly ? "pickup" : q.method;
 
       return client.replyMessage(ev.replyToken, paymentFlex(q.id, qty, method));
@@ -2541,7 +2533,7 @@ async function handleEvent(ev) {
 
     if (data.startsWith("order_pickup_name?")) {
       const q = parseQuery(data);
-      setSession(userId, { mode: "pickup_name", id: q.id, qty: Number(q.qty || 1), method: q.method, payment: q.payment });
+      setSession(userId, { mode: "pickup_name", id: q.id, qty: Number(q.qty || 1), method: "pickup", payment: "cash" });
       return client.replyMessage(ev.replyToken, { type: "text", text: "店頭で受け取るお名前を入力してください。" });
     }
 
@@ -2551,7 +2543,7 @@ async function handleEvent(ev) {
       const qty = Number(q.qty || 1);
 
       // ★pickupOnly のときは method/payment を固定
-      const sess = userId ? getSession(userId) : null;
+      const sess = getSession(userId);
       const method = sess?.pickupOnly ? "pickup" : q.method;
       const payment = sess?.pickupOnly ? "cash" : q.payment;
 
@@ -2575,7 +2567,7 @@ async function handleEvent(ev) {
       const qty = Number(q.qty || 1);
 
       // ★pickupOnly のときは method/payment を固定
-      const sess = userId ? getSession(userId) : null;
+      const sess = getSession(userId);
       const method = sess?.pickupOnly ? "pickup" : q.method;
       const payment = sess?.pickupOnly ? "cash" : q.payment;
 
@@ -2736,9 +2728,7 @@ async function handleEvent(ev) {
         try { await client.pushMessage(ADMIN_USER_ID, { type: "text", text: msg }); } catch {}
       }
 
-      // ★予約でいったんセッション終了
       clearSession(userId);
-
       return client.replyMessage(ev.replyToken, { type: "text", text: "予約を受け付けました。入荷次第ご案内します。" });
     }
 

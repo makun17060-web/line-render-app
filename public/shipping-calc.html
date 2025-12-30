@@ -1,236 +1,471 @@
 <!doctype html>
 <html lang="ja">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>お支払い総額の目安（梱包・発送込み）</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>送料計算（ヤマト運輸・中部・税込）</title>
+  <style>
+    :root{
+      --bg:#f6f7fb; --card:#fff; --text:#111827; --muted:#6b7280;
+      --line:#e5e7eb; --primary:#0b3a53; --danger:#b91c1c; --ok:#065f46;
+      --r:14px;
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      background:var(--bg);
+      color:var(--text);
+    }
+    .wrap{ max-width:860px; margin:0 auto; padding:14px 14px 30px; }
+    header{ margin:6px 0 14px; }
+    h1{ font-size:18px; margin:0 0 6px; }
+    .sub{ font-size:12px; color:var(--muted); line-height:1.6; }
 
-<style>
-  body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:#f7f7f7; margin:0; padding:16px; color:#333; }
-  .wrap { max-width:720px; margin:0 auto; }
+    .grid{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap:12px;
+    }
+    @media(min-width:900px){
+      .grid{ grid-template-columns: 1.1fr .9fr; }
+    }
+    .card{
+      background:var(--card);
+      border:1px solid var(--line);
+      border-radius:var(--r);
+      padding:12px;
+      box-shadow:0 1px 3px rgba(0,0,0,.06);
+    }
+    .card h2{ font-size:15px; margin:0 0 10px; }
+    label{ display:block; font-size:12px; color:var(--muted); margin:10px 0 6px; }
+    input, select, textarea{
+      width:100%;
+      padding:10px 10px;
+      border:1px solid var(--line);
+      border-radius:10px;
+      font-size:14px;
+      outline:none;
+      background:#fff;
+    }
+    textarea{ min-height:84px; resize:vertical; }
+    .row{
+      display:flex; gap:10px; align-items:center;
+    }
+    .row > *{ flex:1; }
+    .btns{ display:flex; gap:10px; margin-top:12px; flex-wrap:wrap; }
+    button{
+      border:none;
+      border-radius:12px;
+      padding:11px 12px;
+      font-size:14px;
+      cursor:pointer;
+    }
+    .primary{ background:var(--primary); color:#fff; }
+    .ghost{ background:#fff; border:1px solid var(--line); color:var(--text); }
+    .danger{ background:#fee2e2; color:#991b1b; border:1px solid #fecaca; }
 
-  /* ===== 上部バー（戻る） ===== */
-  .topbar { display:flex; justify-content:flex-end; margin-bottom:8px; }
-  .closeBtn{
-    width:auto;
-    padding:10px 12px;
-    font-size:14px;
-    border:1px solid #ddd;
-    background:#fff;
-    color:#0b3a53;
-    border-radius:10px;
-    font-weight:700;
-    cursor:pointer;
-  }
-  .closeBtn:active{ transform: translateY(1px); }
+    .pill{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:6px 10px; border-radius:999px; font-size:12px;
+      border:1px solid var(--line); background:#fff;
+    }
+    .pill.ok{ border-color:#bbf7d0; background:#ecfdf5; color:var(--ok); }
+    .pill.ng{ border-color:#fecaca; background:#fff1f2; color:var(--danger); }
 
-  h1 { font-size:20px; margin:0 0 8px; }
-  .lead { font-size:13px; color:#555; line-height:1.7; margin:0 0 12px; }
-  .card { background:#fff; border-radius:12px; padding:14px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
-  label { font-size:14px; font-weight:700; display:block; margin-bottom:4px; }
-  select, input { width:100%; padding:10px; font-size:15px; border-radius:8px; border:1px solid #ccc; }
-  button.main { width:100%; padding:12px; font-size:16px; border:0; border-radius:10px; background:#0b3a53; color:#fff; font-weight:700; cursor:pointer; }
-  .result { font-size:15px; line-height:1.75; }
-  .result .big { font-size:18px; font-weight:800; }
-  .note { font-size:13px; color:#666; line-height:1.7; }
-  .muted { color:#777; font-size:12px; }
-  .hr { height:1px; background:#eee; margin:10px 0; }
-</style>
+    .result{
+      display:grid;
+      gap:8px;
+      margin-top:10px;
+    }
+    .kv{
+      display:flex; justify-content:space-between; gap:10px;
+      padding:10px 10px;
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:#fff;
+      font-size:14px;
+    }
+    .kv .k{ color:var(--muted); }
+    .kv .v{ font-weight:700; }
+    .muted{ color:var(--muted); font-size:12px; line-height:1.6; }
+    .hr{ height:1px; background:var(--line); margin:12px 0; }
+    .small{ font-size:12px; color:var(--muted); }
+    code{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
+      font-size:12px;
+      background:#f3f4f6;
+      padding:2px 6px;
+      border-radius:8px;
+    }
+  </style>
 </head>
-
 <body>
 <div class="wrap">
-
-  <!-- 「戻る」＝ return優先で確実に戻す -->
-  <div class="topbar">
-    <button class="closeBtn" type="button" onclick="goBack()">戻る</button>
-  </div>
-
-  <h1>お支払い総額の目安</h1>
-  <p class="lead">
-    このページは「梱包・発送費用を含めた総額の目安」を確認できます。<br>
-    最終的な金額は、注文画面の<strong>最終確認</strong>で確定します。
-  </p>
-
-  <div class="card">
-    <label>お届け先（都道府県）</label>
-    <select id="pref">
-      <option value="">選択してください</option>
-      <option>北海道</option>
-      <option>青森県</option><option>岩手県</option><option>宮城県</option><option>秋田県</option><option>山形県</option><option>福島県</option>
-      <option>茨城県</option><option>栃木県</option><option>群馬県</option><option>埼玉県</option><option>千葉県</option><option>東京都</option><option>神奈川県</option>
-      <option>新潟県</option><option>富山県</option><option>石川県</option><option>福井県</option><option>長野県</option>
-      <option>岐阜県</option><option>静岡県</option><option>愛知県</option><option>三重県</option>
-      <option>滋賀県</option><option>京都府</option><option>大阪府</option><option>兵庫県</option><option>奈良県</option><option>和歌山県</option>
-      <option>鳥取県</option><option>島根県</option><option>岡山県</option><option>広島県</option><option>山口県</option>
-      <option>徳島県</option><option>香川県</option><option>愛媛県</option><option>高知県</option>
-      <option>福岡県</option><option>佐賀県</option><option>長崎県</option><option>熊本県</option><option>大分県</option><option>宮崎県</option><option>鹿児島県</option>
-      <option>沖縄県</option>
-    </select>
-  </div>
-
-  <div class="card">
-    <label>商品種別</label>
-    <select id="productType">
-      <option value="akasha">あかしゃシリーズ</option>
-      <option value="original">磯屋オリジナルセット</option>
-    </select>
-    <div class="muted" style="margin-top:6px;">
-      ※久助や他商品を含む場合は、注文画面の最終確認をご利用ください
+  <header>
+    <h1>送料計算（ヤマト運輸・中部・税込）</h1>
+    <div class="sub">
+      server.js の <code>calcShippingUnified()</code> と同じ判定で計算します。<br/>
+      優先順位：<b>あかしゃ6</b>（数量別）→ <b>磯屋オリジナルセット</b>（数量別）→ それ以外（総数）。
     </div>
+  </header>
+
+  <div class="grid">
+    <!-- left -->
+    <section class="card">
+      <h2>入力</h2>
+
+      <label>都道府県（例：愛知県 / 東京都 / 北海道 / 沖縄県）</label>
+      <input id="pref" placeholder="例：愛知県" />
+
+      <label>住所（任意：市区町村以降。地域判定の補助）</label>
+      <input id="addr1" placeholder="例：知多郡南知多町豊浜清水谷" />
+
+      <div class="hr"></div>
+
+      <label>商品入力（簡単入力）</label>
+      <div class="small">
+        1行ごとに「商品名,数量」または「商品名 数量」<br/>
+        例：<code>磯屋オリジナルセット 2</code> / <code>のりあかしゃ,5</code> / <code>四角のりせん 3</code>
+      </div>
+      <textarea id="itemsText" placeholder="磯屋オリジナルセット 2
+のりあかしゃ 4"></textarea>
+
+      <div class="row">
+        <div>
+          <label>（または）オリジナルセット個数</label>
+          <input id="originalQty" type="number" min="0" step="1" value="0" />
+        </div>
+        <div>
+          <label>あかしゃ6合計個数</label>
+          <input id="akashaQty" type="number" min="0" step="1" value="0" />
+        </div>
+      </div>
+
+      <label>（その他）合計個数</label>
+      <input id="otherQty" type="number" min="0" step="1" value="0" />
+
+      <div class="btns">
+        <button class="primary" id="calcBtn">計算する</button>
+        <button class="ghost" id="loadApiBtn">/api/shipping で計算（サーバー）</button>
+        <button class="danger" id="resetBtn">リセット</button>
+      </div>
+
+      <div class="hr"></div>
+      <div class="muted">
+        使い分け：<br/>
+        ・このページだけで計算 → 「計算する」（ローカル計算）<br/>
+        ・サーバーの計算と完全一致を確認 → 「/api/shipping で計算」<br/>
+        ※同一オリジン（同じドメイン）に置いてください。
+      </div>
+    </section>
+
+    <!-- right -->
+    <aside class="card">
+      <h2>結果</h2>
+
+      <div id="statusPill" class="pill">未計算</div>
+
+      <div class="result">
+        <div class="kv"><div class="k">配送地域</div><div class="v" id="rRegion">-</div></div>
+        <div class="kv"><div class="k">サイズ</div><div class="v" id="rSize">-</div></div>
+        <div class="kv"><div class="k">送料（税込）</div><div class="v" id="rShip">-</div></div>
+        <div class="kv"><div class="k">判定理由</div><div class="v" id="rReason">-</div></div>
+      </div>
+
+      <div class="hr"></div>
+
+      <h2>送料表（ヤマト中部・税込）</h2>
+      <div class="muted">
+        server.js の <code>YAMATO_CHUBU_TAXED</code> と同じ値です。
+      </div>
+      <div id="tableWrap" class="muted" style="margin-top:10px; overflow:auto;"></div>
+    </aside>
   </div>
-
-  <div class="card">
-    <label id="qtyLabel">あかしゃシリーズ 合計袋数</label>
-    <input type="number" id="qty" min="1" max="99" placeholder="例：6" />
-  </div>
-
-  <div class="card">
-    <button class="main" onclick="calc()">総額の目安を見る</button>
-  </div>
-
-  <div class="card">
-    <div id="result" class="result">―</div>
-  </div>
-
-  <div class="card note" id="noteBox"></div>
-
 </div>
 
 <script>
-/* ======================================================
-   戻る（履歴が無くてもOK）
-   - ?return=（URL） があればそこへ戻る
-   - なければ history.back
-   - それも無理なら referrer に戻る
-   - それでも無理なら安全な固定戻り先（任意）へ
-====================================================== */
-const FALLBACK_RETURN_URL = "https://line-render-app-1.onrender.com/public/usage.html"; // ←ご利用方法URLに合わせて変更OK
+  // ==========================
+  // server.js と同じ送料表
+  // ==========================
+  const YAMATO_CHUBU_TAXED = {
+    "60":  { 北海道:1610, 東北:1190, 関東: 940, 中部: 940, 近畿: 940, 中国:1060, 四国:1060, 九州:1190, 沖縄:1460 },
+    "80":  { 北海道:1900, 東北:1480, 関東:1230, 中部:1230, 近畿:1230, 中国:1350, 四国:1350, 九州:1480, 沖縄:2070 },
+    "100": { 北海道:2200, 東北:1790, 関東:1530, 中部:1530, 近畿:1530, 中国:1650, 四国:1650, 九州:1790, 沖縄:2710 },
+    "120": { 北海道:2780, 東北:2310, 関東:2040, 中部:2040, 近畿:2040, 中国:2170, 四国:2170, 九州:2310, 沖縄:3360 },
+    "140": { 北海道:3440, 東北:2930, 関東:2630, 中部:2630, 近畿:2630, 中国:2780, 四国:2780, 九州:2930, 沖縄:4030 },
+    "160": { 北海道:3820, 東北:3320, 関東:3020, 中部:3020, 近畿:3020, 中国:3160, 四国:3160, 九州:3320, 沖縄:4680 },
+  };
+  const SIZE_ORDER = ["60","80","100","120","140","160"];
 
-function goBack() {
-  const params = new URLSearchParams(location.search);
-  const returnUrl = params.get("return");
+  // server.js と同じ判定（簡略：pref/addr1 から地域判定）
+  function detectRegionFromAddress(address = {}) {
+    const pref = String(address.prefecture || address.pref || "").trim();
+    const addr1 = String(address.addr1 || address.address1 || "").trim();
+    const hay = pref || addr1;
 
-  if (returnUrl) {
-    location.href = returnUrl;
-    return;
-  }
-  if (history.length > 1) {
-    history.back();
-    return;
-  }
-  if (document.referrer) {
-    location.href = document.referrer;
-    return;
-  }
-  // 最後の手段：固定の戻り先（閉じない）
-  location.href = FALLBACK_RETURN_URL;
-}
-
-/* ヤマト 中部発 送料（税込） */
-const YAMATO_CHUBU_TAXED = {
-  "60":  { 北海道:1610, 東北:1190, 関東: 940, 中部: 940, 近畿: 940, 中国:1060, 四国:1060, 九州:1190, 沖縄:1460 },
-  "80":  { 北海道:1900, 東北:1480, 関東:1230, 中部:1230, 近畿:1230, 中国:1350, 四国:1350, 九州:1480, 沖縄:2070 },
-  "100": { 北海道:2200, 東北:1790, 関東:1530, 中部:1530, 近畿:1530, 中国:1650, 四国:1650, 九州:1790, 沖縄:2710 },
-  "120": { 北海道:2780, 東北:2310, 関東:2040, 中部:2040, 近畿:2040, 中国:2170, 四国:2170, 九州:2310, 沖縄:3360 },
-  "140": { 北海道:3440, 東北:2930, 関東:2630, 中部:2630, 近畿:2630, 中国:2780, 四国:2780, 九州:2930, 沖縄:4030 },
-  "160": { 北海道:3820, 東北:3320, 関東:3020, 中部:3020, 近畿:3020, 中国:3160, 四国:3160, 九州:3320, 沖縄:4680 }
-};
-
-/* 概算の商品価格（調整OK） */
-const PRICE = {
-  AKASHA_PER_BAG: 340,
-  ORIGINAL_SET_PER: 2000
-};
-
-function detectRegion(pref) {
-  if (/北海道/.test(pref)) return "北海道";
-  if (/(青森|岩手|宮城|秋田|山形|福島)/.test(pref)) return "東北";
-  if (/(茨城|栃木|群馬|埼玉|千葉|東京|神奈川)/.test(pref)) return "関東";
-  if (/(新潟|富山|石川|福井|長野|岐阜|静岡|愛知|三重)/.test(pref)) return "中部";
-  if (/(滋賀|京都|大阪|兵庫|奈良|和歌山)/.test(pref)) return "近畿";
-  if (/(鳥取|島根|岡山|広島|山口)/.test(pref)) return "中国";
-  if (/(徳島|香川|愛媛|高知)/.test(pref)) return "四国";
-  if (/(福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島)/.test(pref)) return "九州";
-  if (/沖縄/.test(pref)) return "沖縄";
-  return "";
-}
-
-function sizeFromAkashaQty(q) {
-  if (q <= 4) return "60";
-  if (q <= 8) return "80";
-  if (q <= 13) return "100";
-  if (q <= 18) return "120";
-  return "140";
-}
-
-function sizeFromOriginalSetQty(q) {
-  if (q === 1) return "80";
-  if (q === 2) return "100";
-  if (q <= 4) return "120";
-  if (q <= 6) return "140";
-  return "160";
-}
-
-function yen(n) { return Number(n || 0).toLocaleString("ja-JP") + "円"; }
-
-function updateUiByType() {
-  const type = document.getElementById("productType").value;
-  const label = document.getElementById("qtyLabel");
-  const note = document.getElementById("noteBox");
-
-  if (type === "original") {
-    label.textContent = "磯屋オリジナルセット 個数";
-    note.innerHTML =
-      "対象商品：磯屋オリジナルセット<br>" +
-      "※ 個数でサイズ判定します（1⇒80 / 2⇒100 / 3-4⇒120 / 5-6⇒140 / 7+⇒160）。";
-  } else {
-    label.textContent = "あかしゃシリーズ 合計袋数";
-    note.innerHTML =
-      "対象商品：のりあかしゃ／うずあかしゃ／潮あかしゃ／ごまあかしゃ／いそあかしゃ／松あかしゃ<br>" +
-      "※ あかしゃシリーズのみ対象です（他商品は含まれません）。";
-  }
-}
-
-function calc() {
-  const pref = document.getElementById("pref").value;
-  const qty  = Number(document.getElementById("qty").value);
-  const type = document.getElementById("productType").value;
-
-  if (!pref || !qty) {
-    document.getElementById("result").textContent = "都道府県と数量を入力してください。";
-    return;
+    if (/北海道/.test(hay)) return "北海道";
+    if (/(青森|岩手|宮城|秋田|山形|福島|東北)/.test(hay)) return "東北";
+    if (/(茨城|栃木|群馬|埼玉|千葉|東京|神奈川|山梨|関東)/.test(hay)) return "関東";
+    if (/(新潟|富山|石川|福井|長野|岐阜|静岡|愛知|三重|中部)/.test(hay)) return "中部";
+    if (/(滋賀|京都|大阪|兵庫|奈良|和歌山|近畿|関西)/.test(hay)) return "近畿";
+    if (/(鳥取|島根|岡山|広島|山口|中国)/.test(hay)) return "中国";
+    if (/(徳島|香川|愛媛|高知|四国)/.test(hay)) return "四国";
+    if (/(福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|九州)/.test(hay)) return "九州";
+    if (/(沖縄)/.test(hay)) return "沖縄";
+    return "";
   }
 
-  const region = detectRegion(pref);
-
-  let size = "";
-  let itemTotal = 0;
-
-  if (type === "original") {
-    size = sizeFromOriginalSetQty(qty);
-    itemTotal = qty * PRICE.ORIGINAL_SET_PER;
-  } else {
-    size = sizeFromAkashaQty(qty);
-    itemTotal = qty * PRICE.AKASHA_PER_BAG;
+  function isAkasha6(item) {
+    const name = String(item?.name || "");
+    return /(のりあかしゃ|うずあかしゃ|潮あかしゃ|松あかしゃ|ごまあかしゃ|磯あかしゃ|いそあかしゃ)/.test(name);
+  }
+  function sizeFromAkasha6Qty(qty) {
+    const q = Number(qty) || 0;
+    if (q <= 0) return null;
+    if (q <= 4) return "60";
+    if (q <= 8) return "80";
+    if (q <= 13) return "100";
+    if (q <= 18) return "120";
+    return "140";
+  }
+  // ★あなたの要望：オリジナルセットは 1:80 / 2:100 / 3-4:120 / 5-6:140 / それ以上:160
+  function sizeFromOriginalSetQty(qty) {
+    const q = Number(qty) || 0;
+    if (q <= 0) return null;
+    if (q === 1) return "80";
+    if (q === 2) return "100";
+    if (q <= 4) return "120";
+    if (q <= 6) return "140";
+    return "160";
+  }
+  function sizeFromTotalQty(totalQty) {
+    const q = Number(totalQty) || 0;
+    if (q <= 1) return "60";
+    if (q === 2) return "80";
+    if (q === 3) return "100";
+    if (q <= 4) return "120";
+    if (q <= 6) return "140";
+    return "160";
+  }
+  function calcYamatoShipping(region, size) {
+    if (!region) return 0;
+    const table = YAMATO_CHUBU_TAXED[String(size)] || null;
+    if (!table) return 0;
+    return Number(table[region] || 0);
   }
 
-  const ship = YAMATO_CHUBU_TAXED[size]?.[region] || 0;
-  const total = itemTotal + ship;
+  // server.js と同じ統一ロジック（理由も返す）
+  function calcShippingUnified(items = [], address = {}) {
+    const region = detectRegionFromAddress(address);
 
-  document.getElementById("result").innerHTML =
-    `商品：<b>${type === "original" ? "磯屋オリジナルセット" : "あかしゃシリーズ"}</b><br>` +
-    `お届け先：<b>${region}</b> ／ サイズ目安：<b>${size}</b><br>` +
-    `<div class="hr"></div>` +
-    `商品代（目安）：<b>${yen(itemTotal)}</b><br>` +
-    `梱包・発送費用（目安）：<b>${yen(ship)}</b><br>` +
-    `<div class="hr"></div>` +
-    `<div class="big">総額の目安：${yen(total)}</div>` +
-    `<div class="muted">※最終的な金額は注文画面の最終確認で確定します</div>`;
-}
+    const totalQty = items.reduce((s, it) => s + Number(it.qty || 0), 0);
+    const akasha6Qty = items.reduce((s, it) => s + (isAkasha6(it) ? Number(it.qty || 0) : 0), 0);
 
-document.getElementById("productType").addEventListener("change", updateUiByType);
-updateUiByType();
+    // オリジナルセット判定：id or 名前ゆらぎ
+    const originalQty = items.reduce((s, it) => {
+      const nm = String(it.name || "");
+      const isOriginal = (it.id === "original-set-2100") || /磯屋.?オリジナルセ/.test(nm);
+      return s + (isOriginal ? Number(it.qty || 0) : 0);
+    }, 0);
+
+    let size = null;
+    let reason = "";
+
+    if (akasha6Qty > 0) {
+      size = sizeFromAkasha6Qty(akasha6Qty);
+      reason = `あかしゃ6優先（合計 ${akasha6Qty} 個）`;
+    } else if (originalQty > 0) {
+      size = sizeFromOriginalSetQty(originalQty);
+      reason = `オリジナルセット（合計 ${originalQty} 個）`;
+    } else {
+      size = sizeFromTotalQty(totalQty);
+      reason = `総数（合計 ${totalQty} 個）`;
+    }
+
+    const shipping = calcYamatoShipping(region, size);
+    return { region, size, shipping, reason, totalQty, akasha6Qty, originalQty };
+  }
+
+  // ==========================
+  // UI helpers
+  // ==========================
+  const yen = (n)=> `${Number(n||0).toLocaleString("ja-JP")}円`;
+
+  function setPill(type, text){
+    const el = document.getElementById("statusPill");
+    el.className = "pill " + (type || "");
+    el.textContent = text;
+  }
+
+  function parseItemsText(text){
+    const lines = String(text||"").split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+    const out = [];
+    for(const line of lines){
+      // "name,qty" or "name qty"
+      let name = "";
+      let qty = 0;
+
+      if(line.includes(",")){
+        const [a,b] = line.split(",");
+        name = (a||"").trim();
+        qty = Number((b||"").trim());
+      }else{
+        const m = /^(.*?)[\s　]+(\d{1,3})$/.exec(line);
+        if(m){
+          name = (m[1]||"").trim();
+          qty = Number(m[2]);
+        }else{
+          // qty 省略は 1
+          name = line;
+          qty = 1;
+        }
+      }
+      if(!name) continue;
+      if(!Number.isFinite(qty) || qty<=0) qty = 1;
+      out.push({ id:"", name, qty });
+    }
+    return out;
+  }
+
+  function buildItemsFromInputs(){
+    // itemsText があれば優先
+    const t = document.getElementById("itemsText").value;
+    const itemsFromText = parseItemsText(t);
+
+    const originalQty = Number(document.getElementById("originalQty").value || 0);
+    const akashaQty   = Number(document.getElementById("akashaQty").value || 0);
+    const otherQty    = Number(document.getElementById("otherQty").value || 0);
+
+    // 手入力数量（3つ）は itemsText と合算する
+    const items = [...itemsFromText];
+
+    if(originalQty > 0){
+      items.push({ id:"original-set-2100", name:"磯屋オリジナルセット", qty: originalQty });
+    }
+    if(akashaQty > 0){
+      // あかしゃ6 は名前で判定されるので、代表名で入れる
+      items.push({ id:"", name:"のりあかしゃ", qty: akashaQty });
+    }
+    if(otherQty > 0){
+      items.push({ id:"", name:"その他商品", qty: otherQty });
+    }
+
+    // 同名をまとめる（任意）
+    const map = new Map();
+    for(const it of items){
+      const key = (it.id ? `id:${it.id}` : `nm:${it.name}`);
+      map.set(key, { ...it, qty: (map.get(key)?.qty||0) + Number(it.qty||0) });
+    }
+    return Array.from(map.values()).filter(x => Number(x.qty||0) > 0);
+  }
+
+  function renderResult({region,size,shipping,reason}){
+    document.getElementById("rRegion").textContent = region || "（不明）";
+    document.getElementById("rSize").textContent = size || "（不明）";
+    document.getElementById("rShip").textContent = yen(shipping || 0);
+    document.getElementById("rReason").textContent = reason || "-";
+
+    if(!region){
+      setPill("ng", "地域が判定できません（都道府県を入力してください）");
+      return;
+    }
+    if(!size){
+      setPill("ng", "サイズが判定できません（個数を入力してください）");
+      return;
+    }
+    setPill("ok", "計算OK");
+  }
+
+  function renderTable(){
+    const wrap = document.getElementById("tableWrap");
+    const regions = ["北海道","東北","関東","中部","近畿","中国","四国","九州","沖縄"];
+    const rows = SIZE_ORDER.map(sz => {
+      const t = YAMATO_CHUBU_TAXED[sz];
+      return `
+        <tr>
+          <th style="position:sticky;left:0;background:#fff;border:1px solid #e5e7eb;padding:6px 8px;white-space:nowrap;">${sz}</th>
+          ${regions.map(r=>`<td style="border:1px solid #e5e7eb;padding:6px 8px;white-space:nowrap;text-align:right;">${yen(t[r])}</td>`).join("")}
+        </tr>
+      `;
+    }).join("");
+
+    wrap.innerHTML = `
+      <table style="border-collapse:collapse; width:max-content; font-size:12px;">
+        <thead>
+          <tr>
+            <th style="position:sticky;left:0;background:#fff;border:1px solid #e5e7eb;padding:6px 8px;">サイズ</th>
+            ${regions.map(r=>`<th style="border:1px solid #e5e7eb;padding:6px 8px;white-space:nowrap;">${r}</th>`).join("")}
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  }
+
+  // ==========================
+  // actions
+  // ==========================
+  document.getElementById("calcBtn").addEventListener("click", ()=>{
+    const pref = document.getElementById("pref").value.trim();
+    const addr1 = document.getElementById("addr1").value.trim();
+    const items = buildItemsFromInputs();
+
+    const r = calcShippingUnified(items, { pref: pref, prefecture: pref, addr1, address1: addr1 });
+    renderResult(r);
+  });
+
+  document.getElementById("loadApiBtn").addEventListener("click", async ()=>{
+    try{
+      const pref = document.getElementById("pref").value.trim();
+      const addr1 = document.getElementById("addr1").value.trim();
+      const items = buildItemsFromInputs();
+
+      // server.js の /api/shipping へ合わせて price はダミー0でOK（送料判定は qty/name/id しか使わない）
+      const payload = {
+        items: items.map(it => ({ id: it.id || "", name: it.name || "", price: 0, qty: Number(it.qty||0) })),
+        address: { pref: pref, prefecture: pref, addr1, address1: addr1 }
+      };
+
+      const res = await fetch("/api/shipping", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify(payload)
+      });
+      const j = await res.json();
+      if(!res.ok || !j.ok){
+        setPill("ng", "API計算に失敗：" + (j.error || res.status));
+        return;
+      }
+
+      // APIは region/size/shipping を返す
+      renderResult({
+        region: j.region || "",
+        size: j.size || "",
+        shipping: Number(j.shipping||0),
+        reason: "サーバー(/api/shipping)で計算"
+      });
+    }catch(e){
+      setPill("ng", "APIエラー：" + (e?.message || e));
+    }
+  });
+
+  document.getElementById("resetBtn").addEventListener("click", ()=>{
+    document.getElementById("pref").value = "";
+    document.getElementById("addr1").value = "";
+    document.getElementById("itemsText").value = "";
+    document.getElementById("originalQty").value = 0;
+    document.getElementById("akashaQty").value = 0;
+    document.getElementById("otherQty").value = 0;
+
+    document.getElementById("rRegion").textContent = "-";
+    document.getElementById("rSize").textContent = "-";
+    document.getElementById("rShip").textContent = "-";
+    document.getElementById("rReason").textContent = "-";
+    setPill("", "未計算");
+  });
+
+  renderTable();
 </script>
 </body>
 </html>

@@ -1,5 +1,5 @@
 /**
- * server-line.js — フル機能版（Stripe + ミニアプリ + 画像管理 + 住所DB + セグメント配信 + 注文DB永続化）
+ * server.js — フル機能版（Stripe + ミニアプリ + 画像管理 + 住所DB + セグメント配信 + 注文DB永続化）
  *
  * ✅ 重要（今回の要望）
  * - UPLOAD_DIR だけ Disk に保存（再デプロイで画像が消えない）
@@ -32,11 +32,9 @@
  *   - 通常イベントでは 30日以上古い/未登録の時だけ更新（取りすぎ防止）
  * - 管理API：GET /api/admin/users（ユーザー一覧 + display_name）
  *
- * ✅ 今回追加（あなたの要望）：友だち追加時に userId を確実に取得してDBへ保持
- * - follow イベント受信時点で：
- *   - segment_users / line_users を更新（first_seen/last_seen）
- *   - codes（member_code/address_code）を即発行（DBがある場合）
- *   - 管理者へ「友だち追加 userId」通知（任意）
+ * ✅ 今回追加（あなたの要望）：友だち追加＝DBでも100%一致（“以後”）
+ * - follow/unfollow をDBに正式保存：follow_events / unfollow_events
+ * - 管理API：GET /api/admin/follow/stats（今日/昨日/7日/30日）
  *
  * --- 必須 .env ---
  * LINE_CHANNEL_ACCESS_TOKEN
@@ -516,6 +514,29 @@ async function ensureDbSchema() {
   `);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_line_users_last_seen ON line_users(last_seen DESC);`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_line_users_profile_updated_at ON line_users(profile_updated_at DESC);`);
+
+  // ★友だち追加/ブロック ログ（今回追加）
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS follow_events (
+      id        BIGSERIAL PRIMARY KEY,
+      user_id   TEXT NOT NULL,
+      event_ts  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      raw_event JSONB NOT NULL
+    );
+  `);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_follow_events_ts ON follow_events(event_ts DESC);`);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_follow_events_user ON follow_events(user_id);`);
+
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS unfollow_events (
+      id        BIGSERIAL PRIMARY KEY,
+      user_id   TEXT NOT NULL,
+      event_ts  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      raw_event JSONB NOT NULL
+    );
+  `);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_unfollow_events_ts ON unfollow_events(event_ts DESC);`);
+  await p.query(`CREATE INDEX IF NOT EXISTS idx_unfollow_events_user ON unfollow_events(user_id);`);
 
   await p.query(`
     CREATE TABLE IF NOT EXISTS orders (
@@ -1474,9 +1495,9 @@ app.post("/api/admin/images/delete", (req, res) => {
   try {
     const name = String(req.body?.name || "").trim();
     if (!name) return res.status(400).json({ ok: false, error: "name_required" });
-    const p = path.join(UPLOAD_DIR, name);
-    if (!fs.existsSync(p)) return res.status(404).json({ ok: false, error: "not_found" });
-    fs.unlinkSync(p);
+    const pth = path.join(UPLOAD_DIR, name);
+    if (!fs.existsSync(pth)) return res.status(404).json({ ok: false, error: "not_found" });
+    fs.unlinkSync(pth);
     return res.json({ ok: true });
   } catch (e) {
     return res.status(500).json({ ok: false, error: "server_error" });
@@ -1773,6 +1794,67 @@ app.post("/api/admin/segment/send", async (req, res) => {
     return res.json({ ok: true, requested: ids.length, sent: okCount, failed: ngCount });
   } catch (e) {
     console.error("/api/admin/segment/send error:", e);
+    return res.status(500).json({ ok: false, error: e?.message || "server_error" });
+  }
+});
+
+// =====================================
+// ★管理：友だち追加/ブロック 統計（今回追加）
+// =====================================
+app.get("/api/admin/follow/stats", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    if (!pool) return res.status(500).json({ ok: false, error: "db_not_configured" });
+
+    const p = mustPool();
+
+    const sql = `
+      WITH
+      t AS (
+        SELECT
+          (date_trunc('day', now() AT TIME ZONE 'Asia/Tokyo'))::timestamp AS jst_today_start
+      ),
+      f AS (
+        SELECT
+          COUNT(*)::int AS follow_total_events,
+          COUNT(DISTINCT user_id)::int AS follow_total_unique,
+
+          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t))::int AS follow_today,
+          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t) - INTERVAL '1 day'
+                           AND (event_ts AT TIME ZONE 'Asia/Tokyo') <  (SELECT jst_today_start FROM t))::int AS follow_yesterday,
+          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t) - INTERVAL '7 day')::int AS follow_last7,
+          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t) - INTERVAL '30 day')::int AS follow_last30,
+
+          COUNT(DISTINCT user_id) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t))::int AS follow_today_unique,
+          COUNT(DISTINCT user_id) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t) - INTERVAL '7 day')::int AS follow_last7_unique,
+          COUNT(DISTINCT user_id) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t) - INTERVAL '30 day')::int AS follow_last30_unique
+        FROM follow_events
+      ),
+      u AS (
+        SELECT
+          COUNT(*)::int AS unfollow_total_events,
+          COUNT(DISTINCT user_id)::int AS unfollow_total_unique,
+
+          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t))::int AS unfollow_today,
+          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t) - INTERVAL '1 day'
+                           AND (event_ts AT TIME ZONE 'Asia/Tokyo') <  (SELECT jst_today_start FROM t))::int AS unfollow_yesterday,
+          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t) - INTERVAL '7 day')::int AS unfollow_last7,
+          COUNT(*) FILTER (WHERE (event_ts AT TIME ZONE 'Asia/Tokyo') >= (SELECT jst_today_start FROM t) - INTERVAL '30 day')::int AS unfollow_last30
+        FROM unfollow_events
+      )
+      SELECT
+        (SELECT jst_today_start FROM t) AS jst_today_start,
+        f.*, u.*,
+        (f.follow_today - u.unfollow_today)::int AS net_today,
+        (f.follow_last7 - u.unfollow_last7)::int AS net_last7,
+        (f.follow_last30 - u.unfollow_last30)::int AS net_last30
+      FROM f, u
+    `;
+
+    const r = await p.query(sql);
+    return res.json({ ok: true, stats: r.rows?.[0] || null });
+  } catch (e) {
+    console.error("/api/admin/follow/stats error:", e);
     return res.status(500).json({ ok: false, error: e?.message || "server_error" });
   }
 });
@@ -2117,23 +2199,33 @@ async function notifyAdminIncomingMessage(ev, bodyText, extra = {}) {
   }
 }
 
-// =============== handleEvent ===============
-async function handleEvent(ev) {
-  const userId = ev?.source?.userId || "";
-  
-// ★友だち追加（follow）をDBに正式保存
-if (ev.type === "follow") {
+// ================================
+// ★ follow/unfollow をDBに正式保存（今回追加）
+// ================================
+async function logFollowUnfollow(ev) {
+  if (!pool) return;
   const userId = ev?.source?.userId;
-  if (userId && pool) {
+  if (!userId) return;
+
+  if (ev.type === "follow") {
     await pool.query(
-      `
-      INSERT INTO follow_events (user_id, event_ts, raw_event)
-      VALUES ($1, NOW(), $2::jsonb)
-      `,
+      `INSERT INTO follow_events (user_id, event_ts, raw_event) VALUES ($1, NOW(), $2::jsonb)`,
+      [userId, JSON.stringify(ev)]
+    );
+  } else if (ev.type === "unfollow") {
+    await pool.query(
+      `INSERT INTO unfollow_events (user_id, event_ts, raw_event) VALUES ($1, NOW(), $2::jsonb)`,
       [userId, JSON.stringify(ev)]
     );
   }
 }
+
+// =============== handleEvent ===============
+async function handleEvent(ev) {
+  const userId = ev?.source?.userId || "";
+
+  // ★最初に follow/unfollow をログ（失敗しても本処理は続行）
+  try { await logFollowUnfollow(ev); } catch (e) { console.error("logFollowUnfollow:", e?.message || e); }
 
   // ★まず台帳更新（seen）＋プロフィール保存（followは強制更新）
   if (userId) {
@@ -2156,27 +2248,17 @@ if (ev.type === "follow") {
         });
       }
 
-      const { rows } = await mustPool().query(
-        `
-        SELECT member_code
-        FROM addresses
-        WHERE user_id = $1
-        ORDER BY updated_at DESC
-        LIMIT 1
-        `,
-        [userId]
-      );
+      // ★codes から取得（住所未登録でも発行できる）
+      let c = await dbGetCodesByUserId(userId);
+      if (!c?.member_code) c = await dbEnsureCodes(userId);
 
-      if (rows.length === 0) {
-        return client.replyMessage(ev.replyToken, {
-          type: "text",
-          text: "まだ会員コードが発行されていません。\n先にミニアプリから住所登録をお願いします。",
-        });
+      if (!c?.member_code) {
+        return client.replyMessage(ev.replyToken, { type: "text", text: "会員コードの発行に失敗しました。時間をおいてお試しください。" });
       }
 
       return client.replyMessage(ev.replyToken, {
         type: "text",
-        text: `あなたの会員コードは【${rows[0].member_code}】です。\n\n📞 電話注文の際にお伝えください。`,
+        text: `あなたの会員コードは【${String(c.member_code).trim()}】です。\n\n📞 電話注文の際にお伝えください。`,
       });
     } catch (err) {
       console.error("会員コード取得エラー", err);
@@ -2185,17 +2267,16 @@ if (ev.type === "follow") {
   }
 
   // ===========================
-  // ★友だち追加（follow）— userId をこの時点で確実にDBへ保持
+  // ★友だち追加（follow）
   // ===========================
   if (ev.type === "follow") {
-    // ここに来た時点で userId は取れてる（ev.source.userId）
     if (userId) {
       // segment_users / line_users は上の共通処理で更新済み
       // ★codes をこの時点で発行（DBありの場合）
       if (pool) {
         try { await dbEnsureCodes(userId); } catch {}
       }
-      // 管理者へ「友だち追加」通知（欲しければ）
+      // 管理者へ「友だち追加」通知（任意）
       if (ADMIN_USER_ID) {
         try {
           await client.pushMessage(ADMIN_USER_ID, {
@@ -2214,6 +2295,13 @@ if (ev.type === "follow") {
       "・「久助」→ 久助の注文（「久助 3」のように入力）\n" +
       "・住所登録（LIFF）もできます";
     return client.replyMessage(ev.replyToken, { type: "text", text: msg });
+  }
+
+  // ===========================
+  // unfollow（ブロック）：返信できないので何もしない
+  // ===========================
+  if (ev.type === "unfollow") {
+    return null;
   }
 
   // ===========================

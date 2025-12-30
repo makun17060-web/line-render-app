@@ -1589,6 +1589,7 @@ function readLogLines(filePath, limit = 100) {
 function yyyymmddFromIso(ts) {
   const d = new Date(ts);
   if (!Number.isFinite(d.getTime())) return "";
+  
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");

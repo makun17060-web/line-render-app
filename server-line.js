@@ -2200,23 +2200,38 @@ async function notifyAdminIncomingMessage(ev, bodyText, extra = {}) {
 }
 
 // ================================
-// ★ follow/unfollow をDBに正式保存（今回追加）
+// ★ follow/unfollow をDBに正式保存（確定版）
 // ================================
 async function logFollowUnfollow(ev) {
   if (!pool) return;
+
   const userId = ev?.source?.userId;
   if (!userId) return;
 
-  if (ev.type === "follow") {
-    await pool.query(
-      `INSERT INTO follow_events (user_id, event_ts, raw_event) VALUES ($1, NOW(), $2::jsonb)`,
-      [userId, JSON.stringify(ev)]
-    );
-  } else if (ev.type === "unfollow") {
-    await pool.query(
-      `INSERT INTO unfollow_events (user_id, event_ts, raw_event) VALUES ($1, NOW(), $2::jsonb)`,
-      [userId, JSON.stringify(ev)]
-    );
+  try {
+    if (ev.type === "follow") {
+      await mustPool().query(
+        `
+        INSERT INTO follow_events (user_id, followed_at)
+        VALUES ($1, to_timestamp($2::double precision / 1000.0))
+        ON CONFLICT DO NOTHING
+        `,
+        [userId, Number(ev.timestamp || Date.now())]
+      );
+      console.log("[follow_events] inserted:", userId);
+
+    } else if (ev.type === "unfollow") {
+      await mustPool().query(
+        `
+        INSERT INTO unfollow_events (user_id, unfollowed_at)
+        VALUES ($1, to_timestamp($2::double precision / 1000.0))
+        `,
+        [userId, Number(ev.timestamp || Date.now())]
+      );
+      console.log("[unfollow_events] inserted:", userId);
+    }
+  } catch (e) {
+    console.error("[follow/unfollow] DB insert failed:", e?.code, e?.message);
   }
 }
 

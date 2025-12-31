@@ -1,17 +1,18 @@
 /**
  * server-line.js — 超フル機能版（Disk products.json + uploads + 住所DB + セグメント + 注文DB + 送料計算統一 + 代引き確定）
  *
- * ✅ 今回の重要修正
- * 1) Postgres JSONBエラー(22P02)対策：
- *    - raw_event を「必ずオブジェクト」に正規化して INSERT（JSON文字列を入れない）
- * 2) /api/products の image を「表示できるURL」に変換：
- *    - products.json には filename のみ保存 → APIは /public/uploads/filename を返す
- * 3) /api/shipping は { ok, fee, size, region } を返す（フロントと一致）
- * 4) /api/address/save, /api/address/get：住所はDBに保存・取得
- * 5) /api/order/complete：代引き確定が動く（DB保存 + products.json 在庫減算）
+ * ✅ 今回の重要修正（致命傷の止血）
+ * 1) message_events.kind が無い古いDBでも落ちない：
+ *    - ALTER TABLE message_events ADD COLUMN IF NOT EXISTS kind TEXT;
+ * 2) Postgres JSONB 22P02 対策：
+ *    - JSONBへ入れる値は必ず「オブジェクト/配列」に正規化（文字列を入れない）
+ * 3) /api/products の image を表示URLへ変換：
+ *    - products.json は filenameのみ → APIは /public/uploads/filename を返す
+ * 4) /api/address/save /api/address/get：住所はDBに保存・取得
+ * 5) /api/order/complete：代引き確定（DB保存 + products.json 在庫減算）
  *
  * ✅ 重要
- * - LINE webhook は express.json より前（順序を崩すとWebhook壊れます）
+ * - LINE webhook は express.json より前（順序厳守）
  * - Render Disk:
  *   PRODUCTS_FILE=/var/data/products.json
  *   UPLOAD_DIR=/var/data/uploads
@@ -32,7 +33,7 @@ const line = require("@line/bot-sdk");
 
 // ================= Env =================
 const PORT = process.env.PORT || 10000;
-const BASE_URL = process.env.BASE_URL || ""; // 例: https://xxxx.onrender.com
+const BASE_URL = process.env.BASE_URL || "";
 
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 const LINE_CHANNEL_SECRET = process.env.LINE_CHANNEL_SECRET;
@@ -83,7 +84,7 @@ const upload = multer({
       cb(null, `${Date.now()}_${crypto.randomBytes(3).toString("hex")}${ext}`);
     },
   }),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  limits: { fileSize: 10 * 1024 * 1024 },
 });
 
 // ================= Utilities =================
@@ -116,10 +117,10 @@ function isPlainObject(v) {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 function safeJsonb(v) {
-  // ✅ JSONBに入れるものは「必ずオブジェクト/配列」
+  // ✅ JSONBに入れる値は「オブジェクト or 配列」に限定（文字列は捨てる）
   if (Array.isArray(v)) return v;
   if (isPlainObject(v)) return v;
-  return {}; // 文字列などは全部捨てて {} にする（22P02防止）
+  return {};
 }
 function normalizeUploadUrl(filename) {
   const fn = String(filename || "").trim();
@@ -241,7 +242,7 @@ async function ensureDb() {
     );
   `);
 
-  // --- migrate (safe) ---
+  // --- migrate（古いテーブルでも落ちない） ---
   await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT now();`);
   await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_fee INTEGER;`);
   await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS total INTEGER;`);
@@ -262,9 +263,15 @@ async function ensureDb() {
   await pool.query(`ALTER TABLE segment_users ADD COLUMN IF NOT EXISTS last_chat_at TIMESTAMP;`);
 
   await pool.query(`ALTER TABLE liff_logs ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT now();`);
+
+  // ✅ ここが今回の “kind列が無い” 直し
+  await pool.query(`ALTER TABLE message_events ADD COLUMN IF NOT EXISTS kind TEXT;`);
+  await pool.query(`ALTER TABLE message_events ADD COLUMN IF NOT EXISTS raw_event JSONB;`);
   await pool.query(`ALTER TABLE message_events ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT now();`);
+
   await pool.query(`ALTER TABLE line_users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT now();`);
   await pool.query(`ALTER TABLE line_users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT now();`);
+
   await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT now();`);
   await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS member_code TEXT;`);
 
@@ -334,7 +341,6 @@ function sizeFromAkasha6Qty(qty) {
   return 140;
 }
 function sizeFromOriginalSetQty(qty) {
-  // あなた要件：1=80, 2=100, 3-4=120, 5-6=140
   if (qty <= 1) return 80;
   if (qty <= 2) return 100;
   if (qty <= 4) return 120;
@@ -353,7 +359,6 @@ function isOriginalSet(item) {
 function isAkasha6(item) {
   const id = String(item?.id || "");
   const name = String(item?.name || "");
-  // ✅ 久助は「あかしゃシリーズと同梱扱い」
   if (id === "kusuke-250" || /久助/.test(name)) return true;
   return /(のりあかしゃ|うずあかしゃ|潮あかしゃ|松あかしゃ|ごまあかしゃ|磯あかしゃ|いそあかしゃ)/.test(name);
 }
@@ -406,7 +411,7 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// ================= Routes (no body parser BEFORE webhook) =================
+// ================= Routes (NO body parser BEFORE webhook) =================
 app.get("/", (req, res) => res.status(200).send("OK"));
 app.get("/health", (req, res) => res.json({ ok: true }));
 
@@ -429,18 +434,16 @@ app.use(express.urlencoded({ extended: true }));
 
 // ================= Public APIs =================
 
-// products（Diskが正）
-// ✅ image を「表示できるURL」に変換して返す（products.js を変えなくても画像が出る）
+// ✅ products: image を「表示できるURL」に変換して返す
 app.get("/api/products", async (req, res) => {
   try {
     const products = await loadProducts();
     const out = products.map((p) => {
-      const filename = String(p.image || "").trim(); // products.json は filename を想定
-      const imageUrl = normalizeUploadUrl(filename);
+      const filename = String(p.image || "").trim();
       return {
         ...p,
-        image: imageUrl,              // ← フロントがそのまま img.src に入れられる
-        image_filename: filename,     // ← 管理用に残す
+        image: normalizeUploadUrl(filename),
+        image_filename: filename,
       };
     });
     res.json({ ok: true, products: out });
@@ -449,7 +452,7 @@ app.get("/api/products", async (req, res) => {
   }
 });
 
-// 送料計算（統一）: {items, prefecture} -> {ok, fee, size, region}
+// shipping: {items, prefecture} -> {ok, fee, size, region}
 app.post("/api/shipping", async (req, res) => {
   try {
     const { items, prefecture, address } = req.body || {};
@@ -464,7 +467,6 @@ app.post("/api/shipping", async (req, res) => {
 });
 
 // LIFFログ（互換）
-// - products.html が /api/liff/open を叩いているケースがあるので両方用意
 app.post("/api/liff/open", async (req, res) => {
   try {
     const { userId, kind } = req.body || {};
@@ -498,7 +500,7 @@ app.post("/api/liff/log", async (req, res) => {
   }
 });
 
-// 住所取得（DB）: {userId}
+// address get
 app.post("/api/address/get", async (req, res) => {
   try {
     if (!pool) return res.status(400).json({ ok: false, error: "DB not configured" });
@@ -512,7 +514,7 @@ app.post("/api/address/get", async (req, res) => {
   }
 });
 
-// 住所保存（DB）: {userId, address:{...}}
+// address save
 app.post("/api/address/save", async (req, res) => {
   try {
     if (!pool) return res.status(400).json({ ok: false, error: "DB not configured" });
@@ -533,7 +535,6 @@ app.post("/api/address/save", async (req, res) => {
       return res.status(400).json({ ok: false, error: "required fields missing" });
     }
 
-    // member_code が無ければ生成（軽い重複回避）
     let memberCode = null;
     const cur = await dbGetAddressByUserId(userId);
     if (cur?.member_code) memberCode = cur.member_code;
@@ -563,7 +564,7 @@ app.post("/api/address/save", async (req, res) => {
   }
 });
 
-// 代引き注文確定（オンライン）: /api/order/complete
+// ✅ COD order complete
 app.post("/api/order/complete", async (req, res) => {
   try {
     const body = req.body || {};
@@ -585,7 +586,6 @@ app.post("/api/order/complete", async (req, res) => {
       return res.status(400).json({ ok: false, error: "address is incomplete" });
     }
 
-    // サーバ側で正規化（改ざん・不正防止）
     const normItems = items.map((it) => ({
       id: String(it.id || "").trim(),
       name: String(it.name || "").trim(),
@@ -595,13 +595,12 @@ app.post("/api/order/complete", async (req, res) => {
 
     if (!normItems.length) return res.status(400).json({ ok: false, error: "invalid items" });
 
-    // ✅ 送料はサーバで再計算
     const ship = calcShippingUnified(normItems, pref);
     const itemsTotal = normItems.reduce((s, it) => s + Number(it.price || 0) * Number(it.qty || 0), 0);
     const COD_FEE = 330;
     const total = itemsTotal + ship.fee + COD_FEE;
 
-    // ✅ 在庫減算（Disk products.json）
+    // stock check & decrement (Disk)
     const products = await loadProducts();
     for (const it of normItems) {
       const idx = products.findIndex((p) => String(p.id) === String(it.id));
@@ -615,10 +614,9 @@ app.post("/api/order/complete", async (req, res) => {
     }
     await saveProducts(products);
 
-    // ✅ DB保存（ここが 22P02 対策の本丸：raw_event を必ずオブジェクトに）
+    // DB insert (JSONB safe)
     let orderId = null;
     if (pool) {
-      const safeRawEvent = safeJsonb(body); // ← 文字列が混ざってても {} になるので落ちない
       const r = await pool.query(
         `
         INSERT INTO orders (user_id, source, items, total, shipping_fee, payment_method, status, name, zip, pref, address, raw_event)
@@ -628,7 +626,7 @@ app.post("/api/order/complete", async (req, res) => {
         [
           userId,
           "liff",
-          normItems, // JSONB
+          safeJsonb(normItems),        // ✅ JSONB safe
           total,
           ship.fee,
           "cod",
@@ -637,13 +635,12 @@ app.post("/api/order/complete", async (req, res) => {
           postal,
           pref,
           `${city}${addr1}${addr2 ? " " + addr2 : ""}`,
-          safeRawEvent, // JSONB（必ずオブジェクト）
+          safeJsonb(body),             // ✅ JSONB safe（22P02止血）
         ]
       );
       orderId = r.rows[0]?.id ?? null;
     }
 
-    // ✅ 管理者通知（任意）
     if (ADMIN_USER_ID) {
       const lines = normItems.map((x) => `${x.name} x${x.qty}`).join("\n");
       const msg =
@@ -663,7 +660,7 @@ app.post("/api/order/complete", async (req, res) => {
   }
 });
 
-// ================= Admin APIs =================
+// admin update
 app.post("/api/admin/products/update", requireAdmin, async (req, res) => {
   try {
     const patch = normalizeProductPatch(req.body || {});
@@ -692,6 +689,7 @@ app.post("/api/admin/products/update", requireAdmin, async (req, res) => {
   }
 });
 
+// admin upload
 app.post("/api/admin/upload", requireAdmin, upload.single("file"), async (req, res) => {
   try {
     const fn = req.file?.filename || "";
@@ -701,9 +699,10 @@ app.post("/api/admin/upload", requireAdmin, upload.single("file"), async (req, r
   }
 });
 
-// ================= LINE bot (必要最低限：既存挙動はあなたのFlex版に差し替えOK) =================
+// ================= LINE bot (最低限) =================
 const sessions = new Map();
 const SESSION_TTL_MS = 20 * 60 * 1000;
+
 function getSession(userId) {
   const s = sessions.get(userId);
   if (!s) return null;
@@ -738,7 +737,6 @@ async function handleEvent(ev) {
     return client.replyMessage(ev.replyToken, { type: "text", text: "キャンセルしました。" });
   }
 
-  // 起動キーワードは維持
   const isBoot = text === "直接注文" || text === "久助";
   if (!sess && !isBoot) return;
 
@@ -746,7 +744,6 @@ async function handleEvent(ev) {
     await touchUser(userId, "chat");
     return client.replyMessage(ev.replyToken, { type: "text", text: "商品一覧はミニアプリをご利用ください。" });
   }
-
   if (text === "久助") {
     await touchUser(userId, "chat");
     return client.replyMessage(ev.replyToken, { type: "text", text: "久助のご注文もミニアプリから可能です。" });

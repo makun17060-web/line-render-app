@@ -1460,6 +1460,7 @@ app.post("/api/shipping/quote", (req, res) => {
       products.find((p) => p.id === ORIGINAL_SET_PRODUCT_ID) ||
       products.find((p) => /磯屋.?オリジナルセ/.test(String(p.name || ""))) ||
       null;
+const hasOriginal = itemsIn.some((it) => String(it?.product_id || "").trim() === "original-set");
 
      const items = itemsIn
       .map((it) => {
@@ -1480,9 +1481,19 @@ app.post("/api/shipping/quote", (req, res) => {
         }
 
         // ✅ 追加：久助（われせん）＝あかしゃと同一送料ロジック
-        if (pid === "kusuke") {
-          return { id: "akasha_bundle", name: "久助（われせん）", qty, price: 0 };
-        }
+       if (pid === "kusuke") {
+  // ✅ original-set と一緒に買うときは、梱包（送料）を original-set 側で判定させる
+  if (hasOriginal) {
+    return {
+      id: ORIGINAL_SET_PRODUCT_ID,         // ←梱包判定をオリジナルセット側へ
+      name: "久助（われせん）",
+      qty,
+      price: 0,                            // 目安ページで商品代も出したいなら 250 に
+    };
+  }
+  // ✅ 単体/あかしゃ系と一緒のときは、あかしゃ側の送料
+  return { id: "akasha_bundle", name: "久助（われせん）", qty, price: 0 };
+}
 
         return { id: "other_bundle", name: "その他商品", qty, price: 0 };
       })

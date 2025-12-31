@@ -248,7 +248,7 @@ if (!fs.existsSync(PRODUCTS_PATH)) {
       {
         id: "kusuke-250",
         name: "久助（えびせん）",
-        price: 250, // ← 初期値（ここは運用で自由に変更OK）
+        price: 250,
         stock: 30,
         volume: "約○○g",
         desc: "お得な割れせん。",
@@ -521,16 +521,31 @@ function detectRegionFromAddress(address = {}) {
   return "";
 }
 
-// ★修正：久助も「あかしゃサイズ判定」と同じ扱いにする
+// ★修正版：
+// - 久助は id で判定（name に「久助」が含まれても、id がオリジナルセット等に変換された場合は akasha に数えない）
+// - オリジナルセットIDは akasha として数えない
 function isAkasha6(item) {
-  const id = String(item?.id || "");
-  const name = String(item?.name || "");
+  const id = String(item?.id || "").trim();
+  const name = String(item?.name || "").trim();
 
-  // 久助を akasha 扱いに含める（サイズ判定）
-  if (id === "kusuke-250" || /久助/.test(name)) return true;
+  // オリジナルセットは akasha 判定から除外
+  if (id === ORIGINAL_SET_PRODUCT_ID) return false;
 
-  return /(のりあかしゃ|うずあかしゃ|潮あかしゃ|松あかしゃ|ごまあかしゃ|磯あかしゃ|いそあかしゃ)/.test(name);
+  // 久助は「ID」で判定（送料サイズは akasha ルール）
+  if (id === "kusuke-250") return true;
+
+  // 目安ページ用の束ねID
+  if (id === "akasha_bundle") return true;
+
+  // products.json の id で akasha を判定（例：nori-akasha-340 等）
+  if (id.includes("-akasha-")) return true;
+
+  // 念のため、名称に「あかしゃ」が入るもの（ただし久助はここで判定しない）
+  if (/あかしゃ/.test(name)) return true;
+
+  return false;
 }
+
 function sizeFromAkasha6Qty(qty) {
   const q = Number(qty) || 0;
   if (q <= 0) return null;
@@ -561,23 +576,30 @@ function sizeFromTotalQty(totalQty) {
   if (q <= 6) return "140";
   return "160";
 }
+
 function calcYamatoShipping(region, size) {
   if (!region) return 0;
   const table = YAMATO_CHUBU_TAXED[String(size)] || null;
   if (!table) return 0;
   return Number(table[region] || 0);
 }
+
+// ★修正版：
+// - オリジナルセットが含まれる場合は「オリジナルセットのルール」を優先してサイズ決定
+//   （久助/あかしゃが同梱されても、まずオリジナルのサイズ基準で確定）
 function calcShippingUnified(items = [], address = {}) {
   const region = detectRegionFromAddress(address);
   const totalQty = items.reduce((s, it) => s + Number(it.qty || 0), 0);
-  const akasha6Qty = items.reduce((s, it) => s + (isAkasha6(it) ? Number(it.qty || 0) : 0), 0);
+
   const originalQty = items.reduce((s, it) => {
     return s + ((it.id === ORIGINAL_SET_PRODUCT_ID || /磯屋.?オリジナルセ/.test(it.name || "")) ? Number(it.qty || 0) : 0);
   }, 0);
 
+  const akasha6Qty = items.reduce((s, it) => s + (isAkasha6(it) ? Number(it.qty || 0) : 0), 0);
+
   let size;
-  if (akasha6Qty > 0) size = sizeFromAkasha6Qty(akasha6Qty);
-  else if (originalQty > 0) size = sizeFromOriginalSetQty(originalQty);
+  if (originalQty > 0) size = sizeFromOriginalSetQty(originalQty);
+  else if (akasha6Qty > 0) size = sizeFromAkasha6Qty(akasha6Qty);
   else size = sizeFromTotalQty(totalQty);
 
   const shipping = calcYamatoShipping(region, size);
@@ -1460,9 +1482,13 @@ app.post("/api/shipping/quote", (req, res) => {
       products.find((p) => p.id === ORIGINAL_SET_PRODUCT_ID) ||
       products.find((p) => /磯屋.?オリジナルセ/.test(String(p.name || ""))) ||
       null;
-const hasOriginal = itemsIn.some((it) => String(it?.product_id || "").trim() === "original-set");
 
-     const items = itemsIn
+    const kusukeProduct =
+      products.find((p) => p.id === "kusuke-250") ||
+      products.find((p) => /久助/.test(String(p.name || ""))) ||
+      null;
+
+    const items = itemsIn
       .map((it) => {
         const pid = String(it?.product_id || "").trim();
         const qty = Math.max(0, Number(it?.qty || 0));
@@ -1476,29 +1502,27 @@ const hasOriginal = itemsIn.some((it) => String(it?.product_id || "").trim() ===
             price: Number(originalProduct?.price || 0),
           };
         }
+
         if (pid === "akasha") {
-          return { id: "akasha_bundle", name: "のりあかしゃ", qty, price: 0 };
+          // 目安ページ用（送料判定だけなら price=0 でOK）
+          return { id: "akasha_bundle", name: "あかしゃ", qty, price: 0 };
         }
 
-        // ✅ 追加：久助（われせん）＝あかしゃと同一送料ロジック
-       if (pid === "kusuke") {
-  // ✅ original-set と一緒に買うときは、梱包（送料）を original-set 側で判定させる
-  if (hasOriginal) {
-    return {
-      id: ORIGINAL_SET_PRODUCT_ID,         // ←梱包判定をオリジナルセット側へ
-      name: "久助（われせん）",
-      qty,
-      price: 0,                            // 目安ページで商品代も出したいなら 250 に
-    };
-  }
-  // ✅ 単体/あかしゃ系と一緒のときは、あかしゃ側の送料
-  return { id: "akasha_bundle", name: "久助（われせん）", qty, price: 0 };
-}
+        if (pid === "kusuke") {
+          // ✅修正：オリジナルセットに「ID変換で合算」しない（セット数が増えてしまうため）
+          // calcShippingUnified 側で「オリジナルセット優先」判定にしてあるので、
+          // original-set と一緒でもサイズはオリジナルルールが優先されます。
+          return {
+            id: "kusuke-250",
+            name: kusukeProduct?.name || "久助（われせん）",
+            qty,
+            price: Number(kusukeProduct?.price || 0), // 商品代も出したいならここで反映
+          };
+        }
 
         return { id: "other_bundle", name: "その他商品", qty, price: 0 };
       })
       .filter(Boolean);
-
 
     if (!items.length) return res.status(400).json({ ok: false, error: "no_valid_items" });
 
@@ -1748,7 +1772,6 @@ app.post("/api/admin/products/update", (req, res) => {
     const image = req.body?.image != null ? String(req.body.image) : product.image;
     const volume = req.body?.volume != null ? String(req.body.volume) : (product.volume || "");
 
-    // ★久助も含めて price は request か既存値を採用（強制上書きしない）
     const price = req.body?.price != null ? Number(req.body.price) : product.price;
     const stock = req.body?.stock != null ? Number(req.body.stock) : product.stock;
 
@@ -2624,7 +2647,7 @@ async function handleEvent(ev) {
       return client.replyMessage(ev.replyToken, { type: "text", text: msg });
     }
 
-    // ③ 久助 数量（★修正：DB住所があれば読み込んで送料計算できる）
+    // ③ 久助 数量（★DB住所があれば読み込んで送料計算できる）
     const m = /^久助\s*(\d{1,2})$/.exec(text.replace(/[　]+/g, " "));
     if (m) {
       await touchUser(userId, "chat");

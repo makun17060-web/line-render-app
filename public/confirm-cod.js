@@ -18,29 +18,85 @@
 
   function setStatus(msg) { if (statusEl) statusEl.textContent = msg || ""; }
   function yen(n) { return (Number(n) || 0).toLocaleString("ja-JP") + "円"; }
-  function safeJsonParse(s){ try { return JSON.parse(s); } catch { return null; } }
   function safeNumber(n, def = 0){ const x = Number(n); return Number.isFinite(x) ? x : def; }
 
+  function safeJsonParse(raw){
+    try {
+      if (!raw) return null;
+      if (typeof raw === "object") return raw;
+      return JSON.parse(String(raw));
+    } catch {
+      return null;
+    }
+  }
+
+  // ✅ 壊れたJSON文字列（末尾に余計な " が付いてる等）を軽く救済
+  function tryRepairJsonString(s){
+    if (typeof s !== "string") return s;
+    const t = s.trim();
+    if (!t) return t;
+
+    // よくある： ...}"} みたいな末尾の余計な " を削る
+    const repaired = t.replace(/"+\s*$/, "");
+    return repaired;
+  }
+
   function readOrderFromStorage() {
+    // ✅ 遷移元が色々でも拾えるようにキーを増やす
     const keys = [
-      "orderDraft","currentOrder","order","confirm_normalized_order","lastOrder"
+      "orderDraft",
+      "orderDraft_backup",
+      "orderDraft_v2",
+      "currentOrder",
+      "order",
+      "confirm_normalized_order",
+      "lastOrder",
+      "isoya_order",
+      "isoya_order_v2"
     ];
-    for (const store of [sessionStorage, localStorage]) {
+
+    // ✅ localStorage 優先（sessionStorage は LIFF/ブラウザで消えやすい）
+    for (const store of [localStorage, sessionStorage]) {
       for (const k of keys) {
         const raw = store.getItem(k);
         if (!raw) continue;
-        const obj = safeJsonParse(raw);
+
+        // まず通常パース
+        let obj = safeJsonParse(raw);
+        if (obj && typeof obj === "object") return obj;
+
+        // 次に修復して再パース
+        const repaired = tryRepairJsonString(raw);
+        obj = safeJsonParse(repaired);
         if (obj && typeof obj === "object") return obj;
       }
     }
     return null;
   }
+
   function saveOrder(order) {
-    sessionStorage.setItem("orderDraft", JSON.stringify(order));
-    sessionStorage.setItem("order", JSON.stringify(order));
-    sessionStorage.setItem("currentOrder", JSON.stringify(order));
-    sessionStorage.setItem("confirm_normalized_order", JSON.stringify(order));
-    localStorage.setItem("order", JSON.stringify(order));
+    const s = JSON.stringify(order);
+    // ✅ 重要：localStorage にも必ず入れる
+    localStorage.setItem("orderDraft", s);
+    localStorage.setItem("orderDraft_backup", s);
+    localStorage.setItem("isoya_order_v2", s);
+
+    sessionStorage.setItem("orderDraft", s);
+    sessionStorage.setItem("order", s);
+    sessionStorage.setItem("currentOrder", s);
+    sessionStorage.setItem("confirm_normalized_order", s);
+  }
+
+  function normalizeItems(order) {
+    const rawItems = Array.isArray(order?.items) ? order.items : [];
+    return rawItems
+      .map((it) => ({
+        id: String(it.id || it.productId || "").trim(),
+        name: String(it.name || it.id || "商品").trim(),
+        price: safeNumber(it.price, 0),
+        qty: safeNumber(it.qty ?? it.quantity, 0),
+      }))
+      .filter((it) => it.id && it.qty > 0);
   }
 
   function buildOrderRows(items) {
@@ -49,10 +105,7 @@
     items.forEach((it) => {
       const row = document.createElement("div");
       row.className = "row";
-      const name = String(it.name || it.id || "商品");
-      const price = safeNumber(it.price, 0);
-      const qty = safeNumber(it.qty, 0);
-      row.textContent = `${name} × ${qty} = ${yen(price * qty)}`;
+      row.textContent = `${it.name} × ${it.qty} = ${yen(it.price * it.qty)}`;
       orderListEl.appendChild(row);
     });
   }
@@ -64,11 +117,11 @@
     const res = await fetch("/api/shipping", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items, prefecture: pref }) // ★サーバ仕様
+      body: JSON.stringify({ items, prefecture: pref })
     });
     const data = await res.json().catch(() => ({}));
     console.log("[ISOYA] /api/shipping", res.status, data);
-    if (res.ok && data && data.ok) return safeNumber(data.fee, 0);
+    if (res.ok && data && data.ok) return safeNumber(data.fee ?? data.shipping, 0);
     return 0;
   }
 
@@ -79,31 +132,29 @@
         return;
       }
 
+      confirmBtn.disabled = true;
+
       const order = readOrderFromStorage();
       console.log("[ISOYA] order object:", order);
 
       if (!order) {
-        setStatus("注文情報が見つかりませんでした。\n商品一覧からやり直してください。");
+        setStatus(
+          "注文情報が見つかりませんでした。\n\n" +
+          "原因：confirm.html → confirm-cod.html に来る直前の保存が足りない可能性があります。\n" +
+          "対処：ひとつ前の確認画面へ戻って、もう一度「代引き」を押してください。"
+        );
         confirmBtn.disabled = true;
         return;
       }
 
-      const items = (Array.isArray(order.items) ? order.items : [])
-        .map((it) => ({
-          id: String(it.id || "").trim(),
-          name: String(it.name || it.id || "商品").trim(),
-          price: safeNumber(it.price, 0),
-          qty: safeNumber(it.qty, 0),
-        }))
-        .filter((it) => it.id && it.qty > 0);
-
+      const items = normalizeItems(order);
       if (!items.length) {
         setStatus("カートに商品が入っていません。");
         confirmBtn.disabled = true;
         return;
       }
 
-      const pref = String(order.address?.prefecture || "").trim();
+      const pref = String(order.address?.prefecture || order.address?.pref || "").trim();
       if (!pref) {
         setStatus("住所が未入力です。住所入力へ戻って保存してください。");
         confirmBtn.disabled = true;
@@ -114,19 +165,17 @@
 
       const itemsTotal = safeNumber(order.itemsTotal, items.reduce((s, it) => s + it.price * it.qty, 0));
 
-      // 送料は confirm.html で入れているはず → 無ければここで再計算
       let shipping = safeNumber(order.shipping_fee ?? order.shipping ?? 0, 0);
       if (!shipping) shipping = await calcShipping(items, pref);
 
       const finalTotal = itemsTotal + shipping + COD_FEE;
 
-      // 画面反映
       if (sumItemsEl)    sumItemsEl.textContent    = yen(itemsTotal);
       if (sumShippingEl) sumShippingEl.textContent = yen(shipping);
       if (sumCodEl)      sumCodEl.textContent      = yen(COD_FEE);
       if (sumTotalEl)    sumTotalEl.textContent    = yen(finalTotal);
 
-      // 保存（次のAPI用）
+      // ✅ 次の確定APIのために、ここで“強制的に”保存し直す
       order.itemsTotal = itemsTotal;
       order.shipping_fee = shipping;
       saveOrder(order);
@@ -143,11 +192,6 @@
 
           const payload = {
             items,
-            itemsTotal,
-            shipping_fee: shipping,
-            cod_fee: COD_FEE,
-            total: finalTotal,
-            payment_method: "cod",
             address: order.address || null,
             lineUserId: String(order.lineUserId || "").trim(),
             lineUserName: String(order.lineUserName || "").trim(),
@@ -165,11 +209,12 @@
           console.log("[ISOYA] /api/order/complete", res.status, data);
 
           if (!res.ok || !data || !data.ok) {
-            setStatus("ご注文の確定に失敗しました。\n（サーバー応答エラー）");
+            setStatus("ご注文の確定に失敗しました。\n" + (data?.error ? `理由：${data.error}` : "（サーバー応答エラー）"));
             confirmBtn.disabled = false;
             return;
           }
 
+          // ✅ 完了へ
           location.href = "./cod-complete.html";
         } catch (e) {
           console.error("[ISOYA] confirm click error:", e);

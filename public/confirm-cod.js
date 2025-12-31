@@ -12,91 +12,36 @@
 
   const COD_FEE = 330;
 
+  // ===== ISOYA DEBUG MARK =====
   console.log("[ISOYA] confirm-cod.js LOADED", location.href, new Date().toISOString());
   window.addEventListener("error", (e) => console.error("[ISOYA] WINDOW ERROR:", e.error || e.message));
   window.addEventListener("unhandledrejection", (e) => console.error("[ISOYA] UNHANDLED:", e.reason));
 
-  function setStatus(msg) { if (statusEl) statusEl.textContent = msg || ""; }
-  function yen(n) { return (Number(n) || 0).toLocaleString("ja-JP") + "円"; }
-  function safeNumber(n, def = 0){ const x = Number(n); return Number.isFinite(x) ? x : def; }
-
-  function safeJsonParse(raw){
-    try {
-      if (!raw) return null;
-      if (typeof raw === "object") return raw;
-      return JSON.parse(String(raw));
-    } catch {
-      return null;
-    }
+  function setStatus(msg) {
+    if (!statusEl) return;
+    statusEl.textContent = msg || "";
   }
 
-  // ✅ 壊れたJSON文字列（末尾に余計な " が付いてる等）を軽く救済
-  function tryRepairJsonString(s){
-    if (typeof s !== "string") return s;
-    const t = s.trim();
-    if (!t) return t;
-
-    // よくある： ...}"} みたいな末尾の余計な " を削る
-    const repaired = t.replace(/"+\s*$/, "");
-    return repaired;
+  function yen(n) {
+    return (Number(n) || 0).toLocaleString("ja-JP") + "円";
   }
 
-  function readOrderFromStorage() {
-    // ✅ 遷移元が色々でも拾えるようにキーを増やす
-    const keys = [
-      "orderDraft",
-      "orderDraft_backup",
-      "orderDraft_v2",
-      "currentOrder",
-      "order",
-      "confirm_normalized_order",
-      "lastOrder",
-      "isoya_order",
-      "isoya_order_v2"
-    ];
-
-    // ✅ localStorage 優先（sessionStorage は LIFF/ブラウザで消えやすい）
-    for (const store of [localStorage, sessionStorage]) {
-      for (const k of keys) {
-        const raw = store.getItem(k);
-        if (!raw) continue;
-
-        // まず通常パース
-        let obj = safeJsonParse(raw);
-        if (obj && typeof obj === "object") return obj;
-
-        // 次に修復して再パース
-        const repaired = tryRepairJsonString(raw);
-        obj = safeJsonParse(repaired);
-        if (obj && typeof obj === "object") return obj;
-      }
-    }
-    return null;
+  function safeNumber(n, def = 0) {
+    const x = Number(n);
+    return Number.isFinite(x) ? x : def;
   }
 
-  function saveOrder(order) {
-    const s = JSON.stringify(order);
-    // ✅ 重要：localStorage にも必ず入れる
-    localStorage.setItem("orderDraft", s);
-    localStorage.setItem("orderDraft_backup", s);
-    localStorage.setItem("isoya_order_v2", s);
-
-    sessionStorage.setItem("orderDraft", s);
-    sessionStorage.setItem("order", s);
-    sessionStorage.setItem("currentOrder", s);
-    sessionStorage.setItem("confirm_normalized_order", s);
-  }
-
-  function normalizeItems(order) {
-    const rawItems = Array.isArray(order?.items) ? order.items : [];
-    return rawItems
-      .map((it) => ({
-        id: String(it.id || it.productId || "").trim(),
-        name: String(it.name || it.id || "商品").trim(),
-        price: safeNumber(it.price, 0),
-        qty: safeNumber(it.qty ?? it.quantity, 0),
-      }))
-      .filter((it) => it.id && it.qty > 0);
+  function normalizeAddress(addr) {
+    const a = addr || {};
+    return {
+      name: String(a.name || "").trim(),
+      phone: String(a.phone || a.tel || "").trim(),
+      postal: String(a.postal || a.zip || "").trim(),
+      prefecture: String(a.prefecture || a.pref || "").trim(),
+      city: String(a.city || "").trim(),
+      address1: String(a.address1 || a.addr1 || "").trim(),
+      address2: String(a.address2 || a.addr2 || "").trim(),
+    };
   }
 
   function buildOrderRows(items) {
@@ -105,24 +50,37 @@
     items.forEach((it) => {
       const row = document.createElement("div");
       row.className = "row";
-      row.textContent = `${it.name} × ${it.qty} = ${yen(it.price * it.qty)}`;
+      const name = String(it.name || it.id || "商品");
+      const price = safeNumber(it.price, 0);
+      const qty = safeNumber(it.qty, 0);
+      const subtotal = price * qty;
+      row.textContent = `${name} × ${qty} = ${yen(subtotal)}`;
       orderListEl.appendChild(row);
     });
   }
 
-  async function calcShipping(items, prefecture) {
-    const pref = String(prefecture||"").trim();
-    if (!pref) return 0;
+  async function fetchShippingIfNeeded(items, address, shipping) {
+    // shipping が 0 の場合のみ再計算（住所が空なら計算できないのでスキップ）
+    if (shipping > 0) return shipping;
 
-    const res = await fetch("/api/shipping", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items, prefecture: pref })
-    });
-    const data = await res.json().catch(() => ({}));
-    console.log("[ISOYA] /api/shipping", res.status, data);
-    if (res.ok && data && data.ok) return safeNumber(data.fee ?? data.shipping, 0);
-    return 0;
+    const hasPref = !!String(address?.prefecture || "").trim();
+    if (!hasPref) return shipping;
+
+    try {
+      const res = await fetch("/api/shipping", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items, address }),
+      });
+      const data = await res.json().catch(() => ({}));
+      console.log("[ISOYA] /api/shipping result", res.status, data);
+      if (res.ok && data && data.ok) {
+        return safeNumber(data.shipping, shipping);
+      }
+    } catch (e) {
+      console.error("[ISOYA] shipping fetch error:", e);
+    }
+    return shipping;
   }
 
   async function main() {
@@ -132,41 +90,52 @@
         return;
       }
 
-      confirmBtn.disabled = true;
+      const raw = sessionStorage.getItem("orderDraft");
+      console.log("[ISOYA] orderDraft raw:", raw);
 
-      const order = readOrderFromStorage();
-      console.log("[ISOYA] order object:", order);
-
-      if (!order) {
-        setStatus(
-          "注文情報が見つかりませんでした。\n\n" +
-          "原因：confirm.html → confirm-cod.html に来る直前の保存が足りない可能性があります。\n" +
-          "対処：ひとつ前の確認画面へ戻って、もう一度「代引き」を押してください。"
-        );
+      if (!raw) {
+        setStatus("注文情報が見つかりませんでした。\n商品一覧からやり直してください。");
         confirmBtn.disabled = true;
         return;
       }
 
-      const items = normalizeItems(order);
+      let order;
+      try {
+        order = JSON.parse(raw);
+      } catch (e) {
+        console.error("[ISOYA] orderDraft parse error:", e);
+        setStatus("注文情報の読み込みに失敗しました（JSON不正）。");
+        confirmBtn.disabled = true;
+        return;
+      }
+
+      const itemsRaw = Array.isArray(order.items) ? order.items : [];
+      const items = itemsRaw
+        .map((it) => ({
+          id: String(it.id || "").trim(),
+          name: String(it.name || it.id || "商品").trim(),
+          price: safeNumber(it.price, 0),
+          qty: safeNumber(it.qty, 0),
+        }))
+        .filter((it) => it.qty > 0);
+
+      const address = normalizeAddress(order.address || {});
+      let itemsTotal = safeNumber(order.itemsTotal, 0);
+      let shipping = safeNumber(order.shipping, 0);
+
       if (!items.length) {
         setStatus("カートに商品が入っていません。");
         confirmBtn.disabled = true;
         return;
       }
 
-      const pref = String(order.address?.prefecture || order.address?.pref || "").trim();
-      if (!pref) {
-        setStatus("住所が未入力です。住所入力へ戻って保存してください。");
-        confirmBtn.disabled = true;
-        return;
-      }
-
       buildOrderRows(items);
 
-      const itemsTotal = safeNumber(order.itemsTotal, items.reduce((s, it) => s + it.price * it.qty, 0));
+      if (!itemsTotal) {
+        itemsTotal = items.reduce((sum, it) => sum + it.price * it.qty, 0);
+      }
 
-      let shipping = safeNumber(order.shipping_fee ?? order.shipping ?? 0, 0);
-      if (!shipping) shipping = await calcShipping(items, pref);
+      shipping = await fetchShippingIfNeeded(items, address, shipping);
 
       const finalTotal = itemsTotal + shipping + COD_FEE;
 
@@ -175,57 +144,62 @@
       if (sumCodEl)      sumCodEl.textContent      = yen(COD_FEE);
       if (sumTotalEl)    sumTotalEl.textContent    = yen(finalTotal);
 
-      // ✅ 次の確定APIのために、ここで“強制的に”保存し直す
-      order.itemsTotal = itemsTotal;
-      order.shipping_fee = shipping;
-      saveOrder(order);
-
       setStatus("内容をご確認のうえ「代引きで注文を確定する」を押してください。");
 
-      if (backBtn) backBtn.addEventListener("click", () => location.href = "./confirm.html");
+      if (backBtn) {
+        backBtn.addEventListener("click", () => history.back());
+      }
 
-      confirmBtn.disabled = false;
       confirmBtn.addEventListener("click", async () => {
         try {
+          if (confirmBtn.disabled) return;
+
           confirmBtn.disabled = true;
           setStatus("ご注文を確定しています…");
 
-          const payload = {
+          const orderForCod = {
             items,
-            address: order.address || null,
+            itemsTotal,
+            shipping,
+            codFee: COD_FEE,
+            finalTotal,
+            paymentMethod: "cod",
+            payment: "cod",
             lineUserId: String(order.lineUserId || "").trim(),
             lineUserName: String(order.lineUserName || "").trim(),
+            address,
           };
 
-          console.log("[ISOYA] POST /api/order/complete", payload);
+          sessionStorage.setItem("lastOrder", JSON.stringify(orderForCod));
+
+          console.log("[ISOYA] ABOUT TO POST /api/order/complete", orderForCod);
 
           const res = await fetch("/api/order/complete", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
+            body: JSON.stringify(orderForCod),
           });
 
           const data = await res.json().catch(() => ({}));
-          console.log("[ISOYA] /api/order/complete", res.status, data);
+          console.log("[ISOYA] /api/order/complete result", res.status, data);
 
           if (!res.ok || !data || !data.ok) {
-            setStatus("ご注文の確定に失敗しました。\n" + (data?.error ? `理由：${data.error}` : "（サーバー応答エラー）"));
+            setStatus("ご注文の確定に失敗しました。\n（サーバー応答エラー）");
             confirmBtn.disabled = false;
             return;
           }
 
-          // ✅ 完了へ
           location.href = "./cod-complete.html";
         } catch (e) {
-          console.error("[ISOYA] confirm click error:", e);
-          setStatus("通信または画面内エラー:\n" + (e?.message || String(e)));
+          console.error("[ISOYA] CLICK HANDLER ERROR:", e);
+          setStatus("通信または画面内エラーで停止しました:\n" + (e?.message || String(e)));
           confirmBtn.disabled = false;
         }
       }, { once: true });
 
     } catch (e) {
       console.error("[ISOYA] main error:", e);
-      setStatus("画面の初期化でエラー:\n" + (e?.message || String(e)));
+      setStatus("画面の初期化でエラーが発生しました:\n" + (e?.message || String(e)));
       if (confirmBtn) confirmBtn.disabled = true;
     }
   }

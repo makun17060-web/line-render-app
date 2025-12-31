@@ -13,31 +13,58 @@
   const COD_FEE = 330;
 
   console.log("[ISOYA] confirm-cod.js LOADED", location.href, new Date().toISOString());
+  window.addEventListener("error", (e) => console.error("[ISOYA] WINDOW ERROR:", e.error || e.message));
+  window.addEventListener("unhandledrejection", (e) => console.error("[ISOYA] UNHANDLED:", e.reason));
 
   function setStatus(msg) { if (statusEl) statusEl.textContent = msg || ""; }
   function yen(n) { return (Number(n) || 0).toLocaleString("ja-JP") + "円"; }
-  function safeNumber(n, def = 0) { const x = Number(n); return Number.isFinite(x) ? x : def; }
   function safeJsonParse(s){ try { return JSON.parse(s); } catch { return null; } }
+  function safeNumber(n, def = 0){ const x = Number(n); return Number.isFinite(x) ? x : def; }
 
   function readOrderFromStorage() {
-    const keys = ["orderDraft","currentOrder","order","confirm_normalized_order","lastOrder"];
-    for (const k of keys) {
-      const raw = sessionStorage.getItem(k) || localStorage.getItem(k);
-      if (!raw) continue;
-      const obj = safeJsonParse(raw);
-      if (obj && typeof obj === "object") return obj;
+    const keys = [
+      "orderDraft","currentOrder","order","confirm_normalized_order","lastOrder"
+    ];
+    for (const store of [sessionStorage, localStorage]) {
+      for (const k of keys) {
+        const raw = store.getItem(k);
+        if (!raw) continue;
+        const obj = safeJsonParse(raw);
+        if (obj && typeof obj === "object") return obj;
+      }
     }
     return null;
   }
+  function saveOrder(order) {
+    sessionStorage.setItem("orderDraft", JSON.stringify(order));
+    sessionStorage.setItem("order", JSON.stringify(order));
+    sessionStorage.setItem("currentOrder", JSON.stringify(order));
+    sessionStorage.setItem("confirm_normalized_order", JSON.stringify(order));
+    localStorage.setItem("order", JSON.stringify(order));
+  }
 
-  async function fetchShipping(items, prefecture) {
-    const pref = String(prefecture || "").trim();
+  function buildOrderRows(items) {
+    if (!orderListEl) return;
+    orderListEl.innerHTML = "";
+    items.forEach((it) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      const name = String(it.name || it.id || "商品");
+      const price = safeNumber(it.price, 0);
+      const qty = safeNumber(it.qty, 0);
+      row.textContent = `${name} × ${qty} = ${yen(price * qty)}`;
+      orderListEl.appendChild(row);
+    });
+  }
+
+  async function calcShipping(items, prefecture) {
+    const pref = String(prefecture||"").trim();
     if (!pref) return 0;
 
     const res = await fetch("/api/shipping", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items, prefecture: pref }),
+      body: JSON.stringify({ items, prefecture: pref }) // ★サーバ仕様
     });
     const data = await res.json().catch(() => ({}));
     console.log("[ISOYA] /api/shipping", res.status, data);
@@ -45,115 +72,118 @@
     return 0;
   }
 
-  function renderItems(items) {
-    if (!orderListEl) return;
-    orderListEl.innerHTML = "";
-    items.forEach((it) => {
-      const row = document.createElement("div");
-      row.className = "order-row";
-      row.textContent = `${it.name} × ${it.qty} = ${yen(it.price * it.qty)}`;
-      orderListEl.appendChild(row);
-    });
+  async function main() {
+    try {
+      if (!confirmBtn) {
+        setStatus("ボタン要素が見つかりません（confirmCod）");
+        return;
+      }
+
+      const order = readOrderFromStorage();
+      console.log("[ISOYA] order object:", order);
+
+      if (!order) {
+        setStatus("注文情報が見つかりませんでした。\n商品一覧からやり直してください。");
+        confirmBtn.disabled = true;
+        return;
+      }
+
+      const items = (Array.isArray(order.items) ? order.items : [])
+        .map((it) => ({
+          id: String(it.id || "").trim(),
+          name: String(it.name || it.id || "商品").trim(),
+          price: safeNumber(it.price, 0),
+          qty: safeNumber(it.qty, 0),
+        }))
+        .filter((it) => it.id && it.qty > 0);
+
+      if (!items.length) {
+        setStatus("カートに商品が入っていません。");
+        confirmBtn.disabled = true;
+        return;
+      }
+
+      const pref = String(order.address?.prefecture || "").trim();
+      if (!pref) {
+        setStatus("住所が未入力です。住所入力へ戻って保存してください。");
+        confirmBtn.disabled = true;
+        return;
+      }
+
+      buildOrderRows(items);
+
+      const itemsTotal = safeNumber(order.itemsTotal, items.reduce((s, it) => s + it.price * it.qty, 0));
+
+      // 送料は confirm.html で入れているはず → 無ければここで再計算
+      let shipping = safeNumber(order.shipping_fee ?? order.shipping ?? 0, 0);
+      if (!shipping) shipping = await calcShipping(items, pref);
+
+      const finalTotal = itemsTotal + shipping + COD_FEE;
+
+      // 画面反映
+      if (sumItemsEl)    sumItemsEl.textContent    = yen(itemsTotal);
+      if (sumShippingEl) sumShippingEl.textContent = yen(shipping);
+      if (sumCodEl)      sumCodEl.textContent      = yen(COD_FEE);
+      if (sumTotalEl)    sumTotalEl.textContent    = yen(finalTotal);
+
+      // 保存（次のAPI用）
+      order.itemsTotal = itemsTotal;
+      order.shipping_fee = shipping;
+      saveOrder(order);
+
+      setStatus("内容をご確認のうえ「代引きで注文を確定する」を押してください。");
+
+      if (backBtn) backBtn.addEventListener("click", () => location.href = "./confirm.html");
+
+      confirmBtn.disabled = false;
+      confirmBtn.addEventListener("click", async () => {
+        try {
+          confirmBtn.disabled = true;
+          setStatus("ご注文を確定しています…");
+
+          const payload = {
+            items,
+            itemsTotal,
+            shipping_fee: shipping,
+            cod_fee: COD_FEE,
+            total: finalTotal,
+            payment_method: "cod",
+            address: order.address || null,
+            lineUserId: String(order.lineUserId || "").trim(),
+            lineUserName: String(order.lineUserName || "").trim(),
+          };
+
+          console.log("[ISOYA] POST /api/order/complete", payload);
+
+          const res = await fetch("/api/order/complete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+
+          const data = await res.json().catch(() => ({}));
+          console.log("[ISOYA] /api/order/complete", res.status, data);
+
+          if (!res.ok || !data || !data.ok) {
+            setStatus("ご注文の確定に失敗しました。\n（サーバー応答エラー）");
+            confirmBtn.disabled = false;
+            return;
+          }
+
+          location.href = "./cod-complete.html";
+        } catch (e) {
+          console.error("[ISOYA] confirm click error:", e);
+          setStatus("通信または画面内エラー:\n" + (e?.message || String(e)));
+          confirmBtn.disabled = false;
+        }
+      }, { once: true });
+
+    } catch (e) {
+      console.error("[ISOYA] main error:", e);
+      setStatus("画面の初期化でエラー:\n" + (e?.message || String(e)));
+      if (confirmBtn) confirmBtn.disabled = true;
+    }
   }
 
-  (async function main() {
-    if (!confirmBtn) {
-      setStatus("ERROR: confirmCod ボタンが見つかりません。");
-      return;
-    }
-
-    // ★ここで必ず押せる状態にする（ボタンが押せない問題の対策）
-    confirmBtn.disabled = false;
-
-    backBtn?.addEventListener("click", () => history.back());
-
-    const order = readOrderFromStorage();
-    console.log("[ISOYA] order object:", order);
-
-    if (!order) {
-      setStatus("注文情報が見つかりません。\n商品一覧 → 住所入力 → 確認 の順で進んでください。");
-      // order が無いなら確定できないので無効化
-      confirmBtn.disabled = true;
-      return;
-    }
-
-    const items = (order.items || []).map((it) => ({
-      id: String(it.id || "").trim(),
-      name: String(it.name || it.id || "商品").trim(),
-      price: safeNumber(it.price, 0),
-      qty: safeNumber(it.qty, 0),
-    })).filter((it) => it.id && it.qty > 0);
-
-    if (!items.length) {
-      setStatus("カートが空です。");
-      confirmBtn.disabled = true;
-      return;
-    }
-
-    const addr = order.address || {};
-    if (!addr.prefecture || !addr.city || !addr.address1 || !addr.name || !addr.phone || !addr.postal) {
-      setStatus("住所情報が不完全です。\n住所入力に戻って保存してください。");
-      confirmBtn.disabled = true;
-      return;
-    }
-
-    renderItems(items);
-
-    const itemsTotal = items.reduce((s, it) => s + it.price * it.qty, 0);
-    let shipping = safeNumber(order.shipping_fee ?? order.shipping ?? 0, 0);
-    if (!shipping) shipping = await fetchShipping(items, addr.prefecture);
-
-    const finalTotal = itemsTotal + shipping + COD_FEE;
-
-    sumItemsEl.textContent = yen(itemsTotal);
-    sumShippingEl.textContent = yen(shipping);
-    sumCodEl.textContent = yen(COD_FEE);
-    sumTotalEl.textContent = yen(finalTotal);
-
-    setStatus("内容をご確認のうえ「代引きで注文を確定する」を押してください。");
-
-    // ★クリックが効いてるか絶対分かるようにログ入れる
-    confirmBtn.addEventListener("click", async () => {
-      console.log("[ISOYA] confirm button CLICKED");
-      try {
-        if (confirmBtn.disabled) return;
-        confirmBtn.disabled = true;
-        setStatus("ご注文を確定しています…");
-
-        const payload = {
-          items,
-          itemsTotal,
-          shipping_fee: shipping,
-          codFee: COD_FEE,
-          finalTotal,
-          paymentMethod: "cod",
-          lineUserId: String(order.lineUserId || "").trim(),
-          lineUserName: String(order.lineUserName || "").trim(),
-          address: addr,
-        };
-
-        const res = await fetch("/api/order/complete", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-
-        const data = await res.json().catch(() => ({}));
-        console.log("[ISOYA] /api/order/complete", res.status, data);
-
-        if (!res.ok || !data.ok) {
-          setStatus("確定に失敗しました:\n" + (data.error || res.status));
-          confirmBtn.disabled = false;
-          return;
-        }
-
-        location.href = "./cod-complete.html";
-      } catch (e) {
-        console.error("[ISOYA] confirm click error:", e);
-        setStatus("エラー:\n" + (e?.message || String(e)));
-        confirmBtn.disabled = false;
-      }
-    }, { once: true });
-
-  })();
+  main();
 })();

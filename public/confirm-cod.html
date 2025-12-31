@@ -5,21 +5,84 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>ご注文内容の確認（代金引換）</title>
   <style>
-    body { font-family: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:#f5f5f5; margin:0; padding:16px; }
-    .card { max-width:480px; margin:16px auto; background:#fff; border-radius:8px; padding:16px 14px 20px; box-shadow:0 2px 6px rgba(0,0,0,.08); }
-    h1 { font-size:18px; margin:0 0 8px; }
-    p { font-size:14px; margin:4px 0; line-height:1.6; }
-    #orderList .row { font-size:14px; margin:2px 0; }
-    .summary { margin-top:8px; border-top:1px solid #ddd; padding-top:8px; font-size:14px; }
-    .summary-row { display:flex; justify-content:space-between; margin:2px 0; }
-    .summary-row.total { margin-top:4px; font-weight:700; font-size:15px; }
-    #statusMsg { margin-top:8px; font-size:13px; color:#555; white-space:pre-line; }
-    .btn-area { margin-top:16px; display:flex; gap:8px; justify-content:center; }
-    button { border-radius:6px; border:none; padding:10px 14px; font-size:14px; cursor:pointer; }
-    #confirmCod { background:#ff9500; color:#fff; min-width:140px; }
-    #backBtn { background:#ddd; color:#333; min-width:80px; }
-    button[disabled]{ opacity:.5; cursor:not-allowed; }
-    small { display:block; margin-top:8px; font-size:12px; color:#777; }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f5f5;
+      margin: 0;
+      padding: 16px;
+    }
+    .card {
+      max-width: 480px;
+      margin: 16px auto;
+      background: #fff;
+      border-radius: 8px;
+      padding: 16px 14px 20px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    }
+    h1 {
+      font-size: 18px;
+      margin: 0 0 8px;
+    }
+    p {
+      font-size: 14px;
+      margin: 4px 0;
+      line-height: 1.6;
+    }
+    #orderList .row {
+      font-size: 14px;
+      margin: 2px 0;
+    }
+    .summary {
+      margin-top: 8px;
+      border-top: 1px solid #ddd;
+      padding-top: 8px;
+      font-size: 14px;
+    }
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      margin: 2px 0;
+    }
+    .summary-row.total {
+      margin-top: 4px;
+      font-weight: bold;
+      font-size: 15px;
+    }
+    #statusMsg {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #555;
+      white-space: pre-line;
+    }
+    .btn-area {
+      margin-top: 16px;
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+    }
+    button {
+      border-radius: 6px;
+      border: none;
+      padding: 10px 14px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    #confirmCod {
+      background: #ff9500;
+      color: #fff;
+      min-width: 140px;
+    }
+    #backBtn {
+      background: #ddd;
+      color: #333;
+      min-width: 80px;
+    }
+    small {
+      display: block;
+      margin-top: 8px;
+      font-size: 12px;
+      color: #777;
+    }
   </style>
 </head>
 <body>
@@ -30,17 +93,29 @@
     <div id="orderList"></div>
 
     <div class="summary">
-      <div class="summary-row"><span>商品合計</span><span id="sumItems">0円</span></div>
-      <div class="summary-row"><span>送料</span><span id="sumShipping">0円</span></div>
-      <div class="summary-row"><span>代引き手数料</span><span id="sumCod">330円</span></div>
-      <div class="summary-row total"><span>お支払い合計</span><span id="sumTotal">0円</span></div>
+      <div class="summary-row">
+        <span>商品合計</span>
+        <span id="sumItems">0円</span>
+      </div>
+      <div class="summary-row">
+        <span>送料</span>
+        <span id="sumShipping">0円</span>
+      </div>
+      <div class="summary-row">
+        <span>代引き手数料</span>
+        <span id="sumCod">330円</span>
+      </div>
+      <div class="summary-row total">
+        <span>お支払い合計</span>
+        <span id="sumTotal">0円</span>
+      </div>
     </div>
 
     <p id="statusMsg">注文情報を読み込んでいます…</p>
 
     <div class="btn-area">
-      <button id="backBtn" type="button">戻る</button>
-      <button id="confirmCod" type="button" disabled>代引きで注文を確定する</button>
+      <button id="backBtn">戻る</button>
+      <button id="confirmCod">代引きで注文を確定する</button>
     </div>
 
     <small>※この画面の合計金額を、商品お届け時に配達員へお支払いください。</small>

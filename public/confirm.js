@@ -23,8 +23,8 @@ const backBtn = document.getElementById("backBtn");
 
 // ====== 設定 ======
 // ★あなたの明細ページのファイル名に合わせて変更
-const CARD_DETAIL_PAGE = "./card.html"; // 例：./card-detail.html など
-const COD_DETAIL_PAGE  = "./cod.html";  // 例：./cod-detail.html など
+const CARD_DETAIL_PAGE = "./confim-card.html"; // 例：./card-detail.html など
+const COD_DETAIL_PAGE  = "./confirm-cod.html";  // 例：./cod-detail.html など
 const ADDRESS_PAGE     = "./liff-address.html";
 
 // 代引き手数料（表示と計算用）

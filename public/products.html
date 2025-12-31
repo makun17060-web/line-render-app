@@ -1,188 +1,258 @@
-// public/products.js
-(() => {
-  const grid = document.getElementById("productGrid");
-  const summary = document.getElementById("cartSummary");
-  const toAddressBtn = document.getElementById("toAddressBtn");
-  const statusMsg = document.getElementById("statusMsg");
-
-  const cart = new Map(); // productId -> qty
-  let products = [];
-
-  function imgUrl(p) {
-    const v = String(p?.image || "").trim();
-    if (!v) return "/public/noimage.png";
-    if (/^https?:\/\//i.test(v)) return v;            // 互換：URL丸ごとでもOK
-    if (v.startsWith("/")) return v;                  // 互換：/public/uploads/... 等
-    return "/public/uploads/" + encodeURIComponent(v); // ★正解：ファイル名→Disk公開パス
-  }
-
-  function yen(n) {
-    const x = Number(n || 0);
-    return x.toLocaleString("ja-JP") + "円";
-  }
-
-  function setStatus(msg) {
-    statusMsg.textContent = msg || "";
-  }
-
-  function getQty(id) {
-    return cart.get(id) || 0;
-  }
-
-  function setQty(id, qty) {
-    if (qty <= 0) cart.delete(id);
-    else cart.set(id, qty);
-    renderSummary();
-  }
-
-  function renderSummary() {
-    const items = [];
-    let subtotal = 0;
-
-    for (const p of products) {
-      const q = getQty(p.id);
-      if (!q) continue;
-      items.push(`${p.name} ×${q}`);
-      subtotal += Number(p.price || 0) * q;
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>オンライン注文（商品一覧）</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 12px;
+      background: #f7f7f7;
+    }
+    header {
+      margin-bottom: 12px;
+    }
+    header h1 {
+      font-size: 18px;
+      margin: 0 0 4px;
+    }
+    header p {
+      font-size: 12px;
+      margin: 0;
+      color: #555;
+      white-space: pre-line;
     }
 
-    if (items.length === 0) {
-      summary.textContent = "カートに商品は入っていません。";
-      toAddressBtn.disabled = true;
-      return;
+    /* ===== 商品グリッド ===== */
+    #productGrid {
+      display: grid;
+      grid-template-columns: 1fr;            /* ★ 基本は1列で大きく表示 */
+      gap: 10px;
+      margin-bottom: 12px;
     }
-
-    summary.textContent =
-      items.join("\n") +
-      `\n\n小計：${yen(subtotal)}\n（送料は住所入力後に計算）`;
-
-    toAddressBtn.disabled = false;
-  }
-
-  function makeCard(p) {
-    const card = document.createElement("div");
-    card.className = "card";
-
-    const img = document.createElement("img");
-    img.src = imgUrl(p);
-    img.alt = p.name || "";
-    img.loading = "lazy";
-    img.onerror = () => {
-      img.src = "/public/noimage.png";
-    };
-
-    const title = document.createElement("div");
-    title.className = "card-title";
-    title.textContent = p.name || "";
-
-    const desc = document.createElement("div");
-    desc.className = "card-desc";
-    desc.textContent = p.desc || "";
-
-    const vol = document.createElement("div");
-    vol.className = "card-volume";
-    vol.textContent = p.volume ? `内容量：${p.volume}` : "";
-
-    const price = document.createElement("div");
-    price.className = "card-price";
-    price.textContent = `価格：${yen(p.price)}`;
-
-    const stock = document.createElement("div");
-    stock.className = "card-stock";
-    stock.textContent = `在庫：${Number(p.stock ?? 0)}`;
-
-    // qty row
-    const qtyRow = document.createElement("div");
-    qtyRow.className = "qty-row";
-
-    const minus = document.createElement("button");
-    minus.textContent = "−";
-
-    const num = document.createElement("span");
-    num.textContent = String(getQty(p.id));
-
-    const plus = document.createElement("button");
-    plus.textContent = "＋";
-
-    function sync() {
-      num.textContent = String(getQty(p.id));
-    }
-
-    minus.onclick = () => {
-      const q = getQty(p.id);
-      if (q <= 0) return;
-      setQty(p.id, q - 1);
-      sync();
-    };
-
-    plus.onclick = () => {
-      const q = getQty(p.id);
-      const next = q + 1;
-
-      // 在庫上限（在庫が数値の時だけ）
-      const st = Number(p.stock);
-      if (Number.isFinite(st) && st >= 0 && next > st) {
-        setStatus(`「${p.name}」は在庫 ${st} までです。`);
-        return;
+    /* 画面が十分広いときだけ2列にする */
+    @media (min-width: 480px) {
+      #productGrid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
       }
-      setStatus("");
-      setQty(p.id, next);
-      sync();
-    };
-
-    qtyRow.appendChild(minus);
-    qtyRow.appendChild(num);
-    qtyRow.appendChild(plus);
-
-    card.appendChild(img);
-    card.appendChild(title);
-    card.appendChild(desc);
-    if (vol.textContent) card.appendChild(vol);
-    card.appendChild(price);
-    card.appendChild(stock);
-    card.appendChild(qtyRow);
-
-    return card;
-  }
-
-  async function loadProducts() {
-    setStatus("");
-    grid.innerHTML = "";
-
-    const r = await fetch("/api/products", { cache: "no-store" });
-    const t = await r.text();
-    let obj;
-    try {
-      obj = JSON.parse(t);
-    } catch {
-      obj = { ok: false, error: t };
     }
-    if (!obj.ok) throw new Error(obj.error || "api error");
 
-    products = Array.isArray(obj.products) ? obj.products : [];
-
-    for (const p of products) {
-      grid.appendChild(makeCard(p));
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      padding: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
     }
-    renderSummary();
-  }
 
-  toAddressBtn.onclick = () => {
-    // ここはあなたの既存フローに合わせて変更OK
-    // とりあえず選択内容を localStorage に保存して次ページへ渡せる形にする
-    const items = [];
-    for (const p of products) {
-      const q = getQty(p.id);
-      if (!q) continue;
-      items.push({ id: p.id, name: p.name, qty: q, price: Number(p.price || 0), image: p.image || "" });
+    /* ★ ここを変更：上下が切れないように contain＋最大高さ */
+    .card img {
+      width: 100%;
+      max-height: 260px;          /* お好みで高さは調整可 */
+      border-radius: 8px;
+      object-fit: contain;        /* ← 画像を全部表示（トリミングしない） */
+      background: transparent;    /* 余白部分の背景 */
+      display: block;
     }
-    localStorage.setItem("cart_items", JSON.stringify(items));
-    // 例：住所入力ページへ
-    location.href = "./address.html";
-  };
 
-  // start
-  loadProducts().catch((e) => {
-    setStatus("商品取得に失敗しました: " + (e?.message || e));
-  });
-})();
+    .card-title {
+      font-size: 15px;            /* ★ ちょっと大きく */
+      font-weight: 700;
+    }
+    .card-desc {
+      font-size: 11px;
+      color: #555;
+      min-height: 2.4em;
+    }
+    /* 内容量やグラム数など */
+    .card-content,
+    .card-volume {
+      font-size: 12px;
+      color: #000;
+    }
+    .card-price {
+      font-size: 14px;            /* ★ 価格も少し大きく */
+      font-weight: 700;
+      color: #c00;                /* ★ 赤で目立たせる（お好みで） */
+    }
+    .card-stock {
+      font-size: 11px;
+      color: #666;
+    }
+
+    .qty-row {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .qty-row button {
+      border-radius: 999px;
+      border: 1px solid #ccc;
+      background: #fff;
+      width: 30px;
+      height: 30px;
+      font-size: 18px;
+      line-height: 1;
+      padding: 0;
+    }
+    .qty-row span {
+      min-width: 26px;
+      text-align: center;
+      font-size: 14px;
+    }
+
+    #cartSummary {
+      background: #fff;
+      border-radius: 8px;
+      padding: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      font-size: 13px;
+      margin-bottom: 10px;
+      white-space: pre-line;
+    }
+
+    .btn-row {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 10px;
+      border-radius: 999px;
+      border: none;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .btn-primary {
+      background: #00b900;
+      color: #fff;
+    }
+    .btn-primary:disabled {
+      opacity: 0.5;
+    }
+    #statusMsg {
+      margin-top: 6px;
+      font-size: 11px;
+      color: #d00;
+      font-weight: 600;
+      white-space: pre-line;
+    }
+
+    /* デバッグ表示（必要なときだけ見える） */
+    #debugBox {
+      margin-top: 8px;
+      font-size: 11px;
+      color: #111827;
+      background: #fff;
+      border: 1px dashed #e5e7eb;
+      border-radius: 10px;
+      padding: 8px;
+      display: none; /* ★必要なら block に */
+      white-space: pre-line;
+    }
+  </style>
+
+  <!-- LIFF SDK（必須） -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+</head>
+<body>
+  <header>
+    <h1>オンライン注文（商品一覧）</h1>
+    <p>
+商品を選んで「住所入力へ進む」ボタンを押してください。
+その後、確認画面で「クレジット決済」または「代引き」を選べます。
+    </p>
+  </header>
+
+  <main>
+    <div id="productGrid">
+      <!-- JSで商品カードを挿入 -->
+    </div>
+
+    <div id="cartSummary">
+      カートに商品は入っていません。
+    </div>
+
+    <div class="btn-row">
+      <button id="toAddressBtn" class="btn btn-primary">
+        住所入力へ進む
+      </button>
+    </div>
+
+    <div id="statusMsg"></div>
+    <div id="debugBox"></div>
+  </main>
+
+  <script>
+    // ====== LIFF起動ログ（ここが今回の追加） ======
+    // サーバー側に POST /api/liff/open がある前提（curlでDBに入るのは確認済み）
+    // - userIdが取れない場合はログ送信をスキップ（画面は動かす）
+    // - kind は "all"（統一）
+    (async () => {
+      const debug = (msg) => {
+        const box = document.getElementById("debugBox");
+        if (!box) return;
+        // box.style.display = "block"; // デバッグしたい時だけON
+        box.textContent += (box.textContent ? "\n" : "") + msg;
+      };
+
+      // ★ LIFF_ID の供給：
+      // 1) サーバーが window.LIFF_ID を埋め込むならそれを使う
+      // 2) ない場合は下の "REPLACE_ME" を実IDに置換
+      const LIFF_ID = (window.LIFF_ID || "2008406620-G5j1gjzM").trim();
+
+      try {
+        if (!LIFF_ID || LIFF_ID === "REPLACE_ME") {
+          debug("LIFF_ID が未設定です（window.LIFF_ID または直書き置換が必要）");
+          return;
+        }
+
+        await liff.init({ liffId: LIFF_ID });
+        debug("liff.init OK");
+
+        // LIFFブラウザでない場合はここで止める（PCブラウザ確認用）
+        if (!liff.isInClient()) {
+          debug("LIFFクライアント外（通常ブラウザ）なので profile 取得をスキップ");
+          return;
+        }
+
+        // 未ログインならログインへ（基本LIFF内はログイン済みだが保険）
+        if (!liff.isLoggedIn()) {
+          debug("liff not logged in → login()");
+          liff.login();
+          return;
+        }
+
+        const profile = await liff.getProfile();
+        const userId = profile?.userId;
+        debug("profile userId=" + (userId ? userId.slice(0, 6) + "..." : "NONE"));
+
+        if (!userId) return;
+
+        // 起動ログを送る（失敗しても画面は止めない）
+        const r = await fetch("/api/liff/open", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, kind: "all" })
+        });
+
+        const txt = await r.text().catch(() => "");
+        debug("POST /api/liff/open status=" + r.status + " body=" + txt.slice(0, 80));
+      } catch (e) {
+        debug("liff open log failed: " + (e?.message || e));
+      }
+    })();
+  </script>
+
+  <!-- 既存の products.js をそのまま利用 -->
+  <script src="./products.js"></script>
+</body>
+</html>

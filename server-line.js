@@ -89,35 +89,6 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
 });
 
-// ================= Body Parsers =================
-// ★重要：/webhook より後で json parser を入れる（署名検証が壊れない）
-app.use(express.json({ limit: "2mb" }));
-app.use(express.urlencoded({ extended: true }));
-
-// ================= In-memory session =================
-/**
- * 最小セッション（注文途中のみ）
- * sessions[userId] = { mode, data, updatedAt }
- */
-const sessions = new Map();
-const SESSION_TTL_MS = 20 * 60 * 1000; // 20分
-
-function setSession(userId, mode, data = {}) {
-  sessions.set(userId, { mode, data, updatedAt: Date.now() });
-}
-function getSession(userId) {
-  const s = sessions.get(userId);
-  if (!s) return null;
-  if (Date.now() - s.updatedAt > SESSION_TTL_MS) {
-    sessions.delete(userId);
-    return null;
-  }
-  return s;
-}
-function clearSession(userId) {
-  sessions.delete(userId);
-}
-
 // ================= Utilities =================
 function ensureDirSync(dir) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -150,6 +121,30 @@ function chunks(arr, size) {
   const out = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
+}
+
+// ================= In-memory session =================
+/**
+ * 最小セッション（注文途中のみ）
+ * sessions[userId] = { mode, data, updatedAt }
+ */
+const sessions = new Map();
+const SESSION_TTL_MS = 20 * 60 * 1000; // 20分
+
+function setSession(userId, mode, data = {}) {
+  sessions.set(userId, { mode, data, updatedAt: Date.now() });
+}
+function getSession(userId) {
+  const s = sessions.get(userId);
+  if (!s) return null;
+  if (Date.now() - s.updatedAt > SESSION_TTL_MS) {
+    sessions.delete(userId);
+    return null;
+  }
+  return s;
+}
+function clearSession(userId) {
+  sessions.delete(userId);
 }
 
 // ================= Products (Disk single source of truth) =================
@@ -187,10 +182,28 @@ function normalizeProductPatch(patch) {
   return out;
 }
 
-// ================= DB schema =================
+// ================= DB schema (migrate-safe) =================
 async function ensureDb() {
   if (!pool) return;
 
+  async function hasColumn(table, column) {
+    const r = await pool.query(
+      `
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema='public' AND table_name=$1 AND column_name=$2
+      `,
+      [table, column]
+    );
+    return r.rowCount > 0;
+  }
+
+  async function addColumnIfMissing(table, column, typeSql) {
+    if (await hasColumn(table, column)) return;
+    await pool.query(`ALTER TABLE ${table} ADD COLUMN ${column} ${typeSql}`);
+  }
+
+  // ---- tables (create only) ----
   await pool.query(`
     CREATE TABLE IF NOT EXISTS line_users (
       user_id TEXT PRIMARY KEY,
@@ -266,7 +279,6 @@ async function ensureDb() {
     );
   `);
 
-  // 友だち追加/ブロック/解除の“純増”集計用
   await pool.query(`
     CREATE TABLE IF NOT EXISTS message_events (
       id SERIAL PRIMARY KEY,
@@ -277,7 +289,22 @@ async function ensureDb() {
     );
   `);
 
-  // 検索高速化（任意）
+  // ---- migrations (ALTER for existing tables) ----
+  // ★既存テーブルが古い場合でも落ちないように「不足列」を追加
+  await addColumnIfMissing("orders", "created_at", "TIMESTAMP DEFAULT now()");
+  await addColumnIfMissing("message_events", "created_at", "TIMESTAMP DEFAULT now()");
+
+  // あると便利（将来の検索/集計用）
+  await addColumnIfMissing("addresses", "created_at", "TIMESTAMP DEFAULT now()");
+  await addColumnIfMissing("addresses", "updated_at", "TIMESTAMP DEFAULT now()");
+  await addColumnIfMissing("line_users", "created_at", "TIMESTAMP DEFAULT now()");
+  await addColumnIfMissing("line_users", "updated_at", "TIMESTAMP DEFAULT now()");
+  await addColumnIfMissing("segment_users", "created_at", "TIMESTAMP DEFAULT now()");
+  await addColumnIfMissing("segment_users", "updated_at", "TIMESTAMP DEFAULT now()");
+  await addColumnIfMissing("liff_logs", "created_at", "TIMESTAMP DEFAULT now()");
+  await addColumnIfMissing("segment_blast", "created_at", "TIMESTAMP DEFAULT now()");
+
+  // ---- indexes (only after columns exist) ----
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at DESC);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_msg_events_created_at ON message_events(created_at DESC);`);
@@ -406,20 +433,21 @@ function prefToRegion(pref) {
 
 // サイズ×地域→送料（簡易例 / あなたの正確表に置換OK）
 function shippingFeeByRegionAndSize(region, size) {
-  const base = {
-    hokkaido: 1200,
-    tohoku: 950,
-    kanto: 850,
-    shinetsu: 850,
-    hokuriku: 800,
-    chubu: 800,
-    kinki: 850,
-    chugoku: 900,
-    shikoku: 950,
-    kyushu: 1050,
-    okinawa: 1400,
-    unknown: 999,
-  }[region] ?? 999;
+  const base =
+    {
+      hokkaido: 1200,
+      tohoku: 950,
+      kanto: 850,
+      shinetsu: 850,
+      hokuriku: 800,
+      chubu: 800,
+      kinki: 850,
+      chugoku: 900,
+      shikoku: 950,
+      kyushu: 1050,
+      okinawa: 1400,
+      unknown: 999,
+    }[region] ?? 999;
 
   const up = size <= 60 ? 0 : size <= 80 ? 120 : size <= 100 ? 240 : size <= 120 ? 420 : 620;
   return Math.round(base + up);
@@ -586,6 +614,25 @@ function adminPageGate(req) {
   return String(key) === String(ADMIN_API_KEY);
 }
 
+// ================= LINE Webhook =================
+// ★超重要：署名検証が壊れないように /webhook は body parser より前に置く
+app.post("/webhook", line.middleware(lineConfig), async (req, res) => {
+  try {
+    const events = req.body.events || [];
+    await Promise.all(events.map(handleEvent));
+    res.status(200).end();
+  } catch (err) {
+    const detail = err?.response?.data || err?.stack || err;
+    console.error("Webhook Error:", JSON.stringify(detail, null, 2));
+    res.status(500).end();
+  }
+});
+
+// ================= Body Parsers =================
+// /webhook より後に入れる（署名検証が壊れない）
+app.use(express.json({ limit: "2mb" }));
+app.use(express.urlencoded({ extended: true }));
+
 // ================= API (public) =================
 app.get("/", (req, res) => res.status(200).send("OK"));
 
@@ -737,10 +784,9 @@ app.get("/api/admin/friends/today", requireAdmin, async (req, res) => {
     const today = nowJSTDateString();
     const start = new Date(`${today}T00:00:00+09:00`).toISOString(); // UTCに変換される
 
-    const add = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM message_events WHERE kind='follow' AND created_at >= $1`,
-      [start]
-    );
+    const add = await pool.query(`SELECT COUNT(*)::int AS n FROM message_events WHERE kind='follow' AND created_at >= $1`, [
+      start,
+    ]);
     const remove = await pool.query(
       `SELECT COUNT(*)::int AS n FROM message_events WHERE kind IN ('unfollow','blocked') AND created_at >= $1`,
       [start]
@@ -871,7 +917,6 @@ app.post("/api/admin/segment/send", requireAdmin, async (req, res) => {
         await client.multicast(part, messages);
         sent += part.length;
       } catch (e) {
-        // LINEの一時エラーなど：続行（どこまで届いたかはLINE側仕様）
         console.error("multicast error:", e?.message || e);
       }
     }
@@ -885,7 +930,6 @@ app.post("/api/admin/segment/send", requireAdmin, async (req, res) => {
 // ================= Admin pages =================
 app.get("/admin", (req, res) => {
   if (!adminPageGate(req)) return res.status(401).send("unauthorized");
-  const key = ADMIN_API_KEY ? `?api_key=${encodeURIComponent(req.query.api_key || "")}` : "";
   res.type("html").send(`
 <!doctype html><html lang="ja"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -996,7 +1040,7 @@ async function j(url, opt){
 }
 
 async function loadFriends(){
-  const r = await j('/api/admin/friends/today' + (API_KEY?('?api_key='+encodeURIComponent(API_KEY)):''));
+  const r = await j('/api/admin/friends/today' + (API_KEY?('?api_key='+encodeURIComponent(API_KEY)):'')); // headerでもOK
   if(!r.ok){ document.getElementById('friends').textContent = 'ERROR: '+(r.error||''); return; }
   document.getElementById('friends').textContent =
     '日付: '+r.date+'\\n追加: '+r.added+'\\n減少: '+r.removed+'\\n純増: '+r.net;
@@ -1026,7 +1070,7 @@ async function updateProduct(){
     image: document.getElementById('pimage').value,
     desc: document.getElementById('pdesc').value,
   };
-  const r = await j('/api/admin/products/update' + (API_KEY?('?api_key='+encodeURIComponent(API_KEY)):''),
+  const r = await j('/api/admin/products/update' + (API_KEY?('?api_key='+encodeURIComponent(API_KEY)):''), // headerでもOK
     { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) }
   );
   document.getElementById('pout').textContent = r.ok ? 'OK' : ('ERROR: '+(r.error||''));
@@ -1037,7 +1081,7 @@ async function uploadImage(){
   if(!f){ alert('ファイルを選んでください'); return; }
   const fd = new FormData();
   fd.append('file', f);
-  const r = await fetch('/api/admin/upload' + (API_KEY?('?api_key='+encodeURIComponent(API_KEY)):''),
+  const r = await fetch('/api/admin/upload' + (API_KEY?('?api_key='+encodeURIComponent(API_KEY)):''), // headerでもOK
     { method:'POST', headers: API_KEY?{'x-api-key':API_KEY}:{}, body: fd }
   );
   const t = await r.text();
@@ -1048,7 +1092,7 @@ async function uploadImage(){
 async function buildSeg(){
   const segment_key = document.getElementById('segKey').value.trim();
   const rule = document.getElementById('segRule').value;
-  const r = await j('/api/admin/segment/build' + (API_KEY?('?api_key='+encodeURIComponent(API_KEY)):''),
+  const r = await j('/api/admin/segment/build' + (API_KEY?('?api_key='+encodeURIComponent(API_KEY)):''), // headerでもOK
     { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({segment_key, rule}) }
   );
   document.getElementById('segCount').textContent = r.ok ? ('登録数: '+r.count+'（'+r.segment_key+'）') : ('ERROR: '+(r.error||''));
@@ -1058,7 +1102,7 @@ async function sendBlast(){
   const segment_key = document.getElementById('segKey').value.trim();
   const text = document.getElementById('blastText').value;
   const flex_json = document.getElementById('blastFlex').value;
-  const r = await j('/api/admin/segment/send' + (API_KEY?('?api_key='+encodeURIComponent(API_KEY)):''),
+  const r = await j('/api/admin/segment/send' + (API_KEY?('?api_key='+encodeURIComponent(API_KEY)):''), // headerでもOK
     { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({segment_key, text, flex_json}) }
   );
   document.getElementById('blastOut').textContent = r.ok ? ('送信試行: '+r.sent+'人') : ('ERROR: '+(r.error||''));
@@ -1070,20 +1114,7 @@ loadFriends(); loadOrders();
   `);
 });
 
-// ================= LINE Webhook =================
-// ★重要：署名検証が壊れないように、/webhook は json parser の影響を受けない（line.middlewareが処理）
-app.post("/webhook", line.middleware(lineConfig), async (req, res) => {
-  try {
-    const events = req.body.events || [];
-    await Promise.all(events.map(handleEvent));
-    res.status(200).end();
-  } catch (err) {
-    const detail = err?.response?.data || err?.stack || err;
-    console.error("Webhook Error:", JSON.stringify(detail, null, 2));
-    res.status(500).end();
-  }
-});
-
+// ================= Event handler =================
 async function handleEvent(ev) {
   const userId = ev?.source?.userId || "";
 

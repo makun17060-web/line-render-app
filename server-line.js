@@ -1,18 +1,20 @@
 /**
- * server-line.js — 超フル機能版（Disk products.json + uploads + 住所DB + セグメント + 注文DB + 送料計算統一 + 管理画面/配信/発送通知/純増）
+ * server-line.js — 超フル機能版（Disk products.json + uploads + 住所DB + セグメント + 注文DB + 送料計算統一 + 代引き確定）
  *
- * ✅ 修正点（今回）
- * - DB既存テーブルが古くても落ちない：ALTER TABLE ADD COLUMN IF NOT EXISTS でマイグレーション
- * - /api/address/save, /api/address/get 追加（住所はDBに保存される）
- * - /api/shipping は { items, prefecture } を受けて { ok, fee, size, region } を返す
- * - /api/order/complete 追加（代引き確定が動く：DB保存 + products.json 在庫減算）
- * - Web側画像は /public/uploads/ + filename で表示（products.json は filename のみ）
+ * ✅ 今回の重要修正
+ * 1) Postgres JSONBエラー(22P02)対策：
+ *    - raw_event を「必ずオブジェクト」に正規化して INSERT（JSON文字列を入れない）
+ * 2) /api/products の image を「表示できるURL」に変換：
+ *    - products.json には filename のみ保存 → APIは /public/uploads/filename を返す
+ * 3) /api/shipping は { ok, fee, size, region } を返す（フロントと一致）
+ * 4) /api/address/save, /api/address/get：住所はDBに保存・取得
+ * 5) /api/order/complete：代引き確定が動く（DB保存 + products.json 在庫減算）
  *
- * ✅ 重要な追加（今回の22P02対策）
- * - items/raw_event は「壊れたJSON文字列」を受けても落ちないように正規化
- *   - items が文字列なら JSON.parse して配列化（失敗したら400）
- *   - raw_event が文字列なら JSON.parse（失敗しても {} に退避）
- * - DBへは JSON.stringify せず「配列/オブジェクトのまま」渡す（pgが安全にJSON化）
+ * ✅ 重要
+ * - LINE webhook は express.json より前（順序を崩すとWebhook壊れます）
+ * - Render Disk:
+ *   PRODUCTS_FILE=/var/data/products.json
+ *   UPLOAD_DIR=/var/data/uploads
  */
 
 "use strict";
@@ -35,7 +37,7 @@ const BASE_URL = process.env.BASE_URL || ""; // 例: https://xxxx.onrender.com
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 const LINE_CHANNEL_SECRET = process.env.LINE_CHANNEL_SECRET;
 
-const DATABASE_URL = process.env.DATABASE_URL;
+const DATABASE_URL = process.env.DATABASE_URL || "";
 const ADMIN_USER_ID = process.env.ADMIN_USER_ID || "";
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "";
 
@@ -44,7 +46,7 @@ const UPLOAD_DIR = process.env.UPLOAD_DIR || "/var/data/uploads";
 
 if (!LINE_CHANNEL_ACCESS_TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
 if (!LINE_CHANNEL_SECRET) throw new Error("LINE_CHANNEL_SECRET is required");
-if (!DATABASE_URL) console.warn("DATABASE_URL is not set (DB features disabled)");
+if (!DATABASE_URL) console.warn("[WARN] DATABASE_URL is not set (DB features disabled)");
 
 const lineConfig = {
   channelAccessToken: LINE_CHANNEL_ACCESS_TOKEN,
@@ -56,13 +58,13 @@ const client = new line.Client(lineConfig);
 const app = express();
 app.use(cors());
 
-// ---- request log (health確認に便利) ----
+// ---- request log ----
 app.use((req, res, next) => {
   console.log(`[REQ] ${new Date().toISOString()} ${req.method} ${req.path}`);
   next();
 });
 
-// ★静的（public）と uploads（Disk）
+// ★ static
 ensureDirSync(UPLOAD_DIR);
 app.use("/public", express.static(path.join(__dirname, "public")));
 app.use("/public/uploads", express.static(UPLOAD_DIR));
@@ -110,24 +112,24 @@ function clampInt(n, min, max) {
 function rand4() {
   return String(Math.floor(1000 + Math.random() * 9000));
 }
-function safeJsonParse(s) {
-  try { return JSON.parse(s); } catch { return null; }
+function isPlainObject(v) {
+  return !!v && typeof v === "object" && !Array.isArray(v);
 }
-function jsonObjectOrEmpty(x) {
-  if (x && typeof x === "object") return x;
-  if (typeof x === "string") return safeJsonParse(x) || {};
-  return {};
+function safeJsonb(v) {
+  // ✅ JSONBに入れるものは「必ずオブジェクト/配列」
+  if (Array.isArray(v)) return v;
+  if (isPlainObject(v)) return v;
+  return {}; // 文字列などは全部捨てて {} にする（22P02防止）
 }
-function itemsArrayOrNull(x) {
-  if (Array.isArray(x)) return x;
-  if (typeof x === "string") {
-    const parsed = safeJsonParse(x);
-    return Array.isArray(parsed) ? parsed : null;
-  }
-  return null;
+function normalizeUploadUrl(filename) {
+  const fn = String(filename || "").trim();
+  if (!fn) return "";
+  if (/^https?:\/\//i.test(fn)) return fn;
+  if (fn.startsWith("/")) return fn;
+  return `/public/uploads/${fn}`;
 }
 
-// ================= Products (Disk single source of truth) =================
+// ================= Products (Disk) =================
 async function loadProducts() {
   const fallback = [
     { id: "kusuke-250", name: "久助（われせん）", price: 340, stock: 30, volume: "100g", desc: "お得な割れせん。", image: "" },
@@ -146,7 +148,7 @@ function normalizeProductPatch(patch) {
   if (patch.stock != null) out.stock = Number(patch.stock);
   if (patch.volume != null) out.volume = String(patch.volume);
   if (patch.desc != null) out.desc = String(patch.desc);
-  if (patch.image != null) out.image = String(patch.image);
+  if (patch.image != null) out.image = String(patch.image); // filename想定
   return out;
 }
 
@@ -154,7 +156,6 @@ function normalizeProductPatch(patch) {
 async function ensureDb() {
   if (!pool) return;
 
-  // --- create if not exists ---
   await pool.query(`
     CREATE TABLE IF NOT EXISTS line_users (
       user_id TEXT PRIMARY KEY,
@@ -240,7 +241,7 @@ async function ensureDb() {
     );
   `);
 
-  // --- migrate older tables safely ---
+  // --- migrate (safe) ---
   await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT now();`);
   await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_fee INTEGER;`);
   await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS total INTEGER;`);
@@ -289,7 +290,7 @@ async function touchUser(userId, kind) {
       last_liff_at = COALESCE(EXCLUDED.last_liff_at, segment_users.last_liff_at),
       last_chat_at = COALESCE(EXCLUDED.last_chat_at, segment_users.last_chat_at),
       updated_at = now()
-  `,
+    `,
     [userId, kind]
   );
 }
@@ -304,7 +305,7 @@ async function upsertLineProfile(userId) {
       VALUES ($1,$2,$3,$4, now(), now())
       ON CONFLICT (user_id) DO UPDATE SET
         display_name=$2, picture_url=$3, status_message=$4, updated_at=now()
-    `,
+      `,
       [userId, prof.displayName || "", prof.pictureUrl || "", prof.statusMessage || ""]
     );
   } catch {}
@@ -318,11 +319,10 @@ async function dbGetAddressByUserId(userId) {
 
 async function dbInsertMessageEvent(userId, kind, raw_event) {
   if (!pool || !userId || !kind) return;
-  await pool.query(`INSERT INTO message_events (user_id, kind, raw_event) VALUES ($1,$2,$3)`, [
-    userId,
-    String(kind),
-    raw_event || {},
-  ]);
+  await pool.query(
+    `INSERT INTO message_events (user_id, kind, raw_event) VALUES ($1,$2,$3)`,
+    [userId, String(kind), safeJsonb(raw_event)]
+  );
 }
 
 // ================= Shipping (unified) =================
@@ -334,6 +334,7 @@ function sizeFromAkasha6Qty(qty) {
   return 140;
 }
 function sizeFromOriginalSetQty(qty) {
+  // あなた要件：1=80, 2=100, 3-4=120, 5-6=140
   if (qty <= 1) return 80;
   if (qty <= 2) return 100;
   if (qty <= 4) return 120;
@@ -352,7 +353,7 @@ function isOriginalSet(item) {
 function isAkasha6(item) {
   const id = String(item?.id || "");
   const name = String(item?.name || "");
-  // ✅ 久助は “あかしゃ扱い”
+  // ✅ 久助は「あかしゃシリーズと同梱扱い」
   if (id === "kusuke-250" || /久助/.test(name)) return true;
   return /(のりあかしゃ|うずあかしゃ|潮あかしゃ|松あかしゃ|ごまあかしゃ|磯あかしゃ|いそあかしゃ)/.test(name);
 }
@@ -404,11 +405,6 @@ function requireAdmin(req, res, next) {
   if (String(key) !== String(ADMIN_API_KEY)) return res.status(401).json({ ok: false, error: "unauthorized" });
   next();
 }
-function adminPageGate(req) {
-  if (!ADMIN_API_KEY) return true;
-  const key = req.query.api_key || req.headers["x-api-key"] || "";
-  return String(key) === String(ADMIN_API_KEY);
-}
 
 // ================= Routes (no body parser BEFORE webhook) =================
 app.get("/", (req, res) => res.status(200).send("OK"));
@@ -434,39 +430,66 @@ app.use(express.urlencoded({ extended: true }));
 // ================= Public APIs =================
 
 // products（Diskが正）
+// ✅ image を「表示できるURL」に変換して返す（products.js を変えなくても画像が出る）
 app.get("/api/products", async (req, res) => {
   try {
     const products = await loadProducts();
-    res.json({ ok: true, products });
+    const out = products.map((p) => {
+      const filename = String(p.image || "").trim(); // products.json は filename を想定
+      const imageUrl = normalizeUploadUrl(filename);
+      return {
+        ...p,
+        image: imageUrl,              // ← フロントがそのまま img.src に入れられる
+        image_filename: filename,     // ← 管理用に残す
+      };
+    });
+    res.json({ ok: true, products: out });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
-// 送料計算（統一）: {items, prefecture|address.prefecture} -> {ok, fee, size, region}
+// 送料計算（統一）: {items, prefecture} -> {ok, fee, size, region}
 app.post("/api/shipping", async (req, res) => {
   try {
     const { items, prefecture, address } = req.body || {};
     const pref = String(prefecture || address?.prefecture || address?.pref || "").trim();
     if (!pref) return res.status(400).json({ ok: false, error: "prefecture is required" });
 
-    const r = calcShippingUnified(itemsArrayOrNull(items) || items, pref);
+    const r = calcShippingUnified(items, pref);
     res.json({ ok: true, fee: r.fee, size: r.size, region: r.region });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
-// LIFFログ（フロントから）: {userId, event, meta}
+// LIFFログ（互換）
+// - products.html が /api/liff/open を叩いているケースがあるので両方用意
+app.post("/api/liff/open", async (req, res) => {
+  try {
+    const { userId, kind } = req.body || {};
+    if (userId) await touchUser(String(userId), "liff");
+    if (pool && userId) {
+      await pool.query(`INSERT INTO liff_logs (user_id, event, meta) VALUES ($1,$2,$3)`, [
+        String(userId),
+        "open",
+        safeJsonb({ kind: kind || "all" }),
+      ]);
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
 app.post("/api/liff/log", async (req, res) => {
   try {
     const { userId, event, meta } = req.body || {};
-    if (userId) await touchUser(userId, "liff");
+    if (userId) await touchUser(String(userId), "liff");
     if (pool && userId && event) {
       await pool.query(`INSERT INTO liff_logs (user_id, event, meta) VALUES ($1,$2,$3)`, [
-        userId,
+        String(userId),
         String(event),
-        meta || {},
+        safeJsonb(meta),
       ]);
     }
     res.json({ ok: true });
@@ -510,7 +533,7 @@ app.post("/api/address/save", async (req, res) => {
       return res.status(400).json({ ok: false, error: "required fields missing" });
     }
 
-    // member_code が無ければ生成（既存重複は軽く回避）
+    // member_code が無ければ生成（軽い重複回避）
     let memberCode = null;
     const cur = await dbGetAddressByUserId(userId);
     if (cur?.member_code) memberCode = cur.member_code;
@@ -544,49 +567,42 @@ app.post("/api/address/save", async (req, res) => {
 app.post("/api/order/complete", async (req, res) => {
   try {
     const body = req.body || {};
-
-    // ✅ items は「配列」でも「JSON文字列」でも受ける（壊れてたら400で返す）
-    let items = Array.isArray(body.items) ? body.items : itemsArrayOrNull(body.items);
-    if (!Array.isArray(items)) items = [];
-
+    const items = Array.isArray(body.items) ? body.items : [];
     const userId = String(body.lineUserId || "").trim();
-    const address = jsonObjectOrEmpty(body.address);
+    const address = body.address || {};
 
     if (!items.length) return res.status(400).json({ ok: false, error: "items is required" });
     if (!userId) return res.status(400).json({ ok: false, error: "lineUserId is required" });
 
     const name = String(address.name || "").trim();
-    const phone = String(address.phone || address.tel || "").trim();
-    const postal = String(address.postal || address.zip || "").trim();
-    const pref = String(address.prefecture || address.pref || "").trim();
+    const phone = String(address.phone || "").trim();
+    const postal = String(address.postal || "").trim();
+    const pref = String(address.prefecture || "").trim();
     const city = String(address.city || "").trim();
-    const addr1 = String(address.address1 || address.addr1 || "").trim();
-    const addr2 = String(address.address2 || address.addr2 || "").trim();
+    const addr1 = String(address.address1 || "").trim();
+    const addr2 = String(address.address2 || "").trim();
     if (!name || !phone || !postal || !pref || !city || !addr1) {
       return res.status(400).json({ ok: false, error: "address is incomplete" });
     }
 
-    // ✅ raw_event: 文字列が来ても落ちない
-    const rawEvent = jsonObjectOrEmpty(body.raw_event ?? body);
-
-    // サーバ側で送料を再計算（改ざん防止）
+    // サーバ側で正規化（改ざん・不正防止）
     const normItems = items.map((it) => ({
-      id: String(it?.id || it?.productId || "").trim(),
-      name: String(it?.name || "").trim(),
-      qty: clampInt(it?.qty ?? it?.quantity, 1, 99) || 0,
-      price: Number(it?.price || 0),
+      id: String(it.id || "").trim(),
+      name: String(it.name || "").trim(),
+      qty: clampInt(it.qty, 1, 99) || 0,
+      price: Number(it.price || 0),
     })).filter((it) => it.id && it.qty > 0);
 
     if (!normItems.length) return res.status(400).json({ ok: false, error: "invalid items" });
 
+    // ✅ 送料はサーバで再計算
     const ship = calcShippingUnified(normItems, pref);
     const itemsTotal = normItems.reduce((s, it) => s + Number(it.price || 0) * Number(it.qty || 0), 0);
     const COD_FEE = 330;
     const total = itemsTotal + ship.fee + COD_FEE;
 
-    // 在庫減算（Disk products.json）
+    // ✅ 在庫減算（Disk products.json）
     const products = await loadProducts();
-
     for (const it of normItems) {
       const idx = products.findIndex((p) => String(p.id) === String(it.id));
       if (idx < 0) return res.status(400).json({ ok: false, error: `product not found: ${it.id}` });
@@ -599,21 +615,20 @@ app.post("/api/order/complete", async (req, res) => {
     }
     await saveProducts(products);
 
-    // DB保存（✅ JSON.stringify しない。配列/オブジェクトのまま渡す）
+    // ✅ DB保存（ここが 22P02 対策の本丸：raw_event を必ずオブジェクトに）
     let orderId = null;
     if (pool) {
+      const safeRawEvent = safeJsonb(body); // ← 文字列が混ざってても {} になるので落ちない
       const r = await pool.query(
         `
-        INSERT INTO orders
-          (user_id, source, items, total, shipping_fee, payment_method, status, name, zip, pref, address, raw_event)
-        VALUES
-          ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        INSERT INTO orders (user_id, source, items, total, shipping_fee, payment_method, status, name, zip, pref, address, raw_event)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
         RETURNING id
         `,
         [
           userId,
           "liff",
-          normItems, // ★配列のまま
+          normItems, // JSONB
           total,
           ship.fee,
           "cod",
@@ -622,13 +637,13 @@ app.post("/api/order/complete", async (req, res) => {
           postal,
           pref,
           `${city}${addr1}${addr2 ? " " + addr2 : ""}`,
-          rawEvent,  // ★objectのまま
+          safeRawEvent, // JSONB（必ずオブジェクト）
         ]
       );
       orderId = r.rows[0]?.id ?? null;
     }
 
-    // 管理者通知（任意）
+    // ✅ 管理者通知（任意）
     if (ADMIN_USER_ID) {
       const lines = normItems.map((x) => `${x.name} x${x.qty}`).join("\n");
       const msg =
@@ -686,17 +701,9 @@ app.post("/api/admin/upload", requireAdmin, upload.single("file"), async (req, r
   }
 });
 
-// ================= Admin page (簡易) =================
-app.get("/admin", (req, res) => {
-  if (!adminPageGate(req)) return res.status(401).send("unauthorized");
-  res.type("html").send(`<html><body>admin ok</body></html>`);
-});
-
-// ================= LINE bot (既存挙動はそのまま：最低限) =================
+// ================= LINE bot (必要最低限：既存挙動はあなたのFlex版に差し替えOK) =================
 const sessions = new Map();
 const SESSION_TTL_MS = 20 * 60 * 1000;
-
-function setSession(userId, mode, data = {}) { sessions.set(userId, { mode, data, updatedAt: Date.now() }); }
 function getSession(userId) {
   const s = sessions.get(userId);
   if (!s) return null;
@@ -731,24 +738,19 @@ async function handleEvent(ev) {
     return client.replyMessage(ev.replyToken, { type: "text", text: "キャンセルしました。" });
   }
 
+  // 起動キーワードは維持
   const isBoot = text === "直接注文" || text === "久助";
-  const isKusukeInline = /^久助\s*\d{1,2}$/.test(text.replace(/[　]+/g, " "));
-  const isOrder = /^注文\s+/.test(text);
-  const isFix = /^確定\s+/.test(text);
-
-  if (!sess && !isBoot && !isOrder && !isFix && !isKusukeInline) return;
+  if (!sess && !isBoot) return;
 
   if (text === "直接注文") {
     await touchUser(userId, "chat");
-    return client.replyMessage(ev.replyToken, { type: "text", text: `商品一覧はミニアプリをご利用ください。` });
+    return client.replyMessage(ev.replyToken, { type: "text", text: "商品一覧はミニアプリをご利用ください。" });
   }
 
   if (text === "久助") {
     await touchUser(userId, "chat");
-    return client.replyMessage(ev.replyToken, { type: "text", text: `久助のご注文はミニアプリからお願いします。` });
+    return client.replyMessage(ev.replyToken, { type: "text", text: "久助のご注文もミニアプリから可能です。" });
   }
-
-  // 必要なら既存Flex版をここへ戻してOK
 }
 
 // ================= Start =================

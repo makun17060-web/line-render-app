@@ -441,7 +441,7 @@ function toPublicImageUrl(raw) {
 }
 
 // =============== 商品・在庫 ===============
-
+const HIDE_PRODUCT_IDS = new Set([]);
 const LOW_STOCK_THRESHOLD = 5;
 
 function findProductById(id) {

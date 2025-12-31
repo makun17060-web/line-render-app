@@ -1,7 +1,7 @@
 {
   "name": "line-admin-server",
   "version": "1.0.0",
-   "type": "commonjs",
+  "type": "commonjs",
   "description": "LINE Bot 管理画面＋Flex配信＋画像アップロード＋リサイズ機能＋Twilio電話AI＋代引き注文",
   "main": "server-line.js",
   "scripts": {
@@ -13,6 +13,7 @@
   "dependencies": {
     "@line/bot-sdk": "^7.6.0",
     "axios": "^1.7.2",
+    "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "fs-extra": "^11.2.0",
@@ -22,10 +23,9 @@
     "sharp": "^0.33.4",
     "stripe": "^16.0.0",
     "twilio": "^5.10.6"
-    "cors": "^2.8.5"
-      },
+  },
   "engines": {
-    "node": ">=18.x"
+    "node": ">=18"
   },
   "license": "MIT"
 }

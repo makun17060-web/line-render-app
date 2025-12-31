@@ -1,5 +1,4 @@
-/**
- * server.js — フル機能版（Stripe + ミニアプリ + 画像管理 + 住所DB + セグメント配信 + 注文DB永続化）
+ｆ/**ｆ/**server.js — フル機能版（Stripe + ミニアプリ + 画像管理 + 住所DB + セグメント配信 + 注文DB永続化）
  *
  * ✅ 重要（あなたの要望）
  * - UPLOAD_DIR だけ Disk に保存（再デプロイで画像が消えない）
@@ -504,6 +503,26 @@ function detectRegionFromAddress(address = {}) {
   const pref = String(address.prefecture || address.pref || "").trim();
   const addr1 = String(address.addr1 || address.address1 || "").trim();
   const hay = pref || addr1;
+// ================================
+// ★混在禁止：久助 × オリジナルセット
+// ================================
+const KUSUKE_PRODUCT_ID = (process.env.KUSUKE_PRODUCT_ID || "kusuke-250").trim();
+
+function hasMixedKusukeAndOriginalSet(items = []) {
+  const arr = Array.isArray(items) ? items : [];
+  const hasKusuke = arr.some((it) => String(it?.id || "") === KUSUKE_PRODUCT_ID && Number(it?.qty || 0) > 0);
+  const hasOriginal = arr.some((it) => String(it?.id || "") === ORIGINAL_SET_PRODUCT_ID && Number(it?.qty || 0) > 0);
+  return hasKusuke && hasOriginal;
+}
+
+function rejectMixed(res) {
+  return res.status(400).json({
+    ok: false,
+    error: "mixed_items_not_allowed",
+    message: "「久助」と「磯屋オリジナルセット」は一緒に注文できません。別々にご注文ください。",
+    details: { kusukeId: KUSUKE_PRODUCT_ID, originalSetId: ORIGINAL_SET_PRODUCT_ID },
+  });
+}
 
   if (/北海道/.test(hay)) return "北海道";
   if (/(青森|岩手|宮城|秋田|山形|福島|東北)/.test(hay)) return "東北";
@@ -1409,7 +1428,7 @@ app.post("/api/shipping", (req, res) => {
   try {
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
     const address = req.body?.address || {};
-
+if (hasMixedKusukeAndOriginalSet(items)) return rejectMixed(res);
     const itemsTotal = items.reduce((sum, it) => sum + (Number(it.price) || 0) * (Number(it.qty) || 0), 0);
     const { region, size, shipping } = calcShippingUnified(items, address);
     const finalTotal = itemsTotal + shipping;
@@ -1504,6 +1523,7 @@ app.post("/api/pay-stripe", async (req, res) => {
 
     const order = req.body || {};
     const items = Array.isArray(order.items) ? order.items : [];
+    if (hasMixedKusukeAndOriginalSet(items)) return rejectMixed(res);
     if (!items.length) return res.status(400).json({ ok: false, error: "no_items" });
 
     const shipping = Number(order.shipping || 0);
@@ -1554,6 +1574,7 @@ app.post("/api/order/complete", async (req, res) => {
   try {
     const order = req.body || {};
     const items = Array.isArray(order.items) ? order.items : [];
+    if (hasMixedKusukeAndOriginalSet(items)) return rejectMixed(res);
     if (!items.length) return res.json({ ok: false, error: "no_items" });
 
     const paymentMethod = normalizePaymentMethodFromOrder(order);

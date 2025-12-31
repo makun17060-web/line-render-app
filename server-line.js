@@ -1422,13 +1422,47 @@ app.get("/api/products", (_req, res) => {
     return res.status(500).json({ ok: false, error: "server_error" });
   }
 });
+// ===============================
+// 久助 × オリジナルセット 混在チェック
+// ===============================
+
+// ★あなたのオリジナルセットIDに合わせて調整
+// products.json の id が "original-set-2100" ならこのままでOK
+const ORIGINAL_SET_PRODUCT_ID = (process.env.ORIGINAL_SET_PRODUCT_ID || "original-set-2100").trim();
+
+// 久助判定（id に kusuke が入る or name に 久助 が入る を許容）
+function isKusukeItem(it) {
+  const id = String(it?.id || "");
+  const name = String(it?.name || "");
+  return id.includes("kusuke") || name.includes("久助");
+}
+
+// オリジナルセット判定（id一致 or name に オリジナルセット）
+function isOriginalSetItem(it) {
+  const id = String(it?.id || "");
+  const name = String(it?.name || "");
+  return id === ORIGINAL_SET_PRODUCT_ID || name.includes("オリジナルセット");
+}
+
+// ★これが未定義で落ちてた本体
+function hasMixedKusukeAndOriginalSet(items) {
+  const list = Array.isArray(items) ? items : [];
+  const hasK = list.some(isKusukeItem);
+  const hasO = list.some(isOriginalSetItem);
+  return hasK && hasO;
+}
 
 // =============== ミニアプリ：送料計算 ===============
 app.post("/api/shipping", (req, res) => {
   try {
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
     const address = req.body?.address || {};
-if (hasMixedKusukeAndOriginalSet(items)) return rejectMixed(res);
+if (hasMixedKusukeAndOriginalSet(items)) {
+  const err = new Error("久助とオリジナルセットは同時に注文できません。別々に注文してください。");
+  err.code = "exclusive_mix";
+  throw err;
+}
+
     const itemsTotal = items.reduce((sum, it) => sum + (Number(it.price) || 0) * (Number(it.qty) || 0), 0);
     const { region, size, shipping } = calcShippingUnified(items, address);
     const finalTotal = itemsTotal + shipping;

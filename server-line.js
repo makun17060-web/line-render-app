@@ -108,7 +108,7 @@ const PUBLIC_ADDRESS_LOOKUP_TOKEN = (process.env.PUBLIC_ADDRESS_LOOKUP_TOKEN || 
 const COD_FEE = Number(process.env.COD_FEE || 330);
 
 // 久助は 250円固定（運用メモに合わせる）
-const KUSUKE_UNIT_PRICE = 250;
+const KUSUKE_UNIT_PRICE = 340;
 
 // セグメント設定
 const LIFF_OPEN_KIND_MODE = (process.env.LIFF_OPEN_KIND_MODE || "all").trim(); // "all" or "keep"

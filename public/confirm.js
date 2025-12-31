@@ -1,150 +1,233 @@
 "use strict";
 
-const orderListEl     = document.getElementById("orderList");
-const sumItemsEl      = document.getElementById("sumItems");
-const sumShippingEl   = document.getElementById("sumShipping");
-const sumTotalCodEl   = document.getElementById("sumTotalCod");
-const statusMsgEl     = document.getElementById("statusMsg");
+/**
+ * confirm.js — 注文内容の確認・支払方法の選択
+ *
+ * ✅ 修正ポイント（送料が反映されない対策）
+ * - order を複数キーから確実に読む（order/currentOrder/orderDraft/confirm_normalized_order + localStorage）
+ * - order.shipping が無ければ /api/shipping で再計算して保存
+ * - 住所の pref キーゆらぎ（prefecture / pref）にも対応
+ * - 表示（sumShipping / sumTotalCod 等）を必ず更新
+ */
+
+// ====== DOM ======
+const orderList = document.getElementById("orderList");
+const sumItemsEl = document.getElementById("sumItems");
+const sumShippingEl = document.getElementById("sumShipping");
+const sumTotalCodEl = document.getElementById("sumTotalCod");
+const statusMsg = document.getElementById("statusMsg");
 
 const cardBtn = document.getElementById("cardBtn");
-const codBtn  = document.getElementById("codBtn");
+const codBtn = document.getElementById("codBtn");
 const backBtn = document.getElementById("backBtn");
 
+// ====== 設定 ======
+// ★あなたの明細ページのファイル名に合わせて変更
+const CARD_DETAIL_PAGE = "./card.html"; // 例：./card-detail.html など
+const COD_DETAIL_PAGE  = "./cod.html";  // 例：./cod-detail.html など
+const ADDRESS_PAGE     = "./liff-address.html";
+
+// 代引き手数料（表示と計算用）
 const COD_FEE = 330;
 
-function yen(n) {
-  const x = Number(n || 0);
-  return `${x.toLocaleString("ja-JP")}円`;
-}
-function setStatus(msg) {
-  if (statusMsgEl) statusMsgEl.textContent = msg || "";
-}
-function safeJsonParse(s) { try { return JSON.parse(s); } catch { return null; } }
+// products.js / liff-address.js と揃える
+const ORDER_KEYS = ["order", "currentOrder", "orderDraft", "confirm_normalized_order"];
 
-function getOrder() {
-  const keys = ["order", "currentOrder", "orderDraft", "confirm_normalized_order"];
-  for (const k of keys) {
-    const v = sessionStorage.getItem(k) || localStorage.getItem(k);
+// ====== Utils ======
+function setStatus(msg = "") {
+  if (statusMsg) statusMsg.textContent = msg;
+}
+function safeJsonParse(s) {
+  try { return JSON.parse(s); } catch { return null; }
+}
+function toNum(x, fallback = 0) {
+  const n = Number(String(x ?? "").replace(/,/g, "").trim());
+  return Number.isFinite(n) ? n : fallback;
+}
+function yen(n) {
+  return `${toNum(n, 0).toLocaleString("ja-JP")}円`;
+}
+
+function loadOrder() {
+  // sessionStorage 優先
+  for (const k of ORDER_KEYS) {
+    const v = sessionStorage.getItem(k);
     if (!v) continue;
     const j = safeJsonParse(v);
-    if (j && j.items && Array.isArray(j.items)) return j;
+    if (j && typeof j === "object") return j;
   }
+  // localStorage フォールバック
+  const v2 = localStorage.getItem("order");
+  const j2 = v2 ? safeJsonParse(v2) : null;
+  if (j2 && typeof j2 === "object") return j2;
+
   return { items: [], itemsTotal: 0, address: null };
 }
 
-function saveOrder(order) {
-  sessionStorage.setItem("order", JSON.stringify(order));
-  sessionStorage.setItem("currentOrder", JSON.stringify(order));
-  sessionStorage.setItem("orderDraft", JSON.stringify(order));
-  sessionStorage.setItem("confirm_normalized_order", JSON.stringify(order));
-  localStorage.setItem("order", JSON.stringify(order));
+function saveOrderAll(order) {
+  const txt = JSON.stringify(order);
+  for (const k of ORDER_KEYS) sessionStorage.setItem(k, txt);
+  localStorage.setItem("order", txt);
 }
 
-function hasAddress(a) {
-  if (!a) return false;
-  const pref  = a.prefecture || a.pref || "";
-  const city  = a.city || "";
-  const addr1 = a.address1 || a.addr1 || "";
-  return String(pref).trim() && String(city).trim() && String(addr1).trim();
+function normalizeItems(order) {
+  const arr = Array.isArray(order?.items) ? order.items : [];
+  return arr.map((it) => ({
+    id: String(it.id ?? it.productId ?? "").trim(),
+    name: String(it.name ?? "").trim(),
+    qty: toNum(it.qty ?? it.quantity ?? 0, 0),
+    price: toNum(it.price ?? 0, 0),
+    volume: String(it.volume ?? ""),
+  })).filter((it) => it.id && it.qty > 0);
 }
 
-async function calcShipping(items, address) {
-  const body = { items, address };
-  const r = await fetch("/api/shipping", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const j = await r.json().catch(() => null);
-  if (!r.ok || !j?.ok) throw new Error(j?.error || "shipping_error");
-  return j; // {itemsTotal, region, size, shipping, finalTotal}
+function normalizePrefecture(order) {
+  const a = order?.address || {};
+  // キー揺れ対応
+  return String(a.prefecture || a.pref || "").trim();
 }
 
-function renderItems(items) {
-  orderListEl.innerHTML = items
-    .map((it) => {
-      const name = it.name || it.id || "商品";
-      const qty  = Number(it.qty || 0);
-      const sub  = Number(it.price || 0) * qty;
-      return `<div class="order-row">${name} ×${qty} = ${yen(sub)}</div>`;
-    })
-    .join("");
-}
-
-/**
- * ✅ 遷移は二重でやらない（LIFF内なら openWindow、通常ブラウザなら location.href）
- */
-function go(url) {
-  const abs = new URL(url, location.href).toString();
-  const inLiff = !!(window.liff && typeof window.liff.isInClient === "function" && window.liff.isInClient());
-  if (inLiff && typeof window.liff.openWindow === "function") {
-    window.liff.openWindow({ url: abs, external: false });
-  } else {
-    location.href = url;
-  }
-}
-
-document.addEventListener("DOMContentLoaded", async () => {
-  const order = getOrder();
-  const items = Array.isArray(order.items) ? order.items : [];
-
+function renderOrderList(items) {
+  if (!orderList) return;
   if (!items.length) {
-    orderListEl.innerHTML = `<div class="order-row">カートが空です。商品一覧に戻ってください。</div>`;
-    sumItemsEl.textContent = "0円";
-    sumShippingEl.textContent = "0円";
-    sumTotalCodEl.textContent = "0円";
-    cardBtn.disabled = true;
-    codBtn.disabled  = true;
-    setStatus("商品が入っていません。");
+    orderList.innerHTML = `<div class="order-row">商品が選択されていません。</div>`;
     return;
   }
 
-  // 商品合計（まず表示）
-  const itemsTotal =
-    Number(order.itemsTotal || 0) ||
-    items.reduce((s, it) => s + (Number(it.price || 0) * Number(it.qty || 0)), 0);
+  const rows = items.map((it) => {
+    const sub = it.price * it.qty;
+    const vol = it.volume ? `（${it.volume}）` : "";
+    return `<div class="order-row">${escapeHtml(it.name)}${escapeHtml(vol)} ×${it.qty} ＝ ${yen(sub)}</div>`;
+  });
+  orderList.innerHTML = rows.join("");
+}
 
-  renderItems(items);
-  sumItemsEl.textContent = yen(itemsTotal);
+function escapeHtml(s) {
+  return String(s || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
 
-  // 送料を計算して反映
+async function calcShippingByApi(items, prefecture) {
+  const r = await fetch("/api/shipping", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ items, prefecture }),
+  });
+  const t = await r.text().catch(() => "");
+  let obj;
+  try { obj = JSON.parse(t); } catch { obj = { ok: false, error: t }; }
+  if (!r.ok || !obj?.ok) throw new Error(obj?.error || "送料計算に失敗しました");
+  // { ok:true, fee, size, region }
+  return obj;
+}
+
+function getExistingShipping(order) {
+  const s = order?.shipping || null;
+  if (!s) return null;
+
+  // 互換：fee / shipping_fee など
+  const fee = toNum(s.fee ?? s.shipping_fee ?? s.shippingFee, NaN);
+  if (!Number.isFinite(fee)) return null;
+
+  return {
+    fee,
+    size: toNum(s.size ?? 0, 0),
+    region: String(s.region || ""),
+    from: "saved",
+  };
+}
+
+function setTotals(itemsTotal, shippingFee) {
+  if (sumItemsEl) sumItemsEl.textContent = yen(itemsTotal);
+  if (sumShippingEl) sumShippingEl.textContent = yen(shippingFee);
+
+  // 代引き合計 = 商品合計 + 送料 + 代引き手数料
+  const totalCod = itemsTotal + shippingFee + COD_FEE;
+  if (sumTotalCodEl) sumTotalCodEl.textContent = yen(totalCod);
+}
+
+// ====== Main ======
+(async function main() {
   try {
-    setStatus("送料を計算しています…");
+    setStatus("");
 
-    const address = order.address || null;
+    const order = loadOrder();
+    const items = normalizeItems(order);
 
-    if (!hasAddress(address)) {
-      sumShippingEl.textContent = "0円（住所未登録）";
-      sumTotalCodEl.textContent = yen(itemsTotal + COD_FEE);
-      setStatus("住所が未登録のため、送料を計算できません。住所入力へ戻って保存してください。");
-    } else {
-      const result = await calcShipping(items, address);
-      const shippingFee = Number(result.shipping || 0);
-
-      // ✅ キー統一：明細ページが必ず拾えるように shippingFee に保存
-      order.itemsTotal   = Number(result.itemsTotal || itemsTotal);
-      order.shippingFee  = shippingFee;   // ←統一キー（推奨）
-      order.shipping     = shippingFee;   // ←互換（古い明細が shipping を見てもOK）
-      order.region       = result.region || "";
-      order.size         = result.size || "";
-
-      saveOrder(order);
-
-      sumShippingEl.textContent = yen(shippingFee);
-      sumTotalCodEl.textContent = yen(order.itemsTotal + shippingFee + COD_FEE);
-      setStatus(`送料OK（地域：${order.region || "不明"} / サイズ：${order.size || "?"}）`);
+    if (!items.length) {
+      renderOrderList([]);
+      setTotals(0, 0);
+      setStatus("商品が選択されていません。商品一覧へ戻って選択してください。");
+      if (cardBtn) cardBtn.disabled = true;
+      if (codBtn) codBtn.disabled = true;
+      return;
     }
+
+    renderOrderList(items);
+
+    const itemsTotal = items.reduce((s, it) => s + it.price * it.qty, 0);
+
+    // ✅ 送料確定ロジック（ここが重要）
+    let ship = getExistingShipping(order);
+
+    if (!ship) {
+      const pref = normalizePrefecture(order);
+      if (!pref) {
+        // 住所が無い/都道府県が無いと計算できない
+        setTotals(itemsTotal, 0);
+        setStatus("都道府県が未入力のため送料を計算できません。住所入力に戻ってください。");
+      } else {
+        setStatus("送料を計算中…");
+        const r = await calcShippingByApi(items, pref);
+        ship = { fee: toNum(r.fee, 0), size: toNum(r.size, 0), region: String(r.region || ""), from: "api" };
+
+        // 保存（次の画面でも使える）
+        order.shipping = { fee: ship.fee, size: ship.size, region: ship.region };
+        // itemsTotal を order に入れておく（他画面互換）
+        order.itemsTotal = itemsTotal;
+        saveOrderAll(order);
+
+        setStatus("送料を反映しました。");
+      }
+    } else {
+      // shipping が保存済みならそれを使う
+      order.itemsTotal = itemsTotal;
+      saveOrderAll(order);
+      setStatus("送料を反映しました。");
+    }
+
+    const shippingFee = ship ? ship.fee : 0;
+    setTotals(itemsTotal, shippingFee);
+
+    // ===== ボタン遷移 =====
+    if (backBtn) backBtn.onclick = () => (location.href = ADDRESS_PAGE);
+
+    if (cardBtn) {
+      cardBtn.onclick = () => {
+        // クレカ側ページで order を読む前提
+        location.href = CARD_DETAIL_PAGE;
+      };
+    }
+
+    if (codBtn) {
+      codBtn.onclick = () => {
+        // 代引側ページで order を読む前提
+        // 代引き合計も保存しておくと楽
+        order.payment = { method: "cod", cod_fee: COD_FEE };
+        order.totalCod = itemsTotal + shippingFee + COD_FEE;
+        saveOrderAll(order);
+        location.href = COD_DETAIL_PAGE;
+      };
+    }
+
   } catch (e) {
-    sumShippingEl.textContent = "0円（計算エラー）";
-    sumTotalCodEl.textContent = yen(itemsTotal + COD_FEE);
-    setStatus(`送料計算に失敗しました：${e?.message || e}`);
+    setTotals(0, 0);
+    setStatus("エラー: " + (e?.message || e));
+    if (cardBtn) cardBtn.disabled = true;
+    if (codBtn) codBtn.disabled = true;
   }
-
-  // ボタン遷移
-  cardBtn.disabled = false;
-  codBtn.disabled  = false;
-
-  cardBtn.addEventListener("click", () => go("./confirm-card.html"));
-  codBtn.addEventListener("click",  () => go("./confirm-cod.html"));
-  backBtn?.addEventListener("click", () => go("./address.html"));
-});
+})();

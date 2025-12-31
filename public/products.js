@@ -4,12 +4,17 @@
  * products.js — 商品一覧（オンライン注文）
  * - /api/products から商品を取得
  * - 数量 + / - でカート作成
- * - 「住所入力へ進む」で order/currentOrder に保存して address.html へ
+ * - 「住所入力へ進む」で order/currentOrder に保存して liff-address.html へ
  *
  * 重要：
  * ✅ confirm.js / liff-address.js が確実に拾えるよう、保存キーを統一します
  *   - sessionStorage: order / currentOrder / orderDraft / confirm_normalized_order
  *   - localStorage  : order
+ *
+ * ✅ 修正点（今回）
+ * - products.json の image は「ファイル名」なので、そのままだと表示されない
+ * - 正しくは /public/uploads/<filename> で配信されているため、
+ *   img.src を必ずその形に組み立てる（URL/絶対パスにも互換対応）
  */
 
 const grid = document.getElementById("productGrid");
@@ -32,7 +37,25 @@ function toNum(x, fallback = 0) {
 }
 
 function safeJsonParse(s) {
-  try { return JSON.parse(s); } catch { return null; }
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * ★画像URLを正規化
+ * - 画像がURL(https://...)ならそのまま
+ * - / から始まるならそのまま（例 /public/uploads/xxx.jpg）
+ * - ファイル名だけなら /public/uploads/<filename> を組み立てる
+ */
+function imageUrl(v) {
+  const s = String(v || "").trim();
+  if (!s) return "";
+  if (/^https?:\/\//i.test(s)) return s;
+  if (s.startsWith("/")) return s;
+  return "/public/uploads/" + encodeURIComponent(s);
 }
 
 // ===== 商品/カート =====
@@ -48,6 +71,7 @@ function loadCartFromAny() {
     if (!v) continue;
     const j = safeJsonParse(v);
     if (!j) continue;
+
     // {items:[...]} 型
     if (j.items && Array.isArray(j.items)) {
       const out = {};
@@ -58,6 +82,7 @@ function loadCartFromAny() {
       }
       if (Object.keys(out).length) return out;
     }
+
     // 配列型
     if (Array.isArray(j)) {
       const out = {};
@@ -68,6 +93,7 @@ function loadCartFromAny() {
       }
       if (Object.keys(out).length) return out;
     }
+
     // { [id]: qty } 型
     if (typeof j === "object" && j && !Array.isArray(j)) {
       const keys = Object.keys(j);
@@ -98,6 +124,7 @@ function buildOrderPayload() {
       price: toNum(p.price, 0),
       qty: q,
       volume: p.volume || "", // ★内容量
+      image: p.image || "",   // ★必要なら次画面で使える
     });
   }
 
@@ -166,8 +193,12 @@ function renderCards() {
 
     const img = document.createElement("img");
     img.alt = p.name || "商品画像";
-    img.src = p.image || ""; // 空でもOK
-    img.onerror = () => { img.style.display = "none"; };
+
+    // ★ここが今回の核心：/public/uploads/ に組み立てる
+    img.src = imageUrl(p.image) || "/public/noimage.png";
+    img.onerror = () => {
+      img.src = "/public/noimage.png";
+    };
 
     const title = document.createElement("div");
     title.className = "card-title";
@@ -203,13 +234,24 @@ function renderCards() {
 
     const plus = document.createElement("button");
     plus.textContent = "+";
-    plus.addEventListener("click", () => updateQty(p.id, +1));
+    plus.addEventListener("click", () => {
+      // 在庫上限チェック（在庫数がある場合）
+      const curQty = toNum(cart[p.id] || 0, 0);
+      const nextQty = curQty + 1;
+      if (st >= 0 && nextQty > st) {
+        setStatus(`在庫が不足です（${p.name}：在庫 ${st}）。`);
+        return;
+      }
+      setStatus("");
+      updateQty(p.id, +1);
+    });
 
     qtyRow.appendChild(minus);
     qtyRow.appendChild(qty);
     qtyRow.appendChild(plus);
 
-    if (p.image) card.appendChild(img);
+    // 画像は常に表示（noimageにfallbackするため）
+    card.appendChild(img);
     card.appendChild(title);
     card.appendChild(desc);
     if (p.volume) card.appendChild(volume);
@@ -223,20 +265,22 @@ function renderCards() {
 
 async function loadProducts() {
   setStatus("商品を読み込み中...");
-  const r = await fetch("/api/products");
+  const r = await fetch("/api/products", { cache: "no-store" });
   const j = await r.json().catch(() => null);
   if (!r.ok || !j?.ok) throw new Error(j?.error || "商品取得に失敗しました");
 
   // サーバは { id,name,price,stock,desc,volume,image } を返す想定
-  products = (j.products || []).map((p) => ({
-    id: String(p.id || "").trim(),
-    name: String(p.name || "").trim(),
-    price: toNum(p.price, 0),
-    stock: toNum(p.stock ?? 0, 0),
-    desc: String(p.desc || ""),
-    volume: String(p.volume || ""),  // ★内容量
-    image: String(p.image || ""),
-  })).filter((p) => p.id);
+  products = (j.products || [])
+    .map((p) => ({
+      id: String(p.id || "").trim(),
+      name: String(p.name || "").trim(),
+      price: toNum(p.price, 0),
+      stock: toNum(p.stock ?? 0, 0),
+      desc: String(p.desc || ""),
+      volume: String(p.volume || ""), // ★内容量
+      image: String(p.image || ""),   // ★ファイル名（/public/uploads/で表示）
+    }))
+    .filter((p) => p.id);
 
   setStatus("");
 }

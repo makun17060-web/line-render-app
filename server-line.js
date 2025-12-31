@@ -193,10 +193,10 @@ if (!fs.existsSync(GIT_DATA_DIR)) fs.mkdirSync(GIT_DATA_DIR, { recursive: true }
 if (!fs.existsSync(DISK_DATA_DIR)) fs.mkdirSync(DISK_DATA_DIR, { recursive: true });
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-// ★修正：/public/uploads を先にマウント（/public が先だと探しに行って迷うケースを避ける）
-app.use("/public/uploads", express.static(UPLOAD_DIR));
 // 既存の public 配信（HTML/JS/CSS 等）
 app.use("/public", express.static(PUBLIC_DIR));
+// ★/public/uploads は Disk の UPLOAD_DIR を配信
+app.use("/public/uploads", express.static(UPLOAD_DIR));
 
 // ★Disk永続ファイル
 const PRODUCTS_PATH = path.join(DISK_DATA_DIR, "products.json");
@@ -248,7 +248,7 @@ if (!fs.existsSync(PRODUCTS_PATH)) {
       {
         id: "kusuke-250",
         name: "久助（えびせん）",
-        price: 250,
+        price: 250, // ← 初期値（ここは運用で自由に変更OK）
         stock: 30,
         volume: "約○○g",
         desc: "お得な割れせん。",
@@ -501,15 +501,8 @@ const YAMATO_CHUBU_TAXED = {
 };
 const SIZE_ORDER = ["60", "80", "100", "120", "140", "160"];
 
-// ★デフォルトをあなたの products.json に合わせて
+// ★デフォルトをあなたの products.json に合わせて 2000 に
 const ORIGINAL_SET_PRODUCT_ID = (process.env.ORIGINAL_SET_PRODUCT_ID || "original-set-2000").trim();
-
-function isOriginalSetId(idRaw) {
-  const id = String(idRaw || "").trim();
-  if (!id) return false;
-  // env指定のIDと一致 or original-set 始まりをオリジナル扱い（安全）
-  return id === ORIGINAL_SET_PRODUCT_ID || id.startsWith("original-set");
-}
 
 function detectRegionFromAddress(address = {}) {
   const pref = String(address.prefecture || address.pref || "").trim();
@@ -528,31 +521,16 @@ function detectRegionFromAddress(address = {}) {
   return "";
 }
 
-// ★修正版：
-// - 久助は id で判定（name に「久助」が含まれても、id がオリジナルセット等に変換された場合は akasha に数えない）
-// - オリジナルセットIDは akasha として数えない
+// ★修正：久助も「あかしゃサイズ判定」と同じ扱いにする
 function isAkasha6(item) {
-  const id = String(item?.id || "").trim();
-  const name = String(item?.name || "").trim();
+  const id = String(item?.id || "");
+  const name = String(item?.name || "");
 
-  // オリジナルセットは akasha 判定から除外（startsWithも含める）
-  if (isOriginalSetId(id)) return false;
+  // 久助を akasha 扱いに含める（サイズ判定）
+  if (id === "kusuke-250" || /久助/.test(name)) return true;
 
-  // 久助は「ID」で判定（送料サイズは akasha ルール）
-  if (id === "kusuke-250") return true;
-
-  // 目安ページ用の束ねID
-  if (id === "akasha_bundle") return true;
-
-  // products.json の id で akasha を判定（例：nori-akasha-340 等）
-  if (id.includes("-akasha-")) return true;
-
-  // 念のため、名称に「あかしゃ」が入るもの（ただし久助はここで判定しない）
-  if (/あかしゃ/.test(name)) return true;
-
-  return false;
+  return /(のりあかしゃ|うずあかしゃ|潮あかしゃ|松あかしゃ|ごまあかしゃ|磯あかしゃ|いそあかしゃ)/.test(name);
 }
-
 function sizeFromAkasha6Qty(qty) {
   const q = Number(qty) || 0;
   if (q <= 0) return null;
@@ -583,32 +561,23 @@ function sizeFromTotalQty(totalQty) {
   if (q <= 6) return "140";
   return "160";
 }
-
 function calcYamatoShipping(region, size) {
   if (!region) return 0;
   const table = YAMATO_CHUBU_TAXED[String(size)] || null;
   if (!table) return 0;
   return Number(table[region] || 0);
 }
-
-// ★修正版：
-// - オリジナルセットが含まれる場合は「オリジナルセットのルール」を優先してサイズ決定
 function calcShippingUnified(items = [], address = {}) {
   const region = detectRegionFromAddress(address);
   const totalQty = items.reduce((s, it) => s + Number(it.qty || 0), 0);
-
+  const akasha6Qty = items.reduce((s, it) => s + (isAkasha6(it) ? Number(it.qty || 0) : 0), 0);
   const originalQty = items.reduce((s, it) => {
-    const id = String(it.id || "").trim();
-    const nm = String(it.name || "");
-    const isOrig = isOriginalSetId(id) || /磯屋.?オリジナルセ/.test(nm);
-    return s + (isOrig ? Number(it.qty || 0) : 0);
+    return s + ((it.id === ORIGINAL_SET_PRODUCT_ID || /磯屋.?オリジナルセ/.test(it.name || "")) ? Number(it.qty || 0) : 0);
   }, 0);
 
-  const akasha6Qty = items.reduce((s, it) => s + (isAkasha6(it) ? Number(it.qty || 0) : 0), 0);
-
   let size;
-  if (originalQty > 0) size = sizeFromOriginalSetQty(originalQty);
-  else if (akasha6Qty > 0) size = sizeFromAkasha6Qty(akasha6Qty);
+  if (akasha6Qty > 0) size = sizeFromAkasha6Qty(akasha6Qty);
+  else if (originalQty > 0) size = sizeFromOriginalSetQty(originalQty);
   else size = sizeFromTotalQty(totalQty);
 
   const shipping = calcYamatoShipping(region, size);
@@ -1445,71 +1414,14 @@ app.get("/api/products", (_req, res) => {
   }
 });
 
-function normalizeItemId(it) {
-  return String(it?.id || it?.product_id || "").trim();
-}
-
-function normalizeRuleId(idRaw) {
-  const id = String(idRaw || "").trim();
-  // 安全に代表IDへ寄せる（フロントが "original-set" などを送っても崩れない）
-  if (id === "original-set") return ORIGINAL_SET_PRODUCT_ID;
-  if (id === "kusuke") return "kusuke-250";
-  return id;
-}
-
-function isKusuke(idRaw) {
-  const id = normalizeRuleId(idRaw);
-  return id === "kusuke-250" || id.startsWith("kusuke");
-}
-
-function isOriginalSet(idRaw) {
-  const id = normalizeRuleId(idRaw);
-  return isOriginalSetId(id);
-}
-
-function validateSameOrderRules(items) {
-  const ids = (items || []).map((x) => normalizeRuleId(normalizeItemId(x))).filter(Boolean);
-
-  const hasKusuke = ids.some(isKusuke);
-  const hasOriginal = ids.some(isOriginalSet);
-
-  // ① 同一注文：久助 × オリジナルセット は不可
-  if (hasKusuke && hasOriginal) {
-    return {
-      ok: false,
-      code: "SAME_ORDER_NOT_ALLOWED",
-      message: "久助とオリジナルセットは同一注文（同じ決済）では購入できません。別々にご注文ください。",
-    };
-  }
-
-  // ② 久助が店頭受取専用なら、宅配商品と混在を不可にする（現状ON）
-  const hasOtherThanKusuke = ids.some((id) => !isKusuke(id));
-  if (hasKusuke && hasOtherThanKusuke) {
-    return {
-      ok: false,
-      code: "KUSUKE_MIXED_NOT_ALLOWED",
-      message: "久助は店頭受取専用のため、他の商品と同一注文にはできません。別々にご注文ください。",
-    };
-  }
-
-  return { ok: true };
-}
-
 // =============== ミニアプリ：送料計算 ===============
 app.post("/api/shipping", (req, res) => {
   try {
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
     const address = req.body?.address || {};
 
-    // ★修正：同一注文ルールをここで弾く（送料計算段階で止める）
-    const rule = validateSameOrderRules(items);
-    if (!rule.ok) return res.status(400).json({ ok: false, error: rule.code, message: rule.message });
-
     const itemsTotal = items.reduce((sum, it) => sum + (Number(it.price) || 0) * (Number(it.qty) || 0), 0);
-    const { region, size, shipping } = calcShippingUnified(
-      items.map((it) => ({ ...it, id: normalizeRuleId(it.id) })),
-      address
-    );
+    const { region, size, shipping } = calcShippingUnified(items, address);
     const finalTotal = itemsTotal + shipping;
 
     return res.json({ ok: true, itemsTotal, region, size, shipping, finalTotal });
@@ -1548,13 +1460,9 @@ app.post("/api/shipping/quote", (req, res) => {
       products.find((p) => p.id === ORIGINAL_SET_PRODUCT_ID) ||
       products.find((p) => /磯屋.?オリジナルセ/.test(String(p.name || ""))) ||
       null;
+const hasOriginal = itemsIn.some((it) => String(it?.product_id || "").trim() === "original-set");
 
-    const kusukeProduct =
-      products.find((p) => p.id === "kusuke-250") ||
-      products.find((p) => /久助/.test(String(p.name || ""))) ||
-      null;
-
-    const items = itemsIn
+     const items = itemsIn
       .map((it) => {
         const pid = String(it?.product_id || "").trim();
         const qty = Math.max(0, Number(it?.qty || 0));
@@ -1568,24 +1476,29 @@ app.post("/api/shipping/quote", (req, res) => {
             price: Number(originalProduct?.price || 0),
           };
         }
-
         if (pid === "akasha") {
-          // 目安ページ用（送料判定だけなら price=0 でOK）
-          return { id: "akasha_bundle", name: "あかしゃ", qty, price: 0 };
+          return { id: "akasha_bundle", name: "のりあかしゃ", qty, price: 0 };
         }
 
-        if (pid === "kusuke") {
-          return {
-            id: "kusuke-250",
-            name: kusukeProduct?.name || "久助（われせん）",
-            qty,
-            price: Number(kusukeProduct?.price || 0),
-          };
-        }
+        // ✅ 追加：久助（われせん）＝あかしゃと同一送料ロジック
+       if (pid === "kusuke") {
+  // ✅ original-set と一緒に買うときは、梱包（送料）を original-set 側で判定させる
+  if (hasOriginal) {
+    return {
+      id: ORIGINAL_SET_PRODUCT_ID,         // ←梱包判定をオリジナルセット側へ
+      name: "久助（われせん）",
+      qty,
+      price: 0,                            // 目安ページで商品代も出したいなら 250 に
+    };
+  }
+  // ✅ 単体/あかしゃ系と一緒のときは、あかしゃ側の送料
+  return { id: "akasha_bundle", name: "久助（われせん）", qty, price: 0 };
+}
 
         return { id: "other_bundle", name: "その他商品", qty, price: 0 };
       })
       .filter(Boolean);
+
 
     if (!items.length) return res.status(400).json({ ok: false, error: "no_valid_items" });
 
@@ -1620,10 +1533,6 @@ app.post("/api/pay-stripe", async (req, res) => {
     const order = req.body || {};
     const items = Array.isArray(order.items) ? order.items : [];
     if (!items.length) return res.status(400).json({ ok: false, error: "no_items" });
-
-    // ★修正：Stripe決済開始前に同一注文ルールで弾く
-    const rule = validateSameOrderRules(items);
-    if (!rule.ok) return res.status(400).json({ ok: false, error: rule.code, message: rule.message });
 
     const shipping = Number(order.shipping || 0);
     const codFee = Number(order.codFee || 0);
@@ -1704,14 +1613,8 @@ app.post("/api/order/complete", async (req, res) => {
     const codFee = Number(order.codFee || 0);
     const finalTotal = Number(order.finalTotal ?? order.total ?? 0) || (itemsTotal + shipping + codFee);
 
-    // ★修正：ここでも member_code を取得して orders に保存
     try {
-      let memberCode = null;
-      if (pool && order.lineUserId) {
-        const c = await dbGetCodesByUserId(order.lineUserId);
-        if (c?.member_code) memberCode = String(c.member_code).trim();
-      }
-
+      const memberCode = null;
       const addrLineForDb = `${a.city || ""}${a.addr1 || a.address1 || ""}${(a.addr2 || a.address2) ? " " + (a.addr2 || a.address2) : ""}`.trim();
 
       await dbInsertOrder({
@@ -1845,6 +1748,7 @@ app.post("/api/admin/products/update", (req, res) => {
     const image = req.body?.image != null ? String(req.body.image) : product.image;
     const volume = req.body?.volume != null ? String(req.body.volume) : (product.volume || "");
 
+    // ★久助も含めて price は request か既存値を採用（強制上書きしない）
     const price = req.body?.price != null ? Number(req.body.price) : product.price;
     const stock = req.body?.stock != null ? Number(req.body.stock) : product.stock;
 
@@ -2386,7 +2290,7 @@ function confirmFlex(product, qty, method, payment, address, pickupName) {
   if (method === "delivery") {
     if (!address) addressOk = false;
     else {
-      const r = calcShippingUnified([{ id: normalizeRuleId(product.id), name: product.name, qty }], address);
+      const r = calcShippingUnified([{ id: product.id, name: product.name, qty }], address);
       region = r.region;
       size = r.size;
       shipping = r.shipping;
@@ -2720,11 +2624,11 @@ async function handleEvent(ev) {
       return client.replyMessage(ev.replyToken, { type: "text", text: msg });
     }
 
-    // ③ 久助 数量（★DB住所があれば読み込んで送料計算できる）
-    const mm = /^久助\s*(\d{1,2})$/.exec(text.replace(/[　]+/g, " "));
-    if (mm) {
+    // ③ 久助 数量（★修正：DB住所があれば読み込んで送料計算できる）
+    const m = /^久助\s*(\d{1,2})$/.exec(text.replace(/[　]+/g, " "));
+    if (m) {
       await touchUser(userId, "chat");
-      const qty = Number(mm[1]);
+      const qty = Number(m[1]);
       if (qty < 1 || qty > 99) {
         return client.replyMessage(ev.replyToken, { type: "text", text: "個数は 1〜99 で入力してください。" });
       }
@@ -2923,7 +2827,7 @@ async function handleEvent(ev) {
       let region = "";
       let size = "";
       if (method === "delivery") {
-        const r = calcShippingUnified([{ id: normalizeRuleId(product.id), name: product.name, qty }], address || {});
+        const r = calcShippingUnified([{ id: product.id, name: product.name, qty }], address || {});
         shipping = r.shipping;
         region = r.region;
         size = r.size;

@@ -1,6 +1,15 @@
 "use strict";
 
+/**
+ * liff-address.js
+ * - LIFFで userId を取得
+ * - DBから住所を取得してフォームへ反映（任意）
+ * - 保存ボタンで DBへ保存（任意）
+ * - orderDraft に address/userId/name を入れて confirm.html へ
+ */
+
 const $ = (id) => document.getElementById(id);
+
 const postalEl = $("postal");
 const prefEl = $("prefecture");
 const cityEl = $("city");
@@ -8,6 +17,7 @@ const addr1El = $("address1");
 const addr2El = $("address2");
 const nameEl = $("name");
 const phoneEl = $("phone");
+
 const saveBtn = $("saveBtn");
 const backBtn = $("backBtn");
 const statusEl = $("statusMsg");
@@ -35,25 +45,24 @@ function saveOrder(order) {
 
 function readForm() {
   return {
-    postal: String(postalEl.value || "").trim(),
-    prefecture: String(prefEl.value || "").trim(),
-    city: String(cityEl.value || "").trim(),
-    address1: String(addr1El.value || "").trim(),
-    address2: String(addr2El.value || "").trim(),
-    name: String(nameEl.value || "").trim(),
-    phone: String(phoneEl.value || "").trim(),
+    postal: String(postalEl?.value || "").trim(),
+    prefecture: String(prefEl?.value || "").trim(),
+    city: String(cityEl?.value || "").trim(),
+    address1: String(addr1El?.value || "").trim(),
+    address2: String(addr2El?.value || "").trim(),
+    name: String(nameEl?.value || "").trim(),
+    phone: String(phoneEl?.value || "").trim(),
   };
 }
-
 function fillForm(a) {
   const x = a || {};
-  postalEl.value = x.postal || "";
-  prefEl.value = x.prefecture || "";
-  cityEl.value = x.city || "";
-  addr1El.value = x.address1 || "";
-  addr2El.value = x.address2 || "";
-  nameEl.value = x.name || "";
-  phoneEl.value = x.phone || "";
+  if (postalEl) postalEl.value = x.postal || "";
+  if (prefEl) prefEl.value = x.prefecture || "";
+  if (cityEl) cityEl.value = x.city || "";
+  if (addr1El) addr1El.value = x.address1 || "";
+  if (addr2El) addr2El.value = x.address2 || "";
+  if (nameEl) nameEl.value = x.name || "";
+  if (phoneEl) phoneEl.value = x.phone || "";
 }
 
 async function fetchJson(url, body) {
@@ -75,7 +84,7 @@ async function fetchJson(url, body) {
 
     if (!liff.isInClient()) {
       setStatus("LIFF外ブラウザです。LINEアプリ内から開いてください。");
-      saveBtn.disabled = true;
+      if (saveBtn) saveBtn.disabled = true;
       return;
     }
     if (!liff.isLoggedIn()) {
@@ -87,30 +96,19 @@ async function fetchJson(url, body) {
     const userId = prof?.userId;
     if (!userId) throw new Error("userId を取得できません");
 
-    // 既存住所（DB）読み込み
+    // DBから既存住所取得（失敗しても続行）
     try {
       const r = await fetchJson("/api/address/get", { userId });
-      if (r.address) {
-        fillForm({
-          postal: r.address.postal || "",
-          prefecture: r.address.prefecture || "",
-          city: r.address.city || "",
-          address1: r.address.address1 || "",
-          address2: r.address.address2 || "",
-          name: r.address.name || "",
-          phone: r.address.phone || "",
-        });
-      }
+      if (r.address) fillForm(r.address);
     } catch (e) {
-      // DB未設定でも画面は動かす
-      console.warn("address get skipped:", e?.message || e);
+      console.warn("[liff-address] address get skipped:", e?.message || e);
     }
 
     setStatus("");
 
-    backBtn.addEventListener("click", () => history.back());
+    if (backBtn) backBtn.addEventListener("click", () => history.back());
 
-    saveBtn.addEventListener("click", async () => {
+    if (saveBtn) saveBtn.addEventListener("click", async () => {
       try {
         saveBtn.disabled = true;
         setStatus("住所を保存しています…");
@@ -122,14 +120,14 @@ async function fetchJson(url, body) {
           return;
         }
 
-        // DBへ保存（住所はDBに入ります）
+        // DBへ保存（失敗しても続行）
         try {
           await fetchJson("/api/address/save", { userId, address: addr });
         } catch (e) {
-          console.warn("address save failed (still continue):", e?.message || e);
+          console.warn("[liff-address] address save failed (continue):", e?.message || e);
         }
 
-        // orderDraftへ反映（ここが今回の超重要ポイント）
+        // orderDraftへ反映（超重要）
         const order = readOrder();
         if (!order) {
           setStatus("注文情報が見つかりません。商品一覧からやり直してください。");
@@ -140,13 +138,14 @@ async function fetchJson(url, body) {
         order.address = addr;
         order.lineUserId = userId;
         order.lineUserName = prof?.displayName || "";
+
         saveOrder(order);
 
         setStatus("保存しました。確認画面へ移動します…");
         location.href = "./confirm.html";
       } catch (e) {
         setStatus("エラー:\n" + (e?.message || String(e)));
-        saveBtn.disabled = false;
+        if (saveBtn) saveBtn.disabled = false;
       }
     });
 

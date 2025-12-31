@@ -7,6 +7,12 @@
  * - /api/shipping は { items, prefecture } を受けて { ok, fee, size, region } を返す
  * - /api/order/complete 追加（代引き確定が動く：DB保存 + products.json 在庫減算）
  * - Web側画像は /public/uploads/ + filename で表示（products.json は filename のみ）
+ *
+ * ✅ 重要な追加（今回の22P02対策）
+ * - items/raw_event は「壊れたJSON文字列」を受けても落ちないように正規化
+ *   - items が文字列なら JSON.parse して配列化（失敗したら400）
+ *   - raw_event が文字列なら JSON.parse（失敗しても {} に退避）
+ * - DBへは JSON.stringify せず「配列/オブジェクトのまま」渡す（pgが安全にJSON化）
  */
 
 "use strict";
@@ -96,22 +102,29 @@ async function writeJsonAtomic(filePath, obj) {
   await fsp.writeFile(tmp, JSON.stringify(obj, null, 2), "utf8");
   await fsp.rename(tmp, filePath);
 }
-function nowJSTDateString() {
-  const d = new Date(Date.now() + 9 * 3600 * 1000);
-  return d.toISOString().slice(0, 10);
-}
 function clampInt(n, min, max) {
   const x = Number(n);
   if (!Number.isFinite(x)) return null;
   return Math.max(min, Math.min(max, Math.trunc(x)));
 }
-function chunks(arr, size) {
-  const out = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
 function rand4() {
   return String(Math.floor(1000 + Math.random() * 9000));
+}
+function safeJsonParse(s) {
+  try { return JSON.parse(s); } catch { return null; }
+}
+function jsonObjectOrEmpty(x) {
+  if (x && typeof x === "object") return x;
+  if (typeof x === "string") return safeJsonParse(x) || {};
+  return {};
+}
+function itemsArrayOrNull(x) {
+  if (Array.isArray(x)) return x;
+  if (typeof x === "string") {
+    const parsed = safeJsonParse(x);
+    return Array.isArray(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 // ================= Products (Disk single source of truth) =================
@@ -124,10 +137,6 @@ async function loadProducts() {
 }
 async function saveProducts(products) {
   await writeJsonAtomic(PRODUCTS_FILE, products);
-}
-async function getProductById(id) {
-  const products = await loadProducts();
-  return products.find((p) => String(p.id) === String(id)) || null;
 }
 function normalizeProductPatch(patch) {
   const out = {};
@@ -231,8 +240,7 @@ async function ensureDb() {
     );
   `);
 
-  // --- migrate older tables safely (IMPORTANT) ---
-  // orders
+  // --- migrate older tables safely ---
   await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT now();`);
   await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_fee INTEGER;`);
   await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS total INTEGER;`);
@@ -246,28 +254,19 @@ async function ensureDb() {
   await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS source TEXT;`);
   await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS raw_event JSONB;`);
 
-  // segment_users
   await pool.query(`ALTER TABLE segment_users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT now();`);
   await pool.query(`ALTER TABLE segment_users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT now();`);
   await pool.query(`ALTER TABLE segment_users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP;`);
   await pool.query(`ALTER TABLE segment_users ADD COLUMN IF NOT EXISTS last_liff_at TIMESTAMP;`);
   await pool.query(`ALTER TABLE segment_users ADD COLUMN IF NOT EXISTS last_chat_at TIMESTAMP;`);
 
-  // liff_logs
   await pool.query(`ALTER TABLE liff_logs ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT now();`);
-
-  // message_events
   await pool.query(`ALTER TABLE message_events ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT now();`);
-
-  // line_users
   await pool.query(`ALTER TABLE line_users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT now();`);
   await pool.query(`ALTER TABLE line_users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT now();`);
-
-  // addresses
   await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT now();`);
   await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS member_code TEXT;`);
 
-  // indexes (created_atが無いと落ちてたので migrate後に作る)
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at DESC);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_msg_events_created_at ON message_events(created_at DESC);`);
@@ -353,6 +352,7 @@ function isOriginalSet(item) {
 function isAkasha6(item) {
   const id = String(item?.id || "");
   const name = String(item?.name || "");
+  // ✅ 久助は “あかしゃ扱い”
   if (id === "kusuke-250" || /久助/.test(name)) return true;
   return /(のりあかしゃ|うずあかしゃ|潮あかしゃ|松あかしゃ|ごまあかしゃ|磯あかしゃ|いそあかしゃ)/.test(name);
 }
@@ -443,14 +443,14 @@ app.get("/api/products", async (req, res) => {
   }
 });
 
-// 送料計算（統一）: {items, prefecture} -> {ok, fee, size, region}
+// 送料計算（統一）: {items, prefecture|address.prefecture} -> {ok, fee, size, region}
 app.post("/api/shipping", async (req, res) => {
   try {
     const { items, prefecture, address } = req.body || {};
     const pref = String(prefecture || address?.prefecture || address?.pref || "").trim();
     if (!pref) return res.status(400).json({ ok: false, error: "prefecture is required" });
 
-    const r = calcShippingUnified(items, pref);
+    const r = calcShippingUnified(itemsArrayOrNull(items) || items, pref);
     res.json({ ok: true, fee: r.fee, size: r.size, region: r.region });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e?.message || e) });
@@ -544,30 +544,37 @@ app.post("/api/address/save", async (req, res) => {
 app.post("/api/order/complete", async (req, res) => {
   try {
     const body = req.body || {};
-    const items = Array.isArray(body.items) ? body.items : [];
+
+    // ✅ items は「配列」でも「JSON文字列」でも受ける（壊れてたら400で返す）
+    let items = Array.isArray(body.items) ? body.items : itemsArrayOrNull(body.items);
+    if (!Array.isArray(items)) items = [];
+
     const userId = String(body.lineUserId || "").trim();
-    const address = body.address || {};
+    const address = jsonObjectOrEmpty(body.address);
 
     if (!items.length) return res.status(400).json({ ok: false, error: "items is required" });
     if (!userId) return res.status(400).json({ ok: false, error: "lineUserId is required" });
 
     const name = String(address.name || "").trim();
-    const phone = String(address.phone || "").trim();
-    const postal = String(address.postal || "").trim();
-    const pref = String(address.prefecture || "").trim();
+    const phone = String(address.phone || address.tel || "").trim();
+    const postal = String(address.postal || address.zip || "").trim();
+    const pref = String(address.prefecture || address.pref || "").trim();
     const city = String(address.city || "").trim();
-    const addr1 = String(address.address1 || "").trim();
-    const addr2 = String(address.address2 || "").trim();
+    const addr1 = String(address.address1 || address.addr1 || "").trim();
+    const addr2 = String(address.address2 || address.addr2 || "").trim();
     if (!name || !phone || !postal || !pref || !city || !addr1) {
       return res.status(400).json({ ok: false, error: "address is incomplete" });
     }
 
+    // ✅ raw_event: 文字列が来ても落ちない
+    const rawEvent = jsonObjectOrEmpty(body.raw_event ?? body);
+
     // サーバ側で送料を再計算（改ざん防止）
     const normItems = items.map((it) => ({
-      id: String(it.id || "").trim(),
-      name: String(it.name || "").trim(),
-      qty: clampInt(it.qty, 1, 99) || 0,
-      price: Number(it.price || 0),
+      id: String(it?.id || it?.productId || "").trim(),
+      name: String(it?.name || "").trim(),
+      qty: clampInt(it?.qty ?? it?.quantity, 1, 99) || 0,
+      price: Number(it?.price || 0),
     })).filter((it) => it.id && it.qty > 0);
 
     if (!normItems.length) return res.status(400).json({ ok: false, error: "invalid items" });
@@ -579,6 +586,7 @@ app.post("/api/order/complete", async (req, res) => {
 
     // 在庫減算（Disk products.json）
     const products = await loadProducts();
+
     for (const it of normItems) {
       const idx = products.findIndex((p) => String(p.id) === String(it.id));
       if (idx < 0) return res.status(400).json({ ok: false, error: `product not found: ${it.id}` });
@@ -591,19 +599,21 @@ app.post("/api/order/complete", async (req, res) => {
     }
     await saveProducts(products);
 
-    // DB保存
+    // DB保存（✅ JSON.stringify しない。配列/オブジェクトのまま渡す）
     let orderId = null;
     if (pool) {
       const r = await pool.query(
         `
-        INSERT INTO orders (user_id, source, items, total, shipping_fee, payment_method, status, name, zip, pref, address, raw_event)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        INSERT INTO orders
+          (user_id, source, items, total, shipping_fee, payment_method, status, name, zip, pref, address, raw_event)
+        VALUES
+          ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
         RETURNING id
         `,
         [
           userId,
           "liff",
-          normItems,
+          normItems, // ★配列のまま
           total,
           ship.fee,
           "cod",
@@ -612,7 +622,7 @@ app.post("/api/order/complete", async (req, res) => {
           postal,
           pref,
           `${city}${addr1}${addr2 ? " " + addr2 : ""}`,
-          body || {},
+          rawEvent,  // ★objectのまま
         ]
       );
       orderId = r.rows[0]?.id ?? null;
@@ -682,7 +692,7 @@ app.get("/admin", (req, res) => {
   res.type("html").send(`<html><body>admin ok</body></html>`);
 });
 
-// ================= LINE bot (既存挙動はそのまま) =================
+// ================= LINE bot (既存挙動はそのまま：最低限) =================
 const sessions = new Map();
 const SESSION_TTL_MS = 20 * 60 * 1000;
 
@@ -730,11 +740,15 @@ async function handleEvent(ev) {
 
   if (text === "直接注文") {
     await touchUser(userId, "chat");
-    const products = await loadProducts();
     return client.replyMessage(ev.replyToken, { type: "text", text: `商品一覧はミニアプリをご利用ください。` });
   }
 
-  // ここは必要ならあなたの既存Flex版を戻してOK（今回は省略）
+  if (text === "久助") {
+    await touchUser(userId, "chat");
+    return client.replyMessage(ev.replyToken, { type: "text", text: `久助のご注文はミニアプリからお願いします。` });
+  }
+
+  // 必要なら既存Flex版をここへ戻してOK
 }
 
 // ================= Start =================

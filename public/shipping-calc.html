@@ -18,7 +18,6 @@
                   border-radius:8px; border:1px solid #ccc; }
   button { width:100%; padding:12px; font-size:16px; border-radius:10px;
            border:0; background:#0b3a53; color:#fff; font-weight:700; }
-  button.sub { background:#e5e7eb; color:#333; margin-top:6px; }
   .row { display:grid; grid-template-columns: 1fr 90px 40px; gap:6px; margin-bottom:6px; }
   .del { background:#fee2e2; color:#991b1b; border-radius:8px; border:0; }
   .result { font-size:15px; line-height:1.7; }
@@ -62,8 +61,7 @@
 <div class="card">
   <label>商品</label>
   <div id="items"></div>
-
-  <button class="sub" type="button" onclick="addItem()">＋ 商品を追加</button>
+  <div class="muted">※明細は「×」で行を削除できます</div>
 </div>
 
 <div class="card">
@@ -84,6 +82,11 @@ const PRODUCT_OPTIONS = [
   { id: "other", label: "その他商品" }
 ];
 
+/**
+ * ★要望対応：商品追加ボタンを廃止
+ * - 初期表示で「3行」出しておく（必要なら×で削除）
+ * - 追加はできない
+ */
 function addItem() {
   const row = document.createElement("div");
   row.className = "row";
@@ -97,10 +100,16 @@ function addItem() {
   document.getElementById("items").appendChild(row);
 }
 
-addItem(); // 初期1行
+// 初期行（追加ボタン無しの代替）
+// 必要なければ×で減らせる
+addItem();
+addItem();
+addItem();
 
 async function calc() {
+  const result = document.getElementById("result");
   const pref = document.getElementById("pref").value;
+
   if (!pref) {
     result.textContent = "都道府県を選択してください。";
     return;
@@ -108,7 +117,7 @@ async function calc() {
 
   const rows = document.querySelectorAll("#items .row");
   if (!rows.length) {
-    result.textContent = "商品を追加してください。";
+    result.textContent = "商品行がありません。×で消しすぎた場合はページを再読み込みしてください。";
     return;
   }
 
@@ -119,20 +128,30 @@ async function calc() {
     if (qty > 0) items.push({ product_id: id, qty });
   });
 
+  if (!items.length) {
+    result.textContent = "数量を1以上で入力してください。";
+    return;
+  }
+
   try {
     const res = await fetch("/api/shipping/quote", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pref, items })
     });
+
     const d = await res.json();
+    if (!res.ok) {
+      result.textContent = d?.error || "送料を取得できませんでした。";
+      return;
+    }
 
     result.innerHTML =
       `お届け先：<b>${d.region}</b><br>` +
       `サイズ：<b>${d.size}</b><br>` +
       `<div class="hr"></div>` +
-      `送料：<b>${d.shipping_fee.toLocaleString()}円</b><br>` +
-      `<div class="big">総額の目安：${d.total.toLocaleString()}円</div>` +
+      `送料：<b>${Number(d.shipping_fee).toLocaleString()}円</b><br>` +
+      `<div class="big">総額の目安：${Number(d.total).toLocaleString()}円</div>` +
       `<div class="muted">※オンライン注文と同一計算</div>`;
   } catch (e) {
     result.textContent = "送料を取得できませんでした。";

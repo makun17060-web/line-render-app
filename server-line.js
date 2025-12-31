@@ -1246,5 +1246,6 @@ async function handleEvent(ev) {
   }
 
   // ★Render 対策：0.0.0.0 で待つ
-  app.listen(PORT, "0.0.0.0", () => console.log(`server listening on ${PORT}`));
+app.listen(PORT, "0.0.0.0", () => console.log(`server listening on ${PORT}`));
+
 })();

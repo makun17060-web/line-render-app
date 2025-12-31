@@ -1,15 +1,19 @@
 /**
  * server.js — フル機能版（Stripe + ミニアプリ + 画像管理 + 住所DB + セグメント配信 + 注文DB永続化）
  *
- * ✅ 重要（今回の要望）
+ * ✅ 重要（あなたの要望）
  * - UPLOAD_DIR だけ Disk に保存（再デプロイで画像が消えない）
  *   - 画像保存先：UPLOAD_DIR=/var/data/uploads（デフォルト）
  *   - 静的配信：/public/uploads → Disk の UPLOAD_DIR を参照（重要）
  *
- * ✅ 今回の追加修正（超重要）
+ * ✅ 重要（永続データ）
  * - products.json / sessions.json / logs などの DATA も Disk に保存（再デプロイでもズレない）
  *   - データ保存先：DATA_DIR=/var/data（デフォルト）
- *   - これで「管理画面で更新した商品」が確実に永続化します
+ *
+ * ✅ 今回の設計改善（超重要）
+ * - 「久助」も他の商品と同じく products.json に従う（価格固定ロジックを撤廃）
+ *   - 管理APIで久助の price / stock / volume を自由に変更できる
+ *   - チャット案内の単価表示も products.json の値を表示
  *
  * ✅ 既存仕様（維持）
  * - 起動キーワードは「直接注文」と「久助」だけ（それ以外は無反応）
@@ -17,7 +21,7 @@
  * - 公式アカウント受信は管理者へ通知（返信はしない）
  * - /api/admin/orders/notify-shipped はトップレベル
  *
- * ✅ 今回の修正（重要）
+ * ✅ 既存の修正（重要）
  * - 管理画面の抽出人数 ＝ DBで数えた userid数 ＝ 実送信対象 が必ず一致するように
  *   セグメント抽出ロジックを「1本化」
  *   - GET /api/admin/segment/users
@@ -25,18 +29,18 @@
  *   - POST /api/admin/segment/send
  *   が同一の抽出条件を共有
  *
- * ✅ 今回追加（プロフィール保存）
+ * ✅ 追加（プロフィール保存）
  * - LINEプロフィール（display_name / picture_url / status_message）をDBへ保存
  *   - テーブル：line_users
  *   - follow は強制更新
  *   - 通常イベントでは 30日以上古い/未登録の時だけ更新（取りすぎ防止）
  * - 管理API：GET /api/admin/users（ユーザー一覧 + display_name）
  *
- * ✅ 今回追加（あなたの要望）：友だち追加＝DBでも100%一致（“以後”）
+ * ✅ 追加（友だち追加＝DBでも100%一致）
  * - follow/unfollow をDBに正式保存：follow_events / unfollow_events
  * - 管理API：GET /api/admin/follow/stats（今日/昨日/7日/30日 + 純増）
  *
- * ✅ 今回追加（リッチメニュー：店頭受取を postback で開始）
+ * ✅ 追加（リッチメニュー：店頭受取を postback で開始）
  * - リッチメニューの「店頭受取」ボタンを postback にして “トークに文字を出さず” 開始
  *   postback data: action=pickup_start
  * - pickup_start で「直接注文」を内部開始しつつ “店頭受取に固定”
@@ -55,7 +59,7 @@
  * LINE_CHANNEL_ID（LIFF idToken検証するなら）
  * PUBLIC_ADDRESS_LOOKUP_TOKEN（公開住所取得APIを使うなら）
  *
- * --- 今回追加（推奨） .env ---
+ * --- 推奨 .env ---
  * UPLOAD_DIR=/var/data/uploads
  * DATA_DIR=/var/data
  *
@@ -107,9 +111,6 @@ const PUBLIC_ADDRESS_LOOKUP_TOKEN = (process.env.PUBLIC_ADDRESS_LOOKUP_TOKEN || 
 
 const COD_FEE = Number(process.env.COD_FEE || 330);
 
-// 久助は 250円固定（運用メモに合わせる）
-const KUSUKE_UNIT_PRICE = 340;
-
 // セグメント設定
 const LIFF_OPEN_KIND_MODE = (process.env.LIFF_OPEN_KIND_MODE || "all").trim(); // "all" or "keep"
 const SEGMENT_PUSH_LIMIT = Math.min(20000, Math.max(1, Number(process.env.SEGMENT_PUSH_LIMIT || 5000)));
@@ -119,7 +120,7 @@ const SEGMENT_CHUNK_SIZE = Math.min(500, Math.max(50, Number(process.env.SEGMENT
 const PROFILE_REFRESH_DAYS = Math.min(365, Math.max(1, Number(process.env.PROFILE_REFRESH_DAYS || 30)));
 
 // ★店頭受取 postback の data（リッチメニュー）
-const PICKUP_POSTBACK_DATA = "action=pickup_start";
+const PICKUP_POSTBACK_DATA = (process.env.PICKUP_POSTBACK_DATA || "action=pickup_start").trim();
 
 if (!config.channelAccessToken || !config.channelSecret || !LIFF_ID || (!ADMIN_API_TOKEN_ENV && !ADMIN_CODE_ENV)) {
   console.error(`ERROR: 必須envが不足しています
@@ -177,10 +178,10 @@ const PUBLIC_DIR = path.join(__dirname, "public");
 // Git側 data（もし残っていても読むのは主に “移行用”）
 const GIT_DATA_DIR = path.join(__dirname, "data");
 
-// ★Disk側 data（永続化）…ここが今回のキモ
+// ★Disk側 data（永続化）
 const DISK_DATA_DIR = path.resolve(process.env.DATA_DIR || "/var/data");
 
-// ★ここが重要：UPLOAD_DIRは env を優先（Disk）
+// ★UPLOAD_DIRは env を優先（Disk）
 const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || "/var/data/uploads");
 
 if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
@@ -190,7 +191,7 @@ if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 // 既存の public 配信（HTML/JS/CSS 等）
 app.use("/public", express.static(PUBLIC_DIR));
-// ★ここが重要：/public/uploads は Disk の UPLOAD_DIR を配信する
+// ★/public/uploads は Disk の UPLOAD_DIR を配信
 app.use("/public/uploads", express.static(UPLOAD_DIR));
 
 // ★Disk永続ファイル
@@ -235,7 +236,6 @@ function tryCopyFileIfMissing(dst, src) {
 
 // ★Diskに products.json が無ければ、Git側があれば移行、それも無ければ seed
 if (!fs.existsSync(PRODUCTS_PATH)) {
-  // 旧Git data/products.json があれば Diskへ移行
   const gitProducts = path.join(GIT_DATA_DIR, "products.json");
   const migrated = tryCopyFileIfMissing(PRODUCTS_PATH, gitProducts);
 
@@ -244,7 +244,7 @@ if (!fs.existsSync(PRODUCTS_PATH)) {
       {
         id: "kusuke-250",
         name: "久助（えびせん）",
-        price: KUSUKE_UNIT_PRICE,
+        price: 250, // ← 初期値（ここは運用で自由に変更OK）
         stock: 30,
         volume: "約○○g",
         desc: "お得な割れせん。",
@@ -441,7 +441,7 @@ function toPublicImageUrl(raw) {
 }
 
 // =============== 商品・在庫 ===============
-const HIDE_PRODUCT_IDS = new Set([]);
+const HIDE_PRODUCT_IDS = new Set([]); // 必要ならここに追加で非表示化
 const LOW_STOCK_THRESHOLD = 5;
 
 function findProductById(id) {
@@ -648,7 +648,7 @@ async function ensureDbSchema() {
   await p.query(`CREATE INDEX IF NOT EXISTS idx_line_users_last_seen ON line_users(last_seen DESC);`);
   await p.query(`CREATE INDEX IF NOT EXISTS idx_line_users_profile_updated_at ON line_users(profile_updated_at DESC);`);
 
-  // ★友だち追加/ブロック ログ（event_ts + raw_event）
+  // ★友だち追加/ブロック ログ
   await p.query(`
     CREATE TABLE IF NOT EXISTS follow_events (
       id        BIGSERIAL PRIMARY KEY,
@@ -1281,8 +1281,6 @@ app.post("/api/liff/open", async (req, res) => {
 
     await touchUser(userId, "liff");
 
-    // ★プロフィール更新（LIFF open でも userId が来るなら拾う）
-    // ev が無いので profile取得はできないことが多い → last_seen 更新目的
     try {
       if (pool) await dbUpsertLineUser(userId, {}, { forceProfile: false });
       else fileUpsertLineUser(userId, {}, {});
@@ -1385,7 +1383,7 @@ app.get("/api/public/address-by-code", async (req, res) => {
   }
 });
 
-// =============== ミニアプリ：商品一覧（久助除外） ===============
+// =============== ミニアプリ：商品一覧 ===============
 app.get("/api/products", (_req, res) => {
   try {
     const items = readProducts()
@@ -1477,7 +1475,6 @@ app.post("/api/shipping/quote", (req, res) => {
     if (!items.length) return res.status(400).json({ ok: false, error: "no_valid_items" });
 
     const itemsTotal = items.reduce((s, it) => s + (Number(it.price || 0) * Number(it.qty || 0)), 0);
-
     const { region, size, shipping } = calcShippingUnified(items, address);
 
     const shippingFee = Number(shipping || 0);
@@ -1708,6 +1705,7 @@ app.get("/api/admin/products", (req, res) => {
   return res.json({ ok: true, products: items });
 });
 
+// ✅ 久助も含めて price/stock/volume を自由に更新できる
 app.post("/api/admin/products/update", (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
@@ -1722,7 +1720,8 @@ app.post("/api/admin/products/update", (req, res) => {
     const image = req.body?.image != null ? String(req.body.image) : product.image;
     const volume = req.body?.volume != null ? String(req.body.volume) : (product.volume || "");
 
-    const price = id === "kusuke-250" ? KUSUKE_UNIT_PRICE : req.body?.price != null ? Number(req.body.price) : product.price;
+    // ★ここが変更点：久助も含めて price は request か既存値を採用（強制上書きしない）
+    const price = req.body?.price != null ? Number(req.body.price) : product.price;
     const stock = req.body?.stock != null ? Number(req.body.stock) : product.stock;
 
     products[idx] = { ...product, name, desc, image, volume, price, stock };
@@ -1777,7 +1776,6 @@ function readLogLines(filePath, limit = 100) {
 function yyyymmddFromIso(ts) {
   const d = new Date(ts);
   if (!Number.isFinite(d.getTime())) return "";
-
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
@@ -1997,7 +1995,7 @@ app.post("/api/admin/segment/send", async (req, res) => {
 });
 
 // =====================================
-// ★管理：友だち追加/ブロック 統計（event_tsで集計）
+// ★管理：友だち追加/ブロック 統計
 // =====================================
 app.get("/api/admin/follow/stats", async (req, res) => {
   if (!requireAdmin(req, res)) return;
@@ -2085,8 +2083,6 @@ function parseQuery(data) {
     });
   return o;
 }
-
-// ★postback data を URLSearchParams で解析（action=pickup_start など）
 function parsePostbackParams(data) {
   try {
     const s = String(data || "").trim();
@@ -2372,9 +2368,6 @@ function appendJsonl(filePath, obj) {
   } catch {}
 }
 
-/** =========================================================
- *  ★ 管理者通知（公式アカウント受信 → ADMIN_USER_IDへPush）
- * ========================================================= */
 function eventSourceText(ev) {
   const s = ev?.source || {};
   const type = s.type || "unknown";
@@ -2408,9 +2401,6 @@ async function notifyAdminIncomingMessage(ev, bodyText, extra = {}) {
   }
 }
 
-// ================================
-// ★ follow/unfollow をDBに正式保存（event_ts + raw_event）
-// ================================
 async function logFollowUnfollow(ev) {
   if (!pool) return;
 
@@ -2450,10 +2440,8 @@ async function logFollowUnfollow(ev) {
 async function handleEvent(ev) {
   const userId = ev?.source?.userId || "";
 
-  // ★最初に follow/unfollow をログ（失敗しても本処理は続行）
   try { await logFollowUnfollow(ev); } catch (e) { console.error("logFollowUnfollow:", e?.message || e); }
 
-  // ★まず台帳更新（seen）＋プロフィール保存（followは強制更新）
   if (userId) {
     try { await touchUser(userId, "seen"); } catch {}
     try {
@@ -2462,9 +2450,7 @@ async function handleEvent(ev) {
     } catch {}
   }
 
-  // ==============================
   // 会員コード照会（チャット）
-  // ==============================
   if (ev.type === "message" && ev.message?.type === "text" && ev.message.text.trim() === "会員コード") {
     try {
       if (!pool) {
@@ -2491,9 +2477,7 @@ async function handleEvent(ev) {
     }
   }
 
-  // ===========================
-  // ★友だち追加（follow）
-  // ===========================
+  // 友だち追加
   if (ev.type === "follow") {
     if (userId) {
       if (pool) {
@@ -2519,16 +2503,9 @@ async function handleEvent(ev) {
     return client.replyMessage(ev.replyToken, { type: "text", text: msg });
   }
 
-  // ===========================
-  // unfollow（ブロック）：返信できないので何もしない
-  // ===========================
-  if (ev.type === "unfollow") {
-    return null;
-  }
+  if (ev.type === "unfollow") return null;
 
-  // ===========================
-  // テキスト以外も管理者へ通知（返信はしない）
-  // ===========================
+  // テキスト以外は管理者へ通知（返信なし）
   if (ev.type === "message" && ev.message && ev.message.type && ev.message.type !== "text") {
     const m = ev.message;
 
@@ -2554,14 +2531,11 @@ async function handleEvent(ev) {
     return null;
   }
 
-  // ===========================
   // ✅ テキストメッセージ
-  // ===========================
   if (ev.type === "message" && ev.message?.type === "text") {
     const text = String(ev.message.text || "").trim();
     const sess = userId ? getSession(userId) : null;
 
-    // ★管理者通知：受信テキストは全部転送
     try { await notifyAdminIncomingMessage(ev, text, { kind: "text", session: sess?.mode || "" }); } catch {}
 
     // --- セッション入力 ---
@@ -2610,12 +2584,14 @@ async function handleEvent(ev) {
       return client.replyMessage(ev.replyToken, [{ type: "text", text: "直接注文を開始します。商品一覧です。" }, productsFlex()]);
     }
 
-    // ② 久助
+    // ② 久助（単価は products.json の現在値を表示）
     if (text === "久助") {
       await touchUser(userId, "chat");
+      const { product } = findProductById("kusuke-250");
+      const unit = product ? yen(product.price) : "（不明）";
       const msg =
         "久助のご注文を開始します。\n" +
-        `単価：${yen(KUSUKE_UNIT_PRICE)}（税込）\n\n` +
+        `単価：${unit}（税込）\n\n` +
         "「久助 3」のように数量を入力してください。";
       return client.replyMessage(ev.replyToken, { type: "text", text: msg });
     }
@@ -2671,7 +2647,6 @@ async function handleEvent(ev) {
 
       if (data.trim() === PICKUP_POSTBACK_DATA || action === "pickup_start") {
         setSession(userId, { pickupOnly: true });
-
         return client.replyMessage(ev.replyToken, [
           { type: "text", text: "店頭受取でご注文を開始します。商品を選んでください。" },
           productsFlex(),
@@ -2755,7 +2730,6 @@ async function handleEvent(ev) {
       const pickupName = String(q.pickupName || "").trim();
       const product = loadProductByOrderId(id);
 
-      // （在庫処理）
       if (!String(product.id).startsWith("other:")) {
         const { product: p } = findProductById(product.id);
         if (!p) return client.replyMessage(ev.replyToken, { type: "text", text: "商品が見つかりません。" });
@@ -2892,7 +2866,6 @@ async function handleEvent(ev) {
         (method === "delivery" && !address ? "\n※住所が未登録です。住所登録（LIFF）をお願いします。\n" : "");
 
       clearSession(userId);
-
       return client.replyMessage(ev.replyToken, { type: "text", text: userMsg });
     }
 
@@ -2932,7 +2905,7 @@ function loadProductByOrderId(id) {
   const { product } = findProductById(id);
   if (!product) return { id, name: id, price: 0, stock: 0, image: "", volume: "" };
 
-  if (id === "kusuke-250") return { ...product, price: KUSUKE_UNIT_PRICE };
+  // ★ここが変更点：久助も特別扱いしない（products.json の値をそのまま）
   return product;
 }
 

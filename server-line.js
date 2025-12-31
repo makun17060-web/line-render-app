@@ -6,10 +6,10 @@
  *   - 画像保存先：UPLOAD_DIR=/var/data/uploads（デフォルト）
  *   - 静的配信：/public/uploads → Disk の UPLOAD_DIR を参照（重要）
  *
- * - Flexにも「内容量（volume）」を表示
- *   - 商品一覧Flex：内容量行を追加
- *   - 最終確認Flex：内容量行を追加
- *   - 管理API：/api/admin/products/update で volume を保存できるように追加
+ * ✅ 今回の追加修正（超重要）
+ * - products.json / sessions.json / logs などの DATA も Disk に保存（再デプロイでもズレない）
+ *   - データ保存先：DATA_DIR=/var/data（デフォルト）
+ *   - これで「管理画面で更新した商品」が確実に永続化します
  *
  * ✅ 既存仕様（維持）
  * - 起動キーワードは「直接注文」と「久助」だけ（それ以外は無反応）
@@ -57,6 +57,12 @@
  *
  * --- 今回追加（推奨） .env ---
  * UPLOAD_DIR=/var/data/uploads
+ * DATA_DIR=/var/data
+ *
+ * --- 重要：オリジナルセットID ---
+ * あなたのproducts.jsonが original-set-2000 なので、デフォルトもそれに合わせています。
+ * 必要なら env で上書き：
+ * ORIGINAL_SET_PRODUCT_ID=original-set-2000
  */
 
 "use strict";
@@ -165,14 +171,21 @@ app.get(["/liff", "/liff/"], (_req, res) => {
 });
 
 // =============== ディレクトリ & ファイル ===============
-const DATA_DIR = path.join(__dirname, "data");
+// public 配信用（Git側）
 const PUBLIC_DIR = path.join(__dirname, "public");
+
+// Git側 data（もし残っていても読むのは主に “移行用”）
+const GIT_DATA_DIR = path.join(__dirname, "data");
+
+// ★Disk側 data（永続化）…ここが今回のキモ
+const DISK_DATA_DIR = path.resolve(process.env.DATA_DIR || "/var/data");
 
 // ★ここが重要：UPLOAD_DIRは env を優先（Disk）
 const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || "/var/data/uploads");
 
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
+if (!fs.existsSync(GIT_DATA_DIR)) fs.mkdirSync(GIT_DATA_DIR, { recursive: true });
+if (!fs.existsSync(DISK_DATA_DIR)) fs.mkdirSync(DISK_DATA_DIR, { recursive: true });
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 // 既存の public 配信（HTML/JS/CSS 等）
@@ -180,21 +193,22 @@ app.use("/public", express.static(PUBLIC_DIR));
 // ★ここが重要：/public/uploads は Disk の UPLOAD_DIR を配信する
 app.use("/public/uploads", express.static(UPLOAD_DIR));
 
-const PRODUCTS_PATH = path.join(DATA_DIR, "products.json");
-const ORDERS_LOG = path.join(DATA_DIR, "orders.log");
-const RESERVATIONS_LOG = path.join(DATA_DIR, "reservations.log");
-const MESSAGES_LOG = path.join(DATA_DIR, "messages.log");
-const SESSIONS_PATH = path.join(DATA_DIR, "sessions.json");
-const NOTIFY_STATE_PATH = path.join(DATA_DIR, "notify_state.json");
-const STOCK_LOG = path.join(DATA_DIR, "stock.log");
-const SEGMENT_USERS_PATH = path.join(DATA_DIR, "segment_users.json");
+// ★Disk永続ファイル
+const PRODUCTS_PATH = path.join(DISK_DATA_DIR, "products.json");
+const ORDERS_LOG = path.join(DISK_DATA_DIR, "orders.log");
+const RESERVATIONS_LOG = path.join(DISK_DATA_DIR, "reservations.log");
+const MESSAGES_LOG = path.join(DISK_DATA_DIR, "messages.log");
+const SESSIONS_PATH = path.join(DISK_DATA_DIR, "sessions.json");
+const NOTIFY_STATE_PATH = path.join(DISK_DATA_DIR, "notify_state.json");
+const STOCK_LOG = path.join(DISK_DATA_DIR, "stock.log");
+const SEGMENT_USERS_PATH = path.join(DISK_DATA_DIR, "segment_users.json");
 
-// ★プロフィール（DBが無い時の保険：ファイル）
-const LINE_USERS_PATH = path.join(DATA_DIR, "line_users.json");
+// ★プロフィール（DBが無い時の保険：ファイル）も Disk
+const LINE_USERS_PATH = path.join(DISK_DATA_DIR, "line_users.json");
 
-// 互換（旧JSON）
-const ADDRESSES_PATH = path.join(DATA_DIR, "addresses.json");
-const PHONE_ADDRESSES_PATH = path.join(DATA_DIR, "phone-addresses.json");
+// 互換（旧JSON）も Disk 側へ
+const ADDRESSES_PATH = path.join(DISK_DATA_DIR, "addresses.json");
+const PHONE_ADDRESSES_PATH = path.join(DISK_DATA_DIR, "phone-addresses.json");
 
 function safeReadJSON(p, fb) {
   try {
@@ -206,23 +220,129 @@ function safeReadJSON(p, fb) {
 function safeWriteJSON(p, obj) {
   fs.writeFileSync(p, JSON.stringify(obj, null, 2), "utf8");
 }
-
-if (!fs.existsSync(PRODUCTS_PATH)) {
-  const sample = [
-    { id: "original-set-2100", name: "磯屋オリジナルセット", price: 2100, stock: 10, desc: "人気の詰め合わせ。", volume: "（例）8袋入り", image: "" },
-    { id: "nori-square-300", name: "四角のりせん", price: 300, stock: 10, desc: "のり香る角せん。", volume: "（例）1袋 80g", image: "" },
-    { id: "premium-ebi-400", name: "プレミアムえびせん", price: 400, stock: 5, desc: "贅沢な旨み。", volume: "（例）1袋 70g", image: "" },
-    // 久助はミニアプリ一覧から除外。チャット購入専用（単価250固定）
-    { id: "kusuke-250", name: "久助（えびせん）", price: KUSUKE_UNIT_PRICE, stock: 20, desc: "お得な割れせん。", volume: "", image: "" },
-  ];
-  safeWriteJSON(PRODUCTS_PATH, sample);
+function tryCopyFileIfMissing(dst, src) {
+  try {
+    if (fs.existsSync(dst)) return false;
+    if (!fs.existsSync(src)) return false;
+    fs.copyFileSync(src, dst);
+    console.log(`[BOOT] migrated ${path.basename(src)} -> disk (${dst})`);
+    return true;
+  } catch (e) {
+    console.warn("[BOOT] migrate skipped:", e?.message || e);
+    return false;
+  }
 }
-if (!fs.existsSync(SESSIONS_PATH)) safeWriteJSON(SESSIONS_PATH, {});
-if (!fs.existsSync(NOTIFY_STATE_PATH)) safeWriteJSON(NOTIFY_STATE_PATH, {});
-if (!fs.existsSync(SEGMENT_USERS_PATH)) safeWriteJSON(SEGMENT_USERS_PATH, {});
-if (!fs.existsSync(LINE_USERS_PATH)) safeWriteJSON(LINE_USERS_PATH, {});
-if (!fs.existsSync(ADDRESSES_PATH)) safeWriteJSON(ADDRESSES_PATH, {});
-if (!fs.existsSync(PHONE_ADDRESSES_PATH)) safeWriteJSON(PHONE_ADDRESSES_PATH, {});
+
+// ★Diskに products.json が無ければ、Git側があれば移行、それも無ければ seed
+if (!fs.existsSync(PRODUCTS_PATH)) {
+  // 旧Git data/products.json があれば Diskへ移行
+  const gitProducts = path.join(GIT_DATA_DIR, "products.json");
+  const migrated = tryCopyFileIfMissing(PRODUCTS_PATH, gitProducts);
+
+  if (!migrated) {
+    const seed = [
+      {
+        id: "kusuke-250",
+        name: "久助（えびせん）",
+        price: KUSUKE_UNIT_PRICE,
+        stock: 30,
+        volume: "約○○g",
+        desc: "お得な割れせん。",
+        image: "",
+      },
+      {
+        id: "nori-akasha-340",
+        name: "のりあかしゃ",
+        price: 340,
+        stock: 20,
+        volume: "80g",
+        desc: "海苔の風味豊かなえびせんべい",
+        image: "1766470818363_noriakasya90.png",
+      },
+      {
+        id: "uzu-akasha-340",
+        name: "うずあかしゃ",
+        price: 340,
+        stock: 10,
+        volume: "80g",
+        desc: "渦を巻いたえびせんべい",
+        image: "1766470864228__.jpg",
+      },
+      {
+        id: "shio-akasha-340",
+        name: "潮あかしゃ",
+        price: 340,
+        stock: 5,
+        volume: "80g",
+        desc: "えびせんべいにあおさをトッピング",
+        image: "1766470752238_1201_IMG_0076.jpg",
+      },
+      {
+        id: "matsu-akasha-340",
+        name: "松あかしゃ",
+        price: 340,
+        stock: 30,
+        volume: "80g",
+        desc: "海老をたっぷり使用した高級えびせんべい",
+        image: "1766470721680_2_000000000002.png",
+      },
+      {
+        id: "iso-akasha-340",
+        name: "磯あかしゃ",
+        price: 340,
+        stock: 30,
+        volume: "80g",
+        desc: "海老せんべいに高級海苔をトッピング",
+        image: "1766470910323__.jpg",
+      },
+      {
+        id: "goma-akasha-340",
+        name: "ごまあかしゃ",
+        price: 340,
+        stock: 30,
+        volume: "80g",
+        desc: "海老せんべいに風味豊かなごまをトッピング",
+        image: "1766470974602__.jpg",
+      },
+      {
+        id: "original-set-2000",
+        name: "磯屋オリジナルセット",
+        price: 2000,
+        stock: 30,
+        volume: "",
+        desc: "6袋をセットにしたオリジナル",
+        image: "1766470786708_akashi_item.jpg",
+      },
+    ];
+    safeWriteJSON(PRODUCTS_PATH, seed);
+    console.log("[BOOT] seeded products.json on disk");
+  }
+}
+
+if (!fs.existsSync(SESSIONS_PATH)) {
+  const migrated = tryCopyFileIfMissing(SESSIONS_PATH, path.join(GIT_DATA_DIR, "sessions.json"));
+  if (!migrated) safeWriteJSON(SESSIONS_PATH, {});
+}
+if (!fs.existsSync(NOTIFY_STATE_PATH)) {
+  const migrated = tryCopyFileIfMissing(NOTIFY_STATE_PATH, path.join(GIT_DATA_DIR, "notify_state.json"));
+  if (!migrated) safeWriteJSON(NOTIFY_STATE_PATH, {});
+}
+if (!fs.existsSync(SEGMENT_USERS_PATH)) {
+  const migrated = tryCopyFileIfMissing(SEGMENT_USERS_PATH, path.join(GIT_DATA_DIR, "segment_users.json"));
+  if (!migrated) safeWriteJSON(SEGMENT_USERS_PATH, {});
+}
+if (!fs.existsSync(LINE_USERS_PATH)) {
+  const migrated = tryCopyFileIfMissing(LINE_USERS_PATH, path.join(GIT_DATA_DIR, "line_users.json"));
+  if (!migrated) safeWriteJSON(LINE_USERS_PATH, {});
+}
+if (!fs.existsSync(ADDRESSES_PATH)) {
+  const migrated = tryCopyFileIfMissing(ADDRESSES_PATH, path.join(GIT_DATA_DIR, "addresses.json"));
+  if (!migrated) safeWriteJSON(ADDRESSES_PATH, {});
+}
+if (!fs.existsSync(PHONE_ADDRESSES_PATH)) {
+  const migrated = tryCopyFileIfMissing(PHONE_ADDRESSES_PATH, path.join(GIT_DATA_DIR, "phone-addresses.json"));
+  if (!migrated) safeWriteJSON(PHONE_ADDRESSES_PATH, {});
+}
 
 const readProducts = () => safeReadJSON(PRODUCTS_PATH, []);
 const writeProducts = (arr) => safeWriteJSON(PRODUCTS_PATH, arr);
@@ -321,7 +441,7 @@ function toPublicImageUrl(raw) {
 }
 
 // =============== 商品・在庫 ===============
-const HIDE_PRODUCT_IDS = new Set(["kusuke-250"]);
+const HIDE_PRODUCT_IDS = new Set(["kusuke-250"]); // 久助はミニアプリ一覧から除外（仕様）
 const LOW_STOCK_THRESHOLD = 5;
 
 function findProductById(id) {
@@ -376,7 +496,9 @@ const YAMATO_CHUBU_TAXED = {
   "160": { 北海道: 3820, 東北: 3320, 関東: 3020, 中部: 3020, 近畿: 3020, 中国: 3160, 四国: 3160, 九州: 3320, 沖縄: 4680 },
 };
 const SIZE_ORDER = ["60", "80", "100", "120", "140", "160"];
-const ORIGINAL_SET_PRODUCT_ID = (process.env.ORIGINAL_SET_PRODUCT_ID || "original-set-2100").trim();
+
+// ★デフォルトをあなたの products.json に合わせて 2000 に
+const ORIGINAL_SET_PRODUCT_ID = (process.env.ORIGINAL_SET_PRODUCT_ID || "original-set-2000").trim();
 
 function detectRegionFromAddress(address = {}) {
   const pref = String(address.prefecture || address.pref || "").trim();
@@ -408,6 +530,8 @@ function sizeFromAkasha6Qty(qty) {
   if (q <= 18) return "120";
   return "140";
 }
+
+// ★あなたのルール：オリジナルセットは 1個80 / 2個100 / 3-4個120 / 5-6個140 / それ以上160
 function sizeFromOriginalSetQty(qty) {
   const q = Number(qty) || 0;
   if (q <= 0) return null;
@@ -417,6 +541,7 @@ function sizeFromOriginalSetQty(qty) {
   if (q <= 6) return "140";
   return "160";
 }
+
 function sizeFromTotalQty(totalQty) {
   const q = Number(totalQty) || 0;
   if (q <= 1) return "60";
@@ -1126,8 +1251,10 @@ app.get("/api/health", async (_req, res) => {
       STRIPE_SECRET_KEY: !!process.env.STRIPE_SECRET_KEY,
       PUBLIC_BASE_URL: !!PUBLIC_BASE_URL,
       UPLOAD_DIR,
+      DATA_DIR: DISK_DATA_DIR,
       PROFILE_REFRESH_DAYS,
       PICKUP_POSTBACK_DATA,
+      ORIGINAL_SET_PRODUCT_ID,
     },
   });
 });
@@ -1308,13 +1435,8 @@ app.get("/api/shipping/config", (_req, res) => {
     },
   });
 });
+
 // =============== 送料見積（商品選択式：pref + items） ===============
-// HTML側: POST /api/shipping/quote { pref, items:[{product_id, qty}] }
-// - original-set: オリジナルセット（あなたのサイズロジック適用）
-// - akasha: あかしゃシリーズ合計（akasha6判定でサイズロジック適用）
-// - other: その他（合計個数ロジック）
-//
-// 返却: { region, size, shipping_fee, items_total, total }
 app.post("/api/shipping/quote", (req, res) => {
   try {
     const pref = String(req.body?.pref || "").trim();
@@ -1323,17 +1445,14 @@ app.post("/api/shipping/quote", (req, res) => {
     if (!pref) return res.status(400).json({ ok: false, error: "pref_required" });
     if (!itemsIn.length) return res.status(400).json({ ok: false, error: "items_required" });
 
-    // region判定は既存 detectRegionFromAddress を使うので、prefだけ入れた仮住所にする
     const address = { prefecture: pref };
 
-    // products.json から「オリジナルセット」の単価を拾う（他はこの簡易見積では0円扱い）
     const products = readProducts();
     const originalProduct =
       products.find((p) => p.id === ORIGINAL_SET_PRODUCT_ID) ||
       products.find((p) => /磯屋.?オリジナルセ/.test(String(p.name || ""))) ||
       null;
 
-    // items を calcShippingUnified が理解できる形へ変換
     const items = itemsIn
       .map((it) => {
         const pid = String(it?.product_id || "").trim();
@@ -1349,10 +1468,8 @@ app.post("/api/shipping/quote", (req, res) => {
           };
         }
         if (pid === "akasha") {
-          // isAkasha6() は name の正規表現で判定しているので、あかしゃ系の名前を入れる
           return { id: "akasha_bundle", name: "のりあかしゃ", qty, price: 0 };
         }
-        // other
         return { id: "other_bundle", name: "その他商品", qty, price: 0 };
       })
       .filter(Boolean);
@@ -1361,10 +1478,8 @@ app.post("/api/shipping/quote", (req, res) => {
 
     const itemsTotal = items.reduce((s, it) => s + (Number(it.price || 0) * Number(it.qty || 0)), 0);
 
-    // 既存ロジックで送料計算
     const { region, size, shipping } = calcShippingUnified(items, address);
 
-    // region が空だと送料0になるので、ここは明示エラーでもOKだが、いったん返す
     const shippingFee = Number(shipping || 0);
     const total = itemsTotal + shippingFee;
 
@@ -1662,7 +1777,7 @@ function readLogLines(filePath, limit = 100) {
 function yyyymmddFromIso(ts) {
   const d = new Date(ts);
   if (!Number.isFinite(d.getTime())) return "";
-  
+
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
@@ -2359,7 +2474,6 @@ async function handleEvent(ev) {
         });
       }
 
-      // ★codes から取得（住所未登録でも発行できる）
       let c = await dbGetCodesByUserId(userId);
       if (!c?.member_code) c = await dbEnsureCodes(userId);
 
@@ -2551,14 +2665,11 @@ async function handleEvent(ev) {
     if (!userId) return null;
 
     // ★リッチメニュー：店頭受取開始（postback）
-    // data: "action=pickup_start"
     {
       const params = parsePostbackParams(data);
       const action = params.get("action") || "";
 
-      // どちらでも拾えるように（完全一致 or パラメータ解析）
       if (data.trim() === PICKUP_POSTBACK_DATA || action === "pickup_start") {
-        // ★pickupOnly フラグを立てる（この注文中は店頭受取固定）
         setSession(userId, { pickupOnly: true });
 
         return client.replyMessage(ev.replyToken, [
@@ -2586,7 +2697,6 @@ async function handleEvent(ev) {
       const q = parseQuery(data);
       const qty = Number(q.qty || 1);
 
-      // ★pickupOnly のときは「受取方法」を出さず、店頭受取へ固定して次へ
       const sess = getSession(userId);
       if (sess?.pickupOnly) {
         return client.replyMessage(ev.replyToken, paymentFlex(q.id, qty, "pickup"));
@@ -2598,7 +2708,6 @@ async function handleEvent(ev) {
       const q = parseQuery(data);
       const qty = Number(q.qty || 1);
 
-      // ★pickupOnly のときは method を強制 pickup
       const sess = getSession(userId);
       const method = sess?.pickupOnly ? "pickup" : q.method;
 
@@ -2616,7 +2725,6 @@ async function handleEvent(ev) {
       const id = q.id;
       const qty = Number(q.qty || 1);
 
-      // ★pickupOnly のときは method/payment を固定
       const sess = getSession(userId);
       const method = sess?.pickupOnly ? "pickup" : q.method;
       const payment = sess?.pickupOnly ? "cash" : q.payment;
@@ -2640,7 +2748,6 @@ async function handleEvent(ev) {
       const id = q.id;
       const qty = Number(q.qty || 1);
 
-      // ★pickupOnly のときは method/payment を固定
       const sess = getSession(userId);
       const method = sess?.pickupOnly ? "pickup" : q.method;
       const payment = sess?.pickupOnly ? "cash" : q.payment;
@@ -2784,7 +2891,6 @@ async function handleEvent(ev) {
         (method === "pickup" ? `\n店頭受取のお名前：${pickupName || ""}\n` : "") +
         (method === "delivery" && !address ? "\n※住所が未登録です。住所登録（LIFF）をお願いします。\n" : "");
 
-      // ★注文完了で pickupOnly を含むセッションを終了
       clearSession(userId);
 
       return client.replyMessage(ev.replyToken, { type: "text", text: userMsg });
@@ -2841,9 +2947,12 @@ async function start() {
 
   app.listen(PORT, () => {
     console.log(`[BOOT] server listening on ${PORT}`);
+    console.log(`[BOOT] DATA_DIR=${DISK_DATA_DIR}`);
+    console.log(`[BOOT] PRODUCTS_PATH=${PRODUCTS_PATH}`);
     console.log(`[BOOT] UPLOAD_DIR=${UPLOAD_DIR}`);
     console.log(`[BOOT] PROFILE_REFRESH_DAYS=${PROFILE_REFRESH_DAYS}`);
     console.log(`[BOOT] PICKUP_POSTBACK_DATA=${PICKUP_POSTBACK_DATA}`);
+    console.log(`[BOOT] ORIGINAL_SET_PRODUCT_ID=${ORIGINAL_SET_PRODUCT_ID}`);
   });
 }
 

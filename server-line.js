@@ -1435,6 +1435,49 @@ app.get("/api/products", (_req, res) => {
     return res.status(500).json({ ok: false, error: "server_error" });
   }
 });
+function normalizeItemId(it) {
+  return String(it?.id || it?.product_id || "").trim();
+}
+
+function isKusuke(id) {
+  // あなたの現状: kusuke-250 が久助
+  return id === "kusuke-250" || id.startsWith("kusuke");
+}
+
+function isOriginalSet(id) {
+  // オリジナルセットのIDに合わせて調整（例）
+  return id === "original-set" || id.startsWith("original-set") || id.includes("original-set");
+}
+
+function validateSameOrderRules(items) {
+  const ids = (items || []).map(normalizeItemId).filter(Boolean);
+
+  const hasKusuke = ids.some(isKusuke);
+  const hasOriginal = ids.some(isOriginalSet);
+
+  // ① 同一注文：久助 × オリジナルセット は不可
+  if (hasKusuke && hasOriginal) {
+    return {
+      ok: false,
+      code: "SAME_ORDER_NOT_ALLOWED",
+      message: "久助とオリジナルセットは同一注文（同じ決済）では購入できません。別々にご注文ください。",
+    };
+  }
+
+  // ②（おすすめ）久助が店頭受取専用なら、宅配商品と混在を不可にする
+  // ここはあなたの運用に合わせてON/OFFしてOK
+  // 例: 「久助以外=宅配」みたいな単純判定（必要なら商品マスタ参照に変更）
+  const hasOtherThanKusuke = ids.some((id) => !isKusuke(id));
+  if (hasKusuke && hasOtherThanKusuke) {
+    return {
+      ok: false,
+      code: "KUSUKE_MIXED_NOT_ALLOWED",
+      message: "久助は店頭受取専用のため、他の商品と同一注文にはできません。別々にご注文ください。",
+    };
+  }
+
+  return { ok: true };
+}
 
 // =============== ミニアプリ：送料計算 ===============
 app.post("/api/shipping", (req, res) => {

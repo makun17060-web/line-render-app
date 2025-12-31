@@ -441,7 +441,7 @@ function toPublicImageUrl(raw) {
 }
 
 // =============== 商品・在庫 ===============
-const HIDE_PRODUCT_IDS = new Set(["kusuke-250"]); // 久助はミニアプリ一覧から除外（仕様）
+
 const LOW_STOCK_THRESHOLD = 5;
 
 function findProductById(id) {

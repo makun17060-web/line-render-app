@@ -1,183 +1,150 @@
-(function () {
-  "use strict";
+"use strict";
 
-  const orderListEl   = document.getElementById("orderList");
-  const sumItemsEl    = document.getElementById("sumItems");
-  const sumShippingEl = document.getElementById("sumShipping");
-  const sumCodEl      = document.getElementById("sumCod");
-  const sumTotalCodEl = document.getElementById("sumTotalCod");
-  const statusEl      = document.getElementById("statusMsg");
+const orderListEl     = document.getElementById("orderList");
+const sumItemsEl      = document.getElementById("sumItems");
+const sumShippingEl   = document.getElementById("sumShipping");
+const sumTotalCodEl   = document.getElementById("sumTotalCod");
+const statusMsgEl     = document.getElementById("statusMsg");
 
-  const cardBtn = document.getElementById("cardBtn");
-  const codBtn  = document.getElementById("codBtn");
-  const backBtn = document.getElementById("backBtn");
+const cardBtn = document.getElementById("cardBtn");
+const codBtn  = document.getElementById("codBtn");
+const backBtn = document.getElementById("backBtn");
 
-  const COD_FEE = 330;
+const COD_FEE = 330;
 
-  console.log("[ISOYA][confirm.js] LOADED", location.href, new Date().toISOString());
-  window.addEventListener("error", (e) => console.error("[ISOYA][confirm.js] WINDOW ERROR:", e.error || e.message));
-  window.addEventListener("unhandledrejection", (e) => console.error("[ISOYA][confirm.js] UNHANDLED:", e.reason));
+function yen(n) {
+  const x = Number(n || 0);
+  return `${x.toLocaleString("ja-JP")}円`;
+}
+function setStatus(msg) {
+  if (statusMsgEl) statusMsgEl.textContent = msg || "";
+}
+function safeJsonParse(s) { try { return JSON.parse(s); } catch { return null; } }
 
-  function setStatus(msg = "") { if (statusEl) statusEl.textContent = msg; }
-  function yen(n) { return (Number(n) || 0).toLocaleString("ja-JP") + "円"; }
-  function safeJsonParse(s){ try { return JSON.parse(s); } catch { return null; } }
-  function safeNumber(n, def = 0){ const x = Number(n); return Number.isFinite(x) ? x : def; }
+function getOrder() {
+  const keys = ["order", "currentOrder", "orderDraft", "confirm_normalized_order"];
+  for (const k of keys) {
+    const v = sessionStorage.getItem(k) || localStorage.getItem(k);
+    if (!v) continue;
+    const j = safeJsonParse(v);
+    if (j && j.items && Array.isArray(j.items)) return j;
+  }
+  return { items: [], itemsTotal: 0, address: null };
+}
 
-  function readOrderFromStorage() {
-    // ✅ いろんな版が混ざっても拾えるように幅広く
-    const keys = [
-      "orderDraft",
-      "currentOrder",
-      "order",
-      "confirm_normalized_order",
-      "lastOrder"
-    ];
-    for (const store of [sessionStorage, localStorage]) {
-      for (const k of keys) {
-        const raw = store.getItem(k);
-        if (!raw) continue;
-        const obj = safeJsonParse(raw);
-        if (obj && typeof obj === "object") return obj;
-      }
+function saveOrder(order) {
+  sessionStorage.setItem("order", JSON.stringify(order));
+  sessionStorage.setItem("currentOrder", JSON.stringify(order));
+  sessionStorage.setItem("orderDraft", JSON.stringify(order));
+  sessionStorage.setItem("confirm_normalized_order", JSON.stringify(order));
+  localStorage.setItem("order", JSON.stringify(order));
+}
+
+function hasAddress(a) {
+  if (!a) return false;
+  const pref  = a.prefecture || a.pref || "";
+  const city  = a.city || "";
+  const addr1 = a.address1 || a.addr1 || "";
+  return String(pref).trim() && String(city).trim() && String(addr1).trim();
+}
+
+async function calcShipping(items, address) {
+  const body = { items, address };
+  const r = await fetch("/api/shipping", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => null);
+  if (!r.ok || !j?.ok) throw new Error(j?.error || "shipping_error");
+  return j; // {itemsTotal, region, size, shipping, finalTotal}
+}
+
+function renderItems(items) {
+  orderListEl.innerHTML = items
+    .map((it) => {
+      const name = it.name || it.id || "商品";
+      const qty  = Number(it.qty || 0);
+      const sub  = Number(it.price || 0) * qty;
+      return `<div class="order-row">${name} ×${qty} = ${yen(sub)}</div>`;
+    })
+    .join("");
+}
+
+/**
+ * ✅ 遷移は二重でやらない（LIFF内なら openWindow、通常ブラウザなら location.href）
+ */
+function go(url) {
+  const abs = new URL(url, location.href).toString();
+  const inLiff = !!(window.liff && typeof window.liff.isInClient === "function" && window.liff.isInClient());
+  if (inLiff && typeof window.liff.openWindow === "function") {
+    window.liff.openWindow({ url: abs, external: false });
+  } else {
+    location.href = url;
+  }
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  const order = getOrder();
+  const items = Array.isArray(order.items) ? order.items : [];
+
+  if (!items.length) {
+    orderListEl.innerHTML = `<div class="order-row">カートが空です。商品一覧に戻ってください。</div>`;
+    sumItemsEl.textContent = "0円";
+    sumShippingEl.textContent = "0円";
+    sumTotalCodEl.textContent = "0円";
+    cardBtn.disabled = true;
+    codBtn.disabled  = true;
+    setStatus("商品が入っていません。");
+    return;
+  }
+
+  // 商品合計（まず表示）
+  const itemsTotal =
+    Number(order.itemsTotal || 0) ||
+    items.reduce((s, it) => s + (Number(it.price || 0) * Number(it.qty || 0)), 0);
+
+  renderItems(items);
+  sumItemsEl.textContent = yen(itemsTotal);
+
+  // 送料を計算して反映
+  try {
+    setStatus("送料を計算しています…");
+
+    const address = order.address || null;
+
+    if (!hasAddress(address)) {
+      sumShippingEl.textContent = "0円（住所未登録）";
+      sumTotalCodEl.textContent = yen(itemsTotal + COD_FEE);
+      setStatus("住所が未登録のため、送料を計算できません。住所入力へ戻って保存してください。");
+    } else {
+      const result = await calcShipping(items, address);
+      const shippingFee = Number(result.shipping || 0);
+
+      // ✅ キー統一：明細ページが必ず拾えるように shippingFee に保存
+      order.itemsTotal   = Number(result.itemsTotal || itemsTotal);
+      order.shippingFee  = shippingFee;   // ←統一キー（推奨）
+      order.shipping     = shippingFee;   // ←互換（古い明細が shipping を見てもOK）
+      order.region       = result.region || "";
+      order.size         = result.size || "";
+
+      saveOrder(order);
+
+      sumShippingEl.textContent = yen(shippingFee);
+      sumTotalCodEl.textContent = yen(order.itemsTotal + shippingFee + COD_FEE);
+      setStatus(`送料OK（地域：${order.region || "不明"} / サイズ：${order.size || "?"}）`);
     }
-    return null;
+  } catch (e) {
+    sumShippingEl.textContent = "0円（計算エラー）";
+    sumTotalCodEl.textContent = yen(itemsTotal + COD_FEE);
+    setStatus(`送料計算に失敗しました：${e?.message || e}`);
   }
 
-  function saveOrder(order) {
-    const s = JSON.stringify(order);
-    sessionStorage.setItem("orderDraft", s);
-    sessionStorage.setItem("order", s);
-    sessionStorage.setItem("currentOrder", s);
-    sessionStorage.setItem("confirm_normalized_order", s);
-    localStorage.setItem("order", s);
-  }
+  // ボタン遷移
+  cardBtn.disabled = false;
+  codBtn.disabled  = false;
 
-  function normalizeItems(order) {
-    const items = (Array.isArray(order?.items) ? order.items : [])
-      .map((it) => ({
-        id: String(it.id || "").trim(),
-        name: String(it.name || it.id || "商品").trim(),
-        price: safeNumber(it.price, 0),
-        qty: safeNumber(it.qty, 0),
-      }))
-      .filter((it) => it.id && it.qty > 0);
-    return items;
-  }
-
-  function renderItems(items) {
-    if (!orderListEl) return;
-    orderListEl.innerHTML = "";
-    items.forEach((it) => {
-      const div = document.createElement("div");
-      div.className = "order-row";
-      div.textContent = `${it.name} ×${it.qty} = ${yen(it.price * it.qty)}`;
-      orderListEl.appendChild(div);
-    });
-  }
-
-  async function calcShipping(items, prefecture) {
-    const pref = String(prefecture || "").trim();
-    if (!pref) return 0;
-
-    const r = await fetch("/api/shipping", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items, prefecture: pref }),
-    });
-    const j = await r.json().catch(() => ({}));
-    console.log("[ISOYA][confirm.js] /api/shipping", r.status, j);
-
-    if (!r.ok || !j || !j.ok) return 0;
-    return safeNumber(j.fee, 0);
-  }
-
-  function withCacheBuster(url) {
-    const v = "20251231_2"; // ★更新時に数字だけ変えればOK
-    return url.includes("?") ? `${url}&v=${v}` : `${url}?v=${v}`;
-  }
-
-  (async function main() {
-    try {
-      setStatus("注文情報を読み込み中…");
-
-      const order = readOrderFromStorage();
-      console.log("[ISOYA][confirm.js] order object:", order);
-
-      if (!order) {
-        setStatus("注文情報が見つかりません。\n商品一覧からやり直してください。");
-        if (cardBtn) cardBtn.disabled = true;
-        if (codBtn) codBtn.disabled = true;
-        return;
-      }
-
-      const items = normalizeItems(order);
-      if (!items.length) {
-        setStatus("カートが空です。");
-        if (cardBtn) cardBtn.disabled = true;
-        if (codBtn) codBtn.disabled = true;
-        return;
-      }
-
-      // ✅ 住所（都道府県）が無いと送料が出せない
-      const pref = String(order?.address?.prefecture || order?.address?.pref || "").trim();
-      if (!pref) {
-        setStatus("住所が未入力です。住所入力へ戻って保存してください。");
-        if (cardBtn) cardBtn.disabled = true;
-        if (codBtn) codBtn.disabled = true;
-        return;
-      }
-
-      renderItems(items);
-
-      const itemsTotal = items.reduce((s, it) => s + it.price * it.qty, 0);
-      const shipping = await calcShipping(items, pref);
-
-      // ✅ order に確定値を詰める（次画面へ渡す）
-      order.items = items;
-      order.itemsTotal = itemsTotal;
-      order.shipping_fee = shipping;
-      order.payment_method = ""; // まだ未確定
-
-      saveOrder(order); // ★ここで一度保存しておく
-
-      if (sumItemsEl) sumItemsEl.textContent = yen(itemsTotal);
-      if (sumShippingEl) sumShippingEl.textContent = yen(shipping);
-      if (sumCodEl) sumCodEl.textContent = `${COD_FEE}円（代引きの場合のみ）`;
-      if (sumTotalCodEl) sumTotalCodEl.textContent = yen(itemsTotal + shipping + COD_FEE);
-
-      setStatus("支払方法を選んでください。");
-
-      if (backBtn) {
-        backBtn.addEventListener("click", () => {
-          // 住所画面へ
-          location.href = withCacheBuster("./liff-address.html");
-        });
-      }
-
-      if (codBtn) {
-        codBtn.disabled = false;
-        codBtn.addEventListener("click", () => {
-          // ✅ クリック直前に必ず保存してから遷移（これが本丸）
-          order.payment_method = "cod";
-          saveOrder(order);
-          location.href = withCacheBuster("./confirm-cod.html");
-        });
-      }
-
-      if (cardBtn) {
-        cardBtn.disabled = false;
-        cardBtn.addEventListener("click", () => {
-          order.payment_method = "card";
-          saveOrder(order);
-          location.href = withCacheBuster("./card-detail.html"); // あなたのカード明細ページ名に合わせてOK
-        });
-      }
-
-    } catch (e) {
-      console.error("[ISOYA][confirm.js] main error:", e);
-      setStatus("エラー:\n" + (e?.message || String(e)));
-      if (cardBtn) cardBtn.disabled = true;
-      if (codBtn) codBtn.disabled = true;
-    }
-  })();
-})();
+  cardBtn.addEventListener("click", () => go("./confirm-card.html"));
+  codBtn.addEventListener("click",  () => go("./confirm-cod.html"));
+  backBtn?.addEventListener("click", () => go("./address.html"));
+});

@@ -73,6 +73,10 @@ const client = new line.Client(lineConfig);
 
 // ================= App =================
 const app = express();
+app.get("/health", (req, res) => res.status(200).send("ok"));
+app.get("/healthz", (req, res) => res.status(200).send("ok")); // 互換で残す
+app.get("/", (req, res) => res.status(200).send("OK"));
+
 app.use((req, res, next) => {
   console.log("[REQ]", new Date().toISOString(), req.method, req.url);
   next();

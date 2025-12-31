@@ -73,6 +73,11 @@ const client = new line.Client(lineConfig);
 
 // ================= App =================
 const app = express();
+app.use((req, res, next) => {
+  console.log("[REQ]", new Date().toISOString(), req.method, req.url);
+  next();
+});
+
 app.use(cors());
 
 // ★静的（public）と uploads（Disk）

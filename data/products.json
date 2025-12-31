@@ -1,10 +1,10 @@
 [
   {
     "id": "kusuke-250",
-    "name": "久助（えびせん）",
-    "price": 250,
+    "name": "久助（われせん）",
+    "price": 340,
     "stock": 30,
-    "volume": "約○○g",
+    "volume": "100g",
     "desc": "お得な割れせん。",
     "image": ""
   },

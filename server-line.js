@@ -1428,7 +1428,7 @@ app.get("/api/products", (_req, res) => {
 
 // ★あなたのオリジナルセットIDに合わせて調整
 // products.json の id が "original-set-2100" ならこのままでOK
-const ORIGINAL_SET_PRODUCT_ID = (process.env.ORIGINAL_SET_PRODUCT_ID || "original-set-2000").trim();
+
 
 // 久助判定（id に kusuke が入る or name に 久助 が入る を許容）
 function isKusukeItem(it) {

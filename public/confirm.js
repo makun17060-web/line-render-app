@@ -1,5 +1,13 @@
 "use strict";
 
+/**
+ * confirm.js
+ * - storageから order を読み込む
+ * - address.prefecture があれば /api/shipping に {items, prefecture} で問い合わせ
+ * - order.shipping_fee / order.itemsTotal を保存
+ * - 「代引き」→ confirm-cod.html へ（遷移前に必ず保存）
+ */
+
 const orderListEl = document.getElementById("orderList");
 const sumItemsEl = document.getElementById("sumItems");
 const sumShippingEl = document.getElementById("sumShipping");
@@ -8,7 +16,7 @@ const sumTotalCodEl = document.getElementById("sumTotalCod");
 const statusEl = document.getElementById("statusMsg");
 
 const cardBtn = document.getElementById("cardBtn");
-const codBtn = document.getElementById("codBtn");
+const codBtn  = document.getElementById("codBtn");
 const backBtn = document.getElementById("backBtn");
 
 const COD_FEE = 330;
@@ -38,17 +46,21 @@ function saveOrder(order) {
 async function calcShipping(items, prefecture) {
   const pref = String(prefecture||"").trim();
   if (!pref) return 0;
+
   const r = await fetch("/api/shipping", {
     method:"POST",
     headers:{ "Content-Type":"application/json" },
-    body: JSON.stringify({ items, prefecture: pref })
+    body: JSON.stringify({ items, prefecture: pref })  // ★サーバ仕様に合わせる
   });
   const j = await r.json().catch(()=>({}));
   if (!r.ok || !j.ok) return 0;
+
+  // server-line.js は { ok:true, size, region, fee }
   return Number(j.fee||0);
 }
 
 function renderItems(items) {
+  if (!orderListEl) return;
   orderListEl.innerHTML = "";
   items.forEach(it=>{
     const div = document.createElement("div");
@@ -63,8 +75,8 @@ function renderItems(items) {
     const order = readOrder();
     if (!order) {
       setStatus("注文情報が見つかりません。\n商品一覧からやり直してください。");
-      cardBtn.disabled = true;
-      codBtn.disabled = true;
+      if (cardBtn) cardBtn.disabled = true;
+      if (codBtn) codBtn.disabled = true;
       return;
     }
 
@@ -77,15 +89,15 @@ function renderItems(items) {
 
     if (!items.length) {
       setStatus("カートが空です。");
-      cardBtn.disabled = true;
-      codBtn.disabled = true;
+      if (cardBtn) cardBtn.disabled = true;
+      if (codBtn) codBtn.disabled = true;
       return;
     }
 
     if (!order.address?.prefecture) {
       setStatus("住所が未入力です。住所入力へ戻って保存してください。");
-      cardBtn.disabled = true;
-      codBtn.disabled = true;
+      if (cardBtn) cardBtn.disabled = true;
+      if (codBtn) codBtn.disabled = true;
       return;
     }
 
@@ -98,30 +110,29 @@ function renderItems(items) {
     order.shipping_fee = shipping;
     saveOrder(order);
 
-    sumItemsEl.textContent = yen(itemsTotal);
-    sumShippingEl.textContent = yen(shipping);
-    sumCodEl.textContent = `${COD_FEE}円（代引きの場合のみ）`;
-    sumTotalCodEl.textContent = yen(itemsTotal + shipping + COD_FEE);
+    if (sumItemsEl)    sumItemsEl.textContent    = yen(itemsTotal);
+    if (sumShippingEl) sumShippingEl.textContent = yen(shipping);
+    if (sumCodEl)      sumCodEl.textContent      = `${COD_FEE}円（代引きの場合のみ）`;
+    if (sumTotalCodEl) sumTotalCodEl.textContent = yen(itemsTotal + shipping + COD_FEE);
 
-    setStatus("支払方法を選んでください。");
+    setStatus("お支払い方法を選んでください。");
 
-    backBtn.addEventListener("click", ()=> location.href="./liff-address.html");
+    if (backBtn) backBtn.addEventListener("click", ()=> location.href="./liff-address.html");
 
-    // ★最重要：遷移前に必ず orderDraft を保存（confirm-codで null にならない）
-    codBtn.addEventListener("click", ()=>{
+    // ★最重要：遷移前に必ず order を保存（confirm-cod で null にしない）
+    if (codBtn) codBtn.addEventListener("click", ()=>{
       saveOrder(order);
       location.href = "./confirm-cod.html";
     });
 
-    // カード側（あなたのstripe画面に合わせて変更OK）
-    cardBtn.addEventListener("click", ()=>{
+    if (cardBtn) cardBtn.addEventListener("click", ()=>{
       saveOrder(order);
-      location.href = "./card-detail.html"; // 必要ならあなたのファイル名へ
+      location.href = "./card-detail.html"; // あなたのファイル名に合わせてOK
     });
 
   } catch(e){
     setStatus("エラー:\n"+(e?.message||String(e)));
-    cardBtn.disabled = true;
-    codBtn.disabled = true;
+    if (cardBtn) cardBtn.disabled = true;
+    if (codBtn) codBtn.disabled = true;
   }
 })();

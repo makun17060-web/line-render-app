@@ -33,17 +33,20 @@
   async function fetchShipping(items, prefecture) {
     const pref = String(prefecture || "").trim();
     if (!pref) return 0;
+
     const res = await fetch("/api/shipping", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ items, prefecture: pref }),
     });
     const data = await res.json().catch(() => ({}));
+    console.log("[ISOYA] /api/shipping", res.status, data);
     if (res.ok && data && data.ok) return safeNumber(data.fee, 0);
     return 0;
   }
 
   function renderItems(items) {
+    if (!orderListEl) return;
     orderListEl.innerHTML = "";
     items.forEach((it) => {
       const row = document.createElement("div");
@@ -59,7 +62,9 @@
       return;
     }
 
+    // ★ここで必ず押せる状態にする（ボタンが押せない問題の対策）
     confirmBtn.disabled = false;
+
     backBtn?.addEventListener("click", () => history.back());
 
     const order = readOrderFromStorage();
@@ -67,6 +72,7 @@
 
     if (!order) {
       setStatus("注文情報が見つかりません。\n商品一覧 → 住所入力 → 確認 の順で進んでください。");
+      // order が無いなら確定できないので無効化
       confirmBtn.disabled = true;
       return;
     }
@@ -106,7 +112,9 @@
 
     setStatus("内容をご確認のうえ「代引きで注文を確定する」を押してください。");
 
+    // ★クリックが効いてるか絶対分かるようにログ入れる
     confirmBtn.addEventListener("click", async () => {
+      console.log("[ISOYA] confirm button CLICKED");
       try {
         if (confirmBtn.disabled) return;
         confirmBtn.disabled = true;
@@ -129,6 +137,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
+
         const data = await res.json().catch(() => ({}));
         console.log("[ISOYA] /api/order/complete", res.status, data);
 
@@ -138,9 +147,9 @@
           return;
         }
 
-        setStatus("注文を受け付けました。ありがとうございます。");
         location.href = "./cod-complete.html";
       } catch (e) {
+        console.error("[ISOYA] confirm click error:", e);
         setStatus("エラー:\n" + (e?.message || String(e)));
         confirmBtn.disabled = false;
       }

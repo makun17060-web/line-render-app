@@ -1461,7 +1461,7 @@ app.post("/api/shipping/quote", (req, res) => {
       products.find((p) => /磯屋.?オリジナルセ/.test(String(p.name || ""))) ||
       null;
 
-    const items = itemsIn
+     const items = itemsIn
       .map((it) => {
         const pid = String(it?.product_id || "").trim();
         const qty = Math.max(0, Number(it?.qty || 0));
@@ -1478,9 +1478,16 @@ app.post("/api/shipping/quote", (req, res) => {
         if (pid === "akasha") {
           return { id: "akasha_bundle", name: "のりあかしゃ", qty, price: 0 };
         }
+
+        // ✅ 追加：久助（われせん）＝あかしゃと同一送料ロジック
+        if (pid === "kusuke") {
+          return { id: "akasha_bundle", name: "久助（われせん）", qty, price: 0 };
+        }
+
         return { id: "other_bundle", name: "その他商品", qty, price: 0 };
       })
       .filter(Boolean);
+
 
     if (!items.length) return res.status(400).json({ ok: false, error: "no_valid_items" });
 

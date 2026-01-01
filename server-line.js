@@ -70,7 +70,7 @@ const {
   DATA_DIR = "/var/data",
   UPLOAD_DIR = "/var/data/uploads",
 
-  ADMIN_TOKEN = "",
+  ADMIN_API_TOKEN = "",
 
   STRIPE_SECRET_KEY = "",
   STRIPE_WEBHOOK_SECRET = "",

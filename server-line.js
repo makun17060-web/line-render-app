@@ -584,22 +584,20 @@ app.get("/health", (req, res) => res.json({ ok: true, time: nowISO() }));
 // 管理API 認証
 // =========================
 function requireAdmin(req, res, next) {
-  // env は ADMIN_API_TOKEN を使う（この server.js の定義と一致させる）
-  if (!ADMIN_API_TOKEN) {
-    return res.status(403).json({ ok: false, error: "ADMIN_API_TOKEN is not set" });
-  }
+  // ✅ ENVは ADMIN_API_TOKEN を正式採用（互換で ADMIN_TOKEN も許可）
+  const ADMIN_TOKEN = (process.env.ADMIN_API_TOKEN || process.env.ADMIN_TOKEN || "").toString().trim();
 
-  // header は x-admin-api-token（推奨）を正式にする
-  // 後方互換で x-admin-token も許可しておく（混乱防止）
+  if (!ADMIN_TOKEN) return res.status(403).json({ ok: false, error: "ADMIN_API_TOKEN is not set" });
+
+  // ✅ ヘッダ名の揺れを吸収（あなたが色々試したやつ全部通す）
   const token =
-    (req.headers["x-admin-api-token"] ||
-     req.headers["x-admin-token"] ||
+    (req.headers["x-admin-token"] ||
+     req.headers["x-admin-api-token"] ||
+     req.headers["x-admin_api_token"] ||
      req.query.token ||
      "").toString().trim();
 
-  if (token !== String(ADMIN_API_TOKEN).trim()) {
-    return res.status(401).json({ ok: false, error: "unauthorized" });
-  }
+  if (token !== ADMIN_TOKEN) return res.status(401).json({ ok: false, error: "unauthorized" });
   next();
 }
 
@@ -612,6 +610,46 @@ app.get("/api/products", async (req, res) => {
     res.json({ ok: true, products });
   } catch (e) {
     logErr("GET /api/products", e?.stack || e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+// =========================
+// 管理：商品一覧（GET）  ← これが無いので 404 になってた
+// =========================
+app.get("/api/admin/products", requireAdmin, async (req, res) => {
+  try {
+    const products = await loadProducts();
+    res.json({ ok: true, products });
+  } catch (e) {
+    console.error("GET /api/admin/products", e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+// =========================
+// 管理：アップロード済み画像一覧（GET）
+// =========================
+app.get("/api/admin/images", requireAdmin, async (req, res) => {
+  try {
+    await ensureDir(UPLOAD_DIR);
+
+    const files = await fsp.readdir(UPLOAD_DIR).catch(() => []);
+    const images = files
+      .filter(f => /\.(png|jpe?g|webp|gif)$/i.test(f))
+      .sort((a, b) => a.localeCompare(b, "en"));
+
+    const base =
+      (BASE_URL && BASE_URL.startsWith("http")) ? BASE_URL :
+      `${req.protocol}://${req.get("host")}`;
+
+    const list = images.map(name => ({
+      name,
+      url: `${base}/public/uploads/${encodeURIComponent(name)}`
+    }));
+
+    res.json({ ok: true, images: list });
+  } catch (e) {
+    console.error("GET /api/admin/images", e);
     res.status(500).json({ ok: false, error: "server_error" });
   }
 });

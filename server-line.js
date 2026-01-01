@@ -88,7 +88,7 @@ const fetchFn =
 
 // =============== 基本 ===============
 const app = express();
-const path = require("path");
+
 
 // uploads を Disk から配信（重要）
 const UPLOAD_DIR = (process.env.UPLOAD_DIR || "/var/data/uploads").trim();

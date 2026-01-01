@@ -59,6 +59,56 @@
     });
   }
 
+  // ✅ products.html 側の保存キーにも対応（orderDraft / isoya_checkout_v1 / isoya_checkout）
+  function loadDraft() {
+    const keys = ["orderDraft", "isoya_checkout_v1", "isoya_checkout"];
+    for (const k of keys) {
+      const raw = sessionStorage.getItem(k);
+      if (raw) {
+        console.log("[ISOYA] draft found key=", k);
+        return { key: k, raw };
+      }
+    }
+    return { key: "", raw: "" };
+  }
+
+  // ✅ products.html の payload（items/subtotal）と、従来の payload（itemsTotal/shipping/address）両対応にする
+  function normalizeDraftOrder(order) {
+    const o = order || {};
+
+    // items：[{id,name,price,qty}] を作る
+    const itemsRaw = Array.isArray(o.items) ? o.items : [];
+    const items = itemsRaw
+      .map((it) => ({
+        id: String(it.id || "").trim(),
+        name: String(it.name || it.id || "商品").trim(),
+        price: safeNumber(it.price, 0),
+        qty: safeNumber(it.qty ?? it.count ?? it.quantity, 0),
+      }))
+      .filter((it) => it.id && it.qty > 0);
+
+    // itemsTotal：無ければ items から計算 or subtotal を使う
+    let itemsTotal = safeNumber(o.itemsTotal, 0);
+    if (!itemsTotal) itemsTotal = safeNumber(o.subtotal, 0);
+    if (!itemsTotal) itemsTotal = items.reduce((sum, it) => sum + it.price * it.qty, 0);
+
+    // shipping：無ければ 0（後で必要なら /api/shipping で計算）
+    let shipping = safeNumber(o.shipping, 0);
+
+    // address：無ければ空
+    const address = normalizeAddress(o.address || {});
+
+    return {
+      items,
+      itemsTotal,
+      shipping,
+      address,
+      // あるなら拾う（無くてもOK）
+      lineUserId: String(o.lineUserId || o.userId || "").trim(),
+      lineUserName: String(o.lineUserName || o.displayName || "").trim(),
+    };
+  }
+
   async function fetchShippingIfNeeded(items, address, shipping) {
     // shipping が 0 の場合のみ再計算（住所が空なら計算できないのでスキップ）
     if (shipping > 0) return shipping;
@@ -90,8 +140,8 @@
         return;
       }
 
-      const raw = sessionStorage.getItem("orderDraft");
-      console.log("[ISOYA] orderDraft raw:", raw);
+      const { raw } = loadDraft();
+      console.log("[ISOYA] draft raw:", raw);
 
       if (!raw) {
         setStatus("注文情報が見つかりませんでした。\n商品一覧からやり直してください。");
@@ -99,48 +149,33 @@
         return;
       }
 
-      let order;
+      let parsed;
       try {
-        order = JSON.parse(raw);
+        parsed = JSON.parse(raw);
       } catch (e) {
-        console.error("[ISOYA] orderDraft parse error:", e);
+        console.error("[ISOYA] draft parse error:", e);
         setStatus("注文情報の読み込みに失敗しました（JSON不正）。");
         confirmBtn.disabled = true;
         return;
       }
 
-      const itemsRaw = Array.isArray(order.items) ? order.items : [];
-      const items = itemsRaw
-        .map((it) => ({
-          id: String(it.id || "").trim(),
-          name: String(it.name || it.id || "商品").trim(),
-          price: safeNumber(it.price, 0),
-          qty: safeNumber(it.qty, 0),
-        }))
-        .filter((it) => it.qty > 0);
+      const draft = normalizeDraftOrder(parsed);
 
-      const address = normalizeAddress(order.address || {});
-      let itemsTotal = safeNumber(order.itemsTotal, 0);
-      let shipping = safeNumber(order.shipping, 0);
-
-      if (!items.length) {
+      if (!draft.items.length) {
         setStatus("カートに商品が入っていません。");
         confirmBtn.disabled = true;
         return;
       }
 
-      buildOrderRows(items);
+      buildOrderRows(draft.items);
 
-      if (!itemsTotal) {
-        itemsTotal = items.reduce((sum, it) => sum + it.price * it.qty, 0);
-      }
+      // 送料計算（住所があれば /api/shipping で再計算）
+      draft.shipping = await fetchShippingIfNeeded(draft.items, draft.address, draft.shipping);
 
-      shipping = await fetchShippingIfNeeded(items, address, shipping);
+      const finalTotal = draft.itemsTotal + draft.shipping + COD_FEE;
 
-      const finalTotal = itemsTotal + shipping + COD_FEE;
-
-      if (sumItemsEl)    sumItemsEl.textContent    = yen(itemsTotal);
-      if (sumShippingEl) sumShippingEl.textContent = yen(shipping);
+      if (sumItemsEl)    sumItemsEl.textContent    = yen(draft.itemsTotal);
+      if (sumShippingEl) sumShippingEl.textContent = yen(draft.shipping);
       if (sumCodEl)      sumCodEl.textContent      = yen(COD_FEE);
       if (sumTotalEl)    sumTotalEl.textContent    = yen(finalTotal);
 
@@ -158,19 +193,20 @@
           setStatus("ご注文を確定しています…");
 
           const orderForCod = {
-            items,
-            itemsTotal,
-            shipping,
+            items: draft.items,
+            itemsTotal: draft.itemsTotal,
+            shipping: draft.shipping,
             codFee: COD_FEE,
             finalTotal,
             paymentMethod: "cod",
             payment: "cod",
-            lineUserId: String(order.lineUserId || "").trim(),
-            lineUserName: String(order.lineUserName || "").trim(),
-            address,
+            lineUserId: draft.lineUserId,
+            lineUserName: draft.lineUserName,
+            address: draft.address,
           };
 
-          sessionStorage.setItem("lastOrder", JSON.stringify(orderForCod));
+          // デバッグ用に保存
+          try { sessionStorage.setItem("lastOrder", JSON.stringify(orderForCod)); } catch {}
 
           console.log("[ISOYA] ABOUT TO POST /api/order/complete", orderForCod);
 
@@ -184,12 +220,15 @@
           console.log("[ISOYA] /api/order/complete result", res.status, data);
 
           if (!res.ok || !data || !data.ok) {
-            setStatus("ご注文の確定に失敗しました。\n（サーバー応答エラー）");
+            const msg = data?.error ? `\n${data.error}` : "";
+            setStatus("ご注文の確定に失敗しました。\n（サーバー応答エラー）" + msg);
             confirmBtn.disabled = false;
             return;
           }
 
-          location.href = "./cod-complete.html";
+          // ✅ /public 配下運用に寄せて確実に遷移（ファイル名はあなたの実体に合わせて）
+          // cod-complete.html が /public/cod-complete.html にあるならこれでOK
+          location.href = "/public/cod-complete.html";
         } catch (e) {
           console.error("[ISOYA] CLICK HANDLER ERROR:", e);
           setStatus("通信または画面内エラーで停止しました:\n" + (e?.message || String(e)));

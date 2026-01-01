@@ -196,6 +196,28 @@
       .replaceAll('"',"&quot;").replaceAll("'","&#039;");
   }
 
+  // ★追加：products.json の image が filename でもURLでも正しく表示
+  function normalizeImageSrc(image){
+    let v = String(image || "").trim();
+    if(!v) return "";
+    // ありがちな入力ゆれを吸収
+    v = v.replace(/^public\//, "/public/");
+    v = v.replace(/^uploads\//, "/public/uploads/");
+    v = v.replace(/^\/uploads\//, "/public/uploads/");
+
+    // フルURLはそのまま
+    if(/^https?:\/\//i.test(v)) return v;
+
+    // すでに /public/... はそのまま
+    if(v.startsWith("/public/")) return v;
+
+    // すでに絶対パスならそのまま
+    if(v.startsWith("/")) return v;
+
+    // filenameだけ → uploads へ
+    return `/public/uploads/${v}`;
+  }
+
   function render(){
     const list = allProducts.filter(p => mode === "akasha" ? isAkasha(p) : isOriginal(p));
 
@@ -211,12 +233,17 @@
 
       const vol = (p.volume && String(p.volume).trim()) ? `内容量：${escapeHtml(p.volume)}` : "";
       const desc = (p.desc && String(p.desc).trim()) ? escapeHtml(p.desc) : "";
-      const img = p.image ? String(p.image) : "";
+
+      const src = normalizeImageSrc(p.image);
 
       return `
       <div class="card" data-id="${escapeHtml(p.id)}">
         <div class="thumb">
-          ${img ? `<img src="${escapeHtml(img)}" alt="">` : `<span style="color:#9ca3af;font-weight:900;font-size:12px;">NO IMAGE</span>`}
+          ${src
+            ? `<img src="${escapeHtml(src)}" alt="${escapeHtml(p.name || p.id)}"
+                   loading="lazy"
+                   onerror="this.src='/public/noimage.png';">`
+            : `<span style="color:#9ca3af;font-weight:900;font-size:12px;">NO IMAGE</span>`}
         </div>
         <div class="meta">
           <p class="name">${escapeHtml(p.name || p.id)}</p>
@@ -284,6 +311,7 @@
       const res = await fetch(API_PRODUCTS, { cache: "no-store" });
       if(!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
+      // server-line.js は {ok:true, products:[...]} の形
       const products = Array.isArray(json) ? json : (json.products || []);
       allProducts = Array.isArray(products) ? products : [];
       render();
@@ -314,5 +342,6 @@
   loadProducts();
 })();
 </script>
+
 </body>
 </html>

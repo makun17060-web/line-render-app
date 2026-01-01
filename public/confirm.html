@@ -213,7 +213,10 @@
         return;
       }
 
-      addrText.textContent = `〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim();
+      const nameLine = addr.name ? `${addr.name} 様\n` : "";
+addrText.textContent =
+  `${nameLine}〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim();
+
 
       const products=await getProducts();
       renderItems(items, products);

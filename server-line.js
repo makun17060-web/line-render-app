@@ -1348,7 +1348,7 @@ async function replyDirectStart(replyToken, userId) {
           {
             type: "button",
             style: "secondary",
-            action: { type: "uri", label: "住所登録", uri: liffUrl("/public/liff/address.html") }
+            action: { type: "uri", label: "住所登録", uri: liffUrl("/public/liff-address.html") }
           }
         ]
       }
@@ -1369,7 +1369,7 @@ async function replyKusukeStart(replyToken, userId, qtyPreset) {
 
   if (!addr) {
     // 住所が無ければ住所登録へ誘導
-    const url = liffUrl("/public/liff/address.html");
+    const url = liffUrl("/public/liff-address.html");
     await lineClient.replyMessage(replyToken, {
       type: "text",
       text:
@@ -1461,7 +1461,7 @@ async function finalizeKusukeOrder(replyToken, userId, qty) {
         `【合計（代引）】${totalCod}円\n\n` +
         `【お届け先】\n${addrText}\n\n` +
         `※住所が違う場合は住所登録を更新してください。\n` +
-        `${liffUrl("/public/liff/address.html")}`
+        `${liffUrl("/public/liff-address.html")}`
     });
   } catch (e) {
     const code = e?.code || "";
@@ -1469,7 +1469,7 @@ async function finalizeKusukeOrder(replyToken, userId, qty) {
     if (code === "NO_ADDRESS") {
       await lineClient.replyMessage(replyToken, {
         type: "text",
-        text: `住所が未登録です。\n住所登録：\n${liffUrl("/public/liff/address.html")}`,
+        text: `住所が未登録です。\n住所登録：\n${liffUrl("/public/liff-address.html")}`,
       });
       return;
     }

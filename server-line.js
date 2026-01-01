@@ -607,12 +607,35 @@ if (token !== ADMIN_API_TOKEN)
 app.get("/api/products", async (req, res) => {
   try {
     const products = await loadProducts();
-    res.json({ ok: true, products });
+
+    // このAPIを叩いた “そのサーバー自身” を基準にする（最強）
+    const origin = `${req.protocol}://${req.get("host")}`;
+
+    const fixed = products.map(p => {
+      let img = String(p.image || "").trim();
+      if (!img) return p;
+
+      // 入力ゆれ吸収
+      img = img.replace(/^public\//, "/public/");
+      img = img.replace(/^uploads\//, "/public/uploads/");
+      img = img.replace(/^\/uploads\//, "/public/uploads/");
+
+      // filenameだけ → /public/uploads/ に補正
+      if (!/^https?:\/\//i.test(img)) {
+        if (!img.startsWith("/")) img = "/public/uploads/" + img;
+        img = origin + img;
+      }
+      return { ...p, image: img };
+    });
+
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, products: fixed });
   } catch (e) {
     logErr("GET /api/products", e?.stack || e);
     res.status(500).json({ ok: false, error: "server_error" });
   }
 });
+
 // =========================
 // 管理：商品一覧（GET）  ← これが無いので 404 になってた
 // =========================

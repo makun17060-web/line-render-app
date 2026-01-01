@@ -1,15 +1,18 @@
 /**
  * server.js — 真の全部入り “完全・全部入り” 丸ごと版（修正版）
  *  (LINE Bot + LIFFミニアプリ + 画像管理(Disk永続) + products.json(Disk永続) +
- *   住所DB(Postgres) + セグメント配信 + 注文DB永続化 + Stripe決済 + 送料計算統一)
+ *   住所DB(Postgres) + セグメント配信 + 注文DB永続化 + Stripe決済 + 送料計算統一 +
+ *   ★代引き確定→confirm-cod.html自動遷移)
  *
  * ✅ Render Disk 永続化（超重要）
  * - DATA_DIR=/var/data（デフォルト）: products.json / sessions.json / logs
  * - UPLOAD_DIR=/var/data/uploads（デフォルト）: 画像アップロード永続
- * - 静的配信:
- *   - /public              → __dirname/public
- *   - /public/uploads/*    → UPLOAD_DIR
- *   - /uploads/*           → UPLOAD_DIR（保険）
+ *
+ * ✅ 静的配信（Cannot GET /address.html 等を潰す）
+ * - /              → __dirname/public（推奨：URLが短い）
+ * - /public        → __dirname/public（互換）
+ * - /uploads       → UPLOAD_DIR
+ * - /public/uploads→ UPLOAD_DIR
  *
  * ✅ 重要仕様（あなたの要望）
  * - 「久助」も products.json に従う（価格固定ロジック撤廃）
@@ -51,17 +54,14 @@ const { Pool } = require("pg");
 let Stripe = null;
 try { Stripe = require("stripe"); } catch {}
 
-// =========================
-// 基本ENV
-// =========================
 const {
   LINE_CHANNEL_ACCESS_TOKEN,
   LINE_CHANNEL_SECRET,
   DATABASE_URL,
 
   PUBLIC_BASE_URL,        // 例: https://xxxxx.onrender.com
-  LIFF_BASE_URL,          // 例: https://xxxxx.onrender.com  (未設定なら PUBLIC_BASE_URL を使う)
-  LIFF_CHANNEL_ID,        // id_token verify に使う（任意）
+  LIFF_BASE_URL,          // 例: https://xxxxx.onrender.com
+  LIFF_CHANNEL_ID,        // 任意
 
   DATA_DIR = "/var/data",
   UPLOAD_DIR = "/var/data/uploads",
@@ -70,7 +70,6 @@ const {
 
   STRIPE_SECRET_KEY = "",
   STRIPE_WEBHOOK_SECRET = "",
-
   STRIPE_SUCCESS_URL = "",
   STRIPE_CANCEL_URL = "",
 
@@ -90,20 +89,16 @@ const BASE_URL = (PUBLIC_BASE_URL || "").replace(/\/$/, "");
 const LIFF_BASE = (LIFF_BASE_URL || BASE_URL || "").replace(/\/$/, "");
 
 if (!BASE_URL) {
-  console.warn("[WARN] PUBLIC_BASE_URL が未設定です。Stripe/LIFF URL 生成で困る場合があります。");
+  console.warn("[WARN] PUBLIC_BASE_URL が未設定です（URL生成が必要な箇所ではhostから自動推定します）。");
 }
 
-// =========================
-// パス設定（Disk永続）
-// =========================
+// ============== Disk paths ==============
 const PRODUCTS_FILE = path.join(DATA_DIR, "products.json");
 const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
 const LOG_DIR = path.join(DATA_DIR, "logs");
 const APP_LOG_FILE = path.join(LOG_DIR, "app.log");
 
-// =========================
-// 送料テーブル
-// =========================
+// ============== Shipping tables ==============
 const SHIPPING_REGION_BY_PREF = {
   "北海道": "hokkaido",
   "青森県": "tohoku", "岩手県": "tohoku", "宮城県": "tohoku", "秋田県": "tohoku", "山形県": "tohoku", "福島県": "tohoku",
@@ -118,7 +113,7 @@ const SHIPPING_REGION_BY_PREF = {
   "沖縄県": "okinawa",
 };
 
-// サイズ別 送料（例：税込）※あなたの現行表に合わせて調整OK
+// サイズ別 送料（税込の例）※あなたの表に合わせて調整OK
 const SHIPPING_YAMATO = {
   hokkaido: { 60: 1300, 80: 1550, 100: 1800, 120: 2050, 140: 2300 },
   tohoku:   { 60:  900, 80: 1100, 100: 1300, 120: 1500, 140: 1700 },
@@ -133,37 +128,13 @@ const SHIPPING_YAMATO = {
   okinawa:  { 60: 1350, 80: 1700, 100: 2100, 120: 2600, 140: 3100 },
 };
 
-// =========================
-// “あかしゃ扱い” 判定（久助を含める）
-// =========================
-function isAkashaLikeProduct(product) {
-  const name = (product?.name || "").toLowerCase();
-  const id = (product?.id || "").toLowerCase();
-  if (id.includes("akasha") || name.includes("あかしゃ") || name.includes("akasha")) return true;
-  if (id.includes("kusuke") || name.includes("久助")) return true;
-  return false;
-}
+// ============== Helpers ==============
+function nowISO() { return new Date().toISOString(); }
 
-// =========================
-// “オリジナルセット” サイズ決定（あなた指定）
-// =========================
-function sizeForOriginalSet(qty) {
-  if (qty <= 1) return 80;
-  if (qty === 2) return 100;
-  if (qty === 3 || qty === 4) return 120;
-  return 140; // 5-6想定
-}
-
-// =========================
-// 汎用：ディレクトリ作成
-// =========================
 async function ensureDir(dir) {
   await fsp.mkdir(dir, { recursive: true });
 }
 
-// =========================
-// ログ（Disk）
-/* ========================= */
 async function logToFile(line) {
   try {
     await ensureDir(LOG_DIR);
@@ -172,7 +143,6 @@ async function logToFile(line) {
     console.error("[LOG_WRITE_FAIL]", e?.message || e);
   }
 }
-function nowISO() { return new Date().toISOString(); }
 function logInfo(...args) {
   const msg = `[${nowISO()}][INFO] ${args.map(String).join(" ")}`;
   console.log(msg);
@@ -184,9 +154,6 @@ function logErr(...args) {
   logToFile(msg);
 }
 
-// =========================
-// JSON 永続（products / sessions）
-// =========================
 async function readJsonSafe(file, fallback) {
   try {
     const s = await fsp.readFile(file, "utf8");
@@ -202,13 +169,10 @@ async function writeJsonAtomic(file, data) {
   await fsp.rename(tmp, file);
 }
 
-// =========================
-// products.json 初期化
-// =========================
+// ============== products.json ==============
 async function ensureProductsFile() {
   await ensureDir(DATA_DIR);
-  const exists = fs.existsSync(PRODUCTS_FILE);
-  if (exists) return;
+  if (fs.existsSync(PRODUCTS_FILE)) return;
 
   const seed = [
     {
@@ -253,10 +217,9 @@ async function saveProducts(products) {
   await writeJsonAtomic(PRODUCTS_FILE, products);
 }
 
-// =========================
-// セッション（起動キーワード2つだけ）
-// =========================
+// ============== sessions (Map + Disk) ==============
 const sessions = new Map(); // userId -> session
+
 async function loadSessions() {
   const data = await readJsonSafe(SESSIONS_FILE, {});
   if (data && typeof data === "object") {
@@ -288,9 +251,77 @@ function clearSession(userId) {
   persistSessions().catch(()=>{});
 }
 
-// =========================
-// DB（Postgres）
-// =========================
+// ============== Akasha-like (久助含む) ==============
+function isAkashaLikeProduct(product) {
+  const name = (product?.name || "").toLowerCase();
+  const id = (product?.id || "").toLowerCase();
+  if (id.includes("akasha") || name.includes("あかしゃ") || name.includes("akasha")) return true;
+  if (id.includes("kusuke") || name.includes("久助")) return true;
+  return false;
+}
+
+// ============== Original set sizing rule ==============
+function sizeForOriginalSet(qty) {
+  if (qty <= 1) return 80;
+  if (qty === 2) return 100;
+  if (qty === 3 || qty === 4) return 120;
+  return 140; // 5-6想定
+}
+
+// ============== Shipping calc unified ==============
+function detectRegionFromPref(prefecture) {
+  const pref = (prefecture || "").trim();
+  return SHIPPING_REGION_BY_PREF[pref] || "chubu";
+}
+function calcShippingFee(prefecture, size) {
+  const region = detectRegionFromPref(prefecture);
+  const table = SHIPPING_YAMATO[region] || SHIPPING_YAMATO["chubu"];
+  return Number(table[size] || table[80] || 0);
+}
+
+function calcPackageSizeFromItems(items, productsById) {
+  let hasOriginalSet = false;
+  let originalQty = 0;
+
+  let smallCount = 0; // akasha-like（久助含む）
+  let otherCount = 0;
+
+  for (const it of items || []) {
+    const id = String(it.id || "").trim();
+    const qty = Number(it.qty || 0);
+    if (!id || qty <= 0) continue;
+
+    const p = productsById[id];
+    if (!p) continue;
+
+    if (p.id === ORIGINAL_SET_PRODUCT_ID) {
+      hasOriginalSet = true;
+      originalQty += qty;
+      continue;
+    }
+    if (isAkashaLikeProduct(p)) smallCount += qty;
+    else otherCount += qty;
+  }
+
+  if (hasOriginalSet) {
+    const base = sizeForOriginalSet(originalQty);
+    const mix = smallCount + otherCount;
+    if (mix <= 0) return base;
+    if (base === 80) return 100;
+    if (base === 100) return 120;
+    if (base === 120) return 140;
+    return 140;
+  }
+
+  const total = smallCount + otherCount;
+  if (total <= 2) return 60;
+  if (total <= 4) return 80;
+  if (total <= 6) return 100;
+  if (total <= 10) return 120;
+  return 140;
+}
+
+// ============== DB (Postgres) ==============
 const pool = new Pool({
   connectionString: DATABASE_URL,
   ssl: { rejectUnauthorized: false },
@@ -308,11 +339,13 @@ async function ensureDb() {
     );
   `);
 
+  // ★あなたの現DBに寄せた addresses（address_key, created_at を含める）
+  // user_id / member_code / address_key を UNIQUE にする（upsert安定）
   await pool.query(`
     CREATE TABLE IF NOT EXISTS addresses (
       id BIGSERIAL PRIMARY KEY,
-      user_id TEXT UNIQUE,
       member_code TEXT UNIQUE,
+      user_id TEXT UNIQUE,
       name TEXT,
       phone TEXT,
       postal TEXT,
@@ -320,11 +353,12 @@ async function ensureDb() {
       city TEXT,
       address1 TEXT,
       address2 TEXT,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      address_key TEXT UNIQUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `);
 
-  // orders.zip / orders.pref を使ってるなら列名は zip/pref でOK（あなたのSQLに合わせた）
   await pool.query(`
     CREATE TABLE IF NOT EXISTS orders (
       id BIGSERIAL PRIMARY KEY,
@@ -409,7 +443,7 @@ async function touchUser(userId, kind, displayName = null) {
 
 async function getAddressByUserId(userId) {
   const r = await pool.query(
-    `SELECT user_id, member_code, name, phone, postal, prefecture, city, address1, address2, updated_at
+    `SELECT member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at
      FROM addresses WHERE user_id=$1`,
     [userId]
   );
@@ -425,123 +459,219 @@ async function issueUniqueMemberCode() {
   return String(Math.floor(10000 + Math.random() * 90000));
 }
 
+function makeAddressKey(a) {
+  // ★住所同一判定用（必要なら）。空白/記号を軽く正規化してhash化
+  const s = [
+    a?.postal || "",
+    a?.prefecture || "",
+    a?.city || "",
+    a?.address1 || "",
+    a?.address2 || "",
+    a?.name || "",
+    a?.phone || ""
+  ].join("|").replace(/\s+/g, " ").trim();
+  return crypto.createHash("sha1").update(s).digest("hex").slice(0, 20);
+}
+
 async function upsertAddress(userId, addr) {
   let memberCode = (addr.member_code || "").trim();
   if (!memberCode) memberCode = await issueUniqueMemberCode();
 
-  const q = `
-    INSERT INTO addresses (user_id, member_code, name, phone, postal, prefecture, city, address1, address2)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-    ON CONFLICT (user_id) DO UPDATE SET
-      member_code = EXCLUDED.member_code,
-      name = EXCLUDED.name,
-      phone = EXCLUDED.phone,
-      postal = EXCLUDED.postal,
-      prefecture = EXCLUDED.prefecture,
-      city = EXCLUDED.city,
-      address1 = EXCLUDED.address1,
-      address2 = EXCLUDED.address2,
-      updated_at = now()
-    RETURNING user_id, member_code, name, phone, postal, prefecture, city, address1, address2, updated_at
-  `;
-  const r = await pool.query(q, [
-    userId,
-    memberCode,
-    addr.name || "",
-    addr.phone || "",
-    addr.postal || "",
-    addr.prefecture || "",
-    addr.city || "",
-    addr.address1 || "",
-    addr.address2 || "",
-  ]);
-  return r.rows[0];
+  const addressKey = addr.address_key ? String(addr.address_key).trim() : makeAddressKey(addr);
+
+  // ★安定: user_id UNIQUE がある前提で ON CONFLICT(user_id)
+  // member_code は UNIQUE なので、他ユーザーと衝突したら再発行
+  let saved;
+  try {
+    const q = `
+      INSERT INTO addresses (user_id, member_code, name, phone, postal, prefecture, city, address1, address2, address_key)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      ON CONFLICT (user_id) DO UPDATE SET
+        member_code = EXCLUDED.member_code,
+        name = EXCLUDED.name,
+        phone = EXCLUDED.phone,
+        postal = EXCLUDED.postal,
+        prefecture = EXCLUDED.prefecture,
+        city = EXCLUDED.city,
+        address1 = EXCLUDED.address1,
+        address2 = EXCLUDED.address2,
+        address_key = EXCLUDED.address_key,
+        updated_at = now()
+      RETURNING member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at
+    `;
+    const r = await pool.query(q, [
+      userId,
+      memberCode,
+      addr.name || "",
+      addr.phone || "",
+      addr.postal || "",
+      addr.prefecture || "",
+      addr.city || "",
+      addr.address1 || "",
+      addr.address2 || "",
+      addressKey
+    ]);
+    saved = r.rows[0];
+  } catch (e) {
+    // member_code 衝突など（UNIQUE違反）→ 再発行してリトライ
+    const msg = String(e?.message || "");
+    if (msg.includes("addresses_member_code_key") || msg.includes("member_code") || msg.includes("duplicate key")) {
+      const newCode = await issueUniqueMemberCode();
+      const q2 = `
+        INSERT INTO addresses (user_id, member_code, name, phone, postal, prefecture, city, address1, address2, address_key)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        ON CONFLICT (user_id) DO UPDATE SET
+          member_code = EXCLUDED.member_code,
+          name = EXCLUDED.name,
+          phone = EXCLUDED.phone,
+          postal = EXCLUDED.postal,
+          prefecture = EXCLUDED.prefecture,
+          city = EXCLUDED.city,
+          address1 = EXCLUDED.address1,
+          address2 = EXCLUDED.address2,
+          address_key = EXCLUDED.address_key,
+          updated_at = now()
+        RETURNING member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at
+      `;
+      const r2 = await pool.query(q2, [
+        userId,
+        newCode,
+        addr.name || "",
+        addr.phone || "",
+        addr.postal || "",
+        addr.prefecture || "",
+        addr.city || "",
+        addr.address1 || "",
+        addr.address2 || "",
+        addressKey
+      ]);
+      saved = r2.rows[0];
+    } else {
+      throw e;
+    }
+  }
+
+  return saved;
 }
 
-// =========================
-// 送料計算（統一）
-// =========================
-function detectRegionFromPref(prefecture) {
-  const pref = (prefecture || "").trim();
-  return SHIPPING_REGION_BY_PREF[pref] || "chubu";
-}
+// ============== Build order from checkout (anti-tamper) ==============
+async function buildOrderFromCheckout(uid, checkout) {
+  const userId = String(uid || "").trim();
+  if (!userId) {
+    const err = new Error("uid required");
+    err.code = "NO_UID";
+    throw err;
+  }
 
-function calcPackageSizeFromItems(items, productsById) {
-  // items: [{id, qty, ...}] もしくは [{id, qty}] でもOK
-  let hasOriginalSet = false;
-  let originalQty = 0;
+  const addr = await getAddressByUserId(userId);
+  if (!addr) {
+    const err = new Error("address not found");
+    err.code = "NO_ADDRESS";
+    throw err;
+  }
 
-  let smallCount = 0;
-  let otherCount = 0;
+  const products = await loadProducts();
+  const productsById = Object.fromEntries(products.map(p => [p.id, p]));
 
-  for (const it of items || []) {
-    const id = String(it.id || "").trim();
-    const qty = Number(it.qty || 0);
+  const inItems = Array.isArray(checkout?.items) ? checkout.items : [];
+  const items = [];
+  let subtotal = 0;
+
+  for (const it of inItems) {
+    const id = String(it?.id || "").trim();
+    const qty = Math.max(0, Math.floor(Number(it?.qty || 0)));
     if (!id || qty <= 0) continue;
 
     const p = productsById[id];
     if (!p) continue;
 
-    if (p.id === ORIGINAL_SET_PRODUCT_ID) {
-      hasOriginalSet = true;
-      originalQty += qty;
-      continue;
+    if (Number.isFinite(p.stock) && Number(p.stock) < qty) {
+      const err = new Error(`在庫不足: ${p.name} (stock=${p.stock}, qty=${qty})`);
+      err.code = "OUT_OF_STOCK";
+      err.productId = id;
+      throw err;
     }
-    if (isAkashaLikeProduct(p)) smallCount += qty;
-    else otherCount += qty;
+
+    const price = Number(p.price || 0);
+    const lineTotal = price * qty;
+    subtotal += lineTotal;
+
+    items.push({
+      id: p.id,
+      name: p.name,
+      qty,
+      price,
+      volume: p.volume || "",
+      image: p.image || "",
+      desc: p.desc || "",
+      lineTotal,
+    });
   }
 
-  if (hasOriginalSet) {
-    const base = sizeForOriginalSet(originalQty);
-    const mix = smallCount + otherCount;
-    if (mix <= 0) return base;
-    if (base === 80) return 100;
-    if (base === 100) return 120;
-    if (base === 120) return 140;
-    return 140;
+  if (items.length === 0) {
+    const err = new Error("items empty");
+    err.code = "EMPTY_ITEMS";
+    throw err;
   }
 
-  const total = smallCount + otherCount;
-  if (total <= 2) return 60;
-  if (total <= 4) return 80;
-  if (total <= 6) return 100;
-  if (total <= 10) return 120;
-  return 140;
+  const size = calcPackageSizeFromItems(items, productsById);
+  const shippingFee = calcShippingFee(addr.prefecture, size);
+
+  return { userId, addr, items, subtotal, shippingFee, size, productsById };
 }
 
-function calcShippingFee(prefecture, size) {
-  const region = detectRegionFromPref(prefecture);
-  const table = SHIPPING_YAMATO[region] || SHIPPING_YAMATO["chubu"];
-  return Number(table[size] || table[80] || 0);
+async function insertOrderToDb({ userId, items, total, shippingFee, paymentMethod, status, rawEvent }) {
+  const addr = await getAddressByUserId(userId);
+  const fullAddr = addr ? `${addr.prefecture || ""}${addr.city || ""}${addr.address1 || ""} ${addr.address2 || ""}`.trim() : "";
+
+  const r = await pool.query(
+    `
+    INSERT INTO orders (user_id, source, items, total, shipping_fee, payment_method, status, name, zip, pref, address, raw_event)
+    VALUES ($1,'liff',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    RETURNING id
+    `,
+    [
+      userId,
+      JSON.stringify(items),
+      Number(total || 0),
+      Number(shippingFee || 0),
+      paymentMethod,
+      status,
+      addr?.name || "",
+      addr?.postal || "",
+      addr?.prefecture || "",
+      fullAddr,
+      rawEvent ? JSON.stringify(rawEvent) : null,
+    ]
+  );
+  return r.rows[0]?.id;
 }
 
-// =========================
-// LINE クライアント
-// =========================
+// ============== LINE client ==============
 const lineConfig = {
   channelAccessToken: LINE_CHANNEL_ACCESS_TOKEN,
   channelSecret: LINE_CHANNEL_SECRET,
 };
 const lineClient = new line.Client(lineConfig);
 
-// =========================
-// Express
-// =========================
+// ============== Express ==============
 const app = express();
 
-// =========================
-// Stripe（先にwebhook用のrawルートを置く）
-// ※ app.use(express.json) を先に置くとWebhookの署名検証が壊れる
-// =========================
+// ============== Stripe (webhook must be before json parser) ==============
 const stripe = (STRIPE_SECRET_KEY && Stripe) ? new Stripe(STRIPE_SECRET_KEY) : null;
 
-function stripeSuccessUrl() {
-  if (STRIPE_SUCCESS_URL) return STRIPE_SUCCESS_URL;
-  return BASE_URL ? `${BASE_URL}/public/stripe-success.html` : "https://example.com/success";
+function originFromReq(req) {
+  return `${req.protocol}://${req.get("host")}`;
 }
-function stripeCancelUrl() {
+function stripeSuccessUrl(req) {
+  if (STRIPE_SUCCESS_URL) return STRIPE_SUCCESS_URL;
+  const base = BASE_URL || originFromReq(req);
+  return `${base}/stripe-success.html`; // ★/public を付けない（root配信しているため）
+}
+function stripeCancelUrl(req) {
   if (STRIPE_CANCEL_URL) return STRIPE_CANCEL_URL;
-  return BASE_URL ? `${BASE_URL}/public/stripe-cancel.html` : "https://example.com/cancel";
+  const base = BASE_URL || originFromReq(req);
+  return `${base}/stripe-cancel.html`;
 }
 
 // Stripe webhook（必要なら）
@@ -578,26 +708,34 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
-// 静的配信（public）
+// ===== 静的配信（ここが “Cannot GET” 撃退の肝） =====
+// 1) ルート直下で /liff-address.html /confirm-cod.html 等が開く
+app.use(express.static(path.join(__dirname, "public")));
+// 2) 互換：/public/xxx でも開ける
 app.use("/public", express.static(path.join(__dirname, "public")));
 
-// ★超重要：アップロード画像を Disk から配信（Cannot GET 対策）
-app.use("/public/uploads", express.static(UPLOAD_DIR));
-app.use("/uploads", express.static(UPLOAD_DIR)); // 保険
+// アップロード画像を Disk から配信
+app.use("/uploads", express.static(UPLOAD_DIR));
+app.use("/public/uploads", express.static(UPLOAD_DIR)); // 互換
 
 // health
 app.get("/health", (req, res) => res.json({ ok: true, time: nowISO() }));
 
-// =========================
-// 管理API 認証
-// =========================
+// ===== address.html 名称ゆれ吸収（必要なら） =====
+app.get("/address.html", (req, res) => res.sendFile(path.join(__dirname, "public", "liff-address.html")));
+app.get("/address",      (req, res) => res.sendFile(path.join(__dirname, "public", "liff-address.html")));
+
+// confirm-cod 名称ゆれ吸収（必要なら）
+app.get("/confirm_cod.html", (req, res) => res.sendFile(path.join(__dirname, "public", "confirm-cod.html")));
+app.get("/confirm-cod",      (req, res) => res.sendFile(path.join(__dirname, "public", "confirm-cod.html")));
+
+// ============== Admin auth ==============
 function requireAdmin(req, res, next) {
   if (!ADMIN_API_TOKEN) return res.status(403).json({ ok:false, error:"ADMIN_API_TOKEN is not set" });
 
   const token =
     (req.headers["x-admin-token"] ||
      req.headers["x-admin-api-token"] ||
-     req.headers["x-admin_api_token"] ||
      req.query.token ||
      "").toString().trim();
 
@@ -605,27 +743,29 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// =========================
-// Products API（フロント用）
-// - 画像URLは「フロントで扱いやすいように絶対URL」に統一して返す
-// =========================
+// ============== Products API ==============
 app.get("/api/products", async (req, res) => {
   try {
     const products = await loadProducts();
-
-    // このAPIを叩いたhostを基準に絶対URL化（最強）
-    const origin = `${req.protocol}://${req.get("host")}`;
+    const origin = originFromReq(req);
 
     const fixed = products.map(p => {
       let img = String(p.image || "").trim();
       if (!img) return p;
 
-      img = img.replace(/^public\//, "/public/");
-      img = img.replace(/^uploads\//, "/public/uploads/");
-      img = img.replace(/^\/uploads\//, "/public/uploads/");
+      // 画像指定が "kusuke.jpg" だけでも動くように
+      img = img.replace(/^public\//, "");
+      img = img.replace(/^uploads\//, "uploads/");
+      img = img.replace(/^\/uploads\//, "uploads/");
 
       if (!/^https?:\/\//i.test(img)) {
-        if (!img.startsWith("/")) img = "/public/uploads/" + img;
+        // 既に uploads/xxx ならそのまま /uploads/ に
+        if (img.startsWith("uploads/")) img = "/" + img;
+        // それ以外は uploads に寄せる
+        else {
+          if (img.startsWith("/")) img = img.slice(1);
+          img = "/uploads/" + img;
+        }
         img = origin + img;
       }
       return { ...p, image: img };
@@ -639,9 +779,7 @@ app.get("/api/products", async (req, res) => {
   }
 });
 
-// =========================
-// 管理：商品一覧（GET）
-// =========================
+// ============== Admin products ==============
 app.get("/api/admin/products", requireAdmin, async (req, res) => {
   try {
     const products = await loadProducts();
@@ -652,30 +790,6 @@ app.get("/api/admin/products", requireAdmin, async (req, res) => {
   }
 });
 
-// 管理：アップロード済み画像一覧（GET）
-app.get("/api/admin/images", requireAdmin, async (req, res) => {
-  try {
-    await ensureDir(UPLOAD_DIR);
-
-    const files = await fsp.readdir(UPLOAD_DIR).catch(() => []);
-    const images = files.filter(f => /\.(png|jpe?g|webp|gif)$/i.test(f)).sort((a,b)=>a.localeCompare(b,"en"));
-
-    const base = (BASE_URL && BASE_URL.startsWith("http")) ? BASE_URL : `${req.protocol}://${req.get("host")}`;
-
-    res.json({
-      ok: true,
-      images: images.map(name => ({
-        name,
-        url: `${base}/public/uploads/${encodeURIComponent(name)}`
-      }))
-    });
-  } catch (e) {
-    logErr("GET /api/admin/images", e?.stack || e);
-    res.status(500).json({ ok: false, error: "server_error" });
-  }
-});
-
-// 管理：商品更新
 app.post("/api/admin/products/update", requireAdmin, async (req, res) => {
   try {
     const body = req.body || {};
@@ -706,7 +820,6 @@ app.post("/api/admin/products/update", requireAdmin, async (req, res) => {
   }
 });
 
-// 管理：商品追加
 app.post("/api/admin/products/add", requireAdmin, async (req, res) => {
   try {
     const b = req.body || {};
@@ -736,7 +849,6 @@ app.post("/api/admin/products/add", requireAdmin, async (req, res) => {
   }
 });
 
-// 管理：商品削除
 app.post("/api/admin/products/delete", requireAdmin, async (req, res) => {
   try {
     const id = String(req.body?.id || "").trim();
@@ -748,6 +860,27 @@ app.post("/api/admin/products/delete", requireAdmin, async (req, res) => {
     res.json({ ok: true, removed: products.length - next.length });
   } catch (e) {
     logErr("POST /api/admin/products/delete", e?.stack || e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+// 管理：アップロード済み画像一覧
+app.get("/api/admin/images", requireAdmin, async (req, res) => {
+  try {
+    await ensureDir(UPLOAD_DIR);
+    const files = await fsp.readdir(UPLOAD_DIR).catch(() => []);
+    const images = files.filter(f => /\.(png|jpe?g|webp|gif)$/i.test(f)).sort((a,b)=>a.localeCompare(b,"en"));
+
+    const base = BASE_URL || originFromReq(req);
+    res.json({
+      ok: true,
+      images: images.map(name => ({
+        name,
+        url: `${base}/uploads/${encodeURIComponent(name)}`
+      }))
+    });
+  } catch (e) {
+    logErr("GET /api/admin/images", e?.stack || e);
     res.status(500).json({ ok: false, error: "server_error" });
   }
 });
@@ -775,8 +908,8 @@ app.post("/api/admin/upload-image", requireAdmin, async (req, res) => {
     const outPath = path.join(UPLOAD_DIR, name);
     await fsp.writeFile(outPath, buf);
 
-    const base = BASE_URL || `${req.protocol}://${req.get("host")}`;
-    const url = `${base}/public/uploads/${encodeURIComponent(name)}`;
+    const base = BASE_URL || originFromReq(req);
+    const url = `${base}/uploads/${encodeURIComponent(name)}`;
     res.json({ ok: true, name, url });
   } catch (e) {
     logErr("POST /api/admin/upload-image", e?.stack || e);
@@ -784,9 +917,7 @@ app.post("/api/admin/upload-image", requireAdmin, async (req, res) => {
   }
 });
 
-// =========================
-// 住所API（LIFF）
-// =========================
+// ============== Address API (LIFF) ==============
 app.get("/api/address/get", async (req, res) => {
   try {
     const userId = String(req.query.userId || "").trim();
@@ -815,6 +946,7 @@ app.post("/api/address/set", async (req, res) => {
       city: b.city,
       address1: b.address1,
       address2: b.address2,
+      address_key: b.address_key
     });
 
     res.json({ ok: true, address: saved });
@@ -865,111 +997,9 @@ app.post("/api/liff/opened", async (req, res) => {
   }
 });
 
-// =========================
-// 注文（共通組立）
-// - confirm.html からは「checkout payload」が来る
-//   { uid, checkout:{ items:[{id,qty,price,name,image,volume}], subtotal } }
-// - ただし価格や在庫はサーバ側 products.json を正として再計算する
-// =========================
-async function buildOrderFromCheckout(uid, checkout) {
-  const userId = String(uid || "").trim();
-  if (!userId) {
-    const err = new Error("uid required");
-    err.code = "NO_UID";
-    throw err;
-  }
+// ============== Payment / Orders ==============
 
-  const addr = await getAddressByUserId(userId);
-  if (!addr) {
-    const err = new Error("address not found");
-    err.code = "NO_ADDRESS";
-    throw err;
-  }
-
-  const products = await loadProducts();
-  const productsById = Object.fromEntries(products.map(p => [p.id, p]));
-
-  // items をサーバ基準で組み立て直す（改ざん対策）
-  const inItems = Array.isArray(checkout?.items) ? checkout.items : [];
-  const items = [];
-  let subtotal = 0;
-
-  for (const it of inItems) {
-    const id = String(it?.id || "").trim();
-    const qty = Math.max(0, Math.floor(Number(it?.qty || 0)));
-    if (!id || qty <= 0) continue;
-
-    const p = productsById[id];
-    if (!p) continue;
-
-    // 在庫チェック
-    if (Number.isFinite(p.stock) && Number(p.stock) < qty) {
-      const err = new Error(`在庫不足: ${p.name} (stock=${p.stock}, qty=${qty})`);
-      err.code = "OUT_OF_STOCK";
-      err.productId = id;
-      throw err;
-    }
-
-    const price = Number(p.price || 0);
-    const lineTotal = price * qty;
-    subtotal += lineTotal;
-
-    items.push({
-      id: p.id,
-      name: p.name,
-      qty,
-      price,
-      volume: p.volume || "",
-      image: p.image || "",
-      desc: p.desc || "",
-      lineTotal,
-    });
-  }
-
-  if (items.length === 0) {
-    const err = new Error("items empty");
-    err.code = "EMPTY_ITEMS";
-    throw err;
-  }
-
-  const size = calcPackageSizeFromItems(items, productsById);
-  const shippingFee = calcShippingFee(addr.prefecture, size);
-
-  return { userId, addr, items, subtotal, shippingFee, size, productsById };
-}
-
-async function insertOrderToDb({ userId, items, subtotal, shippingFee, paymentMethod, status, rawEvent }) {
-  const addr = await getAddressByUserId(userId);
-  const fullAddr = addr ? `${addr.prefecture || ""}${addr.city || ""}${addr.address1 || ""} ${addr.address2 || ""}`.trim() : "";
-
-  const r = await pool.query(
-    `
-    INSERT INTO orders (user_id, source, items, total, shipping_fee, payment_method, status, name, zip, pref, address, raw_event)
-    VALUES ($1,'liff',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-    RETURNING id
-    `,
-    [
-      userId,
-      JSON.stringify(items),
-      subtotal,
-      shippingFee,
-      paymentMethod,
-      status,
-      addr?.name || "",
-      addr?.postal || "",
-      addr?.prefecture || "",
-      fullAddr,
-      rawEvent ? JSON.stringify(rawEvent) : null,
-    ]
-  );
-  return r.rows[0]?.id;
-}
-
-// =========================
-// ✅ confirm.html 用 API（ここが“全部”の接合部）
-// - /api/pay/stripe/create : {uid, checkout} → {ok:true, url, orderId, ...}
-// - /api/order/cod/create  : {uid, checkout} → {ok:true, orderId, ...}
-// =========================
+// Stripe: create checkout session
 app.post("/api/pay/stripe/create", async (req, res) => {
   try {
     if (!stripe) return res.status(400).json({ ok:false, error:"stripe_not_configured" });
@@ -978,15 +1008,12 @@ app.post("/api/pay/stripe/create", async (req, res) => {
     const checkout = req.body?.checkout || null;
 
     await touchUser(uid, "seen");
-
     const built = await buildOrderFromCheckout(uid, checkout);
 
     const lineItems = built.items.map(it => ({
       price_data: {
         currency: "jpy",
-        product_data: {
-          name: `${it.name}${it.volume ? `（${it.volume}）` : ""}`,
-        },
+        product_data: { name: `${it.name}${it.volume ? `（${it.volume}）` : ""}` },
         unit_amount: it.price,
       },
       quantity: it.qty,
@@ -1006,7 +1033,7 @@ app.post("/api/pay/stripe/create", async (req, res) => {
     const orderId = await insertOrderToDb({
       userId: built.userId,
       items: built.items,
-      subtotal: built.subtotal,
+      total: built.subtotal + built.shippingFee,
       shippingFee: built.shippingFee,
       paymentMethod: "card",
       status: "new",
@@ -1016,8 +1043,8 @@ app.post("/api/pay/stripe/create", async (req, res) => {
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       line_items: lineItems,
-      success_url: `${stripeSuccessUrl()}?orderId=${orderId}`,
-      cancel_url: `${stripeCancelUrl()}?orderId=${orderId}`,
+      success_url: `${stripeSuccessUrl(req)}?orderId=${orderId}`,
+      cancel_url: `${stripeCancelUrl(req)}?orderId=${orderId}`,
       metadata: { orderId: String(orderId), userId: built.userId },
     });
 
@@ -1041,27 +1068,27 @@ app.post("/api/pay/stripe/create", async (req, res) => {
   }
 });
 
+// 代引き：作成（confirm画面で「代引き」押した瞬間にDB保存したい場合）
 app.post("/api/order/cod/create", async (req, res) => {
   try {
     const uid = String(req.body?.uid || "").trim();
     const checkout = req.body?.checkout || null;
 
     await touchUser(uid, "seen");
-
     const built = await buildOrderFromCheckout(uid, checkout);
+
+    const codFee = Number(COD_FEE || 330);
+    const totalCod = built.subtotal + built.shippingFee + codFee;
 
     const orderId = await insertOrderToDb({
       userId: built.userId,
       items: built.items,
-      subtotal: built.subtotal,
+      total: totalCod,
       shippingFee: built.shippingFee,
       paymentMethod: "cod",
       status: "new",
       rawEvent: { type: "cod_create_v2" },
     });
-
-    const codFee = Number(COD_FEE || 330);
-    const totalCod = built.subtotal + built.shippingFee + codFee;
 
     res.json({
       ok: true,
@@ -1085,18 +1112,53 @@ app.post("/api/order/cod/create", async (req, res) => {
   }
 });
 
-// 互換：以前のエンドポイントを叩いてる箇所が残ってても動くように alias
-app.post("/api/checkout", (req, res, next) => {
-  // 旧: {userId, items:[{id,qty}]} を新: {uid, checkout:{items:[{id,qty}]}} に変換
-  const userId = String(req.body?.userId || "").trim();
-  const items = Array.isArray(req.body?.items) ? req.body.items : [];
-  req.body = { uid: userId, checkout: { items: items.map(it=>({ id: it.id, qty: it.qty })) } };
-  return app._router.handle(req, res, next); // いったん次へ（下で /api/pay/stripe/create を再利用しないため直接は不可）
-});
-// ↑ 互換を本当に使うなら、古いフロントの呼び先は /api/pay/stripe/create に寄せるのが一番確実。
-// （このaliasはExpress内部handleの都合で環境によって動作がブレるので、基本は使わないでOK）
+// ★本命：代引き確定 → confirm-cod.htmlへ遷移用
+// フロントはこのAPIを叩くだけでOK（redirectが返る）
+app.post("/api/order/cod/confirm", async (req, res) => {
+  try {
+    const uid = String(req.body?.uid || "").trim();
+    const checkout = req.body?.checkout || null;
 
-// 注文ステータス確認（Stripe success画面などで）
+    await touchUser(uid, "seen");
+    const built = await buildOrderFromCheckout(uid, checkout);
+
+    const codFee = Number(COD_FEE || 330);
+    const totalCod = built.subtotal + built.shippingFee + codFee;
+
+    const orderId = await insertOrderToDb({
+      userId: built.userId,
+      items: built.items,
+      total: totalCod,
+      shippingFee: built.shippingFee,
+      paymentMethod: "cod",
+      status: "confirmed",
+      rawEvent: { type: "cod_confirm_v1" },
+    });
+
+    // confirm-cod.html は “ルート配信” してるので /confirm-cod.html でOK
+    res.json({
+      ok: true,
+      orderId,
+      subtotal: built.subtotal,
+      shippingFee: built.shippingFee,
+      codFee,
+      totalCod,
+      size: built.size,
+      redirect: `/confirm-cod.html?orderId=${encodeURIComponent(orderId)}`
+    });
+  } catch (e) {
+    const code = e?.code || "";
+    logErr("POST /api/order/cod/confirm", code, e?.stack || e);
+
+    if (code === "NO_ADDRESS") return res.status(409).json({ ok:false, error:"NO_ADDRESS" });
+    if (code === "OUT_OF_STOCK") return res.status(409).json({ ok:false, error:"OUT_OF_STOCK", productId: e.productId });
+    if (code === "EMPTY_ITEMS") return res.status(400).json({ ok:false, error:"EMPTY_ITEMS" });
+
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
+
+// 注文ステータス確認
 app.get("/api/order/status", async (req, res) => {
   try {
     const orderId = String(req.query.orderId || "").trim();
@@ -1117,21 +1179,7 @@ app.get("/api/order/status", async (req, res) => {
   }
 });
 
-// =========================
-// 管理：セグメント/配信
-// =========================
-app.get("/api/admin/friends/today", requireAdmin, async (req, res) => {
-  try {
-    const day = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" }); // YYYY-MM-DD
-    const r = await pool.query(`SELECT day, added_count, blocked_count FROM friend_logs WHERE day=$1`, [day]);
-    const row = r.rows[0] || { day, added_count: 0, blocked_count: 0 };
-    res.json({ ok:true, ...row, net: (row.added_count||0) - (row.blocked_count||0) });
-  } catch (e) {
-    logErr("GET /api/admin/friends/today", e?.stack || e);
-    res.status(500).json({ ok:false, error:"server_error" });
-  }
-});
-
+// ============== Segment / blast admin ==============
 app.post("/api/admin/segment/fill", requireAdmin, async (req, res) => {
   try {
     const segmentKey = String(req.body?.segment_key || "").trim();
@@ -1210,9 +1258,7 @@ app.post("/api/admin/blast/once", requireAdmin, async (req, res) => {
   }
 });
 
-// =========================
-// LINE Webhook
-// =========================
+// ============== LINE Webhook ==============
 app.post("/webhook", line.middleware(lineConfig), async (req, res) => {
   try {
     const events = req.body.events || [];
@@ -1223,6 +1269,13 @@ app.post("/webhook", line.middleware(lineConfig), async (req, res) => {
     res.status(500).end();
   }
 });
+
+function liffUrl(pathname, reqForFallback = null) {
+  const base = LIFF_BASE || (reqForFallback ? originFromReq(reqForFallback) : "");
+  if (!base) return pathname;
+  if (!pathname.startsWith("/")) pathname = "/" + pathname;
+  return base + pathname;
+}
 
 async function handleEvent(ev) {
   const type = ev.type;
@@ -1286,10 +1339,8 @@ async function onUnfollow() {
   );
 }
 
-function liffUrl(pathname) {
-  if (!LIFF_BASE) return pathname;
-  if (!pathname.startsWith("/")) pathname = "/" + pathname;
-  return LIFF_BASE + pathname;
+async function onPostback() {
+  // 必要なら拡張
 }
 
 async function onTextMessage(ev) {
@@ -1308,7 +1359,7 @@ async function onTextMessage(ev) {
   // 起動キーワード2つだけ
   if (text === KEYWORD_DIRECT) {
     setSession(userId, { kind: "direct", step: "start" });
-    await replyDirectStart(ev.replyToken, userId);
+    await replyDirectStart(ev.replyToken);
     return;
   }
 
@@ -1324,15 +1375,10 @@ async function onTextMessage(ev) {
   // それ以外は無反応（要望）
 }
 
-async function onPostback() {
-  // 必要なら拡張
-}
-
 async function replyDirectStart(replyToken) {
-  // ✅ ミニアプリ商品一覧へ誘導（あなたのパスに合わせて）
-  const urlProducts = liffUrl("/public/products.html");
-  const urlAddress  = liffUrl("/public/liff-address.html");
-
+  // ★URLは短いルートを使う（/public は付けなくてOK）
+  const urlProducts = liffUrl("/products.html");
+  const urlAddress  = liffUrl("/liff-address.html");
   await lineClient.replyMessage(replyToken, {
     type: "text",
     text: `ミニアプリで注文できます：\n${urlProducts}\n\n住所登録：\n${urlAddress}`
@@ -1342,7 +1388,7 @@ async function replyDirectStart(replyToken) {
 async function replyKusukeStart(replyToken, userId, qtyPreset) {
   const addr = await getAddressByUserId(userId);
   if (!addr) {
-    const url = liffUrl("/public/liff-address.html");
+    const url = liffUrl("/liff-address.html");
     await lineClient.replyMessage(replyToken, {
       type: "text",
       text:
@@ -1383,29 +1429,27 @@ async function handleSessionInput(userId, text, ev) {
 async function finalizeKusukeOrder(replyToken, userId, qty) {
   try {
     const products = await loadProducts();
-    const productsById = Object.fromEntries(products.map(p => [p.id, p]));
     const kusuke = products.find(p => (p.name || "").includes("久助") || (p.id || "").includes("kusuke"));
     if (!kusuke) {
       await lineClient.replyMessage(replyToken, { type:"text", text:"久助の商品が products.json に見つかりませんでした。" });
       return;
     }
 
-    // サーバ側で組み立て
     const fakeCheckout = { items: [{ id: kusuke.id, qty }] };
     const built = await buildOrderFromCheckout(userId, fakeCheckout);
+
+    const codFee = Number(COD_FEE || 330);
+    const totalCod = built.subtotal + built.shippingFee + codFee;
 
     const orderId = await insertOrderToDb({
       userId,
       items: built.items,
-      subtotal: built.subtotal,
+      total: totalCod,
       shippingFee: built.shippingFee,
       paymentMethod: "cod",
-      status: "new",
+      status: "confirmed",
       rawEvent: { type: "line_kusuke" },
     });
-
-    const codFee = Number(COD_FEE || 330);
-    const totalCod = built.subtotal + built.shippingFee + codFee;
 
     const a = built.addr;
     const addrText =
@@ -1420,14 +1464,14 @@ async function finalizeKusukeOrder(replyToken, userId, qty) {
         `【代引手数料】${codFee}円\n\n` +
         `【合計（代引）】${totalCod}円\n\n` +
         `【お届け先】\n${addrText}\n\n` +
-        `住所変更：\n${liffUrl("/public/liff-address.html")}`
+        `住所変更：\n${liffUrl("/liff-address.html")}`
     });
   } catch (e) {
     const code = e?.code || "";
     logErr("finalizeKusukeOrder", code, e?.stack || e);
 
     if (code === "NO_ADDRESS") {
-      await lineClient.replyMessage(replyToken, { type:"text", text:`住所が未登録です。\n${liffUrl("/public/liff-address.html")}` });
+      await lineClient.replyMessage(replyToken, { type:"text", text:`住所が未登録です。\n${liffUrl("/liff-address.html")}` });
       return;
     }
     if (code === "OUT_OF_STOCK") {
@@ -1438,9 +1482,7 @@ async function finalizeKusukeOrder(replyToken, userId, qty) {
   }
 }
 
-// =========================
-// 起動
-// =========================
+// ============== Boot ==============
 async function main() {
   await ensureDir(DATA_DIR);
   await ensureDir(UPLOAD_DIR);

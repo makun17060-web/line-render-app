@@ -216,10 +216,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     () => openUrl(LINKS.ORDER_URL, false);
 
   // ★住所登録：戻り先(return)を付けて LIFF内で開く
-  document.getElementById("btnAddress").onclick = () => {
-    const ret = encodeURIComponent(location.href);
-    openUrl(`${LINKS.ADDRESS_URL}?return=${ret}`, false);
-  };
+ document.getElementById("btnAddress").onclick = () => {
+  const ret = encodeURIComponent(location.href);
+  openUrl(`${LINKS.ADDRESS_URL}?liffId=${encodeURIComponent(LIFF_ID)}&returnTo=${ret}`, false);
+};
+
 
   // ★配送・送料：LIFF内で開く（external=false）＋戻り先(return)を付ける
   document.getElementById("btnShipping").onclick = () => {

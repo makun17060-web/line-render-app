@@ -6,43 +6,31 @@
   <title>住所登録（LIFF）</title>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style>
-    :root{
-      --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280; --border:#e5e7eb;
-      --primary:#0b3a53; --danger:#b91c1c; --ok:#065f46;
-      --shadow:0 1px 3px rgba(0,0,0,.08); --radius:14px;
-    }
-    body{ font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; margin:0; background:var(--bg); color:var(--text);}
-    .wrap{ max-width:720px; margin:0 auto; padding:14px; }
-    .card{ background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:14px; box-shadow:var(--shadow); }
-    h2{ margin:0 0 8px; }
-    .lead{ margin:0 0 10px; color:var(--muted); font-size:13px; line-height:1.7; }
-    label{ display:block; font-weight:900; margin-top:10px; font-size:13px; }
-    input{
-      width:100%; padding:10px; border-radius:10px; border:1px solid #d1d5db;
-      font-size:16px; background:#fff;
-    }
-    button{
-      width:100%; margin-top:14px; padding:12px; border-radius:12px; border:0;
-      background:var(--primary); color:#fff; font-weight:900; font-size:16px; cursor:pointer;
-    }
-    button:disabled{ opacity:.55; cursor:not-allowed; }
-    .msg{ margin-top:10px; font-size:13px; font-weight:900; color:var(--danger); white-space:pre-wrap; }
-    .msg.ok{ color:var(--ok); }
-    .row2{ display:grid; grid-template-columns:1fr; gap:10px; }
-    @media (min-width:560px){ .row2{ grid-template-columns:1fr 1fr; } }
-    .subbtn{ background:#111827; }
-    .subbtn2{ background:#374151; }
-    .debug{ margin-top:10px; font-size:12px; color:#6b7280; white-space:pre-wrap; display:none; }
+    :root{--bg:#f6f7f9;--card:#fff;--text:#111827;--muted:#6b7280;--border:#e5e7eb;--primary:#0b3a53;--danger:#b91c1c;--ok:#065f46;--shadow:0 1px 3px rgba(0,0,0,.08);--radius:14px;}
+    body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:var(--bg);color:var(--text);}
+    .wrap{max-width:720px;margin:0 auto;padding:14px;}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;box-shadow:var(--shadow);}
+    h2{margin:0 0 8px;}
+    .lead{margin:0 0 10px;color:var(--muted);font-size:13px;line-height:1.7;}
+    label{display:block;font-weight:900;margin-top:10px;font-size:13px;}
+    input{width:100%;padding:10px;border-radius:10px;border:1px solid #d1d5db;font-size:16px;background:#fff;}
+    button{width:100%;margin-top:14px;padding:12px;border-radius:12px;border:0;background:var(--primary);color:#fff;font-weight:900;font-size:16px;cursor:pointer;}
+    button:disabled{opacity:.55;cursor:not-allowed;}
+    .msg{margin-top:10px;font-size:13px;font-weight:900;color:var(--danger);white-space:pre-wrap;}
+    .msg.ok{color:var(--ok);}
+    .row2{display:grid;grid-template-columns:1fr;gap:10px;}
+    @media (min-width:560px){.row2{grid-template-columns:1fr 1fr;}}
+    .subbtn{background:#111827;}
+    .debug{margin-top:10px;font-size:12px;color:#6b7280;white-space:pre-wrap;display:none;}
   </style>
 </head>
-
 <body>
   <div class="wrap">
     <div class="card">
       <h2>住所登録</h2>
       <p class="lead">
-        住所を保存したら <b>注文確認（confirm）</b> に進みます。<br>
-        もし移動できない場合は、この画面の下にエラー詳細が表示されます。
+        住所を保存したら <b>注文確認（confirm）</b> へ進みます。<br>
+        ※カートが空なら商品一覧へ戻します。
       </p>
 
       <div id="msg" class="msg"></div>
@@ -75,56 +63,43 @@
       <input id="address2" autocomplete="address-line2" placeholder="例：◯◯マンション 101" />
 
       <button id="saveBtn">保存する</button>
-      <button id="nextBtn" class="subbtn" type="button" style="display:none;">注文確認へ進む</button>
-      <button id="closeBtn" class="subbtn2" type="button" style="display:none;">閉じる</button>
+      <button id="goBtn" class="subbtn" type="button" style="display:none;">注文確認へ進む</button>
     </div>
   </div>
 
 <script>
-/* ===================== ★ここが追記（ログ） ===================== */
-window.addEventListener("error", (e)=>{
-  console.error("[PAGE ERROR]", e.message, e.error);
-});
-window.addEventListener("unhandledrejection", (e)=>{
-  console.error("[UNHANDLED]", e.reason);
-});
-/* =============================================================== */
+window.addEventListener("error", (e)=>console.error("[PAGE ERROR]", e.message, e.error));
+window.addEventListener("unhandledrejection", (e)=>console.error("[UNHANDLED]", e.reason));
 
 (async function(){
   "use strict";
 
-  // ========= 設定 =========
-  const LIFF_ID  = "2008406620-4kyQVyqe";
-  const API_GET  = "/api/address/get";
-  const API_SET  = "/api/address/set";
+  const LIFF_ID = "2008406620-4kyQVyqe";
+  const API_GET = "/api/address/get";
+  const API_SET = "/api/address/set";
 
-  // ★保存後に行きたい先（confirmへ）
-  // ✅ 相対だと LIFF openWindow が「予期せぬエラー」になりやすいので絶対URL化
-  const NEXT_URL = new URL("/public/confirm.html", location.origin).toString();
-
-  // デバッグを画面にも出す（trueで表示）
-  const DEBUG_ON_SCREEN = true;
-
-  // ========= DOM =========
-  const msgEl   = document.getElementById("msg");
+  const msgEl = document.getElementById("msg");
+  const dbgEl = document.getElementById("debug");
   const saveBtn = document.getElementById("saveBtn");
-  const nextBtn = document.getElementById("nextBtn");
-  const closeBtn= document.getElementById("closeBtn");
-  const debugEl = document.getElementById("debug");
-
+  const goBtn = document.getElementById("goBtn");
   const $ = (id)=>document.getElementById(id);
+
+  const DEBUG_ON_SCREEN = true;
   const setMsg = (t, ok=false)=>{ msgEl.textContent=t||""; msgEl.className="msg"+(ok?" ok":""); };
+  const setDbg = (t)=>{ if(!DEBUG_ON_SCREEN) return; dbgEl.style.display="block"; dbgEl.textContent=t||""; };
 
-  const setDebug = (t)=>{
-    if(!DEBUG_ON_SCREEN) return;
-    debugEl.style.display = "block";
-    debugEl.textContent = t || "";
-  };
-
-  // ========= utils =========
   const normPhone  = (s)=> String(s||"").replace(/[^\d+]/g,"").replace(/^(\+81)0/,"$1").trim();
   const normPostal = (s)=> String(s||"").replace(/[^\d]/g,"").slice(0,7).trim();
-  const pretty = (v)=> { try{ return JSON.stringify(v, null, 2); }catch{ return String(v); } };
+
+  function cartCount(){
+    try{
+      const raw = localStorage.getItem("isoya_cart_v1");
+      if(!raw) return 0;
+      const obj = JSON.parse(raw);
+      if(!obj || typeof obj !== "object") return 0;
+      return Object.values(obj).reduce((a,b)=>a+Number(b||0),0);
+    }catch{ return 0; }
+  }
 
   function validate(){
     const name = $("name").value.trim();
@@ -133,7 +108,6 @@ window.addEventListener("unhandledrejection", (e)=>{
     const prefecture = $("prefecture").value.trim();
     const city = $("city").value.trim();
     const address1 = $("address1").value.trim();
-
     if(!name) return "お名前を入力してください。";
     if(!phone || phone.length < 10) return "電話番号を正しく入力してください。";
     if(!postal || postal.length !== 7) return "郵便番号は7桁で入力してください。";
@@ -143,7 +117,6 @@ window.addEventListener("unhandledrejection", (e)=>{
     return "";
   }
 
-  // ========= LIFF =========
   function getUserId(){
     try{
       const ctx = liff.getContext && liff.getContext();
@@ -161,55 +134,16 @@ window.addEventListener("unhandledrejection", (e)=>{
       return true;
     }catch(e){
       setMsg("LIFF初期化に失敗しました。\n" + (e?.message||e));
-      setDebug("[LIFF init error]\n" + (e?.stack || e?.message || e));
+      setDbg("[LIFF init error]\n" + (e?.stack || e?.message || e));
       return false;
     }
   }
 
-  // ========= 遷移（安全版） =========
-  function goNext(){
-    const url = NEXT_URL;
-
-    setDebug(
-      "[goNext]\n" +
-      "url=" + url + "\n" +
-      "origin=" + location.origin + "\n" +
-      "href=" + location.href
-    );
-
-    // まずLIFF openWindow（失敗したら fallback）
-    try{
-      if(window.liff && liff.isInClient && liff.isInClient()){
-        liff.openWindow({ url, external:false });
-        return;
-      }
-    }catch(e){
-      console.error("[LIFF] openWindow failed:", e);
-      setDebug("[openWindow failed]\n" + (e?.stack || e?.message || e));
-    }
-
-    // fallback（ブラウザ遷移）
-    location.href = url;
-  }
-
-  function showAfterSaveUI(){
-    nextBtn.style.display = "block";
-    try{
-      if(liff.isInClient && liff.isInClient()){
-        closeBtn.style.display = "block";
-      }
-    }catch{}
-  }
-
-  // ========= API =========
   async function loadAddress(userId){
     try{
       const r = await fetch(`${API_GET}?userId=${encodeURIComponent(userId)}`, { cache:"no-store" });
       const j = await r.json().catch(()=>({}));
-      if(!r.ok){
-        setDebug("[GET failed]\nHTTP " + r.status + "\n" + pretty(j));
-        return;
-      }
+      if(!r.ok) return;
       const a = j.address || {};
       $("name").value = a.name || "";
       $("phone").value = a.phone || "";
@@ -219,11 +153,36 @@ window.addEventListener("unhandledrejection", (e)=>{
       $("address1").value = a.address1 || "";
       $("address2").value = a.address2 || "";
     }catch(e){
-      setDebug("[GET exception]\n" + (e?.stack || e?.message || e));
+      setDbg("[GET exception]\n" + (e?.stack || e?.message || e));
     }
   }
 
-  let saving = false;
+  // ✅ 保存後の遷移先は「confirm(カートあり) / products(カート空)」
+  function nextUrl(userId){
+    const base = (cartCount() > 0) ? "/public/confirm.html" : "/public/products.html";
+    // userId をクエリで渡す（confirm側で住所取得に使う）
+    const u = new URL(base, location.origin);
+    u.searchParams.set("uid", userId);
+    return u.toString();
+  }
+
+  function goNext(userId){
+    const url = nextUrl(userId);
+    setDbg("[goNext]\n" + url);
+
+    try{
+      if(window.liff && liff.isInClient && liff.isInClient()){
+        liff.openWindow({ url, external:false });
+        return;
+      }
+    }catch(e){
+      console.error("[openWindow failed]", e);
+      setDbg("[openWindow failed]\n" + (e?.stack || e?.message || e));
+    }
+    location.href = url;
+  }
+
+  let saving=false;
 
   async function saveAddress(userId){
     if(saving) return;
@@ -246,9 +205,9 @@ window.addEventListener("unhandledrejection", (e)=>{
       address2: $("address2").value.trim(),
     };
 
-    saving = true;
-    saveBtn.disabled = true;
-    saveBtn.textContent = "保存中…";
+    saving=true;
+    saveBtn.disabled=true;
+    saveBtn.textContent="保存中…";
 
     try{
       const r = await fetch(API_SET, {
@@ -257,58 +216,42 @@ window.addEventListener("unhandledrejection", (e)=>{
         body: JSON.stringify(payload),
       });
       const j = await r.json().catch(()=>({}));
-
       if(!r.ok){
-        setMsg(`保存失敗（HTTP ${r.status}）\n` + pretty(j));
-        setDebug("[POST failed]\n" + pretty(payload) + "\n---\n" + pretty(j));
+        setMsg(`保存失敗（HTTP ${r.status}）\n` + JSON.stringify(j,null,2));
         return;
       }
 
       setMsg("保存しました！注文確認へ進みます…", true);
-      showAfterSaveUI();
-
-      // ✅ すぐ進む（失敗しても次へボタンで再挑戦できる）
-      setTimeout(goNext, 600);
+      goBtn.style.display="block";
+      setTimeout(()=>goNext(userId), 700);
 
     }catch(e){
       setMsg("保存に失敗しました。\n通信環境を確認して再度お試しください。");
-      setDebug("[POST exception]\n" + (e?.stack || e?.message || e));
+      setDbg("[POST exception]\n" + (e?.stack || e?.message || e));
     }finally{
-      saving = false;
-      saveBtn.disabled = false;
-      saveBtn.textContent = "保存する";
+      saving=false;
+      saveBtn.disabled=false;
+      saveBtn.textContent="保存する";
     }
   }
 
-  // ========= 起動 =========
   setMsg("起動中…");
   const ok = await initLiff();
   if(!ok) return;
 
   const userId = getUserId();
   if(!userId){
-    setMsg("userIdが取得できません。\n必ずLINEのLIFF内から開いてください（ブラウザ直開きでは保存できません）。");
-    setDebug("[no userId]\ncontext=" + pretty(liff.getContext ? liff.getContext() : null));
+    setMsg("userIdが取得できません。\n必ずLINEのLIFF内から開いてください。");
     return;
   }
 
   setMsg("");
-  setDebug("[boot]\nuserId=" + userId + "\nNEXT_URL=" + NEXT_URL);
-
   await loadAddress(userId);
 
   saveBtn.addEventListener("click", ()=> saveAddress(userId));
-  nextBtn.addEventListener("click", goNext);
-
-  closeBtn.addEventListener("click", ()=>{
-    try{
-      if(liff.isInClient && liff.isInClient()) liff.closeWindow();
-      else location.href = "about:blank";
-    }catch{ location.href = "about:blank"; }
-  });
+  goBtn.addEventListener("click", ()=> goNext(userId));
 
 })();
 </script>
-
 </body>
 </html>

@@ -32,6 +32,7 @@
     @media (min-width:560px){ .row2{ grid-template-columns:1fr 1fr; } }
     .subbtn{ background:#111827; }
     .subbtn2{ background:#374151; }
+    .debug{ margin-top:10px; font-size:12px; color:#6b7280; white-space:pre-wrap; display:none; }
   </style>
 </head>
 
@@ -40,11 +41,12 @@
     <div class="card">
       <h2>住所登録</h2>
       <p class="lead">
-        住所を保存したら、自動で次の画面へ進みます（3秒）。<br>
-        すぐ進みたい場合は「次へ」を押してください。
+        住所を保存したら <b>注文確認（confirm）</b> に進みます。<br>
+        もし移動できない場合は、この画面の下にエラー詳細が表示されます。
       </p>
 
       <div id="msg" class="msg"></div>
+      <div id="debug" class="debug"></div>
 
       <label>お名前（必須）</label>
       <input id="name" autocomplete="name" placeholder="例：木村 太郎" />
@@ -73,22 +75,20 @@
       <input id="address2" autocomplete="address-line2" placeholder="例：◯◯マンション 101" />
 
       <button id="saveBtn">保存する</button>
-      <button id="nextBtn" class="subbtn" type="button" style="display:none;">次へ進む</button>
+      <button id="nextBtn" class="subbtn" type="button" style="display:none;">注文確認へ進む</button>
       <button id="closeBtn" class="subbtn2" type="button" style="display:none;">閉じる</button>
     </div>
   </div>
 
 <script>
-  // ★ ここ（scriptの一番上）に置く
+/* ===================== ★ここが追記（ログ） ===================== */
 window.addEventListener("error", (e)=>{
   console.error("[PAGE ERROR]", e.message, e.error);
 });
 window.addEventListener("unhandledrejection", (e)=>{
   console.error("[UNHANDLED]", e.reason);
 });
-
-(async function(){
-  "use strict";
+/* =============================================================== */
 
 (async function(){
   "use strict";
@@ -98,22 +98,33 @@ window.addEventListener("unhandledrejection", (e)=>{
   const API_GET  = "/api/address/get";
   const API_SET  = "/api/address/set";
 
-  // ★保存後の遷移先（ここだけ変えればOK）
-  // 例：商品一覧へ
-  const NEXT_URL = "/public/confirm.html";
+  // ★保存後に行きたい先（confirmへ）
+  // ✅ 相対だと LIFF openWindow が「予期せぬエラー」になりやすいので絶対URL化
+  const NEXT_URL = new URL("/public/confirm.html", location.origin).toString();
+
+  // デバッグを画面にも出す（trueで表示）
+  const DEBUG_ON_SCREEN = true;
 
   // ========= DOM =========
   const msgEl   = document.getElementById("msg");
   const saveBtn = document.getElementById("saveBtn");
   const nextBtn = document.getElementById("nextBtn");
   const closeBtn= document.getElementById("closeBtn");
+  const debugEl = document.getElementById("debug");
 
   const $ = (id)=>document.getElementById(id);
   const setMsg = (t, ok=false)=>{ msgEl.textContent=t||""; msgEl.className="msg"+(ok?" ok":""); };
 
+  const setDebug = (t)=>{
+    if(!DEBUG_ON_SCREEN) return;
+    debugEl.style.display = "block";
+    debugEl.textContent = t || "";
+  };
+
   // ========= utils =========
   const normPhone  = (s)=> String(s||"").replace(/[^\d+]/g,"").replace(/^(\+81)0/,"$1").trim();
   const normPostal = (s)=> String(s||"").replace(/[^\d]/g,"").slice(0,7).trim();
+  const pretty = (v)=> { try{ return JSON.stringify(v, null, 2); }catch{ return String(v); } };
 
   function validate(){
     const name = $("name").value.trim();
@@ -122,6 +133,7 @@ window.addEventListener("unhandledrejection", (e)=>{
     const prefecture = $("prefecture").value.trim();
     const city = $("city").value.trim();
     const address1 = $("address1").value.trim();
+
     if(!name) return "お名前を入力してください。";
     if(!phone || phone.length < 10) return "電話番号を正しく入力してください。";
     if(!postal || postal.length !== 7) return "郵便番号は7桁で入力してください。";
@@ -149,26 +161,39 @@ window.addEventListener("unhandledrejection", (e)=>{
       return true;
     }catch(e){
       setMsg("LIFF初期化に失敗しました。\n" + (e?.message||e));
+      setDebug("[LIFF init error]\n" + (e?.stack || e?.message || e));
       return false;
     }
   }
 
-  // ========= 遷移 =========
+  // ========= 遷移（安全版） =========
   function goNext(){
-    // LIFF内で別ページへ → openWindow が安定（同タブ遷移より事故りにくい）
+    const url = NEXT_URL;
+
+    setDebug(
+      "[goNext]\n" +
+      "url=" + url + "\n" +
+      "origin=" + location.origin + "\n" +
+      "href=" + location.href
+    );
+
+    // まずLIFF openWindow（失敗したら fallback）
     try{
-      if(liff.isInClient && liff.isInClient()){
-        liff.openWindow({ url: NEXT_URL, external: false });
+      if(window.liff && liff.isInClient && liff.isInClient()){
+        liff.openWindow({ url, external:false });
         return;
       }
-    }catch{}
-    // ブラウザ時は普通に遷移
-    location.href = NEXT_URL;
+    }catch(e){
+      console.error("[LIFF] openWindow failed:", e);
+      setDebug("[openWindow failed]\n" + (e?.stack || e?.message || e));
+    }
+
+    // fallback（ブラウザ遷移）
+    location.href = url;
   }
 
   function showAfterSaveUI(){
     nextBtn.style.display = "block";
-    // LIFF内なら閉じるも出す
     try{
       if(liff.isInClient && liff.isInClient()){
         closeBtn.style.display = "block";
@@ -178,17 +203,24 @@ window.addEventListener("unhandledrejection", (e)=>{
 
   // ========= API =========
   async function loadAddress(userId){
-    const r = await fetch(`${API_GET}?userId=${encodeURIComponent(userId)}`, { cache:"no-store" });
-    const j = await r.json().catch(()=>({}));
-    if(!r.ok) return;
-    const a = j.address || {};
-    $("name").value = a.name || "";
-    $("phone").value = a.phone || "";
-    $("postal").value = a.postal || "";
-    $("prefecture").value = a.prefecture || "";
-    $("city").value = a.city || "";
-    $("address1").value = a.address1 || "";
-    $("address2").value = a.address2 || "";
+    try{
+      const r = await fetch(`${API_GET}?userId=${encodeURIComponent(userId)}`, { cache:"no-store" });
+      const j = await r.json().catch(()=>({}));
+      if(!r.ok){
+        setDebug("[GET failed]\nHTTP " + r.status + "\n" + pretty(j));
+        return;
+      }
+      const a = j.address || {};
+      $("name").value = a.name || "";
+      $("phone").value = a.phone || "";
+      $("postal").value = a.postal || "";
+      $("prefecture").value = a.prefecture || "";
+      $("city").value = a.city || "";
+      $("address1").value = a.address1 || "";
+      $("address2").value = a.address2 || "";
+    }catch(e){
+      setDebug("[GET exception]\n" + (e?.stack || e?.message || e));
+    }
   }
 
   let saving = false;
@@ -225,20 +257,22 @@ window.addEventListener("unhandledrejection", (e)=>{
         body: JSON.stringify(payload),
       });
       const j = await r.json().catch(()=>({}));
+
       if(!r.ok){
-        setMsg(`保存失敗（HTTP ${r.status}）\n` + JSON.stringify(j, null, 2));
+        setMsg(`保存失敗（HTTP ${r.status}）\n` + pretty(j));
+        setDebug("[POST failed]\n" + pretty(payload) + "\n---\n" + pretty(j));
         return;
       }
 
-      // ✅ ここがポイント：保存後に「次へ」を出して、自動遷移もする
-      setMsg("保存しました！次の画面へ進みます…", true);
+      setMsg("保存しました！注文確認へ進みます…", true);
       showAfterSaveUI();
 
-      // 3秒後に自動で次へ
-      setTimeout(goNext, 3000);
+      // ✅ すぐ進む（失敗しても次へボタンで再挑戦できる）
+      setTimeout(goNext, 600);
 
     }catch(e){
       setMsg("保存に失敗しました。\n通信環境を確認して再度お試しください。");
+      setDebug("[POST exception]\n" + (e?.stack || e?.message || e));
     }finally{
       saving = false;
       saveBtn.disabled = false;
@@ -254,10 +288,13 @@ window.addEventListener("unhandledrejection", (e)=>{
   const userId = getUserId();
   if(!userId){
     setMsg("userIdが取得できません。\n必ずLINEのLIFF内から開いてください（ブラウザ直開きでは保存できません）。");
+    setDebug("[no userId]\ncontext=" + pretty(liff.getContext ? liff.getContext() : null));
     return;
   }
 
   setMsg("");
+  setDebug("[boot]\nuserId=" + userId + "\nNEXT_URL=" + NEXT_URL);
+
   await loadAddress(userId);
 
   saveBtn.addEventListener("click", ()=> saveAddress(userId));
@@ -272,5 +309,6 @@ window.addEventListener("unhandledrejection", (e)=>{
 
 })();
 </script>
+
 </body>
 </html>

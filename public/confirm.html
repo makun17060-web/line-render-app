@@ -218,11 +218,30 @@
       const products=await getProducts();
       renderItems(items, products);
 
-      // 表示は確定時にサーバが返す
-      shippingEl.textContent="（代引き確定時に計算）";
-      codFeeEl.textContent="—";
-      totalCodEl.textContent="—";
-      status.textContent="内容をご確認ください。";
+  // ✅ 見積り（送料/代引手数料/合計を確定前に表示）
+shippingEl.textContent="計算中…";
+codFeeEl.textContent="計算中…";
+totalCodEl.textContent="計算中…";
+
+try{
+  const quote = await postJson("/api/order/quote", { uid, checkout:{ items } });
+
+  shippingEl.textContent = `${yen(quote.shippingFee)}（ヤマト ${quote.size}サイズ）`;
+  codFeeEl.textContent   = yen(quote.codFee);
+  totalCodEl.textContent = yen(quote.totalCod);
+}catch(e){
+  console.error(e);
+  shippingEl.textContent="—";
+  codFeeEl.textContent="—";
+  totalCodEl.textContent="—";
+  // 住所なしは住所登録へ
+  if((e?.message||"").includes("NO_ADDRESS")){
+    openAddress();
+    return;
+  }
+  status.innerHTML = '<span class="err">送料計算に失敗しました（住所/商品/在庫を確認）</span>';
+}
+
 
       backBtn.onclick = ()=>location.href = PATH_PRODUCTS;
       backBtn2.onclick = ()=>location.href = PATH_PRODUCTS;

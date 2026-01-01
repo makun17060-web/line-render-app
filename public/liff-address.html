@@ -51,7 +51,7 @@
 (async function(){
   "use strict";
 
-  const LIFF_ID = new URLSearchParams(location.search).get("liffId") || ""; // 必要なら使う
+  const LIFF_ID = "2008406620-4kyQVyqe";
   const msgEl = document.getElementById("msg");
 
   const $ = (id)=>document.getElementById(id);
@@ -67,7 +67,7 @@
   async function initLiff(){
     try{
       // liffId を固定で持ってるなら、ここを固定値にしてOK
-      // await liff.init({ liffId: "xxxx" });
+      // await liff.init({ liffId: LIFF_ID });
       await liff.init({ liffId: LIFF_ID || undefined });
       if (!liff.isLoggedIn()) liff.login();
     }catch(e){

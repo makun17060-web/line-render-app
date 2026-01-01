@@ -6,44 +6,75 @@
   <title>住所登録（LIFF）</title>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style>
-    body{ font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; margin:0; background:#f6f7f9; color:#111827;}
+    :root{
+      --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280; --border:#e5e7eb;
+      --primary:#0b3a53; --danger:#b91c1c; --ok:#065f46;
+      --shadow:0 1px 3px rgba(0,0,0,.08); --radius:14px;
+    }
+    body{ font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; margin:0; background:var(--bg); color:var(--text);}
     .wrap{ max-width:720px; margin:0 auto; padding:14px; }
-    .card{ background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:14px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
-    label{ display:block; font-weight:800; margin-top:10px; }
-    input,select{ width:100%; padding:10px; border-radius:10px; border:1px solid #d1d5db; font-size:16px; background:#fff; }
-    button{ width:100%; margin-top:14px; padding:12px; border-radius:12px; border:0; background:#0b3a53; color:#fff; font-weight:900; font-size:16px; cursor:pointer; }
-    .msg{ margin-top:10px; font-size:13px; font-weight:800; color:#b91c1c; white-space:pre-wrap; }
-    .ok{ color:#065f46; }
+    .card{ background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:14px; box-shadow:var(--shadow); }
+    h2{ margin:0 0 8px; }
+    .lead{ margin:0 0 10px; color:var(--muted); font-size:13px; line-height:1.7; }
+    label{ display:block; font-weight:900; margin-top:10px; font-size:13px; }
+    input{
+      width:100%; padding:10px; border-radius:10px; border:1px solid #d1d5db;
+      font-size:16px; background:#fff;
+    }
+    button{
+      width:100%; margin-top:14px; padding:12px; border-radius:12px; border:0;
+      background:var(--primary); color:#fff; font-weight:900; font-size:16px; cursor:pointer;
+    }
+    button:disabled{ opacity:.55; cursor:not-allowed; }
+    .msg{ margin-top:10px; font-size:13px; font-weight:900; color:var(--danger); white-space:pre-wrap; }
+    .msg.ok{ color:var(--ok); }
+    .row2{ display:grid; grid-template-columns:1fr; gap:10px; }
+    @media (min-width:560px){ .row2{ grid-template-columns:1fr 1fr; } }
+    .subbtn{ background:#111827; }
+    .subbtn2{ background:#374151; }
   </style>
 </head>
+
 <body>
   <div class="wrap">
     <div class="card">
-      <h2 style="margin:0 0 8px;">住所登録</h2>
+      <h2>住所登録</h2>
+      <p class="lead">
+        住所を保存したら、自動で次の画面へ進みます（3秒）。<br>
+        すぐ進みたい場合は「次へ」を押してください。
+      </p>
+
       <div id="msg" class="msg"></div>
 
-      <label>お名前</label>
-      <input id="name" autocomplete="name" />
+      <label>お名前（必須）</label>
+      <input id="name" autocomplete="name" placeholder="例：木村 太郎" />
 
-      <label>電話</label>
-      <input id="phone" inputmode="tel" autocomplete="tel" />
+      <div class="row2">
+        <div>
+          <label>電話（必須）</label>
+          <input id="phone" inputmode="tel" autocomplete="tel" placeholder="例：09012345678" />
+        </div>
+        <div>
+          <label>郵便番号（必須）</label>
+          <input id="postal" inputmode="numeric" autocomplete="postal-code" placeholder="例：4703402" />
+        </div>
+      </div>
 
-      <label>郵便番号</label>
-      <input id="postal" inputmode="numeric" autocomplete="postal-code" />
-
-      <label>都道府県</label>
+      <label>都道府県（必須）</label>
       <input id="prefecture" autocomplete="address-level1" placeholder="例：愛知県" />
 
-      <label>市区町村</label>
+      <label>市区町村（必須）</label>
       <input id="city" autocomplete="address-level2" placeholder="例：知多郡南知多町" />
 
-      <label>町名・番地</label>
+      <label>町名・番地（必須）</label>
       <input id="address1" autocomplete="street-address" placeholder="例：豊浜清水谷〜" />
 
-      <label>建物名・部屋番号</label>
-      <input id="address2" autocomplete="address-line2" />
+      <label>建物名・部屋番号（任意）</label>
+      <input id="address2" autocomplete="address-line2" placeholder="例：◯◯マンション 101" />
 
       <button id="saveBtn">保存する</button>
+      <button id="nextBtn" class="subbtn" type="button" style="display:none;">次へ進む</button>
+      <button id="closeBtn" class="subbtn2" type="button" style="display:none;">閉じる</button>
     </div>
   </div>
 
@@ -51,12 +82,45 @@
 (async function(){
   "use strict";
 
-  const LIFF_ID = "2008406620-4kyQVyqe";
-  const msgEl = document.getElementById("msg");
+  // ========= 設定 =========
+  const LIFF_ID  = "2008406620-4kyQVyqe";
+  const API_GET  = "/api/address/get";
+  const API_SET  = "/api/address/set";
+
+  // ★保存後の遷移先（ここだけ変えればOK）
+  // 例：商品一覧へ
+  const NEXT_URL = "/public/products.html";
+
+  // ========= DOM =========
+  const msgEl   = document.getElementById("msg");
+  const saveBtn = document.getElementById("saveBtn");
+  const nextBtn = document.getElementById("nextBtn");
+  const closeBtn= document.getElementById("closeBtn");
 
   const $ = (id)=>document.getElementById(id);
-  const setMsg = (t, ok=false)=>{ msgEl.textContent = t||""; msgEl.className = "msg" + (ok?" ok":""); };
+  const setMsg = (t, ok=false)=>{ msgEl.textContent=t||""; msgEl.className="msg"+(ok?" ok":""); };
 
+  // ========= utils =========
+  const normPhone  = (s)=> String(s||"").replace(/[^\d+]/g,"").replace(/^(\+81)0/,"$1").trim();
+  const normPostal = (s)=> String(s||"").replace(/[^\d]/g,"").slice(0,7).trim();
+
+  function validate(){
+    const name = $("name").value.trim();
+    const phone = normPhone($("phone").value);
+    const postal = normPostal($("postal").value);
+    const prefecture = $("prefecture").value.trim();
+    const city = $("city").value.trim();
+    const address1 = $("address1").value.trim();
+    if(!name) return "お名前を入力してください。";
+    if(!phone || phone.length < 10) return "電話番号を正しく入力してください。";
+    if(!postal || postal.length !== 7) return "郵便番号は7桁で入力してください。";
+    if(!prefecture) return "都道府県を入力してください。";
+    if(!city) return "市区町村を入力してください。";
+    if(!address1) return "町名・番地を入力してください。";
+    return "";
+  }
+
+  // ========= LIFF =========
   function getUserId(){
     try{
       const ctx = liff.getContext && liff.getContext();
@@ -66,19 +130,46 @@
 
   async function initLiff(){
     try{
-      // liffId を固定で持ってるなら、ここを固定値にしてOK
-      // await liff.init({ liffId: LIFF_ID });
-      await liff.init({ liffId: LIFF_ID || undefined });
-      if (!liff.isLoggedIn()) liff.login();
+      await liff.init({ liffId: LIFF_ID });
+      if(!liff.isLoggedIn()){
+        liff.login();
+        return false;
+      }
+      return true;
     }catch(e){
       setMsg("LIFF初期化に失敗しました。\n" + (e?.message||e));
+      return false;
     }
   }
 
+  // ========= 遷移 =========
+  function goNext(){
+    // LIFF内で別ページへ → openWindow が安定（同タブ遷移より事故りにくい）
+    try{
+      if(liff.isInClient && liff.isInClient()){
+        liff.openWindow({ url: NEXT_URL, external: false });
+        return;
+      }
+    }catch{}
+    // ブラウザ時は普通に遷移
+    location.href = NEXT_URL;
+  }
+
+  function showAfterSaveUI(){
+    nextBtn.style.display = "block";
+    // LIFF内なら閉じるも出す
+    try{
+      if(liff.isInClient && liff.isInClient()){
+        closeBtn.style.display = "block";
+      }
+    }catch{}
+  }
+
+  // ========= API =========
   async function loadAddress(userId){
-    const r = await fetch(`/api/address/get?userId=${encodeURIComponent(userId)}`, { cache:"no-store" });
+    const r = await fetch(`${API_GET}?userId=${encodeURIComponent(userId)}`, { cache:"no-store" });
     const j = await r.json().catch(()=>({}));
-    if (!r.ok) return;
+    if(!r.ok) return;
     const a = j.address || {};
     $("name").value = a.name || "";
     $("phone").value = a.phone || "";
@@ -89,44 +180,85 @@
     $("address2").value = a.address2 || "";
   }
 
+  let saving = false;
+
   async function saveAddress(userId){
+    if(saving) return;
+    setMsg("");
+
+    $("phone").value  = normPhone($("phone").value);
+    $("postal").value = normPostal($("postal").value);
+
+    const err = validate();
+    if(err){ setMsg(err); return; }
+
     const payload = {
       userId,
       name: $("name").value.trim(),
-      phone: $("phone").value.trim(),
-      postal: $("postal").value.trim(),
+      phone: normPhone($("phone").value),
+      postal: normPostal($("postal").value),
       prefecture: $("prefecture").value.trim(),
       city: $("city").value.trim(),
       address1: $("address1").value.trim(),
       address2: $("address2").value.trim(),
     };
 
-    const r = await fetch("/api/address/set", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    saving = true;
+    saveBtn.disabled = true;
+    saveBtn.textContent = "保存中…";
 
-    const j = await r.json().catch(()=>({}));
-    if (!r.ok) {
-      setMsg(`保存失敗（HTTP ${r.status}）\n` + JSON.stringify(j));
-      return;
+    try{
+      const r = await fetch(API_SET, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json().catch(()=>({}));
+      if(!r.ok){
+        setMsg(`保存失敗（HTTP ${r.status}）\n` + JSON.stringify(j, null, 2));
+        return;
+      }
+
+      // ✅ ここがポイント：保存後に「次へ」を出して、自動遷移もする
+      setMsg("保存しました！次の画面へ進みます…", true);
+      showAfterSaveUI();
+
+      // 3秒後に自動で次へ
+      setTimeout(goNext, 3000);
+
+    }catch(e){
+      setMsg("保存に失敗しました。\n通信環境を確認して再度お試しください。");
+    }finally{
+      saving = false;
+      saveBtn.disabled = false;
+      saveBtn.textContent = "保存する";
     }
-    setMsg("保存しました！この画面を閉じてOKです。", true);
   }
 
-  await initLiff();
+  // ========= 起動 =========
+  setMsg("起動中…");
+  const ok = await initLiff();
+  if(!ok) return;
 
-  // userIdが取れない＝LIFF外で開いてる（400の元）
   const userId = getUserId();
-  if (!userId) {
-    setMsg("userIdが取得できません。\n必ずLINEのLIFF内から開いてください（ブラウザ直開きだと400になります）。");
+  if(!userId){
+    setMsg("userIdが取得できません。\n必ずLINEのLIFF内から開いてください（ブラウザ直開きでは保存できません）。");
     return;
   }
 
+  setMsg("");
   await loadAddress(userId);
 
-  $("saveBtn").addEventListener("click", ()=> saveAddress(userId));
+  saveBtn.addEventListener("click", ()=> saveAddress(userId));
+  nextBtn.addEventListener("click", goNext);
+
+  closeBtn.addEventListener("click", ()=>{
+    try{
+      if(liff.isInClient && liff.isInClient()) liff.closeWindow();
+      else location.href = "about:blank";
+    }catch{ location.href = "about:blank"; }
+  });
+
 })();
 </script>
 </body>

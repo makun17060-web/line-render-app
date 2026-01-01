@@ -149,14 +149,12 @@
 
 <script>
 /* ===========================
-   設定（あなたの環境）
+   リンク（/public をやめて統一）
 =========================== */
-const LIFF_ID = "2008406620-QQFfWP1w";
-
 const LINKS = {
-  ORDER_URL:   "https://line-render-app-1.onrender.com/public/products.html",
-  ADDRESS_URL: "https://line-render-app-1.onrender.com/public/cod-register.html",
-  SHIPPING_URL:"https://line-render-app-1.onrender.com/public/shipping-calc.html",
+  ORDER_URL:   "https://line-render-app-1.onrender.com/products.html",
+  ADDRESS_URL: "https://line-render-app-1.onrender.com/cod-register.html",
+  SHIPPING_URL:"https://line-render-app-1.onrender.com/shipping-calc.html",
   CHAT_TEXT:   "お問い合わせ",
 };
 
@@ -171,7 +169,8 @@ function isInLiff(){
 async function ensureLiff(){
   if (!window.liff || !liff.init) return false;
   try {
-    await liff.init({ liffId: LIFF_ID });
+    // howto自体はLIFF初期化できればOK（できなくても遷移は可能）
+    await liff.init({ liffId: "2008406620-QQFfWP1w" });
     return true;
   } catch (e) {
     console.log("LIFF init error:", e);
@@ -179,20 +178,11 @@ async function ensureLiff(){
   }
 }
 
-/**
- * ★重要：戻るが効くようにする
- * - LIFF内の通常遷移は window.location.href（同一WebView遷移 → 履歴が残る）
- * - external=true のときだけ liff.openWindow({external:true})（外部ブラウザ）
- */
 function openUrl(url, external=false){
   const inClient = isInLiff();
-
-  // 外部ブラウザで開きたい場合だけ openWindow
   if (inClient && external){
     try { liff.openWindow({ url, external:true }); return; } catch {}
   }
-
-  // それ以外は同一画面遷移（履歴が残る）
   window.location.href = url;
 }
 
@@ -206,26 +196,23 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   if (inClient) await ensureLiff();
 
-  // ご利用方法は「閉じる」でLINEへ戻すのが自然
   document.getElementById("btnClose").onclick = () => {
     if (inClient && window.liff && liff.closeWindow) liff.closeWindow();
-    else window.location.href = LINKS.ORDER_URL; // ブラウザの場合は適当な戻り先（任意）
+    else window.location.href = LINKS.ORDER_URL;
   };
 
   document.getElementById("btnOrder").onclick =
     () => openUrl(LINKS.ORDER_URL, false);
 
-  // ★住所登録：戻り先(return)を付けて LIFF内で開く
- document.getElementById("btnAddress").onclick = () => {
-  const ret = encodeURIComponent(location.href);
-  openUrl(`${LINKS.ADDRESS_URL}?liffId=${encodeURIComponent(LIFF_ID)}&returnTo=${ret}`, false);
-};
+  // ✅ 住所登録：余計な liffId パラメータを付けない（cod-register側が自分でconfig取得する）
+  document.getElementById("btnAddress").onclick = () => {
+    const ret = encodeURIComponent(location.href);
+    openUrl(`${LINKS.ADDRESS_URL}?returnTo=${ret}`, false);
+  };
 
-
-  // ★配送・送料：LIFF内で開く（external=false）＋戻り先(return)を付ける
   document.getElementById("btnShipping").onclick = () => {
     const ret = encodeURIComponent(location.href);
-    openUrl(`${LINKS.SHIPPING_URL}?return=${ret}`, false);
+    openUrl(`${LINKS.SHIPPING_URL}?returnTo=${ret}`, false);
   };
 
   document.getElementById("btnChat").onclick = async () => {

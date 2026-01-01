@@ -6,165 +6,69 @@
   <title>商品一覧</title>
   <style>
     :root{
-      --bg:#f6f7f9;
-      --card:#ffffff;
-      --text:#111827;
-      --muted:#6b7280;
-      --border:#e5e7eb;
-      --primary:#0b3a53;
-      --primary2:#123b66;
-      --danger:#b91c1c;
-      --shadow:0 1px 3px rgba(0,0,0,.08);
-      --radius:14px;
+      --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280; --border:#e5e7eb;
+      --primary:#0b3a53; --primary2:#123b66; --danger:#b91c1c;
+      --shadow:0 1px 3px rgba(0,0,0,.08); --radius:14px;
     }
     *{ box-sizing:border-box; }
-    body{
-      margin:0;
-      font-family: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-      background:var(--bg);
-      color:var(--text);
-    }
+    body{ margin:0; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
     .wrap{ max-width:960px; margin:0 auto; padding:14px 14px 30px; }
     h1{ font-size:20px; margin:0 0 6px; }
     .lead{ font-size:13px; color:var(--muted); margin:0 0 12px; line-height:1.7; }
-
-    .topbar{
-      display:flex; gap:10px; flex-wrap:wrap; align-items:center;
-      margin:10px 0 12px;
-    }
+    .topbar{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin:10px 0 12px; }
     .btn{
       appearance:none; border:1px solid var(--border); background:#fff;
       padding:12px 14px; border-radius:999px; cursor:pointer;
-      font-weight:800; font-size:14px;
-      box-shadow: var(--shadow);
-      min-width:220px;
+      font-weight:800; font-size:14px; box-shadow:var(--shadow); min-width:220px;
     }
-    .btn.primary{
-      background:var(--primary);
-      color:#fff;
-      border-color:transparent;
-    }
-    .btn:active{ transform: translateY(1px); }
-
-    .status{
-      margin:10px 0 12px;
-      font-size:13px;
-      color:var(--danger);
-      font-weight:700;
-    }
-
-    .grid{
-      display:grid;
-      grid-template-columns: repeat(12, 1fr);
-      gap:12px;
-    }
+    .btn.primary{ background:var(--primary); color:#fff; border-color:transparent; }
+    .btn:active{ transform:translateY(1px); }
+    .status{ margin:10px 0 12px; font-size:13px; color:var(--danger); font-weight:700; }
+    .grid{ display:grid; grid-template-columns:repeat(12, 1fr); gap:12px; }
     .card{
-      grid-column: span 12;
-      background:var(--card);
-      border:1px solid var(--border);
-      border-radius:var(--radius);
-      box-shadow:var(--shadow);
-      overflow:hidden;
-      display:flex;
-      gap:12px;
-      padding:12px;
-      align-items:flex-start;
+      grid-column:span 12; background:var(--card); border:1px solid var(--border);
+      border-radius:var(--radius); box-shadow:var(--shadow);
+      overflow:hidden; display:flex; gap:12px; padding:12px; align-items:flex-start;
     }
-    @media (min-width:720px){
-      .card{ grid-column: span 6; }
-    }
+    @media (min-width:720px){ .card{ grid-column:span 6; } }
     .thumb{
-      width:94px; height:94px;
-      border-radius:12px;
-      background:#f0f2f5;
-      border:1px solid var(--border);
-      flex:0 0 auto;
-      overflow:hidden;
+      width:94px; height:94px; border-radius:12px; background:#f0f2f5;
+      border:1px solid var(--border); flex:0 0 auto; overflow:hidden;
       display:flex; align-items:center; justify-content:center;
     }
     .thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
     .meta{ flex:1 1 auto; min-width:0; }
     .name{ font-weight:900; font-size:15px; margin:0 0 4px; }
     .sub{ margin:0; color:var(--muted); font-size:12px; line-height:1.6; }
-    .row{
-      display:flex; gap:10px; align-items:center; flex-wrap:wrap;
-      margin-top:10px;
-    }
-    .price{
-      font-weight:900;
-      font-size:16px;
-    }
-    .pill{
-      font-size:12px;
-      padding:4px 10px;
-      border-radius:999px;
-      border:1px solid var(--border);
-      color:var(--muted);
-      background:#fff;
-    }
+    .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:10px; }
+    .price{ font-weight:900; font-size:16px; }
+    .pill{ font-size:12px; padding:4px 10px; border-radius:999px; border:1px solid var(--border); color:var(--muted); background:#fff; }
     .stock.low{ color:#b45309; border-color:#fcd34d; background:#fffbeb; }
     .stock.out{ color:#b91c1c; border-color:#fecaca; background:#fef2f2; }
-
-    .ctrl{
-      display:flex; gap:8px; align-items:center;
-      margin-left:auto;
-    }
+    .ctrl{ display:flex; gap:8px; align-items:center; margin-left:auto; }
     .qtyBtn{
-      width:36px; height:36px;
-      border-radius:10px;
-      border:1px solid var(--border);
-      background:#fff;
-      cursor:pointer;
-      font-weight:900;
+      width:36px; height:36px; border-radius:10px; border:1px solid var(--border);
+      background:#fff; cursor:pointer; font-weight:900;
     }
-    .qty{
-      min-width:34px;
-      text-align:center;
-      font-weight:900;
-    }
+    .qty{ min-width:34px; text-align:center; font-weight:900; }
     .addBtn{
-      border-radius:12px;
-      border:1px solid transparent;
-      background:var(--primary2);
-      color:#fff;
-      padding:10px 12px;
-      font-weight:900;
-      cursor:pointer;
+      border-radius:12px; border:1px solid transparent; background:var(--primary2); color:#fff;
+      padding:10px 12px; font-weight:900; cursor:pointer;
     }
-    .addBtn:disabled{
-      opacity:.5;
-      cursor:not-allowed;
-    }
-
+    .addBtn:disabled{ opacity:.5; cursor:not-allowed; }
     .footerBar{
-      position: sticky;
-      bottom: 0;
-      background: rgba(246,247,249,.92);
-      backdrop-filter: blur(6px);
-      border-top: 1px solid var(--border);
-      padding: 12px 14px;
-      margin: 16px -14px -30px;
+      position:sticky; bottom:0; background:rgba(246,247,249,.92);
+      backdrop-filter:blur(6px); border-top:1px solid var(--border);
+      padding:12px 14px; margin:16px -14px -30px;
     }
-    .footerInner{
-      max-width:960px; margin:0 auto;
-      display:flex; gap:12px; align-items:center; flex-wrap:wrap;
-    }
-    .sum{
-      font-size:13px; color:var(--muted); line-height:1.6;
-    }
+    .footerInner{ max-width:960px; margin:0 auto; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    .sum{ font-size:13px; color:var(--muted); line-height:1.6; }
     .sum strong{ color:var(--text); }
     .goBtn{
-      margin-left:auto;
-      width:min(420px, 100%);
-      border-radius:14px;
-      padding:14px 16px;
-      border:1px solid transparent;
-      background: #111827;
-      color:#fff;
-      font-weight:900;
-      font-size:15px;
-      cursor:pointer;
-      box-shadow: var(--shadow);
+      margin-left:auto; width:min(420px, 100%);
+      border-radius:14px; padding:14px 16px; border:1px solid transparent;
+      background:#111827; color:#fff; font-weight:900; font-size:15px;
+      cursor:pointer; box-shadow:var(--shadow);
     }
     .goBtn:disabled{ opacity:.5; cursor:not-allowed; }
   </style>
@@ -183,7 +87,6 @@
     </div>
 
     <div id="statusMsg" class="status" style="display:none;"></div>
-
     <div id="grid" class="grid"></div>
 
     <div class="footerBar">
@@ -201,14 +104,10 @@
 (function(){
   "use strict";
 
-  // ====== 設定（必要ならここだけ変更） ======
   const API_PRODUCTS = "/api/products";
-  const CONFIRM_URL  = "/confirm.html"; // あなたの確認ページに合わせて変更可
-
-  // グループ定義：今回は「オリジナルセットID」を固定で判定
+  const CONFIRM_URL  = "/public/confirm.html";
   const ORIGINAL_SET_ID = "original-set-2000";
 
-  // ====== DOM ======
   const gridEl = document.getElementById("grid");
   const statusEl = document.getElementById("statusMsg");
   const btnAkasha = document.getElementById("btnAkasha");
@@ -217,37 +116,19 @@
   const sumSubtotalEl = document.getElementById("sumSubtotal");
   const goConfirmBtn = document.getElementById("goConfirm");
 
-  // ====== 状態 ======
   let allProducts = [];
-  let mode = "akasha"; // "akasha" | "original"
-  // cart: { [productId]: qty }
+  let mode = "akasha";
   const cart = loadCart();
 
-  // ====== ユーティリティ ======
   const yen = (n)=> (Number(n||0)).toLocaleString("ja-JP");
 
   function showStatus(msg){
-    if(!msg){
-      statusEl.style.display="none";
-      statusEl.textContent="";
-      return;
-    }
-    statusEl.style.display="block";
-    statusEl.textContent=msg;
+    statusEl.style.display = msg ? "block" : "none";
+    statusEl.textContent = msg || "";
   }
 
-  function isOriginal(p){
-    return (p && (p.id === ORIGINAL_SET_ID));
-  }
-  function isAkasha(p){
-    return (p && !isOriginal(p)); // 今回は「オリジナル以外」をあかしゃ側に出す
-  }
-
-  function safeImg(url){
-    if(!url) return "";
-    // できれば相対が理想だが、絶対URLでもOK
-    return String(url);
-  }
+  function isOriginal(p){ return p && p.id === ORIGINAL_SET_ID; }
+  function isAkasha(p){ return p && !isOriginal(p); }
 
   function stockState(p){
     const s = Number(p.stock ?? 0);
@@ -256,13 +137,10 @@
     return { text:`在庫 (${s})`, cls:"" };
   }
 
-  function getQty(id){
-    return Number(cart[id] || 0);
-  }
+  function getQty(id){ return Number(cart[id] || 0); }
   function setQty(id, qty){
     qty = Math.max(0, Math.floor(Number(qty)||0));
-    if(qty <= 0) delete cart[id];
-    else cart[id] = qty;
+    if(qty <= 0) delete cart[id]; else cart[id] = qty;
     saveCart();
     updateFooter();
   }
@@ -283,9 +161,7 @@
     return n;
   }
 
-  function saveCart(){
-    try{ localStorage.setItem("isoya_cart_v1", JSON.stringify(cart)); }catch{}
-  }
+  function saveCart(){ try{ localStorage.setItem("isoya_cart_v1", JSON.stringify(cart)); }catch{} }
   function loadCart(){
     try{
       const raw = localStorage.getItem("isoya_cart_v1");
@@ -314,30 +190,33 @@
     render();
   }
 
-  // ====== 描画 ======
+  function escapeHtml(s){
+    return String(s ?? "")
+      .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;").replaceAll("'","&#039;");
+  }
+
   function render(){
     const list = allProducts.filter(p => mode === "akasha" ? isAkasha(p) : isOriginal(p));
 
     if(list.length === 0){
-      gridEl.innerHTML = `<div style="grid-column: span 12; color:#6b7280; font-weight:700;">
-        商品がありません（products.json を確認してください）
-      </div>`;
+      gridEl.innerHTML = `<div style="grid-column: span 12; color:#6b7280; font-weight:700;">商品がありません</div>`;
       return;
     }
 
     gridEl.innerHTML = list.map(p => {
-      const img = safeImg(p.image);
       const st = stockState(p);
       const qty = getQty(p.id);
-      const canAdd = Number(p.stock ?? 0) > qty; // 在庫超え防止
+      const canAdd = Number(p.stock ?? 0) > qty;
 
       const vol = (p.volume && String(p.volume).trim()) ? `内容量：${escapeHtml(p.volume)}` : "";
       const desc = (p.desc && String(p.desc).trim()) ? escapeHtml(p.desc) : "";
+      const img = p.image ? String(p.image) : "";
 
       return `
-      <div class="card" data-id="${escapeAttr(p.id)}">
+      <div class="card" data-id="${escapeHtml(p.id)}">
         <div class="thumb">
-          ${img ? `<img src="${escapeAttr(img)}" alt="">` : `<span style="color:#9ca3af;font-weight:900;font-size:12px;">NO IMAGE</span>`}
+          ${img ? `<img src="${escapeHtml(img)}" alt="">` : `<span style="color:#9ca3af;font-weight:900;font-size:12px;">NO IMAGE</span>`}
         </div>
         <div class="meta">
           <p class="name">${escapeHtml(p.name || p.id)}</p>
@@ -348,9 +227,9 @@
             <div class="pill stock ${st.cls}">${st.text}</div>
 
             <div class="ctrl">
-              <button class="qtyBtn" data-act="dec" aria-label="減らす">−</button>
+              <button class="qtyBtn" data-act="dec">−</button>
               <div class="qty" data-role="qty">${qty}</div>
-              <button class="qtyBtn" data-act="inc" aria-label="増やす">＋</button>
+              <button class="qtyBtn" data-act="inc">＋</button>
               <button class="addBtn" data-act="add" ${canAdd ? "" : "disabled"}>カートへ</button>
             </div>
           </div>
@@ -358,7 +237,6 @@
       </div>`;
     }).join("");
 
-    // event delegation
     gridEl.querySelectorAll(".card").forEach(card=>{
       const id = card.getAttribute("data-id");
       const qtyEl = card.querySelector('[data-role="qty"]');
@@ -370,10 +248,8 @@
       function refreshRow(){
         const qty = getQty(id);
         qtyEl.textContent = String(qty);
-
         const stock = Number(p?.stock ?? 0);
-        const canAdd = stock > qty;
-        addBtn.disabled = !canAdd;
+        addBtn.disabled = !(stock > qty);
       }
 
       incBtn.addEventListener("click", ()=>{
@@ -389,7 +265,6 @@
         refreshRow();
       });
       addBtn.addEventListener("click", ()=>{
-        // add は +1 と同義（在庫超えは無視）
         const stock = Number(p?.stock ?? 0);
         const q = getQty(id);
         if(q + 1 > stock) return;
@@ -403,75 +278,38 @@
     updateFooter();
   }
 
-  // ====== 読み込み ======
   async function loadProducts(){
     showStatus("");
     try{
       const res = await fetch(API_PRODUCTS, { cache: "no-store" });
       if(!res.ok) throw new Error(`HTTP ${res.status}`);
-
       const json = await res.json();
-
-      // ★両対応：配列 or {ok, products}
       const products = Array.isArray(json) ? json : (json.products || []);
-      if(!Array.isArray(products)) throw new Error("products is not array");
-
-      allProducts = products;
-
-      // 起動時：オリジナルが存在しなければakasha固定
-      const hasOriginal = allProducts.some(isOriginal);
-      if(!hasOriginal) setMode("akasha");
-
+      allProducts = Array.isArray(products) ? products : [];
       render();
     }catch(e){
-      console.error("[products] load failed:", e);
-      showStatus("商品データの取得に失敗しました（/api/products）。サーバー側とDiskの設定を確認してください。");
-      gridEl.innerHTML = `<div style="grid-column: span 12; color:#6b7280; font-weight:700;">
-        読み込みに失敗しました
-      </div>`;
+      console.error(e);
+      showStatus("商品データの取得に失敗しました（/api/products）");
       updateFooter();
     }
   }
 
-  // ====== 注文確認へ ======
   goConfirmBtn.addEventListener("click", ()=>{
     const payload = {
       at: new Date().toISOString(),
       items: Object.entries(cart).map(([id, qty])=>{
-        const p = allProducts.find(x=>x.id===id) || {};
-        return {
-          id,
-          name: p.name || id,
-          price: Number(p.price||0),
-          qty: Number(qty||0),
-          image: p.image || ""
-        };
+        const p = allProducts.find(x => x.id === id) || {};
+        return { id, name: p.name||id, price: Number(p.price||0), qty: Number(qty||0), image: p.image||"", volume: p.volume||"" };
       }),
       subtotal: subtotal()
     };
-    try{ sessionStorage.setItem("isoya_checkout_v1", JSON.stringify(payload)); }catch{}
-    location.href = "/public/confirm.html";
+    sessionStorage.setItem("isoya_checkout_v1", JSON.stringify(payload));
+    location.href = CONFIRM_URL;
   });
 
-  // ====== 切替 ======
   btnAkasha.addEventListener("click", ()=> setMode("akasha"));
   btnOriginal.addEventListener("click", ()=> setMode("original"));
 
-  // ====== XSS対策（最小限） ======
-  function escapeHtml(s){
-    return String(s ?? "")
-      .replaceAll("&","&amp;")
-      .replaceAll("<","&lt;")
-      .replaceAll(">","&gt;")
-      .replaceAll('"',"&quot;")
-      .replaceAll("'","&#039;");
-  }
-  function escapeAttr(s){
-    // attribute 用（同じ処理でOK）
-    return escapeHtml(s);
-  }
-
-  // ====== start ======
   updateFooter();
   loadProducts();
 })();

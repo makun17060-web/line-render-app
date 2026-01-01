@@ -1,150 +1,194 @@
-"use strict";
+(function(){
+  "use strict";
 
-const orderListEl     = document.getElementById("orderList");
-const sumItemsEl      = document.getElementById("sumItems");
-const sumShippingEl   = document.getElementById("sumShipping");
-const sumTotalCodEl   = document.getElementById("sumTotalCod");
-const statusMsgEl     = document.getElementById("statusMsg");
+  const orderListEl = document.getElementById("orderList");
+  const sumSubtotalEl = document.getElementById("sumSubtotal");
+  const sumShippingEl = document.getElementById("sumShipping");
+  const sumCodEl = document.getElementById("sumCod");
+  const sumTotalCardEl = document.getElementById("sumTotalCard");
+  const sumTotalCodEl = document.getElementById("sumTotalCod");
+  const statusEl = document.getElementById("statusMsg");
 
-const cardBtn = document.getElementById("cardBtn");
-const codBtn  = document.getElementById("codBtn");
-const backBtn = document.getElementById("backBtn");
+  const btnAddress = document.getElementById("btnAddress");
+  const btnCard = document.getElementById("btnCard");
+  const btnCod = document.getElementById("btnCod");
+  const btnBack = document.getElementById("btnBack");
 
-const COD_FEE = 330;
+  const COD_FEE = 330;
 
-function yen(n) {
-  const x = Number(n || 0);
-  return `${x.toLocaleString("ja-JP")}円`;
-}
-function setStatus(msg) {
-  if (statusMsgEl) statusMsgEl.textContent = msg || "";
-}
-function safeJsonParse(s) { try { return JSON.parse(s); } catch { return null; } }
+  const yen = (n)=> (Number(n||0)).toLocaleString("ja-JP") + "円";
 
-function getOrder() {
-  const keys = ["order", "currentOrder", "orderDraft", "confirm_normalized_order"];
-  for (const k of keys) {
-    const v = sessionStorage.getItem(k) || localStorage.getItem(k);
-    if (!v) continue;
-    const j = safeJsonParse(v);
-    if (j && j.items && Array.isArray(j.items)) return j;
-  }
-  return { items: [], itemsTotal: 0, address: null };
-}
-
-function saveOrder(order) {
-  sessionStorage.setItem("order", JSON.stringify(order));
-  sessionStorage.setItem("currentOrder", JSON.stringify(order));
-  sessionStorage.setItem("orderDraft", JSON.stringify(order));
-  sessionStorage.setItem("confirm_normalized_order", JSON.stringify(order));
-  localStorage.setItem("order", JSON.stringify(order));
-}
-
-function hasAddress(a) {
-  if (!a) return false;
-  const pref  = a.prefecture || a.pref || "";
-  const city  = a.city || "";
-  const addr1 = a.address1 || a.addr1 || "";
-  return String(pref).trim() && String(city).trim() && String(addr1).trim();
-}
-
-async function calcShipping(items, address) {
-  const body = { items, address };
-  const r = await fetch("/api/shipping", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const j = await r.json().catch(() => null);
-  if (!r.ok || !j?.ok) throw new Error(j?.error || "shipping_error");
-  return j; // {itemsTotal, region, size, shipping, finalTotal}
-}
-
-function renderItems(items) {
-  orderListEl.innerHTML = items
-    .map((it) => {
-      const name = it.name || it.id || "商品";
-      const qty  = Number(it.qty || 0);
-      const sub  = Number(it.price || 0) * qty;
-      return `<div class="order-row">${name} ×${qty} = ${yen(sub)}</div>`;
-    })
-    .join("");
-}
-
-/**
- * ✅ 遷移は二重でやらない（LIFF内なら openWindow、通常ブラウザなら location.href）
- */
-function go(url) {
-  const abs = new URL(url, location.href).toString();
-  const inLiff = !!(window.liff && typeof window.liff.isInClient === "function" && window.liff.isInClient());
-  if (inLiff && typeof window.liff.openWindow === "function") {
-    window.liff.openWindow({ url: abs, external: false });
-  } else {
-    location.href = url;
-  }
-}
-
-document.addEventListener("DOMContentLoaded", async () => {
-  const order = getOrder();
-  const items = Array.isArray(order.items) ? order.items : [];
-
-  if (!items.length) {
-    orderListEl.innerHTML = `<div class="order-row">カートが空です。商品一覧に戻ってください。</div>`;
-    sumItemsEl.textContent = "0円";
-    sumShippingEl.textContent = "0円";
-    sumTotalCodEl.textContent = "0円";
-    cardBtn.disabled = true;
-    codBtn.disabled  = true;
-    setStatus("商品が入っていません。");
-    return;
-  }
-
-  // 商品合計（まず表示）
-  const itemsTotal =
-    Number(order.itemsTotal || 0) ||
-    items.reduce((s, it) => s + (Number(it.price || 0) * Number(it.qty || 0)), 0);
-
-  renderItems(items);
-  sumItemsEl.textContent = yen(itemsTotal);
-
-  // 送料を計算して反映
-  try {
-    setStatus("送料を計算しています…");
-
-    const address = order.address || null;
-
-    if (!hasAddress(address)) {
-      sumShippingEl.textContent = "0円（住所未登録）";
-      sumTotalCodEl.textContent = yen(itemsTotal + COD_FEE);
-      setStatus("住所が未登録のため、送料を計算できません。住所入力へ戻って保存してください。");
-    } else {
-      const result = await calcShipping(items, address);
-      const shippingFee = Number(result.shipping || 0);
-
-      // ✅ キー統一：明細ページが必ず拾えるように shippingFee に保存
-      order.itemsTotal   = Number(result.itemsTotal || itemsTotal);
-      order.shippingFee  = shippingFee;   // ←統一キー（推奨）
-      order.shipping     = shippingFee;   // ←互換（古い明細が shipping を見てもOK）
-      order.region       = result.region || "";
-      order.size         = result.size || "";
-
-      saveOrder(order);
-
-      sumShippingEl.textContent = yen(shippingFee);
-      sumTotalCodEl.textContent = yen(order.itemsTotal + shippingFee + COD_FEE);
-      setStatus(`送料OK（地域：${order.region || "不明"} / サイズ：${order.size || "?"}）`);
+  function setStatus(msg){
+    if(!msg){
+      statusEl.style.display="none";
+      statusEl.textContent="";
+      return;
     }
-  } catch (e) {
-    sumShippingEl.textContent = "0円（計算エラー）";
-    sumTotalCodEl.textContent = yen(itemsTotal + COD_FEE);
-    setStatus(`送料計算に失敗しました：${e?.message || e}`);
+    statusEl.style.display="block";
+    statusEl.textContent=msg;
   }
 
-  // ボタン遷移
-  cardBtn.disabled = false;
-  codBtn.disabled  = false;
+  function readDraft(){
+    const raw = sessionStorage.getItem("isoya_checkout_v1");
+    if(!raw) return null;
+    try{ return JSON.parse(raw); }catch{ return null; }
+  }
 
-  cardBtn.addEventListener("click", () => go("./confirm-card.html"));
-  codBtn.addEventListener("click",  () => go("./confirm-cod.html"));
-  backBtn?.addEventListener("click", () => go("./address.html"));
-});
+  function escapeHtml(s){
+    return String(s ?? "")
+      .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;").replaceAll("'","&#039;");
+  }
+
+  function renderItems(items){
+    orderListEl.innerHTML = items.map(it=>{
+      const name = escapeHtml(it.name || it.id || "商品");
+      const qty = Number(it.qty||0);
+      const price = Number(it.price||0);
+      const line = price * qty;
+      return `<div class="row"><span>${name} × ${qty}</span><strong>${yen(line)}</strong></div>`;
+    }).join("");
+  }
+
+  function getUserIdMaybe(){
+    // LIFF環境なら liff.getProfile などで userId を取る設計が本筋
+    // 本番は“設定済み”と言っているので、ここは既にどこかで保存されている想定に寄せる
+    // 例：address.html 側で保存した userId を使う
+    return (localStorage.getItem("isoya_user_id") || "").trim();
+  }
+
+  function openAddress(){
+    // あなたの運用の住所登録LIFFページに合わせて変更
+    // server側で /public/liff/address.html を置いている想定
+    location.href = "/public/liff/address.html";
+  }
+
+  async function callCheckout(items){
+    const userId = getUserIdMaybe();
+    if(!userId){
+      throw new Error("LIFFのuserIdが未保存です。先に住所登録（LIFF）を開いてください。");
+    }
+    const payload = {
+      userId,
+      items: items.map(it=>({ id: it.id, qty: Number(it.qty||0) }))
+    };
+    const res = await fetch("/api/checkout", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(()=> ({}));
+    if(!res.ok || !data.ok){
+      const err = new Error(data.error || `HTTP ${res.status}`);
+      err.detail = data;
+      throw err;
+    }
+    return data; // {checkoutUrl, orderId, subtotal, shippingFee, size}
+  }
+
+  async function callCod(items){
+    const userId = getUserIdMaybe();
+    if(!userId){
+      throw new Error("LIFFのuserIdが未保存です。先に住所登録（LIFF）を開いてください。");
+    }
+    const payload = {
+      userId,
+      items: items.map(it=>({ id: it.id, qty: Number(it.qty||0) }))
+    };
+    const res = await fetch("/api/cod/create", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(()=> ({}));
+    if(!res.ok || !data.ok){
+      const err = new Error(data.error || `HTTP ${res.status}`);
+      err.detail = data;
+      throw err;
+    }
+    return data; // {orderId, subtotal, shippingFee, codFee, totalCod}
+  }
+
+  async function main(){
+    const draft = readDraft();
+    if(!draft || !Array.isArray(draft.items) || draft.items.length===0){
+      setStatus("注文情報が見つかりません。商品一覧からやり直してください。");
+      btnCard.classList.add("disabled"); btnCard.disabled = true;
+      btnCod.classList.add("disabled"); btnCod.disabled = true;
+      return;
+    }
+
+    const items = draft.items
+      .map(it=>({ id:String(it.id||"").trim(), name:it.name, price:Number(it.price||0), qty:Number(it.qty||0) }))
+      .filter(it=>it.id && it.qty>0);
+
+    if(items.length===0){
+      setStatus("カートが空です。");
+      btnCard.disabled = true; btnCod.disabled = true;
+      return;
+    }
+
+    renderItems(items);
+
+    const sub = items.reduce((s,it)=> s + it.price*it.qty, 0);
+    sumSubtotalEl.textContent = yen(sub);
+    sumCodEl.textContent = yen(COD_FEE);
+
+    // 送料・合計はサーバ計算（住所あり前提）
+    sumShippingEl.textContent = "—";
+    sumTotalCardEl.textContent = "—";
+    sumTotalCodEl.textContent = "—";
+
+    btnAddress.addEventListener("click", openAddress);
+    btnBack.addEventListener("click", ()=> history.back());
+
+    btnCard.addEventListener("click", async ()=>{
+      try{
+        btnCard.disabled = true; btnCod.disabled = true;
+        setStatus("Stripe決済画面へ移動します…（送料計算中）");
+
+        const r = await callCheckout(items);
+
+        sumShippingEl.textContent = yen(r.shippingFee);
+        sumTotalCardEl.textContent = yen(r.subtotal + r.shippingFee);
+        sumTotalCodEl.textContent = yen(r.subtotal + r.shippingFee + COD_FEE);
+
+        setStatus("Stripeへ移動します…");
+        location.href = r.checkoutUrl;
+      }catch(e){
+        console.error(e);
+        const msg = (e && e.detail && e.detail.error === "NO_ADDRESS")
+          ? "住所が未登録です。先に住所登録（LIFF）をしてください。"
+          : "決済開始に失敗しました：\n" + (e?.message || String(e));
+        setStatus(msg);
+        btnCard.disabled = false; btnCod.disabled = false;
+      }
+    });
+
+    btnCod.addEventListener("click", async ()=>{
+      try{
+        btnCard.disabled = true; btnCod.disabled = true;
+        setStatus("代引き注文を作成しています…（送料計算中）");
+
+        const r = await callCod(items);
+
+        // 表示更新
+        sumShippingEl.textContent = yen(r.shippingFee);
+        sumTotalCardEl.textContent = yen(r.subtotal + r.shippingFee);
+        sumTotalCodEl.textContent = yen(r.totalCod);
+
+        // 完了画面へ
+        location.href = "/public/cod-complete.html?orderId=" + encodeURIComponent(r.orderId);
+      }catch(e){
+        console.error(e);
+        const msg = (e && e.detail && e.detail.error === "NO_ADDRESS")
+          ? "住所が未登録です。先に住所登録（LIFF）をしてください。"
+          : "代引き注文に失敗しました：\n" + (e?.message || String(e));
+        setStatus(msg);
+        btnCard.disabled = false; btnCod.disabled = false;
+      }
+    });
+  }
+
+  main();
+})();

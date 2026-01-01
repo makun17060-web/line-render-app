@@ -1,0 +1,123 @@
+/* =====================================================
+   商品画像 共通CSS（完全版）
+   - 管理画面 / 商品画面 / LIFF / confirm 共通
+   - 画像比率 1:1 完全統一
+   - 上下切れ防止
+   - クリックで拡大プレビュー対応
+   ===================================================== */
+
+
+/* =========================
+   基本リセット（安全）
+   ========================= */
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+
+/* =========================
+   商品画像（一覧・管理）
+   ========================= */
+.product-image {
+  width: 120px;
+  height: 120px;
+
+  /* 比率崩れ・上下切れ防止 */
+  object-fit: contain;
+  object-position: center;
+
+  background-color: #f5f5f5;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+
+  padding: 6px;
+  box-sizing: border-box;
+
+  cursor: zoom-in;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.product-image:hover {
+  transform: scale(1.03);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.12);
+}
+
+
+/* =========================
+   商品画面用（少し大きめ）
+   ========================= */
+.product-image.large {
+  width: 160px;
+  height: 160px;
+}
+
+
+/* =========================
+   カート・確認画面用
+   ========================= */
+.product-image.small {
+  width: 80px;
+  height: 80px;
+}
+
+
+/* =========================
+   画像プレビューモーダル
+   ========================= */
+.img-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+}
+
+.img-modal.hidden {
+  display: none;
+}
+
+.img-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+}
+
+
+/* =========================
+   拡大表示画像
+   ========================= */
+#imagePreview {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+
+  max-width: 90vw;
+  max-height: 90vh;
+
+  background: #fff;
+  padding: 12px;
+  border-radius: 12px;
+
+  object-fit: contain;
+  object-position: center;
+
+  cursor: zoom-out;
+
+  box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+}
+
+
+/* =========================
+   スマホ最適化
+   ========================= */
+@media (max-width: 600px) {
+  .product-image {
+    width: 100px;
+    height: 100px;
+  }
+
+  .product-image.large {
+    width: 130px;
+    height: 130px;
+  }
+}

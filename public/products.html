@@ -12,202 +12,367 @@
     :root{
       --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280;
       --line:#e5e7eb; --pri:#0b3a53; --pri2:#123b66;
-      --danger:#b91c1c;
+      --warn:#b45309; --danger:#b91c1c;
+      --shadow:0 1px 3px rgba(0,0,0,.06);
+      --radius:14px;
     }
-    *{box-sizing:border-box}
+    *{ box-sizing:border-box; }
     body{
       margin:0;
       font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
       background:var(--bg); color:var(--text);
     }
-    .wrap{max-width:1040px;margin:0 auto;padding:14px 14px 96px}
-    h1{margin:0 0 6px;font-size:18px}
-    .muted{color:var(--muted);font-size:13px;line-height:1.5}
-    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-top:12px}
+    .wrap{ max-width:1040px; margin:0 auto; padding:14px 14px 118px; }
+    h1{ margin:0 0 6px; font-size:18px; }
+    .muted{ color:var(--muted); font-size:13px; line-height:1.5; }
+    .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; margin-top:12px; }
     .card{
       background:var(--card);
       border:1px solid var(--line);
-      border-radius:14px;
+      border-radius:var(--radius);
       overflow:hidden;
-      box-shadow:0 1px 3px rgba(0,0,0,.06);
+      box-shadow:var(--shadow);
     }
-    .imgbox{height:160px;background:#eaecef}
-    .imgbox img{width:100%;height:100%;object-fit:cover;display:block}
-    .body{padding:12px}
-    .name{font-weight:900;font-size:15px}
-    .desc{margin-top:6px;color:var(--muted);font-size:12px;min-height:34px}
-    .row{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:8px}
-    .price{font-weight:900;color:var(--pri)}
-    .badge{font-size:12px;border:1px solid var(--line);background:#fafafa;border-radius:999px;padding:2px 8px}
-    .controls{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:10px}
-    .qty{display:flex;align-items:center;gap:6px}
+    .imgbox{ height:160px; background:#eaecef; }
+    .imgbox img{ width:100%; height:100%; object-fit:cover; display:block; }
+    .body{ padding:12px; }
+    .name{ font-weight:900; font-size:15px; }
+    .desc{ margin-top:6px; color:var(--muted); font-size:12px; min-height:34px; }
+    .row{ display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:8px; }
+    .price{ font-weight:900; color:var(--pri); }
+    .badge{ font-size:12px; border:1px solid var(--line); background:#fafafa; border-radius:999px; padding:2px 8px; white-space:nowrap; }
+    .badgeWarn{ color:var(--warn); border-color:#f59e0b; background:#fff7ed; }
+    .controls{ display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:10px; }
+    .qty{ display:flex; align-items:center; gap:6px; }
     .qty button{
-      width:34px;height:34px;border-radius:10px;
-      border:1px solid var(--line);background:#fff;font-size:18px;
+      width:34px; height:34px;
+      border-radius:10px;
+      border:1px solid var(--line);
+      background:#fff;
+      font-size:18px;
+      cursor:pointer;
     }
     .qty input{
-      width:56px;height:34px;border-radius:10px;
-      border:1px solid var(--line);text-align:center;
+      width:56px; height:34px;
+      border-radius:10px;
+      border:1px solid var(--line);
+      text-align:center;
+      font-size:15px;
     }
-    .btn{border:none;border-radius:12px;padding:10px 12px;font-weight:900;cursor:pointer}
-    .btnAdd{background:var(--pri);color:#fff}
-    .btnAdd:disabled{opacity:.55}
+    .btn{
+      border:none;
+      border-radius:12px;
+      padding:10px 12px;
+      font-weight:900;
+      cursor:pointer;
+    }
+    .btnAdd{ background:var(--pri); color:#fff; }
+    .btnAdd:disabled{ opacity:.55; cursor:not-allowed; }
+
+    /* bottom bar */
     .bar{
-      position:fixed;left:0;right:0;bottom:0;
+      position:fixed; left:0; right:0; bottom:0;
       border-top:1px solid var(--line);
       background:rgba(246,247,249,.92);
       backdrop-filter:blur(10px);
       padding:10px 12px;
     }
     .bar .inner{
-      max-width:1040px;margin:0 auto;
-      display:flex;justify-content:space-between;align-items:center;gap:10px;
+      max-width:1040px; margin:0 auto;
+      display:flex; justify-content:space-between; align-items:center; gap:10px;
     }
-    .btnGo{background:var(--pri2);color:#fff;padding:12px 14px;border-radius:14px}
-    .btnClear{background:#fff;border:1px solid #fecaca;color:var(--danger);padding:12px 14px;border-radius:14px}
+    .bar .right{
+      display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;
+    }
+    .btnClear{
+      background:#fff;
+      border:1px solid #fecaca;
+      color:var(--danger);
+      padding:12px 14px;
+      border-radius:14px;
+    }
+    .btnAkasha{
+      background:var(--pri);
+      color:#fff;
+      padding:12px 14px;
+      border-radius:14px;
+    }
+    .btnOriginal{
+      background:var(--warn);
+      color:#fff;
+      padding:12px 14px;
+      border-radius:14px;
+    }
+    .btnWide{ min-width:210px; }
+    .btnDisabled{ opacity:.55; cursor:not-allowed; pointer-events:none; }
   </style>
 </head>
 
 <body>
-<div class="wrap">
-  <h1>商品一覧</h1>
-  <div class="muted" id="status">読み込み中…</div>
-  <div class="grid" id="grid"></div>
-</div>
+  <div class="wrap">
+    <h1>商品一覧</h1>
+    <div class="muted" id="status">読み込み中…</div>
+    <div class="grid" id="grid"></div>
+  </div>
 
-<div class="bar">
-  <div class="inner">
-    <div class="muted" id="sum">カート：0点 / 小計 0円</div>
-    <div style="display:flex;gap:8px">
-      <button class="btn btnClear" id="clearBtn" type="button">空にする</button>
-      <button class="btn btnGo" id="nextBtn" type="button" disabled>注文内容を確認</button>
+  <div class="bar">
+    <div class="inner">
+      <div class="muted" id="sum">カート：0点 / 小計 0円</div>
+      <div class="right">
+        <button class="btn btnClear" id="clearBtn" type="button">空にする</button>
+        <button class="btn btnAkasha btnWide" id="akashaBtn" type="button">あかしゃシリーズを注文</button>
+        <button class="btn btnOriginal btnWide" id="originalBtn" type="button">オリジナルセットを注文</button>
+      </div>
     </div>
   </div>
-</div>
 
 <script>
 (async function(){
   "use strict";
 
   /* ===== 設定 ===== */
-  const LIFF_ID = "2008406620-G5j1gjzM"; // ★必ず差し替え
+  const LIFF_ID  = "2008406620-G5j1gjzM";        // ★必ず差し替え
   const KEY_UID  = "isoya_userId";
   const KEY_CART = "isoya_cart";
 
-  /* ===== LIFF 初期化（userIdを必ず保存）===== */
+  /* ===== Utils ===== */
+  const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
+
+  function loadCart(){
+    try{
+      const v = JSON.parse(localStorage.getItem(KEY_CART) || "");
+      if(v && typeof v==="object") return v;
+    }catch{}
+    return { items: [] };
+  }
+  function saveCart(cart){
+    localStorage.setItem(KEY_CART, JSON.stringify(cart));
+  }
+  function normItems(items){
+    const map = new Map();
+    for(const it of (items||[])){
+      const id = String(it?.id||"").trim();
+      const qty = Math.max(0, Math.floor(Number(it?.qty||0)));
+      if(!id || qty<=0) continue;
+      map.set(id, (map.get(id)||0) + qty);
+    }
+    return Array.from(map.entries()).map(([id,qty])=>({id,qty}));
+  }
+
+  /* ===== “グループ分離” ロジック =====
+     - original: オリジナルセット
+     - akasha  : あかしゃ系列（久助もこちら扱い）
+     ※判定は id/name の両方で保険
+  */
+  function productGroup(product){
+    const id = String(product?.id || "").toLowerCase();
+    const name = String(product?.name || "");
+
+    if (id.includes("original") || name.includes("オリジナル")) return "original";
+    return "akasha";
+  }
+
+  function cartGroups(cartItems, products){
+    const set = new Set();
+    for(const it of (cartItems||[])){
+      const p = products.find(x => x.id === it.id);
+      if(!p) continue;
+      set.add(productGroup(p));
+    }
+    return set;
+  }
+
+  /* ===== LIFF 初期化（userId保存）===== */
   try{
     await liff.init({ liffId: LIFF_ID });
-
     if(!liff.isLoggedIn()){
       liff.login({ redirectUri: location.href });
       return;
     }
-
     const prof = await liff.getProfile();
     const uid = (prof?.userId || "").trim();
     if(uid){
       localStorage.setItem(KEY_UID, uid);
       console.log("[products] userId saved:", uid);
     }else{
-      alert("userIdを取得できませんでした");
+      alert("userIdを取得できませんでした。LIFF設定を確認してください。");
+      return;
     }
   }catch(e){
     console.error("LIFF init failed:", e);
-    alert("LIFF初期化に失敗しました");
+    alert("LIFF初期化に失敗しました。LIFF ID を確認してください。");
     return;
   }
 
   /* ===== DOM ===== */
-  const statusEl=document.getElementById("status");
-  const gridEl=document.getElementById("grid");
-  const sumEl=document.getElementById("sum");
-  const clearBtn=document.getElementById("clearBtn");
-  const nextBtn=document.getElementById("nextBtn");
+  const statusEl  = document.getElementById("status");
+  const gridEl    = document.getElementById("grid");
+  const sumEl     = document.getElementById("sum");
+  const clearBtn  = document.getElementById("clearBtn");
+  const akashaBtn = document.getElementById("akashaBtn");
+  const originalBtn = document.getElementById("originalBtn");
 
-  const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
+  let cart = loadCart();
+  cart.items = normItems(cart.items);
 
-  const loadCart=()=>{try{return JSON.parse(localStorage.getItem(KEY_CART)||"");}catch{return{items:[]}}};
-  const saveCart=c=>localStorage.setItem(KEY_CART,JSON.stringify(c));
-
-  let cart=loadCart(); if(!cart.items) cart.items=[];
-  let products=[];
+  let products = [];
 
   function renderSum(){
-    let subtotal=0,count=0;
+    const byId = Object.fromEntries(products.map(p=>[p.id,p]));
+    let subtotal = 0, count = 0;
+
     for(const it of cart.items){
-      const p=products.find(x=>x.id===it.id);
+      const p = byId[it.id];
       if(!p) continue;
-      subtotal+=p.price*it.qty;
-      count+=it.qty;
+      subtotal += Number(p.price||0) * Number(it.qty||0);
+      count += Number(it.qty||0);
     }
-    sumEl.textContent=`カート：${count}点 / 小計 ${yen(subtotal)}`;
-    nextBtn.disabled=(count===0);
+
+    sumEl.textContent = `カート：${count}点 / 小計 ${yen(subtotal)}`;
+
+    // ボタン有効/無効はカートの中身で変える（空なら両方無効）
+    const empty = (count === 0);
+    akashaBtn.classList.toggle("btnDisabled", empty);
+    originalBtn.classList.toggle("btnDisabled", empty);
+  }
+
+  function addToCart(product, qtyToAdd){
+    const id = String(product.id||"").trim();
+    const qty = Math.max(1, Math.floor(Number(qtyToAdd||1)));
+
+    const ex = cart.items.find(x => x.id === id);
+    if(ex) ex.qty += qty;
+    else cart.items.push({ id, qty });
+
+    cart.items = normItems(cart.items);
+    saveCart(cart);
+    renderSum();
   }
 
   function card(p){
-    const el=document.createElement("div");
-    el.className="card";
-    el.innerHTML=`
-      <div class="imgbox">${p.image?`<img src="${p.image}">`:""}</div>
+    const el = document.createElement("div");
+    el.className = "card";
+
+    const img = String(p.image||"").trim();
+    const group = productGroup(p);
+    const warnBadge = (group === "original")
+      ? `<span class="badge badgeWarn">※ 他商品と同時注文不可</span>`
+      : `<span class="badge">${p.volume ? `内容量 ${p.volume}` : `在庫 ${Number(p.stock||0)}`}</span>`;
+
+    el.innerHTML = `
+      <div class="imgbox">${img ? `<img src="${img}" alt="">` : ""}</div>
       <div class="body">
-        <div class="name">${p.name}</div>
-        <div class="desc">${p.desc||""}</div>
+        <div class="name">${p.name || ""}</div>
+        <div class="desc">${p.desc || ""}</div>
         <div class="row">
           <div class="price">${yen(p.price)}</div>
-          <div class="badge">${p.volume||""}</div>
+          ${warnBadge}
         </div>
         <div class="controls">
           <div class="qty">
-            <button class="dec">−</button>
-            <input class="q" type="number" value="1" min="1">
-            <button class="inc">＋</button>
+            <button type="button" class="dec">−</button>
+            <input class="q" type="number" min="1" step="1" value="1" inputmode="numeric">
+            <button type="button" class="inc">＋</button>
           </div>
-          <button class="btn btnAdd">追加</button>
+          <button type="button" class="btn btnAdd add">カートに追加</button>
         </div>
       </div>
     `;
 
-    const q=el.querySelector(".q");
-    el.querySelector(".dec").onclick=()=>q.value=Math.max(1,q.value-1);
-    el.querySelector(".inc").onclick=()=>q.value=Number(q.value)+1;
+    const im = el.querySelector("img");
+    if(im) im.addEventListener("error", ()=> im.remove()); // 画像404でも崩れない
 
-    el.querySelector(".btnAdd").onclick=()=>{
-      const qty=Number(q.value)||1;
-      const ex=cart.items.find(x=>x.id===p.id);
-      if(ex) ex.qty+=qty;
-      else cart.items.push({id:p.id,qty});
-      saveCart(cart);
-      renderSum();
+    const q = el.querySelector(".q");
+    el.querySelector(".dec").onclick = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1))-1)); };
+    el.querySelector(".inc").onclick = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1))+1)); };
+    q.onchange = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1)))); };
+
+    const addBtn = el.querySelector(".add");
+    const stock = Number(p.stock||0);
+    if(Number.isFinite(stock) && stock <= 0){
+      addBtn.disabled = true;
+      addBtn.textContent = "在庫なし";
+    }
+
+    addBtn.onclick = ()=>{
+      // 追加自体はOK（分離は“注文ボタン”側でやる）
+      // ただし在庫超過だけはここで弾く
+      const add = Math.max(1, Math.floor(Number(q.value||1)));
+      const inCart = cart.items.find(x => x.id === p.id)?.qty || 0;
+      const next = inCart + add;
+
+      if(Number.isFinite(stock) && stock >= 0 && next > stock){
+        alert(`在庫不足です（在庫 ${stock}）。個数を減らしてください。`);
+        return;
+      }
+
+      addToCart(p, add);
     };
-
-    const img=el.querySelector("img");
-    if(img) img.onerror=()=>img.remove();
 
     return el;
   }
 
+  function goConfirm(expectGroup){
+    const groups = cartGroups(cart.items, products);
+
+    if(groups.size === 0){
+      alert("カートが空です");
+      return;
+    }
+
+    // 混在ならブロック
+    if(groups.size > 1){
+      alert("あかしゃシリーズとオリジナルセットは別注文になります。\n一度カートを空にしてから注文してください。");
+      return;
+    }
+
+    // 片方だけだが、押したボタンと中身が違うならブロック
+    const only = Array.from(groups)[0];
+    if(only !== expectGroup){
+      alert(
+        expectGroup === "akasha"
+          ? "オリジナルセットが入っています。\nあかしゃシリーズは別注文になります。"
+          : "あかしゃシリーズが入っています。\nオリジナルセットは別注文になります。"
+      );
+      return;
+    }
+
+    location.href = "/public/confirm.html";
+  }
+
+  /* ===== イベント ===== */
+  clearBtn.onclick = ()=>{
+    if(!confirm("カートを空にしますか？")) return;
+    cart = { items: [] };
+    saveCart(cart);
+    renderSum();
+  };
+  akashaBtn.onclick = ()=> goConfirm("akasha");
+  originalBtn.onclick = ()=> goConfirm("original");
+
+  /* ===== 商品ロード ===== */
   try{
-    const r=await fetch("/api/products",{cache:"no-store"});
-    const d=await r.json();
-    if(!d.ok) throw new Error("products api error");
-    products=d.products;
-    statusEl.textContent="";
-    gridEl.innerHTML="";
-    products.forEach(p=>gridEl.appendChild(card(p)));
+    const r = await fetch("/api/products", { cache:"no-store" });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok || !d.ok) throw new Error(d?.error || ("HTTP "+r.status));
+
+    products = Array.isArray(d.products) ? d.products : [];
+    if(products.length === 0){
+      statusEl.textContent = "商品がありません（products.json を確認）";
+      renderSum();
+      return;
+    }
+
+    statusEl.textContent = "";
+    gridEl.innerHTML = "";
+    products.forEach(p => gridEl.appendChild(card(p)));
+
     renderSum();
   }catch(e){
     console.error(e);
-    statusEl.textContent="商品読み込みに失敗しました";
+    statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">商品読み込み失敗：/api/products を確認してください</span>';
+    renderSum();
   }
-
-  clearBtn.onclick=()=>{
-    if(!confirm("カートを空にしますか？")) return;
-    cart={items:[]}; saveCart(cart); renderSum();
-  };
-
-  nextBtn.onclick=()=>{
-    location.href="/public/confirm.html"; // ★必ず confirm へ
-  };
 
 })();
 </script>

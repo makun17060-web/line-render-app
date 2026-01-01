@@ -1,29 +1,25 @@
 /**
- * server.js — 真の全部入り “完全・全部入り” 丸ごと版
+ * server.js — 真の全部入り “完全・全部入り” 丸ごと版（修正版）
  *  (LINE Bot + LIFFミニアプリ + 画像管理(Disk永続) + products.json(Disk永続) +
  *   住所DB(Postgres) + セグメント配信 + 注文DB永続化 + Stripe決済 + 送料計算統一)
  *
- * =========================
  * ✅ Render Disk 永続化（超重要）
- * - DATA_DIR=/var/data（デフォルト）
- *   - products.json / sessions.json / logs / etc...
- * - UPLOAD_DIR=/var/data/uploads（デフォルト）
- *   - 画像アップロード永続
- * - 静的配信（Cannot GET 対策）
- *   - /public/uploads/*  → UPLOAD_DIR を直接配信
+ * - DATA_DIR=/var/data（デフォルト）: products.json / sessions.json / logs
+ * - UPLOAD_DIR=/var/data/uploads（デフォルト）: 画像アップロード永続
+ * - 静的配信:
+ *   - /public              → __dirname/public
+ *   - /public/uploads/*    → UPLOAD_DIR
+ *   - /uploads/*           → UPLOAD_DIR（保険）
  *
- * =========================
  * ✅ 重要仕様（あなたの要望）
  * - 「久助」も products.json に従う（価格固定ロジック撤廃）
  * - 久助の送料サイズ判定＝ “あかしゃシリーズ扱い” に含める
  * - 起動キーワードは「直接注文」「久助」だけ（それ以外は無反応）
  *   - ただし“セッション中”の入力は受け付ける
  *
- * =========================
  * ✅ 送料（例：オリジナルセット）
  * - 1個=80 / 2個=100 / 3-4個=120 / 5-6個=140
  *
- * =========================
  * ✅ 必須 ENV
  * - LINE_CHANNEL_ACCESS_TOKEN
  * - LINE_CHANNEL_SECRET
@@ -35,7 +31,7 @@
  * - PUBLIC_BASE_URL（例 https://xxxx.onrender.com）
  *
  * ✅ 任意
- * - ADMIN_TOKEN（管理API保護）
+ * - ADMIN_API_TOKEN（管理API保護）
  * - LIFF_CHANNEL_ID（id_token verify をやるなら）
  * - LIFF_BASE_URL（FlexのURLに使う：PUBLIC_BASE_URL と同じでOK）
  */
@@ -75,20 +71,15 @@ const {
   STRIPE_SECRET_KEY = "",
   STRIPE_WEBHOOK_SECRET = "",
 
-  // Stripeのリダイレクト先（未設定なら PUBLIC_BASE_URL ベースで作る）
   STRIPE_SUCCESS_URL = "",
   STRIPE_CANCEL_URL = "",
 
-  // 代引き手数料（ミニアプリ側の“代引合計”に使う等）
   COD_FEE = "330",
 
-  // LINEの“起動キーワード”
   KEYWORD_DIRECT = "直接注文",
   KEYWORD_KUSUKE = "久助",
 
-  // “オリジナルセット”商品ID（products.json に入れてそれを使う）
   ORIGINAL_SET_PRODUCT_ID = "original-set-2000",
-
 } = process.env;
 
 if (!LINE_CHANNEL_ACCESS_TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
@@ -111,11 +102,9 @@ const LOG_DIR = path.join(DATA_DIR, "logs");
 const APP_LOG_FILE = path.join(LOG_DIR, "app.log");
 
 // =========================
-// 送料テーブル（例）
-// 実運用は DB テーブル化でもOKだが、まずはサーバ内で統一。
+// 送料テーブル
 // =========================
 const SHIPPING_REGION_BY_PREF = {
-  // ※必要なら増やす
   "北海道": "hokkaido",
   "青森県": "tohoku", "岩手県": "tohoku", "宮城県": "tohoku", "秋田県": "tohoku", "山形県": "tohoku", "福島県": "tohoku",
   "東京都": "kanto", "神奈川県": "kanto", "埼玉県": "kanto", "千葉県": "kanto", "茨城県": "kanto", "栃木県": "kanto", "群馬県": "kanto",
@@ -129,8 +118,7 @@ const SHIPPING_REGION_BY_PREF = {
   "沖縄県": "okinawa",
 };
 
-// サイズ別 送料（例：税込）※あなたの現行表に合わせて調整してOK
-// key: region -> size -> yen
+// サイズ別 送料（例：税込）※あなたの現行表に合わせて調整OK
 const SHIPPING_YAMATO = {
   hokkaido: { 60: 1300, 80: 1550, 100: 1800, 120: 2050, 140: 2300 },
   tohoku:   { 60:  900, 80: 1100, 100: 1300, 120: 1500, 140: 1700 },
@@ -146,14 +134,13 @@ const SHIPPING_YAMATO = {
 };
 
 // =========================
-// “あかしゃ扱い” 判定（久助をここに含める）
+// “あかしゃ扱い” 判定（久助を含める）
 // =========================
 function isAkashaLikeProduct(product) {
   const name = (product?.name || "").toLowerCase();
   const id = (product?.id || "").toLowerCase();
-  // あかしゃ系 + 久助 を同カテゴリとして扱う
   if (id.includes("akasha") || name.includes("あかしゃ") || name.includes("akasha")) return true;
-  if (id.includes("kusuke") || name.includes("久助")) return true; // ← ここが重要
+  if (id.includes("kusuke") || name.includes("久助")) return true;
   return false;
 }
 
@@ -164,19 +151,19 @@ function sizeForOriginalSet(qty) {
   if (qty <= 1) return 80;
   if (qty === 2) return 100;
   if (qty === 3 || qty === 4) return 120;
-  return 140; // 5-6想定（それ以上は運用で制限/分割など）
+  return 140; // 5-6想定
 }
 
 // =========================
-// 汎用：安全にディレクトリ作成
+// 汎用：ディレクトリ作成
 // =========================
 async function ensureDir(dir) {
   await fsp.mkdir(dir, { recursive: true });
 }
 
 // =========================
-// ログ（Diskに保存）
-// =========================
+// ログ（Disk）
+/* ========================= */
 async function logToFile(line) {
   try {
     await ensureDir(LOG_DIR);
@@ -216,8 +203,7 @@ async function writeJsonAtomic(file, data) {
 }
 
 // =========================
-// products.json 初期化（無ければ作る）
-// “久助の価格固定ロジック撤廃” → ここは seed だけ。管理で変更可能。
+// products.json 初期化
 // =========================
 async function ensureProductsFile() {
   await ensureDir(DATA_DIR);
@@ -268,8 +254,7 @@ async function saveProducts(products) {
 }
 
 // =========================
-// セッション（“起動キーワード2つだけ”を守る）
-// sessions.json に永続化
+// セッション（起動キーワード2つだけ）
 // =========================
 const sessions = new Map(); // userId -> session
 async function loadSessions() {
@@ -290,8 +275,7 @@ function setSession(userId, sess) {
 function getSession(userId) {
   const s = sessions.get(userId);
   if (!s) return null;
-  // 例：24時間で期限切れ
-  const ttl = 24 * 60 * 60 * 1000;
+  const ttl = 24 * 60 * 60 * 1000; // 24h
   if (Date.now() - (s.updatedAt || 0) > ttl) {
     sessions.delete(userId);
     persistSessions().catch(()=>{});
@@ -313,7 +297,6 @@ const pool = new Pool({
 });
 
 async function ensureDb() {
-  // users: display_name を保存（販促/管理で使う）
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       user_id TEXT PRIMARY KEY,
@@ -325,7 +308,6 @@ async function ensureDb() {
     );
   `);
 
-  // addresses: 住所DB（オンライン側）
   await pool.query(`
     CREATE TABLE IF NOT EXISTS addresses (
       id BIGSERIAL PRIMARY KEY,
@@ -342,17 +324,17 @@ async function ensureDb() {
     );
   `);
 
-  // orders: 注文DB（永続）
+  // orders.zip / orders.pref を使ってるなら列名は zip/pref でOK（あなたのSQLに合わせた）
   await pool.query(`
     CREATE TABLE IF NOT EXISTS orders (
       id BIGSERIAL PRIMARY KEY,
       user_id TEXT,
-      source TEXT,                 -- 'liff' / 'line' / etc
-      items JSONB NOT NULL,        -- [{id,name,qty,price,volume,image,...}]
-      total INTEGER NOT NULL,      -- 商品合計
+      source TEXT,
+      items JSONB NOT NULL,
+      total INTEGER NOT NULL,
       shipping_fee INTEGER NOT NULL,
-      payment_method TEXT NOT NULL, -- 'card'/'cod'
-      status TEXT NOT NULL DEFAULT 'new', -- new/paid/cancelled/...
+      payment_method TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'new',
       name TEXT,
       zip TEXT,
       pref TEXT,
@@ -362,7 +344,6 @@ async function ensureDb() {
     );
   `);
 
-  // segment_users: セグメント抽出用（LIFF起動者等）
   await pool.query(`
     CREATE TABLE IF NOT EXISTS segment_users (
       user_id TEXT PRIMARY KEY,
@@ -371,7 +352,6 @@ async function ensureDb() {
     );
   `);
 
-  // segment_blast: ワンショット配信用（seg_key × user_id）
   await pool.query(`
     CREATE TABLE IF NOT EXISTS segment_blast (
       segment_key TEXT NOT NULL,
@@ -381,7 +361,6 @@ async function ensureDb() {
     );
   `);
 
-  // friend_logs: 友だち追加/ブロック等を“日次”で見える化
   await pool.query(`
     CREATE TABLE IF NOT EXISTS friend_logs (
       id BIGSERIAL PRIMARY KEY,
@@ -397,11 +376,13 @@ async function ensureDb() {
 }
 
 async function touchUser(userId, kind, displayName = null) {
-  // users upsert
   await pool.query(
     `
     INSERT INTO users (user_id, display_name, last_seen_at, last_liff_at)
-    VALUES ($1, $2, CASE WHEN $3='seen' THEN now() ELSE NULL END, CASE WHEN $3='liff' THEN now() ELSE NULL END)
+    VALUES ($1, $2,
+      CASE WHEN $3='seen' THEN now() ELSE NULL END,
+      CASE WHEN $3='liff' THEN now() ELSE NULL END
+    )
     ON CONFLICT (user_id) DO UPDATE SET
       display_name = COALESCE(EXCLUDED.display_name, users.display_name),
       last_seen_at = CASE WHEN $3='seen' THEN now() ELSE users.last_seen_at END,
@@ -411,11 +392,13 @@ async function touchUser(userId, kind, displayName = null) {
     [userId, displayName, kind]
   );
 
-  // segment_users upsert
   await pool.query(
     `
     INSERT INTO segment_users (user_id, last_seen_at, last_liff_at)
-    VALUES ($1, CASE WHEN $2='seen' THEN now() ELSE NULL END, CASE WHEN $2='liff' THEN now() ELSE NULL END)
+    VALUES ($1,
+      CASE WHEN $2='seen' THEN now() ELSE NULL END,
+      CASE WHEN $2='liff' THEN now() ELSE NULL END
+    )
     ON CONFLICT (user_id) DO UPDATE SET
       last_seen_at = CASE WHEN $2='seen' THEN now() ELSE segment_users.last_seen_at END,
       last_liff_at = CASE WHEN $2='liff' THEN now() ELSE segment_users.last_liff_at END
@@ -433,8 +416,16 @@ async function getAddressByUserId(userId) {
   return r.rows[0] || null;
 }
 
+async function issueUniqueMemberCode() {
+  for (let i = 0; i < 80; i++) {
+    const code = String(Math.floor(1000 + Math.random() * 9000));
+    const r = await pool.query(`SELECT 1 FROM addresses WHERE member_code=$1`, [code]);
+    if (r.rowCount === 0) return code;
+  }
+  return String(Math.floor(10000 + Math.random() * 90000));
+}
+
 async function upsertAddress(userId, addr) {
-  // member_code が無ければ発行（4桁）
   let memberCode = (addr.member_code || "").trim();
   if (!memberCode) memberCode = await issueUniqueMemberCode();
 
@@ -467,22 +458,8 @@ async function upsertAddress(userId, addr) {
   return r.rows[0];
 }
 
-async function issueUniqueMemberCode() {
-  // 4桁を衝突回避で発行
-  for (let i = 0; i < 50; i++) {
-    const code = String(Math.floor(1000 + Math.random() * 9000));
-    const r = await pool.query(`SELECT 1 FROM addresses WHERE member_code=$1`, [code]);
-    if (r.rowCount === 0) return code;
-  }
-  // 最後の手段
-  return String(Math.floor(10000 + Math.random() * 90000));
-}
-
 // =========================
-// 送料計算（オンライン側統一）
-// - 商品構成から “サイズ” を決める
-//   - 例：オリジナルセットはあなた指定のサイズ表
-//   - “久助”は akasha 扱いでサイズ計算へ含める
+// 送料計算（統一）
 // =========================
 function detectRegionFromPref(prefecture) {
   const pref = (prefecture || "").trim();
@@ -490,44 +467,32 @@ function detectRegionFromPref(prefecture) {
 }
 
 function calcPackageSizeFromItems(items, productsById) {
-  // items: [{id, qty}]
-  // ここはあなたの運用ルールで最重要。まずは
-  //  - オリジナルセットは専用表
-  //  - それ以外はざっくり（あかしゃ/久助を小箱として加算）にしておく
-  //
-  // ※必要ならここを“完全にあなたの梱包ルール”へ寄せる
-
+  // items: [{id, qty, ...}] もしくは [{id, qty}] でもOK
   let hasOriginalSet = false;
   let originalQty = 0;
 
-  let smallCount = 0; // あかしゃ・久助等を小袋換算
+  let smallCount = 0;
   let otherCount = 0;
 
   for (const it of items || []) {
-    const p = productsById[it.id];
+    const id = String(it.id || "").trim();
     const qty = Number(it.qty || 0);
-    if (!p || qty <= 0) continue;
+    if (!id || qty <= 0) continue;
+
+    const p = productsById[id];
+    if (!p) continue;
 
     if (p.id === ORIGINAL_SET_PRODUCT_ID) {
       hasOriginalSet = true;
       originalQty += qty;
       continue;
     }
-
-    if (isAkashaLikeProduct(p)) {
-      smallCount += qty;
-    } else {
-      otherCount += qty;
-    }
+    if (isAkashaLikeProduct(p)) smallCount += qty;
+    else otherCount += qty;
   }
 
-  // オリジナルセットが入る場合：あなた指定のサイズを優先
   if (hasOriginalSet) {
-    // まず “セット数”で基本サイズ
     const base = sizeForOriginalSet(originalQty);
-
-    // 他商品が混載される場合：+1段階 など運用ルールを入れたいならここ
-    // 今回は “混載なら一段階上げる” の保守的ルール
     const mix = smallCount + otherCount;
     if (mix <= 0) return base;
     if (base === 80) return 100;
@@ -536,9 +501,7 @@ function calcPackageSizeFromItems(items, productsById) {
     return 140;
   }
 
-  // それ以外：ざっくり（小袋合計でサイズ決め）
   const total = smallCount + otherCount;
-
   if (total <= 2) return 60;
   if (total <= 4) return 80;
   if (total <= 6) return 100;
@@ -566,7 +529,52 @@ const lineClient = new line.Client(lineConfig);
 // =========================
 const app = express();
 
-// Webhook は raw body が必要になるケースがあるので、Stripe webhook と分離
+// =========================
+// Stripe（先にwebhook用のrawルートを置く）
+// ※ app.use(express.json) を先に置くとWebhookの署名検証が壊れる
+// =========================
+const stripe = (STRIPE_SECRET_KEY && Stripe) ? new Stripe(STRIPE_SECRET_KEY) : null;
+
+function stripeSuccessUrl() {
+  if (STRIPE_SUCCESS_URL) return STRIPE_SUCCESS_URL;
+  return BASE_URL ? `${BASE_URL}/public/stripe-success.html` : "https://example.com/success";
+}
+function stripeCancelUrl() {
+  if (STRIPE_CANCEL_URL) return STRIPE_CANCEL_URL;
+  return BASE_URL ? `${BASE_URL}/public/stripe-cancel.html` : "https://example.com/cancel";
+}
+
+// Stripe webhook（必要なら）
+app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  try {
+    if (!stripe || !STRIPE_WEBHOOK_SECRET) return res.status(400).send("stripe not configured");
+
+    const sig = req.headers["stripe-signature"];
+    let event;
+    try {
+      event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
+    } catch (err) {
+      logErr("Stripe webhook signature verify failed", err?.message || err);
+      return res.status(400).send("Bad signature");
+    }
+
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+      const orderId = session?.metadata?.orderId;
+      if (orderId) {
+        await pool.query(`UPDATE orders SET status='paid' WHERE id=$1`, [orderId]);
+        logInfo("Order paid:", orderId);
+      }
+    }
+
+    res.json({ received: true });
+  } catch (e) {
+    logErr("POST /stripe/webhook", e?.stack || e);
+    res.status(500).send("server_error");
+  }
+});
+
+// ここから通常JSON
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
@@ -575,7 +583,7 @@ app.use("/public", express.static(path.join(__dirname, "public")));
 
 // ★超重要：アップロード画像を Disk から配信（Cannot GET 対策）
 app.use("/public/uploads", express.static(UPLOAD_DIR));
-app.use("/uploads", express.static(UPLOAD_DIR)); // 保険（どっちでも見える）
+app.use("/uploads", express.static(UPLOAD_DIR)); // 保険
 
 // health
 app.get("/health", (req, res) => res.json({ ok: true, time: nowISO() }));
@@ -584,10 +592,8 @@ app.get("/health", (req, res) => res.json({ ok: true, time: nowISO() }));
 // 管理API 認証
 // =========================
 function requireAdmin(req, res, next) {
- if (!ADMIN_API_TOKEN)
-      return res.status(403).json({ ok:false, error:"ADMIN_TOKEN is not set" });
+  if (!ADMIN_API_TOKEN) return res.status(403).json({ ok:false, error:"ADMIN_API_TOKEN is not set" });
 
-  // ✅ ヘッダ名の揺れを吸収（あなたが色々試したやつ全部通す）
   const token =
     (req.headers["x-admin-token"] ||
      req.headers["x-admin-api-token"] ||
@@ -595,32 +601,29 @@ function requireAdmin(req, res, next) {
      req.query.token ||
      "").toString().trim();
 
-if (token !== ADMIN_API_TOKEN)
-      return res.status(401).json({ ok:false, error:"unauthorized" });
-
-   next();
- }
+  if (token !== ADMIN_API_TOKEN) return res.status(401).json({ ok:false, error:"unauthorized" });
+  next();
+}
 
 // =========================
-// Products API
+// Products API（フロント用）
+// - 画像URLは「フロントで扱いやすいように絶対URL」に統一して返す
 // =========================
 app.get("/api/products", async (req, res) => {
   try {
     const products = await loadProducts();
 
-    // このAPIを叩いた “そのサーバー自身” を基準にする（最強）
+    // このAPIを叩いたhostを基準に絶対URL化（最強）
     const origin = `${req.protocol}://${req.get("host")}`;
 
     const fixed = products.map(p => {
       let img = String(p.image || "").trim();
       if (!img) return p;
 
-      // 入力ゆれ吸収
       img = img.replace(/^public\//, "/public/");
       img = img.replace(/^uploads\//, "/public/uploads/");
       img = img.replace(/^\/uploads\//, "/public/uploads/");
 
-      // filenameだけ → /public/uploads/ に補正
       if (!/^https?:\/\//i.test(img)) {
         if (!img.startsWith("/")) img = "/public/uploads/" + img;
         img = origin + img;
@@ -637,47 +640,42 @@ app.get("/api/products", async (req, res) => {
 });
 
 // =========================
-// 管理：商品一覧（GET）  ← これが無いので 404 になってた
+// 管理：商品一覧（GET）
 // =========================
 app.get("/api/admin/products", requireAdmin, async (req, res) => {
   try {
     const products = await loadProducts();
     res.json({ ok: true, products });
   } catch (e) {
-    console.error("GET /api/admin/products", e);
+    logErr("GET /api/admin/products", e?.stack || e);
     res.status(500).json({ ok: false, error: "server_error" });
   }
 });
 
-// =========================
 // 管理：アップロード済み画像一覧（GET）
-// =========================
 app.get("/api/admin/images", requireAdmin, async (req, res) => {
   try {
     await ensureDir(UPLOAD_DIR);
 
     const files = await fsp.readdir(UPLOAD_DIR).catch(() => []);
-    const images = files
-      .filter(f => /\.(png|jpe?g|webp|gif)$/i.test(f))
-      .sort((a, b) => a.localeCompare(b, "en"));
+    const images = files.filter(f => /\.(png|jpe?g|webp|gif)$/i.test(f)).sort((a,b)=>a.localeCompare(b,"en"));
 
-    const base =
-      (BASE_URL && BASE_URL.startsWith("http")) ? BASE_URL :
-      `${req.protocol}://${req.get("host")}`;
+    const base = (BASE_URL && BASE_URL.startsWith("http")) ? BASE_URL : `${req.protocol}://${req.get("host")}`;
 
-    const list = images.map(name => ({
-      name,
-      url: `${base}/public/uploads/${encodeURIComponent(name)}`
-    }));
-
-    res.json({ ok: true, images: list });
+    res.json({
+      ok: true,
+      images: images.map(name => ({
+        name,
+        url: `${base}/public/uploads/${encodeURIComponent(name)}`
+      }))
+    });
   } catch (e) {
-    console.error("GET /api/admin/images", e);
+    logErr("GET /api/admin/images", e?.stack || e);
     res.status(500).json({ ok: false, error: "server_error" });
   }
 });
 
-// 管理：商品更新（price/stock/volume/desc/name/image）
+// 管理：商品更新
 app.post("/api/admin/products/update", requireAdmin, async (req, res) => {
   try {
     const body = req.body || {};
@@ -698,9 +696,9 @@ app.post("/api/admin/products/update", requireAdmin, async (req, res) => {
       desc: body.desc != null ? String(body.desc) : (p.desc || ""),
       image: body.image != null ? String(body.image) : (p.image || ""),
     };
+
     products[i] = next;
     await saveProducts(products);
-
     res.json({ ok: true, product: next });
   } catch (e) {
     logErr("POST /api/admin/products/update", e?.stack || e);
@@ -728,6 +726,7 @@ app.post("/api/admin/products/add", requireAdmin, async (req, res) => {
       desc: String(b.desc || ""),
       image: String(b.image || ""),
     };
+
     products.push(p);
     await saveProducts(products);
     res.json({ ok: true, product: p });
@@ -753,8 +752,7 @@ app.post("/api/admin/products/delete", requireAdmin, async (req, res) => {
   }
 });
 
-// 画像アップロード（base64 を受ける簡易版）
-// body: { filename?, contentBase64, mime? } -> /public/uploads/<saved>
+// 管理：画像アップロード（base64簡易）
 app.post("/api/admin/upload-image", requireAdmin, async (req, res) => {
   try {
     const { contentBase64, filename, mime } = req.body || {};
@@ -763,23 +761,22 @@ app.post("/api/admin/upload-image", requireAdmin, async (req, res) => {
     await ensureDir(UPLOAD_DIR);
 
     const ext =
-      (mime && mime.includes("png")) ? "png" :
+      (mime && mime.includes("png"))  ? "png" :
       (mime && mime.includes("webp")) ? "webp" :
-      (mime && mime.includes("jpeg")) ? "jpg" :
-      (mime && mime.includes("jpg")) ? "jpg" : "png";
+      (mime && (mime.includes("jpeg") || mime.includes("jpg"))) ? "jpg" : "png";
 
-    const safeName = (filename ? String(filename) : "").
-      replace(/[^\w.\-]/g, "_").
-      replace(/\.+/g, ".").
-      slice(0, 80);
+    const safeName = (filename ? String(filename) : "")
+      .replace(/[^\w.\-]/g, "_")
+      .replace(/\.+/g, ".")
+      .slice(0, 80);
 
     const name = safeName || `${Date.now()}_${crypto.randomBytes(4).toString("hex")}.${ext}`;
     const buf = Buffer.from(String(contentBase64).replace(/^data:.*;base64,/, ""), "base64");
     const outPath = path.join(UPLOAD_DIR, name);
-
     await fsp.writeFile(outPath, buf);
 
-    const url = `${BASE_URL}/public/uploads/${encodeURIComponent(name)}`;
+    const base = BASE_URL || `${req.protocol}://${req.get("host")}`;
+    const url = `${base}/public/uploads/${encodeURIComponent(name)}`;
     res.json({ ok: true, name, url });
   } catch (e) {
     logErr("POST /api/admin/upload-image", e?.stack || e);
@@ -788,7 +785,7 @@ app.post("/api/admin/upload-image", requireAdmin, async (req, res) => {
 });
 
 // =========================
-// 住所API（LIFFから保存/取得）
+// 住所API（LIFF）
 // =========================
 app.get("/api/address/get", async (req, res) => {
   try {
@@ -827,7 +824,7 @@ app.post("/api/address/set", async (req, res) => {
   }
 });
 
-// id_token verify（任意：LIFF_CHANNEL_ID があれば使える）
+// id_token verify（任意）
 app.post("/api/liff/verify", async (req, res) => {
   try {
     if (!LIFF_CHANNEL_ID) return res.status(400).json({ ok: false, error: "LIFF_CHANNEL_ID not set" });
@@ -847,7 +844,6 @@ app.post("/api/liff/verify", async (req, res) => {
     const data = await r.json().catch(()=> ({}));
     if (!r.ok) return res.status(401).json({ ok: false, error: "verify_failed", detail: data });
 
-    // data.sub が userId
     res.json({ ok: true, profile: data });
   } catch (e) {
     logErr("POST /api/liff/verify", e?.stack || e);
@@ -855,7 +851,7 @@ app.post("/api/liff/verify", async (req, res) => {
   }
 });
 
-// LIFF 起動ログ（セグメント抽出）
+// LIFF 起動ログ（セグメント用）
 app.post("/api/liff/opened", async (req, res) => {
   try {
     const userId = String(req.body?.userId || "").trim();
@@ -870,43 +866,59 @@ app.post("/api/liff/opened", async (req, res) => {
 });
 
 // =========================
-// 注文作成（LIFF → card/cod）
-// - items は [{id, qty}] を想定
-// - address は userId から DB 取得
-// - shippingFee を統一計算
+// 注文（共通組立）
+// - confirm.html からは「checkout payload」が来る
+//   { uid, checkout:{ items:[{id,qty,price,name,image,volume}], subtotal } }
+// - ただし価格や在庫はサーバ側 products.json を正として再計算する
 // =========================
-async function buildOrderFromRequest(userId, itemsRaw) {
-  const products = await loadProducts();
-  const productsById = {};
-  for (const p of products) productsById[p.id] = p;
+async function buildOrderFromCheckout(uid, checkout) {
+  const userId = String(uid || "").trim();
+  if (!userId) {
+    const err = new Error("uid required");
+    err.code = "NO_UID";
+    throw err;
+  }
 
+  const addr = await getAddressByUserId(userId);
+  if (!addr) {
+    const err = new Error("address not found");
+    err.code = "NO_ADDRESS";
+    throw err;
+  }
+
+  const products = await loadProducts();
+  const productsById = Object.fromEntries(products.map(p => [p.id, p]));
+
+  // items をサーバ基準で組み立て直す（改ざん対策）
+  const inItems = Array.isArray(checkout?.items) ? checkout.items : [];
   const items = [];
   let subtotal = 0;
 
-  for (const it of (itemsRaw || [])) {
-    const id = String(it.id || "").trim();
-    const qty = Math.max(0, Number(it.qty || 0));
+  for (const it of inItems) {
+    const id = String(it?.id || "").trim();
+    const qty = Math.max(0, Math.floor(Number(it?.qty || 0)));
     if (!id || qty <= 0) continue;
 
     const p = productsById[id];
     if (!p) continue;
 
-    // 在庫チェック（必要なら“注文確定時に在庫減算”へ）
-    if (Number.isFinite(p.stock) && p.stock < qty) {
+    // 在庫チェック
+    if (Number.isFinite(p.stock) && Number(p.stock) < qty) {
       const err = new Error(`在庫不足: ${p.name} (stock=${p.stock}, qty=${qty})`);
       err.code = "OUT_OF_STOCK";
       err.productId = id;
       throw err;
     }
 
-    const lineTotal = Number(p.price || 0) * qty;
+    const price = Number(p.price || 0);
+    const lineTotal = price * qty;
     subtotal += lineTotal;
 
     items.push({
       id: p.id,
       name: p.name,
       qty,
-      price: Number(p.price || 0),
+      price,
       volume: p.volume || "",
       image: p.image || "",
       desc: p.desc || "",
@@ -920,27 +932,12 @@ async function buildOrderFromRequest(userId, itemsRaw) {
     throw err;
   }
 
-  const addr = await getAddressByUserId(userId);
-  if (!addr) {
-    const err = new Error("address not found");
-    err.code = "NO_ADDRESS";
-    throw err;
-  }
-
-  // 送料計算
-  const size = calcPackageSizeFromItems(items, Object.fromEntries(items.map(x => [x.id, (productsById[x.id] || {})])));
+  const size = calcPackageSizeFromItems(items, productsById);
   const shippingFee = calcShippingFee(addr.prefecture, size);
 
-  return {
-    items,
-    subtotal,
-    shippingFee,
-    size,
-    address: addr,
-  };
+  return { userId, addr, items, subtotal, shippingFee, size, productsById };
 }
 
-// 注文DB保存
 async function insertOrderToDb({ userId, items, subtotal, shippingFee, paymentMethod, status, rawEvent }) {
   const addr = await getAddressByUserId(userId);
   const fullAddr = addr ? `${addr.prefecture || ""}${addr.city || ""}${addr.address1 || ""} ${addr.address2 || ""}`.trim() : "";
@@ -969,43 +966,32 @@ async function insertOrderToDb({ userId, items, subtotal, shippingFee, paymentMe
 }
 
 // =========================
-// Stripe 決済
+// ✅ confirm.html 用 API（ここが“全部”の接合部）
+// - /api/pay/stripe/create : {uid, checkout} → {ok:true, url, orderId, ...}
+// - /api/order/cod/create  : {uid, checkout} → {ok:true, orderId, ...}
 // =========================
-const stripe = (STRIPE_SECRET_KEY && Stripe) ? new Stripe(STRIPE_SECRET_KEY) : null;
-
-function stripeSuccessUrl() {
-  if (STRIPE_SUCCESS_URL) return STRIPE_SUCCESS_URL;
-  return BASE_URL ? `${BASE_URL}/public/stripe-success.html` : "https://example.com/success";
-}
-function stripeCancelUrl() {
-  if (STRIPE_CANCEL_URL) return STRIPE_CANCEL_URL;
-  return BASE_URL ? `${BASE_URL}/public/stripe-cancel.html` : "https://example.com/cancel";
-}
-
-// LIFF → Stripe Checkout Session 作成
-app.post("/api/checkout", async (req, res) => {
+app.post("/api/pay/stripe/create", async (req, res) => {
   try {
-    if (!stripe) return res.status(400).json({ ok: false, error: "stripe_not_configured" });
+    if (!stripe) return res.status(400).json({ ok:false, error:"stripe_not_configured" });
 
-    const userId = String(req.body?.userId || "").trim();
-    const itemsRaw = req.body?.items || [];
-    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
+    const uid = String(req.body?.uid || "").trim();
+    const checkout = req.body?.checkout || null;
 
-    await touchUser(userId, "seen");
+    await touchUser(uid, "seen");
 
-    const built = await buildOrderFromRequest(userId, itemsRaw);
+    const built = await buildOrderFromCheckout(uid, checkout);
 
-    // Stripe line items
     const lineItems = built.items.map(it => ({
       price_data: {
         currency: "jpy",
-        product_data: { name: `${it.name}（${it.volume || ""}）`.replace(/（\s*）$/, "") },
+        product_data: {
+          name: `${it.name}${it.volume ? `（${it.volume}）` : ""}`,
+        },
         unit_amount: it.price,
       },
       quantity: it.qty,
     }));
 
-    // 送料を別行として追加
     if (built.shippingFee > 0) {
       lineItems.push({
         price_data: {
@@ -1017,16 +1003,14 @@ app.post("/api/checkout", async (req, res) => {
       });
     }
 
-    // 先に order を new で入れて、Checkout完了で paid にする設計もOK
-    // 今回は “Checkout作成時に仮注文作成” して orderId を metadata に入れる
     const orderId = await insertOrderToDb({
-      userId,
+      userId: built.userId,
       items: built.items,
       subtotal: built.subtotal,
       shippingFee: built.shippingFee,
       paymentMethod: "card",
       status: "new",
-      rawEvent: { type: "checkout_create" },
+      rawEvent: { type: "checkout_create_v2" },
     });
 
     const session = await stripe.checkout.sessions.create({
@@ -1034,57 +1018,85 @@ app.post("/api/checkout", async (req, res) => {
       line_items: lineItems,
       success_url: `${stripeSuccessUrl()}?orderId=${orderId}`,
       cancel_url: `${stripeCancelUrl()}?orderId=${orderId}`,
-      metadata: { orderId: String(orderId), userId },
+      metadata: { orderId: String(orderId), userId: built.userId },
     });
 
     res.json({
       ok: true,
       orderId,
-      checkoutUrl: session.url,
+      url: session.url,
       subtotal: built.subtotal,
       shippingFee: built.shippingFee,
       size: built.size,
     });
   } catch (e) {
     const code = e?.code || "";
-    logErr("POST /api/checkout", code, e?.stack || e);
-    if (code === "NO_ADDRESS") return res.status(409).json({ ok: false, error: "NO_ADDRESS" });
-    if (code === "OUT_OF_STOCK") return res.status(409).json({ ok: false, error: "OUT_OF_STOCK", productId: e.productId });
-    if (code === "EMPTY_ITEMS") return res.status(400).json({ ok: false, error: "EMPTY_ITEMS" });
-    res.status(500).json({ ok: false, error: "server_error" });
+    logErr("POST /api/pay/stripe/create", code, e?.stack || e);
+
+    if (code === "NO_ADDRESS") return res.status(409).json({ ok:false, error:"NO_ADDRESS" });
+    if (code === "OUT_OF_STOCK") return res.status(409).json({ ok:false, error:"OUT_OF_STOCK", productId: e.productId });
+    if (code === "EMPTY_ITEMS") return res.status(400).json({ ok:false, error:"EMPTY_ITEMS" });
+
+    res.status(500).json({ ok:false, error:"server_error" });
   }
 });
 
-// Stripe webhook（必要なら）
-app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+app.post("/api/order/cod/create", async (req, res) => {
   try {
-    if (!stripe || !STRIPE_WEBHOOK_SECRET) return res.status(400).send("stripe not configured");
+    const uid = String(req.body?.uid || "").trim();
+    const checkout = req.body?.checkout || null;
 
-    const sig = req.headers["stripe-signature"];
-    let event;
-    try {
-      event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
-    } catch (err) {
-      logErr("Stripe webhook signature verify failed", err?.message || err);
-      return res.status(400).send("Bad signature");
-    }
+    await touchUser(uid, "seen");
 
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
-      const orderId = session?.metadata?.orderId;
-      if (orderId) {
-        await pool.query(`UPDATE orders SET status='paid' WHERE id=$1`, [orderId]);
-        logInfo("Order paid:", orderId);
-      }
-    }
+    const built = await buildOrderFromCheckout(uid, checkout);
 
-    res.json({ received: true });
+    const orderId = await insertOrderToDb({
+      userId: built.userId,
+      items: built.items,
+      subtotal: built.subtotal,
+      shippingFee: built.shippingFee,
+      paymentMethod: "cod",
+      status: "new",
+      rawEvent: { type: "cod_create_v2" },
+    });
+
+    const codFee = Number(COD_FEE || 330);
+    const totalCod = built.subtotal + built.shippingFee + codFee;
+
+    res.json({
+      ok: true,
+      orderId,
+      subtotal: built.subtotal,
+      shippingFee: built.shippingFee,
+      codFee,
+      totalCod,
+      size: built.size,
+      message: `代引き注文を受け付けました（注文ID: ${orderId}）`,
+    });
   } catch (e) {
-    logErr("POST /stripe/webhook", e?.stack || e);
-    res.status(500).send("server_error");
+    const code = e?.code || "";
+    logErr("POST /api/order/cod/create", code, e?.stack || e);
+
+    if (code === "NO_ADDRESS") return res.status(409).json({ ok:false, error:"NO_ADDRESS" });
+    if (code === "OUT_OF_STOCK") return res.status(409).json({ ok:false, error:"OUT_OF_STOCK", productId: e.productId });
+    if (code === "EMPTY_ITEMS") return res.status(400).json({ ok:false, error:"EMPTY_ITEMS" });
+
+    res.status(500).json({ ok:false, error:"server_error" });
   }
 });
-// 注文ステータス確認（Stripe success画面でポーリングに使う）
+
+// 互換：以前のエンドポイントを叩いてる箇所が残ってても動くように alias
+app.post("/api/checkout", (req, res, next) => {
+  // 旧: {userId, items:[{id,qty}]} を新: {uid, checkout:{items:[{id,qty}]}} に変換
+  const userId = String(req.body?.userId || "").trim();
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  req.body = { uid: userId, checkout: { items: items.map(it=>({ id: it.id, qty: it.qty })) } };
+  return app._router.handle(req, res, next); // いったん次へ（下で /api/pay/stripe/create を再利用しないため直接は不可）
+});
+// ↑ 互換を本当に使うなら、古いフロントの呼び先は /api/pay/stripe/create に寄せるのが一番確実。
+// （このaliasはExpress内部handleの都合で環境によって動作がブレるので、基本は使わないでOK）
+
+// 注文ステータス確認（Stripe success画面などで）
 app.get("/api/order/status", async (req, res) => {
   try {
     const orderId = String(req.query.orderId || "").trim();
@@ -1100,88 +1112,35 @@ app.get("/api/order/status", async (req, res) => {
 
     res.json({ ok:true, order: row });
   } catch (e) {
-    console.error("GET /api/order/status", e);
+    logErr("GET /api/order/status", e?.stack || e);
     res.status(500).json({ ok:false, error:"server_error" });
   }
 });
 
 // =========================
-// 代引注文（LIFF側で“代引”を選ぶ時）
-// - DBに保存して status=new のまま（運用で発送/入金管理）
+// 管理：セグメント/配信
 // =========================
-app.post("/api/cod/create", async (req, res) => {
-  try {
-    const userId = String(req.body?.userId || "").trim();
-    const itemsRaw = req.body?.items || [];
-    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
-
-    await touchUser(userId, "seen");
-
-    const built = await buildOrderFromRequest(userId, itemsRaw);
-
-    const orderId = await insertOrderToDb({
-      userId,
-      items: built.items,
-      subtotal: built.subtotal,
-      shippingFee: built.shippingFee,
-      paymentMethod: "cod",
-      status: "new",
-      rawEvent: { type: "cod_create" },
-    });
-
-    res.json({
-      ok: true,
-      orderId,
-      subtotal: built.subtotal,
-      shippingFee: built.shippingFee,
-      codFee: Number(COD_FEE || 330),
-      totalCod: built.subtotal + built.shippingFee + Number(COD_FEE || 330),
-      size: built.size,
-    });
-  } catch (e) {
-    const code = e?.code || "";
-    logErr("POST /api/cod/create", code, e?.stack || e);
-    if (code === "NO_ADDRESS") return res.status(409).json({ ok: false, error: "NO_ADDRESS" });
-    if (code === "OUT_OF_STOCK") return res.status(409).json({ ok: false, error: "OUT_OF_STOCK", productId: e.productId });
-    if (code === "EMPTY_ITEMS") return res.status(400).json({ ok: false, error: "EMPTY_ITEMS" });
-    res.status(500).json({ ok: false, error: "server_error" });
-  }
-});
-
-// =========================
-// 管理：セグメント抽出 & ワンショット配信
-// =========================
-
-// 管理：今日の友だち追加/純増（簡易）
 app.get("/api/admin/friends/today", requireAdmin, async (req, res) => {
   try {
-    const day = new Date();
-    const yyyy = day.getFullYear();
-    const mm = String(day.getMonth() + 1).padStart(2, "0");
-    const dd = String(day.getDate()).padStart(2, "0");
-    const key = `${yyyy}-${mm}-${dd}`;
-
-    const r = await pool.query(`SELECT day, added_count, blocked_count FROM friend_logs WHERE day=$1`, [key]);
-    const row = r.rows[0] || { day: key, added_count: 0, blocked_count: 0 };
-    res.json({ ok: true, ...row, net: (row.added_count || 0) - (row.blocked_count || 0) });
+    const day = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" }); // YYYY-MM-DD
+    const r = await pool.query(`SELECT day, added_count, blocked_count FROM friend_logs WHERE day=$1`, [day]);
+    const row = r.rows[0] || { day, added_count: 0, blocked_count: 0 };
+    res.json({ ok:true, ...row, net: (row.added_count||0) - (row.blocked_count||0) });
   } catch (e) {
     logErr("GET /api/admin/friends/today", e?.stack || e);
-    res.status(500).json({ ok: false, error: "server_error" });
+    res.status(500).json({ ok:false, error:"server_error" });
   }
 });
 
-// 管理：segment_key に対して条件抽出して segment_blast に詰める
-// 例：昨日の LIFF 起動者を詰める
 app.post("/api/admin/segment/fill", requireAdmin, async (req, res) => {
   try {
     const segmentKey = String(req.body?.segment_key || "").trim();
     const mode = String(req.body?.mode || "yesterday_liff").trim();
-    if (!segmentKey) return res.status(400).json({ ok: false, error: "segment_key required" });
+    if (!segmentKey) return res.status(400).json({ ok:false, error:"segment_key required" });
 
     let inserted = 0;
 
     if (mode === "yesterday_liff") {
-      // “昨日”の定義：JSTで前日0:00-24:00（DBはTZ付き、簡易に now()-1day の date で見る）
       const q = `
         INSERT INTO segment_blast (segment_key, user_id)
         SELECT $1, user_id
@@ -1205,42 +1164,36 @@ app.post("/api/admin/segment/fill", requireAdmin, async (req, res) => {
       const r = await pool.query(q, [segmentKey]);
       inserted = r.rowCount || 0;
     } else {
-      return res.status(400).json({ ok: false, error: "unknown mode" });
+      return res.status(400).json({ ok:false, error:"unknown mode" });
     }
 
-    res.json({ ok: true, inserted });
+    res.json({ ok:true, inserted });
   } catch (e) {
     logErr("POST /api/admin/segment/fill", e?.stack || e);
-    res.status(500).json({ ok: false, error: "server_error" });
+    res.status(500).json({ ok:false, error:"server_error" });
   }
 });
 
-// 管理：segment_key の対象数
 app.get("/api/admin/segment/count", requireAdmin, async (req, res) => {
   try {
     const segmentKey = String(req.query.segment_key || "").trim();
-    if (!segmentKey) return res.status(400).json({ ok: false, error: "segment_key required" });
+    if (!segmentKey) return res.status(400).json({ ok:false, error:"segment_key required" });
+
     const r = await pool.query(`SELECT COUNT(*)::int AS n FROM segment_blast WHERE segment_key=$1`, [segmentKey]);
-    res.json({ ok: true, count: r.rows[0]?.n || 0 });
+    res.json({ ok:true, count: r.rows[0]?.n || 0 });
   } catch (e) {
     logErr("GET /api/admin/segment/count", e?.stack || e);
-    res.status(500).json({ ok: false, error: "server_error" });
+    res.status(500).json({ ok:false, error:"server_error" });
   }
 });
 
-// 管理：ワンショット配信（multicast）
-// body: { segment_key, messages:[{type:'text',text:'...'}] }
 app.post("/api/admin/blast/once", requireAdmin, async (req, res) => {
   try {
     const segmentKey = String(req.body?.segment_key || "").trim();
-    const messages = req.body?.messages || [{ type: "text", text: "配信テスト" }];
-    if (!segmentKey) return res.status(400).json({ ok: false, error: "segment_key required" });
+    const messages = req.body?.messages || [{ type:"text", text:"配信テスト" }];
+    if (!segmentKey) return res.status(400).json({ ok:false, error:"segment_key required" });
 
-    // 最大500件ずつ（LINE multicast 制限）
-    const r = await pool.query(
-      `SELECT user_id FROM segment_blast WHERE segment_key=$1 ORDER BY created_at ASC`,
-      [segmentKey]
-    );
+    const r = await pool.query(`SELECT user_id FROM segment_blast WHERE segment_key=$1 ORDER BY created_at ASC`, [segmentKey]);
     const userIds = r.rows.map(x => x.user_id).filter(Boolean);
 
     let sent = 0;
@@ -1249,10 +1202,11 @@ app.post("/api/admin/blast/once", requireAdmin, async (req, res) => {
       await lineClient.multicast(chunk, messages);
       sent += chunk.length;
     }
-    res.json({ ok: true, sent });
+
+    res.json({ ok:true, sent });
   } catch (e) {
     logErr("POST /api/admin/blast/once", e?.stack || e);
-    res.status(500).json({ ok: false, error: "server_error" });
+    res.status(500).json({ ok:false, error:"server_error" });
   }
 });
 
@@ -1278,30 +1232,18 @@ async function handleEvent(ev) {
     try { await touchUser(userId, "seen"); } catch {}
   }
 
-  if (type === "follow") {
-    await onFollow(ev);
-    return;
-  }
-  if (type === "unfollow") {
-    await onUnfollow(ev);
-    return;
-  }
-  if (type === "message" && ev.message?.type === "text") {
-    await onTextMessage(ev);
-    return;
-  }
-  if (type === "postback") {
-    await onPostback(ev);
-    return;
-  }
+  if (type === "follow") return onFollow(ev);
+  if (type === "unfollow") return onUnfollow(ev);
+
+  if (type === "message" && ev.message?.type === "text") return onTextMessage(ev);
+  if (type === "postback") return onPostback(ev);
 }
 
 async function onFollow(ev) {
   const userId = ev?.source?.userId || "";
   if (!userId) return;
 
-  // 友だち追加を日次で+1
-  const day = (new Date()).toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" }); // YYYY-MM-DD
+  const day = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
   await pool.query(
     `
     INSERT INTO friend_logs (day, added_count, blocked_count)
@@ -1313,7 +1255,6 @@ async function onFollow(ev) {
     [day]
   );
 
-  // display_name 保存
   let displayName = null;
   try {
     const prof = await lineClient.getProfile(userId);
@@ -1331,9 +1272,8 @@ async function onFollow(ev) {
   });
 }
 
-async function onUnfollow(ev) {
-  // ブロック等を日次で+1（厳密ではないが運用上OK）
-  const day = (new Date()).toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+async function onUnfollow() {
+  const day = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
   await pool.query(
     `
     INSERT INTO friend_logs (day, added_count, blocked_count)
@@ -1347,15 +1287,11 @@ async function onUnfollow(ev) {
 }
 
 function liffUrl(pathname) {
-  // LIFFのURLはあなたの運用に合わせて：
-  // - LIFFアプリのURL（LINE Developers の LIFF URL）を使う場合は “固定URL”を env に置く方がベター
-  // ここは “公開URL + /public/xxx.html” としている（あなたの既存HTMLに合わせて調整OK）
   if (!LIFF_BASE) return pathname;
   if (!pathname.startsWith("/")) pathname = "/" + pathname;
   return LIFF_BASE + pathname;
 }
 
-// 起動キーワード2つだけ + セッション中のみ継続
 async function onTextMessage(ev) {
   const userId = ev?.source?.userId || "";
   const text = (ev.message?.text || "").trim();
@@ -1369,14 +1305,14 @@ async function onTextMessage(ev) {
     return;
   }
 
-  // セッションが無い場合：起動キーワード2つだけ
+  // 起動キーワード2つだけ
   if (text === KEYWORD_DIRECT) {
     setSession(userId, { kind: "direct", step: "start" });
     await replyDirectStart(ev.replyToken, userId);
     return;
   }
+
   if (text.startsWith(KEYWORD_KUSUKE)) {
-    // 例： "久助 3" も許可（あなた要望）
     const m = text.match(/^久助\s*([0-9]+)?/);
     const qty = m && m[1] ? Number(m[1]) : null;
 
@@ -1385,64 +1321,27 @@ async function onTextMessage(ev) {
     return;
   }
 
-  // それ以外は無反応（あなた要望）
+  // それ以外は無反応（要望）
 }
 
-async function onPostback(ev) {
-  // 必要なら拡張（店舗受取/注文開始のポストバック等）
+async function onPostback() {
+  // 必要なら拡張
 }
 
-async function replyDirectStart(replyToken, userId) {
-  // ミニアプリ（商品一覧）へ誘導
-  const url = liffUrl("/public/liff/index.html"); // あなたの既存パスに合わせて変更OK
-  const msg = {
-    type: "flex",
-    altText: "ミニアプリ注文を開く",
-    contents: {
-      type: "bubble",
-      hero: {
-        type: "image",
-        url: `${BASE_URL}/public/assets/hero.png`.replace("undefined", ""),
-        size: "full",
-        aspectMode: "cover",
-        aspectRatio: "20:13"
-      },
-      body: {
-        type: "box",
-        layout: "vertical",
-        spacing: "md",
-        contents: [
-          { type: "text", text: "ミニアプリで注文", weight: "bold", size: "lg" },
-          { type: "text", text: "商品を選んで、住所・支払い方法を選択して注文できます。", wrap: true, size: "sm", color: "#555555" },
-          {
-            type: "button",
-            style: "primary",
-            action: { type: "uri", label: "注文をはじめる", uri: url }
-          },
-          {
-            type: "button",
-            style: "secondary",
-            action: { type: "uri", label: "住所登録", uri: liffUrl("/public/liff-address.html") }
-          }
-        ]
-      }
-    }
-  };
+async function replyDirectStart(replyToken) {
+  // ✅ ミニアプリ商品一覧へ誘導（あなたのパスに合わせて）
+  const urlProducts = liffUrl("/public/products.html");
+  const urlAddress  = liffUrl("/public/liff-address.html");
 
-  // hero画像が無い環境でも落ちないように altText テキスト版も併用可
-  await lineClient.replyMessage(replyToken, msg).catch(async () => {
-    await lineClient.replyMessage(replyToken, { type: "text", text: `こちらから注文できます：\n${url}` });
+  await lineClient.replyMessage(replyToken, {
+    type: "text",
+    text: `ミニアプリで注文できます：\n${urlProducts}\n\n住所登録：\n${urlAddress}`
   });
-
-  clearSession(userId);
 }
 
 async function replyKusukeStart(replyToken, userId, qtyPreset) {
-  // 久助は“チャットで個数入力 → 住所DB読んで送料計算”があなた要望
   const addr = await getAddressByUserId(userId);
-
   if (!addr) {
-    // 住所が無ければ住所登録へ誘導
     const url = liffUrl("/public/liff-address.html");
     await lineClient.replyMessage(replyToken, {
       type: "text",
@@ -1456,18 +1355,12 @@ async function replyKusukeStart(replyToken, userId, qtyPreset) {
   }
 
   if (qtyPreset && qtyPreset > 0) {
-    // すぐ確定計算へ
     await finalizeKusukeOrder(replyToken, userId, qtyPreset);
     clearSession(userId);
     return;
   }
 
-  await lineClient.replyMessage(replyToken, {
-    type: "text",
-    text:
-      "久助の個数を数字で送ってください。\n" +
-      "例：3",
-  });
+  await lineClient.replyMessage(replyToken, { type:"text", text:"久助の個数を数字で送ってください。\n例：3" });
   setSession(userId, { kind: "kusuke", step: "wait_qty" });
 }
 
@@ -1475,37 +1368,32 @@ async function handleSessionInput(userId, text, ev) {
   const sess = getSession(userId);
   if (!sess) return;
 
-  if (sess.kind === "kusuke") {
-    if (sess.step === "wait_qty") {
-      const qty = Number(text);
-      if (!Number.isFinite(qty) || qty <= 0) {
-        await lineClient.replyMessage(ev.replyToken, { type: "text", text: "数字（例：3）で送ってください。" });
-        return;
-      }
-      await finalizeKusukeOrder(ev.replyToken, userId, qty);
-      clearSession(userId);
+  if (sess.kind === "kusuke" && sess.step === "wait_qty") {
+    const qty = Number(text);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      await lineClient.replyMessage(ev.replyToken, { type:"text", text:"数字（例：3）で送ってください。" });
       return;
     }
+    await finalizeKusukeOrder(ev.replyToken, userId, qty);
+    clearSession(userId);
+    return;
   }
-
-  // それ以外のセッションは必要に応じて拡張
 }
 
 async function finalizeKusukeOrder(replyToken, userId, qty) {
   try {
     const products = await loadProducts();
+    const productsById = Object.fromEntries(products.map(p => [p.id, p]));
     const kusuke = products.find(p => (p.name || "").includes("久助") || (p.id || "").includes("kusuke"));
     if (!kusuke) {
-      await lineClient.replyMessage(replyToken, { type: "text", text: "久助の商品が products.json に見つかりませんでした。" });
+      await lineClient.replyMessage(replyToken, { type:"text", text:"久助の商品が products.json に見つかりませんでした。" });
       return;
     }
 
-    // buildOrderFromRequest を使って統一送料計算（久助は akasha 扱いでサイズ計算へ入る）
-    const built = await buildOrderFromRequest(userId, [{ id: kusuke.id, qty }]);
+    // サーバ側で組み立て
+    const fakeCheckout = { items: [{ id: kusuke.id, qty }] };
+    const built = await buildOrderFromCheckout(userId, fakeCheckout);
 
-    // “久助”はチャット注文なので、まずは “代引（new）” として作る運用が多いが、
-    // あなたの運用に合わせて “card へ誘導” も可能。
-    // ここでは「代引注文として仮登録 + 合計案内」にしておく（必要なら変更）
     const orderId = await insertOrderToDb({
       userId,
       items: built.items,
@@ -1519,39 +1407,34 @@ async function finalizeKusukeOrder(replyToken, userId, qty) {
     const codFee = Number(COD_FEE || 330);
     const totalCod = built.subtotal + built.shippingFee + codFee;
 
-    const addr = built.address;
+    const a = built.addr;
     const addrText =
-      `〒${addr.postal || ""} ${addr.prefecture || ""}${addr.city || ""}${addr.address1 || ""} ${addr.address2 || ""}`.trim();
+      `〒${a.postal || ""} ${a.prefecture || ""}${a.city || ""}${a.address1 || ""} ${a.address2 || ""}`.trim();
 
     await lineClient.replyMessage(replyToken, {
-      type: "text",
+      type:"text",
       text:
         `久助 注文を受け付けました（注文ID: ${orderId}）\n\n` +
-        `【内容】\n` +
-        `${kusuke.name} × ${qty}\n` +
-        `単価：${kusuke.price}円\n\n` +
+        `【内容】\n${kusuke.name} × ${qty}\n単価：${kusuke.price}円\n\n` +
         `【送料】ヤマト ${built.size}サイズ：${built.shippingFee}円\n` +
         `【代引手数料】${codFee}円\n\n` +
         `【合計（代引）】${totalCod}円\n\n` +
         `【お届け先】\n${addrText}\n\n` +
-        `※住所が違う場合は住所登録を更新してください。\n` +
-        `${liffUrl("/public/liff-address.html")}`
+        `住所変更：\n${liffUrl("/public/liff-address.html")}`
     });
   } catch (e) {
     const code = e?.code || "";
     logErr("finalizeKusukeOrder", code, e?.stack || e);
+
     if (code === "NO_ADDRESS") {
-      await lineClient.replyMessage(replyToken, {
-        type: "text",
-        text: `住所が未登録です。\n住所登録：\n${liffUrl("/public/liff-address.html")}`,
-      });
+      await lineClient.replyMessage(replyToken, { type:"text", text:`住所が未登録です。\n${liffUrl("/public/liff-address.html")}` });
       return;
     }
     if (code === "OUT_OF_STOCK") {
-      await lineClient.replyMessage(replyToken, { type: "text", text: "在庫が不足しています。個数を減らして試してください。" });
+      await lineClient.replyMessage(replyToken, { type:"text", text:"在庫が不足しています。個数を減らして試してください。" });
       return;
     }
-    await lineClient.replyMessage(replyToken, { type: "text", text: "エラーが発生しました。時間をおいて再度お試しください。" });
+    await lineClient.replyMessage(replyToken, { type:"text", text:"エラーが発生しました。時間をおいて再度お試しください。" });
   }
 }
 

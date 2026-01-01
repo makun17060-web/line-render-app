@@ -1067,6 +1067,42 @@ app.post("/api/pay/stripe/create", async (req, res) => {
     res.status(500).json({ ok:false, error:"server_error" });
   }
 });
+// =========================
+// 見積り（注文は作らない）
+// - confirm で送料/代引手数料/合計を表示するため
+// =========================
+app.post("/api/order/quote", async (req, res) => {
+  try {
+    const uid = String(req.body?.uid || "").trim();
+    const checkout = req.body?.checkout || null;
+
+    await touchUser(uid, "seen");
+
+    // ★ここで住所・在庫・送料計算まで全部やる（注文INSERTはしない）
+    const built = await buildOrderFromCheckout(uid, checkout);
+
+    const codFee = Number(COD_FEE || 330);
+    const totalCod = built.subtotal + built.shippingFee + codFee;
+
+    res.json({
+      ok: true,
+      subtotal: built.subtotal,
+      shippingFee: built.shippingFee,
+      codFee,
+      totalCod,
+      size: built.size,
+    });
+  } catch (e) {
+    const code = e?.code || "";
+    logErr("POST /api/order/quote", code, e?.stack || e);
+
+    if (code === "NO_ADDRESS") return res.status(409).json({ ok:false, error:"NO_ADDRESS" });
+    if (code === "OUT_OF_STOCK") return res.status(409).json({ ok:false, error:"OUT_OF_STOCK", productId: e.productId });
+    if (code === "EMPTY_ITEMS") return res.status(400).json({ ok:false, error:"EMPTY_ITEMS" });
+
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
 
 // 代引き：作成（confirm画面で「代引き」押した瞬間にDB保存したい場合）
 app.post("/api/order/cod/create", async (req, res) => {

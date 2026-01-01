@@ -584,9 +584,22 @@ app.get("/health", (req, res) => res.json({ ok: true, time: nowISO() }));
 // 管理API 認証
 // =========================
 function requireAdmin(req, res, next) {
-  if (!ADMIN_TOKEN) return res.status(403).json({ ok: false, error: "ADMIN_TOKEN is not set" });
-  const token = (req.headers["x-admin-token"] || req.query.token || "").toString();
-  if (token !== ADMIN_TOKEN) return res.status(401).json({ ok: false, error: "unauthorized" });
+  // env は ADMIN_API_TOKEN を使う（この server.js の定義と一致させる）
+  if (!ADMIN_API_TOKEN) {
+    return res.status(403).json({ ok: false, error: "ADMIN_API_TOKEN is not set" });
+  }
+
+  // header は x-admin-api-token（推奨）を正式にする
+  // 後方互換で x-admin-token も許可しておく（混乱防止）
+  const token =
+    (req.headers["x-admin-api-token"] ||
+     req.headers["x-admin-token"] ||
+     req.query.token ||
+     "").toString().trim();
+
+  if (token !== String(ADMIN_API_TOKEN).trim()) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
   next();
 }
 

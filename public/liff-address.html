@@ -1,256 +1,127 @@
 <!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>住所登録（LIFF）</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+  <title>住所登録</title>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style>
-    :root{--bg:#f6f7f9;--card:#fff;--text:#111827;--muted:#6b7280;--border:#e5e7eb;--primary:#0b3a53;--danger:#b91c1c;--ok:#065f46;--shadow:0 1px 3px rgba(0,0,0,.08);--radius:14px;}
-    body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:var(--bg);color:var(--text);}
-    .wrap{max-width:720px;margin:0 auto;padding:14px;}
-    .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;box-shadow:var(--shadow);}
-    h2{margin:0 0 8px;}
-    .lead{margin:0 0 10px;color:var(--muted);font-size:13px;line-height:1.7;}
-    label{display:block;font-weight:900;margin-top:10px;font-size:13px;}
-    input{width:100%;padding:10px;border-radius:10px;border:1px solid #d1d5db;font-size:16px;background:#fff;}
-    button{width:100%;margin-top:14px;padding:12px;border-radius:12px;border:0;background:var(--primary);color:#fff;font-weight:900;font-size:16px;cursor:pointer;}
-    button:disabled{opacity:.55;cursor:not-allowed;}
-    .msg{margin-top:10px;font-size:13px;font-weight:900;color:var(--danger);white-space:pre-wrap;}
-    .msg.ok{color:var(--ok);}
-    .row2{display:grid;grid-template-columns:1fr;gap:10px;}
-    @media (min-width:560px){.row2{grid-template-columns:1fr 1fr;}}
-    .subbtn{background:#111827;}
-    .debug{margin-top:10px;font-size:12px;color:#6b7280;white-space:pre-wrap;display:none;}
+    :root{--bg:#f6f7f9;--card:#fff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;--pri:#0b3a53;}
+    *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)}
+    .wrap{max-width:720px;margin:0 auto;padding:14px 14px 26px}
+    h1{margin:0 0 6px;font-size:18px}
+    .muted{color:var(--muted);font-size:13px;line-height:1.5}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-top:12px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+    label{display:block;font-weight:900;margin:10px 0 4px}
+    input{width:100%;padding:10px;border:1px solid var(--line);border-radius:12px;font-size:15px}
+    button{width:100%;padding:12px;border:none;border-radius:14px;font-weight:900;background:var(--pri);color:#fff;cursor:pointer}
+    button:disabled{opacity:.6;cursor:not-allowed}
   </style>
 </head>
 <body>
   <div class="wrap">
+    <h1>住所登録</h1>
+    <div class="muted" id="msg">読み込み中…</div>
+
     <div class="card">
-      <h2>住所登録</h2>
-      <p class="lead">
-        住所を保存したら <b>注文確認（confirm）</b> へ進みます。<br>
-        ※カートが空なら商品一覧へ戻します。
-      </p>
-
-      <div id="msg" class="msg"></div>
-      <div id="debug" class="debug"></div>
-
-      <label>お名前（必須）</label>
-      <input id="name" autocomplete="name" placeholder="例：木村 太郎" />
-
-      <div class="row2">
-        <div>
-          <label>電話（必須）</label>
-          <input id="phone" inputmode="tel" autocomplete="tel" placeholder="例：09012345678" />
-        </div>
-        <div>
-          <label>郵便番号（必須）</label>
-          <input id="postal" inputmode="numeric" autocomplete="postal-code" placeholder="例：4703402" />
-        </div>
-      </div>
-
-      <label>都道府県（必須）</label>
-      <input id="prefecture" autocomplete="address-level1" placeholder="例：愛知県" />
-
-      <label>市区町村（必須）</label>
-      <input id="city" autocomplete="address-level2" placeholder="例：知多郡南知多町" />
-
-      <label>町名・番地（必須）</label>
-      <input id="address1" autocomplete="street-address" placeholder="例：豊浜清水谷〜" />
-
-      <label>建物名・部屋番号（任意）</label>
-      <input id="address2" autocomplete="address-line2" placeholder="例：◯◯マンション 101" />
-
-      <button id="saveBtn">保存する</button>
-      <button id="goBtn" class="subbtn" type="button" style="display:none;">注文確認へ進む</button>
+      <label>お名前</label><input id="name">
+      <label>電話</label><input id="phone" inputmode="tel">
+      <label>郵便番号</label><input id="postal" inputmode="numeric" placeholder="例: 4703412">
+      <label>都道府県</label><input id="prefecture" placeholder="例: 愛知県">
+      <label>市区町村</label><input id="city" placeholder="例: 知多郡南知多町">
+      <label>番地</label><input id="address1">
+      <label>建物名等</label><input id="address2">
+      <div style="height:10px"></div>
+      <button id="saveBtn" type="button">保存して戻る</button>
     </div>
   </div>
 
 <script>
-window.addEventListener("error", (e)=>console.error("[PAGE ERROR]", e.message, e.error));
-window.addEventListener("unhandledrejection", (e)=>console.error("[UNHANDLED]", e.reason));
-
 (async function(){
   "use strict";
 
-  const LIFF_ID = "2008406620-4kyQVyqe";
-  const API_GET = "/api/address/get";
-  const API_SET = "/api/address/set";
+  // ★ここはあなたの LIFF ID に変更
+  const LIFF_ID = window.LIFF_ID || "YOUR_LIFF_ID";
 
-  const msgEl = document.getElementById("msg");
-  const dbgEl = document.getElementById("debug");
-  const saveBtn = document.getElementById("saveBtn");
-  const goBtn = document.getElementById("goBtn");
-  const $ = (id)=>document.getElementById(id);
+  const KEY_UID="isoya_userId";
+  const params=new URLSearchParams(location.search);
+  const returnTo=params.get("returnTo") || "/confirm.html";
 
-  const DEBUG_ON_SCREEN = true;
-  const setMsg = (t, ok=false)=>{ msgEl.textContent=t||""; msgEl.className="msg"+(ok?" ok":""); };
-  const setDbg = (t)=>{ if(!DEBUG_ON_SCREEN) return; dbgEl.style.display="block"; dbgEl.textContent=t||""; };
+  const msg=document.getElementById("msg");
+  const saveBtn=document.getElementById("saveBtn");
+  const $=id=>document.getElementById(id);
+  const v=id=>$(id).value.trim();
 
-  const normPhone  = (s)=> String(s||"").replace(/[^\d+]/g,"").replace(/^(\+81)0/,"$1").trim();
-  const normPostal = (s)=> String(s||"").replace(/[^\d]/g,"").slice(0,7).trim();
-
-  function cartCount(){
-    try{
-      const raw = localStorage.getItem("isoya_cart_v1");
-      if(!raw) return 0;
-      const obj = JSON.parse(raw);
-      if(!obj || typeof obj !== "object") return 0;
-      return Object.values(obj).reduce((a,b)=>a+Number(b||0),0);
-    }catch{ return 0; }
+  function setBtn(disabled, text){
+    saveBtn.disabled=disabled;
+    saveBtn.textContent=text || (disabled?"保存中…":"保存して戻る");
   }
 
-  function validate(){
-    const name = $("name").value.trim();
-    const phone = normPhone($("phone").value);
-    const postal = normPostal($("postal").value);
-    const prefecture = $("prefecture").value.trim();
-    const city = $("city").value.trim();
-    const address1 = $("address1").value.trim();
-    if(!name) return "お名前を入力してください。";
-    if(!phone || phone.length < 10) return "電話番号を正しく入力してください。";
-    if(!postal || postal.length !== 7) return "郵便番号は7桁で入力してください。";
-    if(!prefecture) return "都道府県を入力してください。";
-    if(!city) return "市区町村を入力してください。";
-    if(!address1) return "町名・番地を入力してください。";
-    return "";
-  }
+  try{
+    msg.textContent="LIFF初期化中…";
+    await liff.init({ liffId: LIFF_ID });
 
-  function getUserId(){
-    try{
-      const ctx = liff.getContext && liff.getContext();
-      return (ctx && ctx.userId) ? String(ctx.userId) : "";
-    }catch{ return ""; }
-  }
+    if(!liff.isLoggedIn()){
+      liff.login({ redirectUri: location.href });
+      return;
+    }
 
-  async function initLiff(){
+    const prof=await liff.getProfile();
+    const userId=prof?.userId || "";
+    if(!userId) throw new Error("NO_UID");
+
+    localStorage.setItem(KEY_UID, userId);
+    msg.textContent="住所を入力して保存してください。";
+
+    // 既存住所を取得してフォーム反映
     try{
-      await liff.init({ liffId: LIFF_ID });
-      if(!liff.isLoggedIn()){
-        liff.login();
-        return false;
+      const r=await fetch(`/api/address/get?userId=${encodeURIComponent(userId)}`,{cache:"no-store"});
+      const d=await r.json().catch(()=>({}));
+      const a=d?.address;
+      if(a){
+        $("name").value=a.name||"";
+        $("phone").value=a.phone||"";
+        $("postal").value=a.postal||"";
+        $("prefecture").value=a.prefecture||"";
+        $("city").value=a.city||"";
+        $("address1").value=a.address1||"";
+        $("address2").value=a.address2||"";
       }
-      return true;
-    }catch(e){
-      setMsg("LIFF初期化に失敗しました。\n" + (e?.message||e));
-      setDbg("[LIFF init error]\n" + (e?.stack || e?.message || e));
-      return false;
-    }
-  }
+    }catch{}
 
-  async function loadAddress(userId){
-    try{
-      const r = await fetch(`${API_GET}?userId=${encodeURIComponent(userId)}`, { cache:"no-store" });
-      const j = await r.json().catch(()=>({}));
-      if(!r.ok) return;
-      const a = j.address || {};
-      $("name").value = a.name || "";
-      $("phone").value = a.phone || "";
-      $("postal").value = a.postal || "";
-      $("prefecture").value = a.prefecture || "";
-      $("city").value = a.city || "";
-      $("address1").value = a.address1 || "";
-      $("address2").value = a.address2 || "";
-    }catch(e){
-      setDbg("[GET exception]\n" + (e?.stack || e?.message || e));
-    }
-  }
-
-  // ✅ 保存後の遷移先は「confirm(カートあり) / products(カート空)」
-  function nextUrl(userId){
-    const base = (cartCount() > 0) ? "/public/confirm.html" : "/public/products.html";
-    // userId をクエリで渡す（confirm側で住所取得に使う）
-    const u = new URL(base, location.origin);
-    u.searchParams.set("uid", userId);
-    return u.toString();
-  }
-
-  function goNext(userId){
-    const url = nextUrl(userId);
-    setDbg("[goNext]\n" + url);
-
-    try{
-      if(window.liff && liff.isInClient && liff.isInClient()){
-        liff.openWindow({ url, external:false });
-        return;
+    saveBtn.onclick=async ()=>{
+      setBtn(true,"保存中…");
+      try{
+        const body={
+          userId,
+          name:v("name"),
+          phone:v("phone"),
+          postal:v("postal"),
+          prefecture:v("prefecture"),
+          city:v("city"),
+          address1:v("address1"),
+          address2:v("address2"),
+        };
+        const res=await fetch("/api/address/set",{
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify(body)
+        });
+        const data=await res.json().catch(()=>({}));
+        if(!res.ok || !data.ok) throw new Error(data?.error || ("HTTP "+res.status));
+        location.replace(returnTo);
+      }catch(e){
+        console.error(e);
+        alert("住所保存に失敗しました: "+(e?.message||e));
+        setBtn(false);
       }
-    }catch(e){
-      console.error("[openWindow failed]", e);
-      setDbg("[openWindow failed]\n" + (e?.stack || e?.message || e));
-    }
-    location.href = url;
-  }
-
-  let saving=false;
-
-  async function saveAddress(userId){
-    if(saving) return;
-    setMsg("");
-
-    $("phone").value  = normPhone($("phone").value);
-    $("postal").value = normPostal($("postal").value);
-
-    const err = validate();
-    if(err){ setMsg(err); return; }
-
-    const payload = {
-      userId,
-      name: $("name").value.trim(),
-      phone: normPhone($("phone").value),
-      postal: normPostal($("postal").value),
-      prefecture: $("prefecture").value.trim(),
-      city: $("city").value.trim(),
-      address1: $("address1").value.trim(),
-      address2: $("address2").value.trim(),
     };
 
-    saving=true;
-    saveBtn.disabled=true;
-    saveBtn.textContent="保存中…";
-
-    try{
-      const r = await fetch(API_SET, {
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify(payload),
-      });
-      const j = await r.json().catch(()=>({}));
-      if(!r.ok){
-        setMsg(`保存失敗（HTTP ${r.status}）\n` + JSON.stringify(j,null,2));
-        return;
-      }
-
-      setMsg("保存しました！注文確認へ進みます…", true);
-      goBtn.style.display="block";
-      setTimeout(()=>goNext(userId), 700);
-
-    }catch(e){
-      setMsg("保存に失敗しました。\n通信環境を確認して再度お試しください。");
-      setDbg("[POST exception]\n" + (e?.stack || e?.message || e));
-    }finally{
-      saving=false;
-      saveBtn.disabled=false;
-      saveBtn.textContent="保存する";
-    }
+  }catch(e){
+    console.error(e);
+    msg.innerHTML='<span style="color:#b91c1c;font-weight:900">エラー：LIFF/サーバー設定を確認してください</span>';
+    setBtn(true,"保存できません");
   }
-
-  setMsg("起動中…");
-  const ok = await initLiff();
-  if(!ok) return;
-
-  const userId = getUserId();
-  if(!userId){
-    setMsg("userIdが取得できません。\n必ずLINEのLIFF内から開いてください。");
-    return;
-  }
-
-  setMsg("");
-  await loadAddress(userId);
-
-  saveBtn.addEventListener("click", ()=> saveAddress(userId));
-  goBtn.addEventListener("click", ()=> goNext(userId));
-
 })();
 </script>
 </body>

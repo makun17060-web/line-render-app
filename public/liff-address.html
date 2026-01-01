@@ -2,192 +2,131 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>住所登録</title>
-
-  <!-- LIFF SDK -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>住所登録（LIFF）</title>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-
   <style>
-    body {
-      margin: 0;
-      font-family: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-      background: #f7f7f7;
-      color: #333;
-    }
-    .wrap {
-      max-width: 520px;
-      margin: 0 auto;
-      padding: 14px;
-    }
-    h1 {
-      font-size: 18px;
-      margin: 8px 0 12px;
-    }
-    .card {
-      background: #fff;
-      border-radius: 12px;
-      padding: 14px;
-      box-shadow: 0 1px 3px rgba(0,0,0,.08);
-      margin-bottom: 12px;
-    }
-    label {
-      font-size: 13px;
-      font-weight: 600;
-      display: block;
-      margin-bottom: 4px;
-    }
-    input {
-      width: 100%;
-      padding: 10px;
-      font-size: 15px;
-      border-radius: 8px;
-      border: 1px solid #ccc;
-      margin-bottom: 10px;
-    }
-    button {
-      width: 100%;
-      padding: 12px;
-      border-radius: 10px;
-      border: none;
-      font-size: 15px;
-      font-weight: 700;
-      cursor: pointer;
-    }
-    .save {
-      background: #0b3a53;
-      color: #fff;
-    }
-    .status {
-      font-size: 13px;
-      color: #555;
-      margin-top: 8px;
-      white-space: pre-line;
-    }
+    body{ font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; margin:0; background:#f6f7f9; color:#111827;}
+    .wrap{ max-width:720px; margin:0 auto; padding:14px; }
+    .card{ background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:14px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+    label{ display:block; font-weight:800; margin-top:10px; }
+    input,select{ width:100%; padding:10px; border-radius:10px; border:1px solid #d1d5db; font-size:16px; background:#fff; }
+    button{ width:100%; margin-top:14px; padding:12px; border-radius:12px; border:0; background:#0b3a53; color:#fff; font-weight:900; font-size:16px; cursor:pointer; }
+    .msg{ margin-top:10px; font-size:13px; font-weight:800; color:#b91c1c; white-space:pre-wrap; }
+    .ok{ color:#065f46; }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <h1>お届け先住所の登録</h1>
-
     <div class="card">
-      <label>お名前</label>
-      <input id="name" placeholder="例：木村 太郎" />
+      <h2 style="margin:0 0 8px;">住所登録</h2>
+      <div id="msg" class="msg"></div>
 
-      <label>電話番号</label>
-      <input id="phone" placeholder="例：09012345678" />
+      <label>お名前</label>
+      <input id="name" autocomplete="name" />
+
+      <label>電話</label>
+      <input id="phone" inputmode="tel" autocomplete="tel" />
 
       <label>郵便番号</label>
-      <input id="postal" placeholder="例：4703501" />
+      <input id="postal" inputmode="numeric" autocomplete="postal-code" />
 
       <label>都道府県</label>
-      <input id="prefecture" placeholder="例：愛知県" />
+      <input id="prefecture" autocomplete="address-level1" placeholder="例：愛知県" />
 
       <label>市区町村</label>
-      <input id="city" placeholder="例：知多郡南知多町豊浜" />
+      <input id="city" autocomplete="address-level2" placeholder="例：知多郡南知多町" />
 
-      <label>番地・建物名</label>
-      <input id="address1" placeholder="例：清水谷32-1" />
+      <label>町名・番地</label>
+      <input id="address1" autocomplete="street-address" placeholder="例：豊浜清水谷〜" />
 
-      <label>建物名・部屋番号（任意）</label>
-      <input id="address2" placeholder="例：◯◯マンション101" />
+      <label>建物名・部屋番号</label>
+      <input id="address2" autocomplete="address-line2" />
+
+      <button id="saveBtn">保存する</button>
     </div>
-
-    <button class="save" id="saveBtn">住所を保存する</button>
-    <div class="status" id="status">読み込み中…</div>
   </div>
 
 <script>
-(async function () {
-  const statusEl = document.getElementById("status");
-  const saveBtn = document.getElementById("saveBtn");
+(async function(){
+  "use strict";
 
-  const f = id => document.getElementById(id);
+  const LIFF_ID = new URLSearchParams(location.search).get("liffId") || ""; // 必要なら使う
+  const msgEl = document.getElementById("msg");
 
-  function setStatus(msg) {
-    statusEl.textContent = msg || "";
+  const $ = (id)=>document.getElementById(id);
+  const setMsg = (t, ok=false)=>{ msgEl.textContent = t||""; msgEl.className = "msg" + (ok?" ok":""); };
+
+  function getUserId(){
+    try{
+      const ctx = liff.getContext && liff.getContext();
+      return (ctx && ctx.userId) ? String(ctx.userId) : "";
+    }catch{ return ""; }
   }
 
-  // ===== LIFF 初期化 =====
-  try {
-    await liff.init({ liffId: "YOUR_LIFF_ID_HERE" });
-  } catch (e) {
-    setStatus("LIFF 初期化に失敗しました");
-    return;
-  }
-
-  if (!liff.isLoggedIn()) {
-    liff.login();
-    return;
-  }
-
-  const profile = await liff.getProfile();
-  const userId = profile.userId;
-
-  // ===== 既存住所の読み込み =====
-  try {
-    const res = await fetch(`/api/address/get?userId=${encodeURIComponent(userId)}`);
-    const data = await res.json();
-    if (data.ok && data.address) {
-      const a = data.address;
-      f("name").value = a.name || "";
-      f("phone").value = a.phone || "";
-      f("postal").value = a.postal || "";
-      f("prefecture").value = a.prefecture || "";
-      f("city").value = a.city || "";
-      f("address1").value = a.address1 || "";
-      f("address2").value = a.address2 || "";
-      setStatus("登録済みの住所を読み込みました");
-    } else {
-      setStatus("住所を入力してください");
+  async function initLiff(){
+    try{
+      // liffId を固定で持ってるなら、ここを固定値にしてOK
+      // await liff.init({ liffId: "xxxx" });
+      await liff.init({ liffId: LIFF_ID || undefined });
+      if (!liff.isLoggedIn()) liff.login();
+    }catch(e){
+      setMsg("LIFF初期化に失敗しました。\n" + (e?.message||e));
     }
-  } catch {
-    setStatus("住所情報の取得に失敗しました");
   }
 
-  // ===== 保存 =====
-  saveBtn.onclick = async () => {
-    saveBtn.disabled = true;
-    setStatus("保存しています…");
+  async function loadAddress(userId){
+    const r = await fetch(`/api/address/get?userId=${encodeURIComponent(userId)}`, { cache:"no-store" });
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok) return;
+    const a = j.address || {};
+    $("name").value = a.name || "";
+    $("phone").value = a.phone || "";
+    $("postal").value = a.postal || "";
+    $("prefecture").value = a.prefecture || "";
+    $("city").value = a.city || "";
+    $("address1").value = a.address1 || "";
+    $("address2").value = a.address2 || "";
+  }
 
-    const body = {
+  async function saveAddress(userId){
+    const payload = {
       userId,
-      name: f("name").value.trim(),
-      phone: f("phone").value.trim(),
-      postal: f("postal").value.trim(),
-      prefecture: f("prefecture").value.trim(),
-      city: f("city").value.trim(),
-      address1: f("address1").value.trim(),
-      address2: f("address2").value.trim(),
+      name: $("name").value.trim(),
+      phone: $("phone").value.trim(),
+      postal: $("postal").value.trim(),
+      prefecture: $("prefecture").value.trim(),
+      city: $("city").value.trim(),
+      address1: $("address1").value.trim(),
+      address2: $("address2").value.trim(),
     };
 
-    try {
-      const res = await fetch("/api/address/set", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        throw new Error("save failed");
-      }
+    const r = await fetch("/api/address/set", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
 
-      setStatus("住所を保存しました。\n前の画面に戻ります…");
-
-      setTimeout(() => {
-        if (liff.isInClient()) {
-          liff.closeWindow();
-        } else {
-          history.back();
-        }
-      }, 1200);
-
-    } catch (e) {
-      console.error(e);
-      setStatus("保存に失敗しました");
-      saveBtn.disabled = false;
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok) {
+      setMsg(`保存失敗（HTTP ${r.status}）\n` + JSON.stringify(j));
+      return;
     }
-  };
+    setMsg("保存しました！この画面を閉じてOKです。", true);
+  }
+
+  await initLiff();
+
+  // userIdが取れない＝LIFF外で開いてる（400の元）
+  const userId = getUserId();
+  if (!userId) {
+    setMsg("userIdが取得できません。\n必ずLINEのLIFF内から開いてください（ブラウザ直開きだと400になります）。");
+    return;
+  }
+
+  await loadAddress(userId);
+
+  $("saveBtn").addEventListener("click", ()=> saveAddress(userId));
 })();
 </script>
 </body>

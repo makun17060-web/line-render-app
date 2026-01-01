@@ -1,42 +1,38 @@
 /**
- * server.js — 真の全部入り “完全・全部入り” 丸ごと版（修正版）
- *  (LINE Bot + LIFFミニアプリ + 画像管理(Disk永続) + products.json(Disk永続) +
- *   住所DB(Postgres) + セグメント配信 + 注文DB永続化 + Stripe決済 + 送料計算統一 +
- *   ★代引き確定→confirm-cod.html自動遷移)
+ * server.js — 真の全部入り “完全・全部入り” 丸ごと版（cod-register一本化 対応版）
+ *
+ * ✅ 追加したこと（今回の修正点）
+ * - /api/liff/config を実装（cod-register.html の「liffId取得失敗」を解消）
+ * - /api/liff/open を実装（/api/liff/opened の別名として互換）
+ * - /api/liff/address /api/liff/address/me を実装（/api/address/* の別名として互換）
+ * - liff-address.html /address.html を cod-register.html へ 302 リダイレクト（削除しても壊れない）
+ * - LINE Bot が返す「住所登録URL」を cod-register.html に統一
  *
  * ✅ Render Disk 永続化（超重要）
  * - DATA_DIR=/var/data（デフォルト）: products.json / sessions.json / logs
  * - UPLOAD_DIR=/var/data/uploads（デフォルト）: 画像アップロード永続
  *
- * ✅ 静的配信（Cannot GET /address.html 等を潰す）
- * - /              → __dirname/public（推奨：URLが短い）
+ * ✅ 静的配信
+ * - /              → __dirname/public
  * - /public        → __dirname/public（互換）
  * - /uploads       → UPLOAD_DIR
  * - /public/uploads→ UPLOAD_DIR
- *
- * ✅ 重要仕様（あなたの要望）
- * - 「久助」も products.json に従う（価格固定ロジック撤廃）
- * - 久助の送料サイズ判定＝ “あかしゃシリーズ扱い” に含める
- * - 起動キーワードは「直接注文」「久助」だけ（それ以外は無反応）
- *   - ただし“セッション中”の入力は受け付ける
- *
- * ✅ 送料（例：オリジナルセット）
- * - 1個=80 / 2個=100 / 3-4個=120 / 5-6個=140
  *
  * ✅ 必須 ENV
  * - LINE_CHANNEL_ACCESS_TOKEN
  * - LINE_CHANNEL_SECRET
  * - DATABASE_URL（Postgres）
  *
+ * ✅ LIFF（今回追加）
+ * - LIFF_ID_DEFAULT（例 2008406620-QQFfWP1w）←まずこれだけでOK
+ *   任意で分けるなら:
+ *   - LIFF_ID_COD
+ *   - LIFF_ID_ORDER
+ *
  * ✅ Stripe 利用するなら
  * - STRIPE_SECRET_KEY
  * - STRIPE_WEBHOOK_SECRET（Webhook受けるなら）
  * - PUBLIC_BASE_URL（例 https://xxxx.onrender.com）
- *
- * ✅ 任意
- * - ADMIN_API_TOKEN（管理API保護）
- * - LIFF_CHANNEL_ID（id_token verify をやるなら）
- * - LIFF_BASE_URL（FlexのURLに使う：PUBLIC_BASE_URL と同じでOK）
  */
 
 "use strict";
@@ -62,6 +58,11 @@ const {
   PUBLIC_BASE_URL,        // 例: https://xxxxx.onrender.com
   LIFF_BASE_URL,          // 例: https://xxxxx.onrender.com
   LIFF_CHANNEL_ID,        // 任意
+
+  // ★今回追加（cod-register.html が /api/liff/config で取得）
+  LIFF_ID_DEFAULT = "",
+  LIFF_ID_COD = "",
+  LIFF_ID_ORDER = "",
 
   DATA_DIR = "/var/data",
   UPLOAD_DIR = "/var/data/uploads",
@@ -339,13 +340,12 @@ async function ensureDb() {
     );
   `);
 
-  // ★あなたの現DBに寄せた addresses（address_key, created_at を含める）
-  // user_id / member_code / address_key を UNIQUE にする（upsert安定）
+  // ★addresses は既存DBに寄せる
   await pool.query(`
     CREATE TABLE IF NOT EXISTS addresses (
       id BIGSERIAL PRIMARY KEY,
-      member_code TEXT UNIQUE,
-      user_id TEXT UNIQUE,
+      member_code TEXT,
+      user_id TEXT,
       name TEXT,
       phone TEXT,
       postal TEXT,
@@ -354,10 +354,16 @@ async function ensureDb() {
       address1 TEXT,
       address2 TEXT,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      address_key TEXT UNIQUE,
+      address_key TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `);
+
+  // ★既存テーブルでも upsert が動くよう、ユニークindexを作る（存在すればスキップ）
+  //   ※もし既に重複データがあると index 作成が失敗します。その場合はログに出ます（要整理）
+  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_user_id_uidx ON addresses(user_id) WHERE user_id IS NOT NULL;`); } catch(e){ logErr("CREATE UNIQUE INDEX addresses_user_id_uidx failed", e?.message||e); }
+  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_member_code_uidx ON addresses(member_code) WHERE member_code IS NOT NULL;`); } catch(e){ logErr("CREATE UNIQUE INDEX addresses_member_code_uidx failed", e?.message||e); }
+  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_address_key_uidx ON addresses(address_key) WHERE address_key IS NOT NULL;`); } catch(e){ logErr("CREATE UNIQUE INDEX addresses_address_key_uidx failed", e?.message||e); }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS orders (
@@ -460,7 +466,6 @@ async function issueUniqueMemberCode() {
 }
 
 function makeAddressKey(a) {
-  // ★住所同一判定用（必要なら）。空白/記号を軽く正規化してhash化
   const s = [
     a?.postal || "",
     a?.prefecture || "",
@@ -479,8 +484,8 @@ async function upsertAddress(userId, addr) {
 
   const addressKey = addr.address_key ? String(addr.address_key).trim() : makeAddressKey(addr);
 
-  // ★安定: user_id UNIQUE がある前提で ON CONFLICT(user_id)
-  // member_code は UNIQUE なので、他ユーザーと衝突したら再発行
+  // ★ user_id にユニークがある想定（ensureDbで index 作成）
+  //   もし index 作成に失敗（重複）しているとここでエラーになります（ログ確認）
   let saved;
   try {
     const q = `
@@ -513,9 +518,9 @@ async function upsertAddress(userId, addr) {
     ]);
     saved = r.rows[0];
   } catch (e) {
-    // member_code 衝突など（UNIQUE違反）→ 再発行してリトライ
     const msg = String(e?.message || "");
-    if (msg.includes("addresses_member_code_key") || msg.includes("member_code") || msg.includes("duplicate key")) {
+    // member_code 衝突など → 再発行してリトライ
+    if (msg.includes("member_code") || msg.includes("duplicate key")) {
       const newCode = await issueUniqueMemberCode();
       const q2 = `
         INSERT INTO addresses (user_id, member_code, name, phone, postal, prefecture, city, address1, address2, address_key)
@@ -666,7 +671,7 @@ function originFromReq(req) {
 function stripeSuccessUrl(req) {
   if (STRIPE_SUCCESS_URL) return STRIPE_SUCCESS_URL;
   const base = BASE_URL || originFromReq(req);
-  return `${base}/stripe-success.html`; // ★/public を付けない（root配信しているため）
+  return `${base}/stripe-success.html`;
 }
 function stripeCancelUrl(req) {
   if (STRIPE_CANCEL_URL) return STRIPE_CANCEL_URL;
@@ -708,26 +713,33 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
-// ===== 静的配信（ここが “Cannot GET” 撃退の肝） =====
-// 1) ルート直下で /liff-address.html /confirm-cod.html 等が開く
+// =========================
+// ★ liff-address 廃止 → cod-register へ転送（staticより先に置く）
+// =========================
+function redirectToCodRegister(req, res) {
+  const q = req.originalUrl.includes("?") ? req.originalUrl.split("?")[1] : "";
+  const sep = q ? "?" : "";
+  res.redirect(302, `/cod-register.html${sep}${q}`);
+}
+app.get("/liff-address.html", redirectToCodRegister);
+app.get("/public/liff-address.html", redirectToCodRegister);
+app.get("/address.html", redirectToCodRegister);
+app.get("/public/address.html", redirectToCodRegister);
+app.get("/address", (req, res) => res.redirect(302, "/cod-register.html"));
+
+// confirm-cod 名称ゆれ吸収（必要なら）
+app.get("/confirm_cod.html", (req, res) => res.sendFile(path.join(__dirname, "public", "confirm-cod.html")));
+app.get("/confirm-cod",      (req, res) => res.sendFile(path.join(__dirname, "public", "confirm-cod.html")));
+
+// ===== 静的配信（Cannot GET 撃退の肝） =====
 app.use(express.static(path.join(__dirname, "public")));
-// 2) 互換：/public/xxx でも開ける
 app.use("/public", express.static(path.join(__dirname, "public")));
 
-// アップロード画像を Disk から配信
 app.use("/uploads", express.static(UPLOAD_DIR));
 app.use("/public/uploads", express.static(UPLOAD_DIR)); // 互換
 
 // health
 app.get("/health", (req, res) => res.json({ ok: true, time: nowISO() }));
-
-// ===== address.html 名称ゆれ吸収（必要なら） =====
-app.get("/address.html", (req, res) => res.sendFile(path.join(__dirname, "public", "liff-address.html")));
-app.get("/address",      (req, res) => res.sendFile(path.join(__dirname, "public", "liff-address.html")));
-
-// confirm-cod 名称ゆれ吸収（必要なら）
-app.get("/confirm_cod.html", (req, res) => res.sendFile(path.join(__dirname, "public", "confirm-cod.html")));
-app.get("/confirm-cod",      (req, res) => res.sendFile(path.join(__dirname, "public", "confirm-cod.html")));
 
 // ============== Admin auth ==============
 function requireAdmin(req, res, next) {
@@ -753,15 +765,12 @@ app.get("/api/products", async (req, res) => {
       let img = String(p.image || "").trim();
       if (!img) return p;
 
-      // 画像指定が "kusuke.jpg" だけでも動くように
       img = img.replace(/^public\//, "");
       img = img.replace(/^uploads\//, "uploads/");
       img = img.replace(/^\/uploads\//, "uploads/");
 
       if (!/^https?:\/\//i.test(img)) {
-        // 既に uploads/xxx ならそのまま /uploads/ に
         if (img.startsWith("uploads/")) img = "/" + img;
-        // それ以外は uploads に寄せる
         else {
           if (img.startsWith("/")) img = img.slice(1);
           img = "/uploads/" + img;
@@ -917,7 +926,30 @@ app.post("/api/admin/upload-image", requireAdmin, async (req, res) => {
   }
 });
 
-// ============== Address API (LIFF) ==============
+// =========================
+// LIFF config（cod-register.html が使用）
+// =========================
+app.get("/api/liff/config", async (req, res) => {
+  try {
+    const kind = String(req.query.kind || "").trim();
+
+    const liffId =
+      (kind === "cod" && LIFF_ID_COD) ? LIFF_ID_COD :
+      (kind === "order" && LIFF_ID_ORDER) ? LIFF_ID_ORDER :
+      (LIFF_ID_DEFAULT || LIFF_ID_COD || LIFF_ID_ORDER || "");
+
+    if (!liffId) {
+      return res.status(400).json({ ok:false, error:"LIFF_ID is not set", kind });
+    }
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok:true, liffId });
+  } catch (e) {
+    logErr("GET /api/liff/config", e?.stack || e);
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
+
+// ============== Address API (旧/現行) ==============
 app.get("/api/address/get", async (req, res) => {
   try {
     const userId = String(req.query.userId || "").trim();
@@ -956,6 +988,49 @@ app.post("/api/address/set", async (req, res) => {
   }
 });
 
+// =========================
+// ★互換：cod-register.html 用（/api/liff/address/me, /api/liff/address）
+// =========================
+app.get("/api/liff/address/me", async (req, res) => {
+  try {
+    const userId = String(req.query.userId || "").trim();
+    if (!userId) return res.status(400).json({ ok:false, error:"userId required" });
+
+    const addr = await getAddressByUserId(userId);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok:true, address: addr });
+  } catch (e) {
+    logErr("GET /api/liff/address/me", e?.stack || e);
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
+
+app.post("/api/liff/address", async (req, res) => {
+  try {
+    const userId = String(req.body?.userId || "").trim();
+    const address = req.body?.address || null;
+    if (!userId) return res.status(400).json({ ok:false, error:"userId required" });
+    if (!address) return res.status(400).json({ ok:false, error:"address required" });
+
+    const saved = await upsertAddress(userId, {
+      member_code: address.member_code,
+      name: address.name,
+      phone: address.phone,
+      postal: address.postal,
+      prefecture: address.prefecture,
+      city: address.city,
+      address1: address.address1,
+      address2: address.address2,
+      address_key: address.address_key
+    });
+
+    res.json({ ok:true, memberCode: saved?.member_code, address: saved });
+  } catch (e) {
+    logErr("POST /api/liff/address", e?.stack || e);
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
+
 // id_token verify（任意）
 app.post("/api/liff/verify", async (req, res) => {
   try {
@@ -983,7 +1058,7 @@ app.post("/api/liff/verify", async (req, res) => {
   }
 });
 
-// LIFF 起動ログ（セグメント用）
+// LIFF 起動ログ（現行：/api/liff/opened）
 app.post("/api/liff/opened", async (req, res) => {
   try {
     const userId = String(req.body?.userId || "").trim();
@@ -994,6 +1069,19 @@ app.post("/api/liff/opened", async (req, res) => {
   } catch (e) {
     logErr("POST /api/liff/opened", e?.stack || e);
     res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+// ★互換：/api/liff/open（cod-register.html が呼ぶ名前）
+app.post("/api/liff/open", async (req, res) => {
+  try {
+    const userId = String(req.body?.userId || "").trim();
+    if (!userId) return res.status(400).json({ ok:false, error:"userId required" });
+    await touchUser(userId, "liff");
+    res.json({ ok:true });
+  } catch (e) {
+    logErr("POST /api/liff/open", e?.stack || e);
+    res.status(500).json({ ok:false, error:"server_error" });
   }
 });
 
@@ -1067,18 +1155,14 @@ app.post("/api/pay/stripe/create", async (req, res) => {
     res.status(500).json({ ok:false, error:"server_error" });
   }
 });
-// =========================
-// 見積り（注文は作らない）
-// - confirm で送料/代引手数料/合計を表示するため
-// =========================
+
+// 見積り（confirmで送料表示用）
 app.post("/api/order/quote", async (req, res) => {
   try {
     const uid = String(req.body?.uid || "").trim();
     const checkout = req.body?.checkout || null;
 
     await touchUser(uid, "seen");
-
-    // ★ここで住所・在庫・送料計算まで全部やる（注文INSERTはしない）
     const built = await buildOrderFromCheckout(uid, checkout);
 
     const codFee = Number(COD_FEE || 330);
@@ -1104,7 +1188,7 @@ app.post("/api/order/quote", async (req, res) => {
   }
 });
 
-// 代引き：作成（confirm画面で「代引き」押した瞬間にDB保存したい場合）
+// 代引き：作成
 app.post("/api/order/cod/create", async (req, res) => {
   try {
     const uid = String(req.body?.uid || "").trim();
@@ -1148,8 +1232,7 @@ app.post("/api/order/cod/create", async (req, res) => {
   }
 });
 
-// ★本命：代引き確定 → confirm-cod.htmlへ遷移用
-// フロントはこのAPIを叩くだけでOK（redirectが返る）
+// 代引き確定 → confirm-cod.html へ
 app.post("/api/order/cod/confirm", async (req, res) => {
   try {
     const uid = String(req.body?.uid || "").trim();
@@ -1171,7 +1254,6 @@ app.post("/api/order/cod/confirm", async (req, res) => {
       rawEvent: { type: "cod_confirm_v1" },
     });
 
-    // confirm-cod.html は “ルート配信” してるので /confirm-cod.html でOK
     res.json({
       ok: true,
       orderId,
@@ -1351,13 +1433,17 @@ async function onFollow(ev) {
   } catch {}
   try { await touchUser(userId, "seen", displayName); } catch {}
 
+  const urlProducts = liffUrl("/products.html");
+  const urlAddress  = liffUrl("/cod-register.html"); // ★統一
+
   await lineClient.pushMessage(userId, {
     type: "text",
     text:
       "友だち追加ありがとうございます！\n\n" +
       `・「${KEYWORD_DIRECT}」でミニアプリ注文\n` +
       `・「${KEYWORD_KUSUKE}」で久助の注文\n\n` +
-      "住所登録がまだの場合は、ミニアプリ内の「住所登録」からお願いします。",
+      "住所登録がまだの場合は、ミニアプリ内の「住所登録」からお願いします。\n\n" +
+      `商品一覧：\n${urlProducts}\n\n住所登録：\n${urlAddress}`,
   });
 }
 
@@ -1412,9 +1498,8 @@ async function onTextMessage(ev) {
 }
 
 async function replyDirectStart(replyToken) {
-  // ★URLは短いルートを使う（/public は付けなくてOK）
   const urlProducts = liffUrl("/products.html");
-  const urlAddress  = liffUrl("/liff-address.html");
+  const urlAddress  = liffUrl("/cod-register.html"); // ★統一
   await lineClient.replyMessage(replyToken, {
     type: "text",
     text: `ミニアプリで注文できます：\n${urlProducts}\n\n住所登録：\n${urlAddress}`
@@ -1424,7 +1509,7 @@ async function replyDirectStart(replyToken) {
 async function replyKusukeStart(replyToken, userId, qtyPreset) {
   const addr = await getAddressByUserId(userId);
   if (!addr) {
-    const url = liffUrl("/liff-address.html");
+    const url = liffUrl("/cod-register.html"); // ★統一
     await lineClient.replyMessage(replyToken, {
       type: "text",
       text:
@@ -1500,14 +1585,14 @@ async function finalizeKusukeOrder(replyToken, userId, qty) {
         `【代引手数料】${codFee}円\n\n` +
         `【合計（代引）】${totalCod}円\n\n` +
         `【お届け先】\n${addrText}\n\n` +
-        `住所変更：\n${liffUrl("/liff-address.html")}`
+        `住所変更：\n${liffUrl("/cod-register.html")}`
     });
   } catch (e) {
     const code = e?.code || "";
     logErr("finalizeKusukeOrder", code, e?.stack || e);
 
     if (code === "NO_ADDRESS") {
-      await lineClient.replyMessage(replyToken, { type:"text", text:`住所が未登録です。\n${liffUrl("/liff-address.html")}` });
+      await lineClient.replyMessage(replyToken, { type:"text", text:`住所が未登録です。\n${liffUrl("/cod-register.html")}` });
       return;
     }
     if (code === "OUT_OF_STOCK") {

@@ -5,80 +5,77 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>住所登録</title>
 
-  <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
   <style>
     :root{
       --bg:#f7f7f7; --card:#fff; --text:#111827; --muted:#6b7280;
       --pri:#0b3a53; --border:#e5e7eb; --radius:14px;
+      --danger:#b91c1c; --ok:#0a7b19;
     }
-    body{
-      margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
-      background:var(--bg); color:var(--text);
-    }
+    body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
     .wrap{ max-width:720px; margin:0 auto; padding:14px 14px 28px; }
     h1{ font-size:18px; margin:0 0 6px; }
-    .muted{ color:var(--muted); font-size:13px; }
+    .muted{ color:var(--muted); font-size:13px; line-height:1.5; }
 
     .card{
-      background:var(--card);
-      border:1px solid var(--border);
-      border-radius:var(--radius);
-      padding:14px;
-      margin-top:12px;
+      background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
+      padding:14px; margin-top:12px;
     }
-    label{ font-size:13px; font-weight:700; display:block; margin-top:10px; }
+    label{ font-size:13px; font-weight:800; display:block; margin-top:10px; }
     input{
-      width:100%; padding:10px;
-      border-radius:10px; border:1px solid var(--border);
-      font-size:15px;
+      width:100%; padding:10px; border-radius:10px; border:1px solid var(--border);
+      font-size:15px; box-sizing:border-box;
     }
-    .row{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
     .btn{
-      margin-top:14px;
-      width:100%; padding:14px;
+      margin-top:14px; width:100%; padding:14px;
       border-radius:14px; border:none;
       background:var(--pri); color:#fff;
-      font-weight:900; font-size:16px;
-      cursor:pointer;
+      font-weight:900; font-size:16px; cursor:pointer;
     }
-    .btnSub{
-      background:#fff; color:var(--text);
-      border:1px solid var(--border);
+    .btnSub{ background:#fff; color:var(--text); border:1px solid var(--border); }
+
+    .debug{
+      margin-top:12px; font-size:12px; white-space:pre-line;
+      color:#374151; background:#fff; border:1px dashed var(--border);
+      border-radius:12px; padding:10px;
     }
+    .err{ color:var(--danger); font-weight:800; }
+    .ok{ color:var(--ok); font-weight:800; }
   </style>
 </head>
 
 <body>
 <div class="wrap">
   <h1>住所登録</h1>
-  <div class="muted">初回のみ入力が必要です</div>
+  <div class="muted">初回のみ入力が必要です（保存後は自動反映されます）</div>
 
   <div class="card">
     <label>お名前</label>
-    <input id="name">
+    <input id="name" placeholder="例）磯屋 太郎">
 
     <label>電話番号</label>
-    <input id="phone">
+    <input id="phone" placeholder="例）090-1234-5678">
 
     <label>郵便番号</label>
-    <input id="postal">
+    <input id="postal" placeholder="例）470-0000">
 
     <label>都道府県</label>
-    <input id="prefecture">
+    <input id="prefecture" placeholder="例）愛知県">
 
     <label>市区町村</label>
-    <input id="city">
+    <input id="city" placeholder="例）知多郡武豊町">
 
     <label>番地</label>
-    <input id="address1">
+    <input id="address1" placeholder="例）字〇〇 1-2-3">
 
-    <label>建物名など</label>
-    <input id="address2">
+    <label>建物名など（任意）</label>
+    <input id="address2" placeholder="任意">
 
-    <button class="btn" id="saveBtn">保存する</button>
-    <button class="btn btnSub" id="backBtn">戻る</button>
+    <button class="btn" id="saveBtn" type="button">保存する</button>
+    <button class="btn btnSub" id="backBtn" type="button">戻る</button>
+
+    <div class="debug" id="debug">debug: 起動中…</div>
   </div>
 </div>
 
@@ -86,55 +83,162 @@
 (async function(){
   "use strict";
 
-  /* ===== 住所登録用 LIFF（固定） ===== */
+  // ✅ 住所登録専用 LIFF（あなたが言ったやつ）
   const LIFF_ID = "2008406620-4kyQVyqe";
 
   const qs = new URLSearchParams(location.search);
-  const returnTo = qs.get("returnTo");
+  const returnTo = qs.get("returnTo") || qs.get("return") || qs.get("return_url") || "";
 
-  /* ===== LIFF init ===== */
-  try{
-    await liff.init({ liffId: LIFF_ID });
+  // もし別ドメインAPIを叩く必要がある場合に備えて（同一ドメインなら空でOK）
+  const API_BASE_RAW = (qs.get("api") || "").trim().replace(/\/+$/, "");
+  const API_BASE = API_BASE_RAW || "";
 
-    if(!liff.isLoggedIn()){
-      liff.login({ redirectUri: location.href });
-      return;
+  const $ = (id) => document.getElementById(id);
+  const debugEl = $("debug");
+  const setDebug = (msg) => { debugEl.textContent = msg; };
+  const addDebug = (msg) => { debugEl.textContent += "\n" + msg; };
+
+  function apiUrl(path){
+    if(!path.startsWith("/")) path = "/" + path;
+    return API_BASE ? (API_BASE + path) : path;
+  }
+
+  async function fetchJson(url, opts){
+    const res = await fetch(url, opts);
+    const text = await res.text();
+    let data = {};
+    try { data = text ? JSON.parse(text) : {}; } catch { data = { _raw: text }; }
+    return { res, data, raw: text };
+  }
+
+  async function initLiff(){
+    try{
+      await liff.init({ liffId: LIFF_ID });
+      if(!liff.isLoggedIn()){
+        liff.login({ redirectUri: location.href });
+        return { ok:false, waitLogin:true };
+      }
+      const prof = await liff.getProfile();
+      const userId = (prof?.userId || "").trim();
+      if(!userId) return { ok:false, error:"NO_USER_ID" };
+      return { ok:true, userId };
+    }catch(e){
+      return { ok:false, error: (e?.message || String(e)) };
     }
-  }catch(e){
-    alert("LIFF初期化に失敗しました（住所登録）");
-    console.error(e);
+  }
+
+  // ✅ GET: /api/liff/address/me → /api/address/get の順で試す
+  async function loadAddress(userId){
+    const u1 = apiUrl(`/api/liff/address/me?userId=${encodeURIComponent(userId)}`);
+    const u2 = apiUrl(`/api/address/get?userId=${encodeURIComponent(userId)}`);
+
+    // 1) liff系
+    try{
+      const { res, data, raw } = await fetchJson(u1, { cache:"no-store" });
+      addDebug(`GET1 ${res.status} ${u1}`);
+      if(res.ok && data?.ok && data?.address) return { ok:true, address:data.address, used:"/api/liff/address/me" };
+      if(res.status !== 404 && res.status !== 400){
+        // 404/400以外はそのまま返す（例えば500）
+        return { ok:false, status:res.status, data, raw, used:"/api/liff/address/me" };
+      }
+    }catch(e){
+      addDebug(`GET1 fetch error: ${e?.message || e}`);
+    }
+
+    // 2) address系
+    try{
+      const { res, data, raw } = await fetchJson(u2, { cache:"no-store" });
+      addDebug(`GET2 ${res.status} ${u2}`);
+      if(res.ok && data?.ok && data?.address) return { ok:true, address:data.address, used:"/api/address/get" };
+      return { ok:false, status:res.status, data, raw, used:"/api/address/get" };
+    }catch(e){
+      return { ok:false, error:(e?.message || String(e)), used:"/api/address/get" };
+    }
+  }
+
+  // ✅ POST: /api/liff/address → /api/address/set の順で試す
+  async function saveAddress(payload){
+    const u1 = apiUrl(`/api/liff/address`);
+    const u2 = apiUrl(`/api/address/set`);
+
+    const opts = {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(payload)
+    };
+
+    // 1) liff系
+    try{
+      const { res, data, raw } = await fetchJson(u1, opts);
+      addDebug(`POST1 ${res.status} ${u1}`);
+      if(res.ok && data?.ok) return { ok:true, data, used:"/api/liff/address" };
+      if(res.status !== 404 && res.status !== 400){
+        return { ok:false, status:res.status, data, raw, used:"/api/liff/address" };
+      }
+    }catch(e){
+      addDebug(`POST1 fetch error: ${e?.message || e}`);
+    }
+
+    // 2) address系
+    try{
+      const { res, data, raw } = await fetchJson(u2, opts);
+      addDebug(`POST2 ${res.status} ${u2}`);
+      if(res.ok && data?.ok) return { ok:true, data, used:"/api/address/set" };
+      return { ok:false, status:res.status, data, raw, used:"/api/address/set" };
+    }catch(e){
+      return { ok:false, error:(e?.message || String(e)), used:"/api/address/set" };
+    }
+  }
+
+  // ===== 起動 =====
+  setDebug(
+    `debug: start\n` +
+    `LIFF_ID=${LIFF_ID}\n` +
+    `api=${API_BASE ? API_BASE : "(same-origin)"}\n` +
+    `returnTo=${returnTo ? "(set)" : "(none)"}`
+  );
+
+  const init = await initLiff();
+  if(!init.ok){
+    if(init.waitLogin) return;
+    addDebug(`\nERR: LIFF init failed: ${init.error}`);
+    debugEl.classList.add("err");
+    alert("初期化に失敗しました（住所登録LIFF）。LIFF ID/登録URLを確認してください。");
     return;
   }
 
-  const prof = await liff.getProfile();
-  const userId = prof?.userId;
-  if(!userId){
-    alert("userIdを取得できませんでした");
-    return;
+  const userId = init.userId;
+  addDebug(`\nOK: userId=${userId}`);
+  debugEl.classList.add("ok");
+
+  // 既存住所ロード
+  const got = await loadAddress(userId);
+  if(got.ok){
+    const a = got.address;
+    $("name").value = a.name || "";
+    $("phone").value = a.phone || "";
+    $("postal").value = a.postal || "";
+    $("prefecture").value = a.prefecture || "";
+    $("city").value = a.city || "";
+    $("address1").value = a.address1 || "";
+    $("address2").value = a.address2 || "";
+    addDebug(`OK: loaded via ${got.used}`);
+  }else{
+    addDebug(`WARN: address load failed via ${got.used || "unknown"}`);
+    if(got.status) addDebug(`status=${got.status}`);
+    if(got.data) addDebug(`data=${JSON.stringify(got.data)}`);
   }
 
-  /* ===== DOM ===== */
-  const $ = id => document.getElementById(id);
+  function goBack(){
+    if(returnTo) location.href = returnTo;
+    else if(liff.isInClient()) liff.closeWindow();
+    else history.back();
+  }
 
-  /* ===== 既存住所取得 ===== */
-  try{
-    const r = await fetch(`/api/address/get?userId=${encodeURIComponent(userId)}`);
-    const d = await r.json();
-    if(d.ok && d.address){
-      const a = d.address;
-      $("name").value = a.name || "";
-      $("phone").value = a.phone || "";
-      $("postal").value = a.postal || "";
-      $("prefecture").value = a.prefecture || "";
-      $("city").value = a.city || "";
-      $("address1").value = a.address1 || "";
-      $("address2").value = a.address2 || "";
-    }
-  }catch{}
+  $("backBtn").onclick = goBack;
 
-  /* ===== 保存 ===== */
   $("saveBtn").onclick = async () => {
-    const body = {
+    const payload = {
       userId,
       name: $("name").value.trim(),
       phone: $("phone").value.trim(),
@@ -145,26 +249,29 @@
       address2: $("address2").value.trim(),
     };
 
-    const r = await fetch("/api/address/set", {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify(body)
-    });
-    const d = await r.json().catch(()=>({}));
-
-    if(!r.ok || !d.ok){
-      alert("保存に失敗しました");
+    // 必須チェック（サーバが400返す前に止める）
+    if(!payload.name || !payload.phone || !payload.postal || !payload.prefecture || !payload.city || !payload.address1){
+      alert("必須項目（名前/電話/郵便/都道府県/市区町村/番地）を入力してください。");
       return;
     }
 
-    if(returnTo) location.href = returnTo;
-    else liff.closeWindow();
+    addDebug("\n--- SAVE ---");
+    const saved = await saveAddress(payload);
+
+    if(!saved.ok){
+      alert("保存に失敗しました（下のdebugに400のURLが出ます）");
+      debugEl.classList.add("err");
+      addDebug(`ERR: save failed via ${saved.used || "unknown"}`);
+      if(saved.status) addDebug(`status=${saved.status}`);
+      if(saved.data) addDebug(`data=${JSON.stringify(saved.data)}`);
+      return;
+    }
+
+    addDebug(`OK: saved via ${saved.used}`);
+    alert("保存しました");
+    goBack();
   };
 
-  $("backBtn").onclick = () => {
-    if(returnTo) location.href = returnTo;
-    else liff.closeWindow();
-  };
 })();
 </script>
 </body>

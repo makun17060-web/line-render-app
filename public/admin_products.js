@@ -1,552 +1,369 @@
-// admin_products.js（修正版・丸ごと）
-// 目的：server-line.js に実在するAPIに合わせて、画像アップロード/一覧/削除/商品への画像URL保存を確実に動かす。
-// 対応API（server-line.js に存在）:
-//  - GET    /api/admin/products                 -> { ok:true, products:[...] }
-//  - POST   /api/admin/upload                   (multipart: file) -> { ok:true, filename, url }
-//  - GET    /api/admin/images                   -> { ok:true, items:[{name,url}...] }
-//  - POST   /api/admin/images/delete            (JSON: { name }) -> { ok:true }
-//  - POST   /api/admin/products/update          (JSON: { id, image }) -> { ok:true, product:{...} }
-//  - POST   /api/admin/stock/set                (JSON: { id, qty }) -> { ok:true, ... }   ※server-line.js準拠
-//
-// 注意：この管理画面は「画像URLの保存」と「在庫変更」を行えます。
-//      商品名/価格/説明の更新も server-line.js の /api/admin/products/update で可能ですが、
-//      ここでは誤操作防止のため UI は画像のみ保存にしています（必要なら拡張できます）。
+/* admin_products.js - 商品管理（磯屋） */
 
-document.addEventListener("DOMContentLoaded", () => {
-  const tokenInput   = document.getElementById("tokenInput");
-  const saveTokenBtn = document.getElementById("saveTokenBtn");
-  const authStatus   = document.getElementById("authStatus");
+"use strict";
 
-  const statusEl     = document.getElementById("status");
-  const reloadBtn    = document.getElementById("reloadBtn");
-  const listArea     = document.getElementById("listArea");
+const $ = (sel) => document.querySelector(sel);
 
-  const uploadInput  = document.getElementById("uploadInput");
-  const uploadBtn    = document.getElementById("uploadBtn");
-  const uploadStatus = document.getElementById("uploadStatus");
+const tokenInput = $("#tokenInput");
+const saveTokenBtn = $("#saveTokenBtn");
+const authStatus = $("#authStatus");
 
-  const reloadImagesBtn = document.getElementById("reloadImagesBtn");
-  const imagesList      = document.getElementById("imagesList");
+const reloadBtn = $("#reloadBtn");
+const statusEl = $("#status");
+const listArea = $("#listArea");
 
-  const STORAGE_KEY = "iso_admin_token";
+const uploadInput = $("#uploadInput");
+const uploadBtn = $("#uploadBtn");
+const uploadStatus = $("#uploadStatus");
 
-  let currentProducts = [];
-  let cachedImages = [];
+const reloadImagesBtn = $("#reloadImagesBtn");
+const imagesList = $("#imagesList");
 
-  // =========================
-  // Token
-  // =========================
-  function loadToken() {
-    const t = localStorage.getItem(STORAGE_KEY) || "";
-    if (tokenInput && !tokenInput.value) tokenInput.value = t;
-    return t;
+// ===== 設定 =====
+const LS_KEY = "ISOYA_ADMIN_TOKEN";
+
+// ===== トークン =====
+function getToken() {
+  return (localStorage.getItem(LS_KEY) || "").trim();
+}
+function setToken(t) {
+  localStorage.setItem(LS_KEY, (t || "").trim());
+}
+function authHeaders() {
+  const t = getToken();
+  return {
+    "Content-Type": "application/json",
+    "x-admin-token": t, // server側で揺れ吸収してるけど、これを正式採用
+  };
+}
+function setStatus(msg = "", isError = false) {
+  statusEl.textContent = msg;
+  statusEl.style.color = isError ? "#b91c1c" : "#111827";
+}
+function setAuthStatus(msg = "", isError = false) {
+  authStatus.textContent = msg;
+  authStatus.style.color = isError ? "#b91c1c" : "#059669";
+}
+
+// ===== API =====
+async function apiGet(path, admin = false) {
+  const res = await fetch(path, {
+    method: "GET",
+    headers: admin ? authHeaders() : {},
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) {
+    const err = new Error(data.error || `HTTP_${res.status}`);
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+async function apiPost(path, body, admin = false) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: admin ? authHeaders() : { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) {
+    const err = new Error(data.error || `HTTP_${res.status}`);
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+// ===== UI: 商品一覧 =====
+function escapeHtml(s) {
+  return String(s || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function renderProducts(products) {
+  if (!Array.isArray(products) || products.length === 0) {
+    listArea.innerHTML = `<div class="muted">商品がありません。</div>`;
+    return;
   }
 
-  function getToken() {
-    return (tokenInput?.value || "").trim() || (localStorage.getItem(STORAGE_KEY) || "").trim();
+  const rows = products.map((p) => {
+    const id = escapeHtml(p.id);
+    const name = escapeHtml(p.name);
+    const price = Number(p.price || 0);
+    const stock = Number(p.stock || 0);
+    const volume = escapeHtml(p.volume || "");
+    const desc = escapeHtml(p.desc || "");
+    const image = escapeHtml(p.image || "");
+
+    return `
+      <tr data-id="${id}">
+        <td class="mono">${id}</td>
+        <td><input class="inp name" value="${name}"></td>
+        <td><input class="inp price" type="number" value="${price}"></td>
+        <td><input class="inp stock" type="number" value="${stock}"></td>
+        <td><input class="inp volume" value="${volume}"></td>
+        <td><input class="inp image" value="${image}" placeholder="https://.../public/uploads/xxx.png"></td>
+        <td><textarea class="ta desc" rows="2">${desc}</textarea></td>
+        <td class="actions">
+          <button class="btn save">保存</button>
+          <button class="btn danger del">削除</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  listArea.innerHTML = `
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>商品名</th>
+          <th>価格</th>
+          <th>在庫</th>
+          <th>内容量</th>
+          <th>画像URL</th>
+          <th>説明</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows}
+      </tbody>
+    </table>
+
+    <div class="addBox">
+      <h3>商品を追加</h3>
+      <div class="grid">
+        <label>ID <input id="add_id" class="inp" placeholder="new-product-001"></label>
+        <label>商品名 <input id="add_name" class="inp" placeholder="新商品"></label>
+        <label>価格 <input id="add_price" class="inp" type="number" value="0"></label>
+        <label>在庫 <input id="add_stock" class="inp" type="number" value="0"></label>
+        <label>内容量 <input id="add_volume" class="inp" placeholder="80g"></label>
+        <label>画像URL <input id="add_image" class="inp" placeholder="https://.../public/uploads/..."></label>
+      </div>
+      <label>説明
+        <textarea id="add_desc" class="ta" rows="2" placeholder="説明..."></textarea>
+      </label>
+      <button id="addBtn" class="btn">追加</button>
+      <span id="addStatus" class="muted"></span>
+    </div>
+  `;
+
+  // 行ボタン
+  listArea.querySelectorAll("tr[data-id]").forEach((tr) => {
+    const id = tr.getAttribute("data-id");
+
+    tr.querySelector(".save").addEventListener("click", async () => {
+      try {
+        setStatus("保存中…");
+        const body = {
+          id,
+          name: tr.querySelector(".name").value.trim(),
+          price: Number(tr.querySelector(".price").value || 0),
+          stock: Number(tr.querySelector(".stock").value || 0),
+          volume: tr.querySelector(".volume").value.trim(),
+          image: tr.querySelector(".image").value.trim(),
+          desc: tr.querySelector(".desc").value.trim(),
+        };
+        await apiPost("/api/admin/products/update", body, true);
+        setStatus(`保存しました：${id}`);
+      } catch (e) {
+        setStatus(`保存失敗：${id} / ${e.message}`, true);
+      }
+    });
+
+    tr.querySelector(".del").addEventListener("click", async () => {
+      if (!confirm(`削除しますか？\nID: ${id}`)) return;
+      try {
+        setStatus("削除中…");
+        await apiPost("/api/admin/products/delete", { id }, true);
+        setStatus(`削除しました：${id}`);
+        await loadProductsAndRender();
+      } catch (e) {
+        setStatus(`削除失敗：${id} / ${e.message}`, true);
+      }
+    });
+  });
+
+  // 追加ボタン
+  const addBtn = $("#addBtn");
+  const addStatus = $("#addStatus");
+  addBtn.addEventListener("click", async () => {
+    try {
+      addStatus.textContent = "追加中…";
+      const body = {
+        id: $("#add_id").value.trim(),
+        name: $("#add_name").value.trim(),
+        price: Number($("#add_price").value || 0),
+        stock: Number($("#add_stock").value || 0),
+        volume: $("#add_volume").value.trim(),
+        image: $("#add_image").value.trim(),
+        desc: $("#add_desc").value.trim(),
+      };
+      await apiPost("/api/admin/products/add", body, true);
+      addStatus.textContent = "追加しました";
+      await loadProductsAndRender();
+    } catch (e) {
+      addStatus.textContent = `追加失敗：${e.message}`;
+    }
+  });
+}
+
+async function loadProductsAndRender() {
+  // 管理用に /api/admin/products を使う（トークン必須）
+  const data = await apiGet("/api/admin/products", true);
+  renderProducts(data.products || []);
+}
+
+// ===== UI: 画像アップロード =====
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = reject;
+    fr.readAsDataURL(file);
+  });
+}
+
+async function uploadImage() {
+  const file = uploadInput.files && uploadInput.files[0];
+  if (!file) {
+    uploadStatus.textContent = "ファイルを選んでください";
+    uploadStatus.style.color = "#b91c1c";
+    return;
+  }
+  if (file.size > 8 * 1024 * 1024) {
+    uploadStatus.textContent = "8MBを超えています";
+    uploadStatus.style.color = "#b91c1c";
+    return;
   }
 
-  function setAuth(ok, msg) {
-    if (!authStatus) return;
-    authStatus.textContent = msg;
-    authStatus.style.color = ok ? "green" : "red";
+  try {
+    uploadStatus.textContent = "読み込み中…";
+    uploadStatus.style.color = "#111827";
+
+    const dataUrl = await readFileAsDataURL(file);
+    const mime = (dataUrl.match(/^data:(.*?);base64,/) || [])[1] || file.type || "image/png";
+    const contentBase64 = dataUrl; // server側で data:...;base64, を剥がしているのでOK
+
+    uploadStatus.textContent = "アップロード中…";
+
+    const r = await apiPost("/api/admin/upload-image", {
+      filename: file.name,
+      mime,
+      contentBase64,
+    }, true);
+
+    uploadStatus.textContent = `アップロードOK：${r.url}`;
+    uploadStatus.style.color = "#059669";
+
+    // 画像一覧も更新
+    await loadImagesAndRender();
+  } catch (e) {
+    uploadStatus.textContent = `失敗：${e.message}`;
+    uploadStatus.style.color = "#b91c1c";
+  }
+}
+
+// ===== UI: 画像一覧 =====
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // fallback
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  }
+}
+
+function renderImages(images) {
+  if (!Array.isArray(images) || images.length === 0) {
+    imagesList.innerHTML = `<div class="muted">画像がありません。</div>`;
+    return;
   }
 
-  function saveToken() {
-    const t = (tokenInput?.value || "").trim();
+  imagesList.innerHTML = `
+    <div class="imgGrid">
+      ${images.map(img => `
+        <div class="imgCard">
+          <div class="thumb">
+            <img src="${img.url}" alt="${escapeHtml(img.name)}" loading="lazy">
+          </div>
+          <div class="imgMeta">
+            <div class="mono small">${escapeHtml(img.name)}</div>
+            <div class="url mono small">${escapeHtml(img.url)}</div>
+            <button class="btn small copy" data-url="${escapeHtml(img.url)}">URLコピー</button>
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+
+  imagesList.querySelectorAll(".copy").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const url = btn.getAttribute("data-url") || "";
+      const ok = await copyText(url);
+      btn.textContent = ok ? "コピーしました" : "コピー失敗";
+      setTimeout(() => (btn.textContent = "URLコピー"), 900);
+    });
+  });
+}
+
+async function loadImagesAndRender() {
+  const data = await apiGet("/api/admin/images", true);
+  renderImages(data.images || []);
+}
+
+// ===== 初期化 =====
+function init() {
+  tokenInput.value = getToken();
+
+  saveTokenBtn.addEventListener("click", () => {
+    const t = tokenInput.value.trim();
     if (!t) {
-      setAuth(false, "トークンを入力してください。");
+      setAuthStatus("トークンを入力してください", true);
       return;
     }
-    localStorage.setItem(STORAGE_KEY, t);
-    setAuth(true, "保存しました。");
-  }
+    setToken(t);
+    setAuthStatus("保存しました");
+  });
 
-  saveTokenBtn?.addEventListener("click", saveToken);
-  tokenInput?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      saveToken();
+  reloadBtn.addEventListener("click", async () => {
+    try {
+      setStatus("読み込み中…");
+      await loadProductsAndRender();
+      setStatus("読み込み完了");
+    } catch (e) {
+      setStatus(`読み込み失敗：${e.message}`, true);
     }
   });
 
-  // =========================
-  // API helpers
-  // =========================
-  function withToken(path) {
-    const token = getToken();
-    if (!token) {
-      setAuth(false, "管理用トークンを入力して保存してください。");
-      throw new Error("no_token");
-    }
-    const url = `${path}${path.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
-    return { url, token };
-  }
+  uploadBtn.addEventListener("click", uploadImage);
 
-  async function readJsonOrThrow(res) {
-    const text = await res.text();
-    let data = null;
-    try { data = JSON.parse(text); } catch {}
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`);
-    if (!data || data.ok !== true) throw new Error(`API error: ${(data && data.error) || text || "unknown"}`);
-    return data;
-  }
-
-  async function apiGet(path) {
-    const { url, token } = withToken(path);
-    const res = await fetch(url, {
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Accept": "application/json",
-      },
-    });
-    return readJsonOrThrow(res);
-  }
-
-  async function apiPostJson(path, bodyObj) {
-    const { url, token } = withToken(path);
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-      },
-      body: JSON.stringify(bodyObj || {}),
-    });
-    return readJsonOrThrow(res);
-  }
-
-  // =========================
-  // Products
-  // =========================
-  async function fetchProducts() {
-    if (statusEl) statusEl.textContent = "商品一覧取得中...";
-    if (listArea) listArea.textContent = "読み込み中...";
+  reloadImagesBtn.addEventListener("click", async () => {
     try {
-      const data = await apiGet("/api/admin/products");
-      // server-line.js は { ok:true, products:[...] }
-      currentProducts = data.products || [];
-      renderProducts(currentProducts);
-      if (statusEl) statusEl.textContent = `OK: 商品数 ${currentProducts.length} 件`;
-      setAuth(true, "認証OK");
+      uploadStatus.textContent = "";
+      await loadImagesAndRender();
     } catch (e) {
-      console.error("fetchProducts error:", e);
-      if (statusEl) statusEl.textContent = "商品一覧の取得に失敗しました。";
-      if (listArea) {
-        listArea.innerHTML = "";
-        const pre = document.createElement("pre");
-        pre.textContent = String(e.message || e);
-        listArea.appendChild(pre);
-      }
+      imagesList.textContent = `失敗：${e.message}`;
     }
+  });
+
+  // 起動時：画像一覧だけは読み込みを試す（トークン入ってれば即表示）
+  if (getToken()) {
+    loadImagesAndRender().catch(() => {});
   }
+}
 
-  // 画像URLのみ保存（/api/admin/products/update で id + image を更新）
-  function renderProducts(items) {
-    if (!listArea) return;
-
-    if (!items || items.length === 0) {
-      listArea.textContent = "商品がありません。";
-      return;
-    }
-
-    const table = document.createElement("table");
-    table.style.borderCollapse = "collapse";
-    table.style.width = "100%";
-
-    const thead = document.createElement("thead");
-    const trh = document.createElement("tr");
-    ["ID", "商品名", "価格", "在庫", "説明", "画像URL", "プレビュー", "操作"].forEach((h) => {
-      const th = document.createElement("th");
-      th.textContent = h;
-      th.style.borderBottom = "1px solid #ddd";
-      th.style.textAlign = "left";
-      th.style.padding = "6px";
-      trh.appendChild(th);
-    });
-    thead.appendChild(trh);
-    table.appendChild(thead);
-
-    const tbody = document.createElement("tbody");
-
-    items.forEach((p) => {
-      const tr = document.createElement("tr");
-
-      // ID
-      const tdId = document.createElement("td");
-      tdId.textContent = p.id;
-      tdId.style.padding = "6px";
-      tr.appendChild(tdId);
-
-      // 名称（表示のみ）
-      const tdName = document.createElement("td");
-      const inputName = document.createElement("input");
-      inputName.type = "text";
-      inputName.value = p.name || "";
-      inputName.style.width = "140px";
-      inputName.disabled = true;
-      tdName.appendChild(inputName);
-      tdName.style.padding = "6px";
-      tr.appendChild(tdName);
-
-      // 価格（表示のみ）
-      const tdPrice = document.createElement("td");
-      const inputPrice = document.createElement("input");
-      inputPrice.type = "number";
-      inputPrice.value = p.price != null ? String(p.price) : "";
-      inputPrice.style.width = "80px";
-      inputPrice.disabled = true;
-      tdPrice.appendChild(inputPrice);
-      tdPrice.style.padding = "6px";
-      tr.appendChild(tdPrice);
-
-      // 在庫（表示のみ）
-      const tdStock = document.createElement("td");
-      const inputStock = document.createElement("input");
-      inputStock.type = "number";
-      inputStock.value = p.stock != null ? String(p.stock) : "0";
-      inputStock.style.width = "60px";
-      inputStock.disabled = true;
-      tdStock.appendChild(inputStock);
-      tdStock.style.padding = "6px";
-      tr.appendChild(tdStock);
-
-      // 説明（表示のみ）
-      const tdDesc = document.createElement("td");
-      const inputDesc = document.createElement("input");
-      inputDesc.type = "text";
-      inputDesc.value = p.desc || "";
-      inputDesc.style.width = "200px";
-      inputDesc.disabled = true;
-      tdDesc.appendChild(inputDesc);
-      tdDesc.style.padding = "6px";
-      tr.appendChild(tdDesc);
-
-      // 画像URL（編集可）
-      const tdImage = document.createElement("td");
-      tdImage.style.padding = "6px";
-      const inputImage = document.createElement("input");
-      inputImage.type = "text";
-      inputImage.value = p.image || "";
-      inputImage.style.width = "240px";
-      tdImage.appendChild(inputImage);
-
-      const btnFromList = document.createElement("button");
-      btnFromList.textContent = "一覧から選ぶ";
-      btnFromList.style.marginLeft = "6px";
-      btnFromList.addEventListener("click", async () => {
-        try {
-          if (!cachedImages.length) await fetchImages(true);
-          if (!cachedImages.length) {
-            alert("画像がまだありません。先にアップロードしてください。");
-            return;
-          }
-          const options = cachedImages
-            .map((img, i) => `${i + 1}: ${img.name} (${img.url})`)
-            .join("\n");
-          const input = window.prompt("使用する画像の番号を入力してください:\n" + options, "1");
-          if (!input) return;
-          const index = Number(input) - 1;
-          if (index < 0 || index >= cachedImages.length) {
-            alert("番号が不正です。");
-            return;
-          }
-          const chosen = cachedImages[index];
-          inputImage.value = chosen.url; // /public/uploads/xxx
-          updatePreview(previewImg, inputImage.value);
-        } catch (e) {
-          console.error("select image error:", e);
-          alert("画像一覧の取得に失敗しました。\n" + String(e.message || e));
-        }
-      });
-      tdImage.appendChild(btnFromList);
-      tr.appendChild(tdImage);
-
-      // プレビュー
-      const tdPrev = document.createElement("td");
-      tdPrev.style.padding = "6px";
-      const previewImg = document.createElement("img");
-      previewImg.style.width = "56px";
-      previewImg.style.height = "56px";
-      previewImg.style.objectFit = "cover";
-      previewImg.style.borderRadius = "6px";
-      previewImg.style.border = "1px solid #ddd";
-      updatePreview(previewImg, p.image || "");
-      tdPrev.appendChild(previewImg);
-      tr.appendChild(tdPrev);
-
-      // 操作
-      const tdOps = document.createElement("td");
-      tdOps.style.padding = "6px";
-
-      const saveBtn = document.createElement("button");
-      saveBtn.textContent = "画像URLを保存";
-      saveBtn.addEventListener("click", async () => {
-        try {
-          saveBtn.disabled = true;
-          saveBtn.textContent = "保存中...";
-
-          const imageUrl = (inputImage.value || "").trim();
-
-          // ✅ server-line.js に存在：POST /api/admin/products/update
-          // body: { id, image }
-          await apiPostJson("/api/admin/products/update", {
-            id: p.id,
-            image: imageUrl,
-          });
-
-          if (statusEl) statusEl.textContent = `画像を保存しました：${p.id}`;
-          updatePreview(previewImg, imageUrl);
-
-          // 商品一覧を再取得して整合
-          await fetchProducts();
-        } catch (e) {
-          console.error("save image error:", e);
-          alert("保存に失敗しました。\n" + String(e.message || e));
-        } finally {
-          saveBtn.disabled = false;
-          saveBtn.textContent = "画像URLを保存";
-        }
-      });
-      tdOps.appendChild(saveBtn);
-
-      // 在庫操作（server-line.js：POST /api/admin/stock/set body { id, qty }）
-      const stockBtn = document.createElement("button");
-      stockBtn.textContent = "在庫を変更";
-      stockBtn.style.marginLeft = "6px";
-      stockBtn.title = "在庫は /api/admin/stock/set で変更します";
-      stockBtn.addEventListener("click", async () => {
-        try {
-          const input = prompt("在庫を何個にしますか？（半角数字）", String(p.stock ?? 0));
-          if (input == null) return;
-          const qty = Number(input);
-          if (!Number.isFinite(qty) || qty < 0) {
-            alert("数値が不正です");
-            return;
-          }
-          await apiPostJson("/api/admin/stock/set", { id: p.id, qty });
-          if (statusEl) statusEl.textContent = `在庫を更新しました：${p.id}`;
-          await fetchProducts();
-        } catch (e) {
-          alert("在庫更新に失敗しました。\n" + String(e.message || e));
-        }
-      });
-      tdOps.appendChild(stockBtn);
-
-      tr.appendChild(tdOps);
-      tbody.appendChild(tr);
-    });
-
-    table.appendChild(tbody);
-    listArea.innerHTML = "";
-    listArea.appendChild(table);
-
-    const note = document.createElement("div");
-    note.style.marginTop = "8px";
-    note.style.fontSize = "12px";
-    note.style.color = "#555";
-    note.innerHTML =
-      "※ 画像URLは <code>/api/admin/products/update</code>（<code>{ id, image }</code>）で保存します。<br>" +
-      "※ 在庫は <code>/api/admin/stock/set</code>（<code>{ id, qty }</code>）で変更します。";
-    listArea.appendChild(note);
-  }
-
-  function updatePreview(imgEl, url) {
-    const u = (url || "").trim();
-    if (!u) {
-      imgEl.src = "";
-      imgEl.alt = "no image";
-      imgEl.style.opacity = "0.3";
-      imgEl.style.background = "#f5f5f5";
-      return;
-    }
-    imgEl.style.opacity = "1";
-    imgEl.style.background = "transparent";
-    imgEl.src = u;
-  }
-
-  // =========================
-  // Upload image
-  // =========================
-  async function uploadImage() {
-    const token = getToken();
-    if (!token) {
-      setAuth(false, "管理用トークンを入力して保存してください。");
-      return;
-    }
-    if (!uploadInput?.files || !uploadInput.files[0]) {
-      if (uploadStatus) {
-        uploadStatus.textContent = "ファイルを選択してください。";
-        uploadStatus.style.color = "red";
-      }
-      return;
-    }
-
-    const file = uploadInput.files[0];
-    if (uploadStatus) {
-      uploadStatus.textContent = "アップロード中...";
-      uploadStatus.style.color = "#666";
-    }
-
-    try {
-      // ✅ server-line.js：POST /api/admin/upload で upload.single("file")
-      const { url } = withToken("/api/admin/upload");
-      const fd = new FormData();
-      fd.append("file", file); // ★重要：multer.single("file") に合わせる
-
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${token}` },
-        body: fd,
-      });
-
-      const data = await readJsonOrThrow(res);
-
-      if (uploadStatus) {
-        uploadStatus.textContent = "アップロード成功：" + (data.url || data.filename || "");
-        uploadStatus.style.color = "green";
-      }
-      uploadInput.value = "";
-
-      // 画像一覧更新
-      await fetchImages(true);
-
-      // 便利：アップロード直後にURLをクリップボードへ
-      const copyText = data.url || "";
-      if (copyText) {
-        if (navigator.clipboard?.writeText) {
-          try { await navigator.clipboard.writeText(copyText); } catch {}
-        }
-      }
-    } catch (e) {
-      console.error("uploadImage error:", e);
-      if (uploadStatus) {
-        uploadStatus.textContent = "アップロード失敗：" + String(e.message || e);
-        uploadStatus.style.color = "red";
-      }
-    }
-  }
-
-  // =========================
-  // Images list
-  // =========================
-  async function fetchImages(force) {
-    if (!imagesList) return [];
-    if (!force && cachedImages.length) return cachedImages;
-
-    imagesList.textContent = "画像一覧取得中...";
-    imagesList.style.color = "#666";
-
-    try {
-      const data = await apiGet("/api/admin/images");
-      // server-line.js は { ok:true, items:[{name,url}...] }
-      const items = data.items || [];
-      cachedImages = items;
-
-      if (!items.length) {
-        imagesList.textContent = "画像がありません。";
-        return items;
-      }
-
-      const container = document.createElement("div");
-      container.style.display = "flex";
-      container.style.flexWrap = "wrap";
-      container.style.gap = "8px";
-
-      items.forEach((img) => {
-        const card = document.createElement("div");
-        card.style.border = "1px solid #ccc";
-        card.style.borderRadius = "6px";
-        card.style.padding = "6px";
-        card.style.width = "220px";
-        card.style.fontSize = "11px";
-        card.style.background = "#fff";
-
-        const thumb = document.createElement("img");
-        thumb.src = img.url;
-        thumb.style.width = "100%";
-        thumb.style.height = "auto";
-        thumb.style.maxHeight = "140px";
-        thumb.style.objectFit = "contain";
-        thumb.style.backgroundColor = "#f5f5f5";
-        thumb.style.borderRadius = "6px";
-        thumb.style.border = "1px solid #eee";
-        card.appendChild(thumb);
-
-        const nameDiv = document.createElement("div");
-        nameDiv.textContent = img.name;
-        nameDiv.style.marginTop = "6px";
-        nameDiv.style.wordBreak = "break-all";
-        card.appendChild(nameDiv);
-
-        const urlDiv = document.createElement("div");
-        urlDiv.textContent = img.url;
-        urlDiv.style.wordBreak = "break-all";
-        urlDiv.style.color = "#666";
-        card.appendChild(urlDiv);
-
-        const row = document.createElement("div");
-        row.style.marginTop = "6px";
-        row.style.display = "flex";
-        row.style.gap = "6px";
-
-        const copyBtn = document.createElement("button");
-        copyBtn.textContent = "URLコピー";
-        copyBtn.addEventListener("click", async () => {
-          const u = img.url || "";
-          if (!u) return;
-          if (navigator.clipboard?.writeText) {
-            try {
-              await navigator.clipboard.writeText(u);
-              alert("コピーしました:\n" + u);
-            } catch {
-              window.prompt("このURLをコピーしてください：", u);
-            }
-          } else {
-            window.prompt("このURLをコピーしてください：", u);
-          }
-        });
-        row.appendChild(copyBtn);
-
-        const delBtn = document.createElement("button");
-        delBtn.textContent = "削除";
-        delBtn.addEventListener("click", async () => {
-          if (!confirm(`削除しますか？\n${img.name}`)) return;
-          try {
-            // ✅ server-line.js：POST /api/admin/images/delete body { name }
-            await apiPostJson("/api/admin/images/delete", { name: img.name });
-            await fetchImages(true);
-          } catch (e) {
-            alert("削除に失敗しました。\n" + String(e.message || e));
-          }
-        });
-        row.appendChild(delBtn);
-
-        card.appendChild(row);
-        container.appendChild(card);
-      });
-
-      imagesList.innerHTML = "";
-      imagesList.appendChild(container);
-      return items;
-    } catch (e) {
-      console.error("fetchImages error:", e);
-      imagesList.textContent = "画像一覧の取得に失敗しました。";
-      imagesList.style.color = "red";
-      return [];
-    }
-  }
-
-  // =========================
-  // Events
-  // =========================
-  reloadBtn?.addEventListener("click", fetchProducts);
-  uploadBtn?.addEventListener("click", uploadImage);
-  reloadImagesBtn?.addEventListener("click", () => fetchImages(true));
-
-  // 初期表示
-  loadToken();
-  setAuth(false, "管理用トークンを入力して保存してください。");
-  if (listArea) listArea.textContent = "「商品一覧を再読み込み」を押すと一覧が表示されます。";
-});
+document.addEventListener("DOMContentLoaded", init);

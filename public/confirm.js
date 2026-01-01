@@ -59,8 +59,8 @@
 
   function openAddress(){
     // あなたの運用の住所登録LIFFページに合わせて変更
-    // server側で /public/liff/address.html を置いている想定
-    location.href = "/public/liff/address.html";
+    // server側で /public/liff-address.html を置いている想定
+    location.href = "/public/liff-address.html";
   }
 
   async function callCheckout(items){

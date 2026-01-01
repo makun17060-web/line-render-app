@@ -91,6 +91,13 @@
       padding:12px 14px;
       border-radius:14px;
     }
+    .btnAddr{
+      background:#fff;
+      border:1px solid var(--line);
+      color:var(--text);
+      padding:12px 14px;
+      border-radius:14px;
+    }
     .btnAkasha{
       background:var(--pri);
       color:#fff;
@@ -119,6 +126,7 @@
     <div class="inner">
       <div class="muted" id="sum">カート：0点 / 小計 0円</div>
       <div class="right">
+        <button class="btn btnAddr" id="addrBtn" type="button">住所登録／変更</button>
         <button class="btn btnClear" id="clearBtn" type="button">空にする</button>
         <button class="btn btnAkasha btnWide" id="akashaBtn" type="button">あかしゃシリーズを注文</button>
         <button class="btn btnOriginal btnWide" id="originalBtn" type="button">オリジナルセットを注文</button>
@@ -131,7 +139,7 @@
   "use strict";
 
   /* ===== 設定 ===== */
-  const LIFF_ID  = "2008406620-G5j1gjzM";        // ★必ず差し替え
+  const LIFF_ID  = "2008406620-G5j1gjzM"; // ★あなたの LIFF ID
   const KEY_UID  = "isoya_userId";
   const KEY_CART = "isoya_cart";
 
@@ -162,20 +170,19 @@
   /* ===== “グループ分離” ロジック =====
      - original: オリジナルセット
      - akasha  : あかしゃ系列（久助もこちら扱い）
-     ※判定は id/name の両方で保険
   */
   function productGroup(product){
     const id = String(product?.id || "").toLowerCase();
     const name = String(product?.name || "");
-
     if (id.includes("original") || name.includes("オリジナル")) return "original";
     return "akasha";
   }
 
   function cartGroups(cartItems, products){
     const set = new Set();
+    const byId = Object.fromEntries(products.map(p=>[p.id,p]));
     for(const it of (cartItems||[])){
-      const p = products.find(x => x.id === it.id);
+      const p = byId[it.id];
       if(!p) continue;
       set.add(productGroup(p));
     }
@@ -209,6 +216,7 @@
   const gridEl    = document.getElementById("grid");
   const sumEl     = document.getElementById("sum");
   const clearBtn  = document.getElementById("clearBtn");
+  const addrBtn   = document.getElementById("addrBtn");
   const akashaBtn = document.getElementById("akashaBtn");
   const originalBtn = document.getElementById("originalBtn");
 
@@ -230,7 +238,6 @@
 
     sumEl.textContent = `カート：${count}点 / 小計 ${yen(subtotal)}`;
 
-    // ボタン有効/無効はカートの中身で変える（空なら両方無効）
     const empty = (count === 0);
     akashaBtn.classList.toggle("btnDisabled", empty);
     originalBtn.classList.toggle("btnDisabled", empty);
@@ -255,7 +262,7 @@
 
     const img = String(p.image||"").trim();
     const group = productGroup(p);
-    const warnBadge = (group === "original")
+    const badgeHtml = (group === "original")
       ? `<span class="badge badgeWarn">※ 他商品と同時注文不可</span>`
       : `<span class="badge">${p.volume ? `内容量 ${p.volume}` : `在庫 ${Number(p.stock||0)}`}</span>`;
 
@@ -266,7 +273,7 @@
         <div class="desc">${p.desc || ""}</div>
         <div class="row">
           <div class="price">${yen(p.price)}</div>
-          ${warnBadge}
+          ${badgeHtml}
         </div>
         <div class="controls">
           <div class="qty">
@@ -295,8 +302,6 @@
     }
 
     addBtn.onclick = ()=>{
-      // 追加自体はOK（分離は“注文ボタン”側でやる）
-      // ただし在庫超過だけはここで弾く
       const add = Math.max(1, Math.floor(Number(q.value||1)));
       const inCart = cart.items.find(x => x.id === p.id)?.qty || 0;
       const next = inCart + add;
@@ -305,7 +310,6 @@
         alert(`在庫不足です（在庫 ${stock}）。個数を減らしてください。`);
         return;
       }
-
       addToCart(p, add);
     };
 
@@ -320,13 +324,11 @@
       return;
     }
 
-    // 混在ならブロック
     if(groups.size > 1){
       alert("あかしゃシリーズとオリジナルセットは別注文になります。\n一度カートを空にしてから注文してください。");
       return;
     }
 
-    // 片方だけだが、押したボタンと中身が違うならブロック
     const only = Array.from(groups)[0];
     if(only !== expectGroup){
       alert(
@@ -337,16 +339,25 @@
       return;
     }
 
-    location.href = "/public/confirm.html";
+    // ★ルート配信に統一（/public を混ぜない）
+    location.href = "/confirm.html";
   }
 
   /* ===== イベント ===== */
+
+  // ★住所登録/変更は cod-register.html に一本化
+  addrBtn.onclick = ()=>{
+    const ret = encodeURIComponent(location.href);
+    location.href = `/cod-register.html?returnTo=${ret}`;
+  };
+
   clearBtn.onclick = ()=>{
     if(!confirm("カートを空にしますか？")) return;
     cart = { items: [] };
     saveCart(cart);
     renderSum();
   };
+
   akashaBtn.onclick = ()=> goConfirm("akasha");
   originalBtn.onclick = ()=> goConfirm("original");
 

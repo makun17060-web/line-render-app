@@ -187,7 +187,7 @@ const GIT_DATA_DIR = path.join(__dirname, "data");
 const DISK_DATA_DIR = path.resolve(process.env.DATA_DIR || "/var/data");
 
 // ★UPLOAD_DIRは env を優先（Disk）
-const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || "/var/data/uploads");
+
 
 if (!fs.existsSync(PUBLIC_DIR)) fs.mkdirSync(PUBLIC_DIR, { recursive: true });
 if (!fs.existsSync(GIT_DATA_DIR)) fs.mkdirSync(GIT_DATA_DIR, { recursive: true });

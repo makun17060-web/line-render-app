@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
   <title>注文内容の確認</title>
 
-  <!-- LIFF（住所変更を確実に開くための保険） -->
+  <!-- LIFF（住所変更ボタンの保険） -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
   <style>
@@ -23,10 +23,10 @@
     .row{display:flex;justify-content:space-between;gap:10px;margin:0;padding:6px 0;font-size:14px}
     .err{color:var(--danger);font-weight:900}
 
-    /* お届け先の改行 */
+    /* お届け先の改行を効かせる */
     #addrText{ white-space: pre-line; }
 
-    /* 住所変更ボタン */
+    /* 住所変更ボタン（押せない対策） */
     .addrBtns{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;position:relative;z-index:20}
     .btnLink{
       display:inline-flex;align-items:center;justify-content:center;
@@ -36,7 +36,7 @@
     }
     .btnLinkPrimary{background:var(--pri);border-color:transparent;color:#fff}
 
-    /* 注文明細（見やすさ） */
+    /* 注文明細（見やすさ改善） */
     .items{margin-top:10px;border-top:1px solid var(--line)}
     .item{
       display:grid;
@@ -102,7 +102,8 @@
       </div>
 
       <div class="muted" style="margin-top:8px">
-        ※クレジット決済は Stripe の決済画面へ移動します。送料は確定時の計算結果が適用されます。
+        ※クレジットは次の画面で最終確認後、Stripeの決済画面へ進みます。<br>
+        ※送料は見積り表示です。最終金額は確定時の計算結果が適用されます。
       </div>
     </div>
   </div>
@@ -114,11 +115,13 @@
   const KEY_CART="isoya_cart";
   const KEY_UID ="isoya_userId";
   const KEY_LAST="isoya_last_order";
+  const KEY_CARD="isoya_card_checkout";
 
   const PATH_PRODUCTS = "/public/products.html";
   const PATH_CONFIRM  = "/public/confirm.html";
   const PATH_ADDRESS  = "/public/liff-address.html";
   const PATH_CONFIRM_COD = "/public/confirm-cod.html";
+  const PATH_CONFIRM_CARD = "/public/confirm-card.html";
 
   const status=document.getElementById("status");
   const addrText=document.getElementById("addrText");
@@ -129,19 +132,19 @@
   const totalCodEl=document.getElementById("totalCod");
 
   const backBtn=document.getElementById("backBtn");
+  const backBtn2=document.getElementById("backBtn2");
+  const addrBtn=document.getElementById("addrBtn");
   const cardBtn=document.getElementById("cardBtn");
   const codBtn=document.getElementById("codBtn");
-  const addrBtn=document.getElementById("addrBtn");
-  const backBtn2=document.getElementById("backBtn2");
 
   const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
   const loadJson=k=>{try{return JSON.parse(localStorage.getItem(k)||"");}catch{return null;}};
 
-  function setBusy(disabled, textCod, textCard){
+  function setBusy(disabled, codText, cardText){
     codBtn.disabled = disabled;
     cardBtn.disabled = disabled;
-    codBtn.textContent  = textCod  || (disabled ? "確定中…" : "代引きで注文確定");
-    cardBtn.textContent = textCard || (disabled ? "移動中…" : "クレジットで支払う");
+    codBtn.textContent  = codText  || (disabled ? "確定中…" : "代引きで注文確定");
+    cardBtn.textContent = cardText || (disabled ? "移動中…" : "クレジットで支払う");
     codBtn.style.pointerEvents  = disabled ? "none" : "auto";
     cardBtn.style.pointerEvents = disabled ? "none" : "auto";
   }
@@ -199,7 +202,9 @@
     for(const it of cartItems){
       const p=byId[it.id];
       if(!p) continue;
-      const line=Number(p.price||0)*Number(it.qty||0);
+
+      const qty = Number(it.qty||0);
+      const line=Number(p.price||0) * qty;
       subtotal += line;
 
       const div=document.createElement("div");
@@ -207,7 +212,7 @@
       div.innerHTML = `
         <div class="name">${p.name || ""}${p.volume ? `（${p.volume}）` : ""}</div>
         <div class="price">${yen(line)}</div>
-        <div class="qty">× ${it.qty} 点</div>
+        <div class="qty">× ${qty} 点</div>
       `;
       itemsEl.appendChild(div);
     }
@@ -242,6 +247,7 @@
         return;
       }
 
+      // ✅ 名前＋住所（改行）
       const nameLine = addr.name ? `${addr.name} 様\n` : "";
       addrText.textContent =
         `${nameLine}〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim();
@@ -249,7 +255,7 @@
       const products=await getProducts();
       renderItems(items, products);
 
-      // 見積り表示（/api/order/quote がある前提）
+      // ✅ 見積り（送料/代引/合計）
       shippingEl.textContent="計算中…";
       codFeeEl.textContent="計算中…";
       totalCodEl.textContent="計算中…";
@@ -271,22 +277,13 @@
       backBtn2.onclick = ()=>location.href = PATH_PRODUCTS;
       addrBtn.onclick  = ()=>openAddress();
 
-      // ✅ クレジット（Stripe Checkoutへ）
+      // ✅ クレジット：confirm-card へ遷移（Stripeへ直行しない）
       cardBtn.onclick = ()=>{
-  // confirm-card で使う情報を保存
-  localStorage.setItem("isoya_card_checkout", JSON.stringify({
-    uid,
-    items
-  }));
-  location.href = "/public/confirm-card.html";
-        }catch(e){
-          console.error(e);
-          alert("クレジット決済に進めませんでした: " + (e?.message||e));
-          setBusy(false);
-        }
+        localStorage.setItem(KEY_CARD, JSON.stringify({ uid, items }));
+        location.href = PATH_CONFIRM_CARD;
       };
 
-      // ✅ 代引き確定（注文作成）
+      // ✅ 代引き確定
       codBtn.onclick=async ()=>{
         setBusy(true, "確定中…", "待機中…");
         try{

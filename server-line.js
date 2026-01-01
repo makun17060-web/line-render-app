@@ -584,10 +584,8 @@ app.get("/health", (req, res) => res.json({ ok: true, time: nowISO() }));
 // 管理API 認証
 // =========================
 function requireAdmin(req, res, next) {
-  // ✅ ENVは ADMIN_API_TOKEN を正式採用（互換で ADMIN_TOKEN も許可）
-  const ADMIN_TOKEN = (process.env.ADMIN_API_TOKEN || process.env.ADMIN_TOKEN || "").toString().trim();
-
-  if (!ADMIN_TOKEN) return res.status(403).json({ ok: false, error: "ADMIN_API_TOKEN is not set" });
+ if (!ADMIN_API_TOKEN)
+      return res.status(403).json({ ok:false, error:"ADMIN_TOKEN is not set" });
 
   // ✅ ヘッダ名の揺れを吸収（あなたが色々試したやつ全部通す）
   const token =
@@ -597,9 +595,11 @@ function requireAdmin(req, res, next) {
      req.query.token ||
      "").toString().trim();
 
-  if (token !== ADMIN_TOKEN) return res.status(401).json({ ok: false, error: "unauthorized" });
-  next();
-}
+if (token !== ADMIN_API_TOKEN)
+      return res.status(401).json({ ok:false, error:"unauthorized" });
+
+   next();
+ }
 
 // =========================
 // Products API

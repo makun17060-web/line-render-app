@@ -450,7 +450,7 @@
       subtotal: subtotal()
     };
     try{ sessionStorage.setItem("isoya_checkout_v1", JSON.stringify(payload)); }catch{}
-    location.href = CONFIRM_URL;
+    location.href = "/public/confirm.html";
   });
 
   // ====== 切替 ======

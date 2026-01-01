@@ -272,12 +272,13 @@
       addrBtn.onclick  = ()=>openAddress();
 
       // ✅ クレジット（Stripe Checkoutへ）
-      cardBtn.onclick = async ()=>{
-        setBusy(true, "待機中…", "決済画面へ…");
-        try{
-          const data = await postJson("/api/pay/stripe/create", { uid, checkout:{ items } });
-          if(!data?.url) throw new Error("stripe_url_missing");
-          location.href = data.url; // Stripeへ遷移
+      cardBtn.onclick = ()=>{
+  // confirm-card で使う情報を保存
+  localStorage.setItem("isoya_card_checkout", JSON.stringify({
+    uid,
+    items
+  }));
+  location.href = "/public/confirm-card.html";
         }catch(e){
           console.error(e);
           alert("クレジット決済に進めませんでした: " + (e?.message||e));

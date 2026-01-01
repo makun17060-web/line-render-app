@@ -1010,6 +1010,26 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
     res.status(500).send("server_error");
   }
 });
+// 注文ステータス確認（Stripe success画面でポーリングに使う）
+app.get("/api/order/status", async (req, res) => {
+  try {
+    const orderId = String(req.query.orderId || "").trim();
+    if (!orderId) return res.status(400).json({ ok:false, error:"orderId required" });
+
+    const r = await pool.query(
+      `SELECT id, status, payment_method, total, shipping_fee, created_at
+       FROM orders WHERE id=$1`,
+      [orderId]
+    );
+    const row = r.rows[0];
+    if (!row) return res.status(404).json({ ok:false, error:"not_found" });
+
+    res.json({ ok:true, order: row });
+  } catch (e) {
+    console.error("GET /api/order/status", e);
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
 
 // =========================
 // 代引注文（LIFF側で“代引”を選ぶ時）

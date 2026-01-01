@@ -79,6 +79,17 @@
   </div>
 
 <script>
+  // ★ ここ（scriptの一番上）に置く
+window.addEventListener("error", (e)=>{
+  console.error("[PAGE ERROR]", e.message, e.error);
+});
+window.addEventListener("unhandledrejection", (e)=>{
+  console.error("[UNHANDLED]", e.reason);
+});
+
+(async function(){
+  "use strict";
+
 (async function(){
   "use strict";
 

@@ -1,194 +1,164 @@
-(function(){
+/**
+ * confirm.js — 注文最終確認（代引き対応・堅牢版）
+ * 対象HTML:
+ *  - confirm.html
+ * 必須要素:
+ *  - <button id="codBtn" type="button">代引きで注文確定</button>
+ *  - <script src="/public/js/confirm.js"></script>
+ */
+
+(function () {
   "use strict";
 
-  const orderListEl = document.getElementById("orderList");
-  const sumSubtotalEl = document.getElementById("sumSubtotal");
-  const sumShippingEl = document.getElementById("sumShipping");
-  const sumCodEl = document.getElementById("sumCod");
-  const sumTotalCardEl = document.getElementById("sumTotalCard");
-  const sumTotalCodEl = document.getElementById("sumTotalCod");
-  const statusEl = document.getElementById("statusMsg");
+  console.log("[confirm.js] loaded");
 
-  const btnAddress = document.getElementById("btnAddress");
-  const btnCard = document.getElementById("btnCard");
-  const btnCod = document.getElementById("btnCod");
-  const btnBack = document.getElementById("btnBack");
+  // ==========
+  // 設定
+  // ==========
+  const API_COD = "/api/order/cod/create";
+  const REDIRECT_FALLBACK = "/confirm-cod.html";
 
-  const COD_FEE = 330;
+  // localStorage のキー（あなたの既存実装に合わせて）
+  const KEY_UID   = "isoya_userId";   // なければ userId も見る
+  const KEY_CART  = "isoya_cart";     // { items:[{id,qty,...}] }
+  const KEY_LAST  = "isoya_last_order";
 
-  const yen = (n)=> (Number(n||0)).toLocaleString("ja-JP") + "円";
+  // ==========
+  // util
+  // ==========
+  function $(id) {
+    return document.getElementById(id);
+  }
 
-  function setStatus(msg){
-    if(!msg){
-      statusEl.style.display="none";
-      statusEl.textContent="";
-      return;
+  function loadJson(key) {
+    try {
+      return JSON.parse(localStorage.getItem(key) || "");
+    } catch {
+      return null;
     }
-    statusEl.style.display="block";
-    statusEl.textContent=msg;
   }
 
-  function readDraft(){
-    const raw = sessionStorage.getItem("isoya_checkout_v1");
-    if(!raw) return null;
-    try{ return JSON.parse(raw); }catch{ return null; }
+  function setDisabled(btn, disabled, text) {
+    if (!btn) return;
+    btn.disabled = disabled;
+    btn.style.pointerEvents = disabled ? "none" : "auto";
+    if (text) btn.textContent = text;
   }
 
-  function escapeHtml(s){
-    return String(s ?? "")
-      .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
-      .replaceAll('"',"&quot;").replaceAll("'","&#039;");
-  }
-
-  function renderItems(items){
-    orderListEl.innerHTML = items.map(it=>{
-      const name = escapeHtml(it.name || it.id || "商品");
-      const qty = Number(it.qty||0);
-      const price = Number(it.price||0);
-      const line = price * qty;
-      return `<div class="row"><span>${name} × ${qty}</span><strong>${yen(line)}</strong></div>`;
-    }).join("");
-  }
-
-  function getUserIdMaybe(){
-    // LIFF環境なら liff.getProfile などで userId を取る設計が本筋
-    // 本番は“設定済み”と言っているので、ここは既にどこかで保存されている想定に寄せる
-    // 例：address.html 側で保存した userId を使う
-    return (localStorage.getItem("isoya_user_id") || "").trim();
-  }
-
-  function openAddress(){
-    // あなたの運用の住所登録LIFFページに合わせて変更
-    // server側で /public/liff-address.html を置いている想定
-    location.href = "/public/liff-address.html";
-  }
-
-  async function callCheckout(items){
-    const userId = getUserIdMaybe();
-    if(!userId){
-      throw new Error("LIFFのuserIdが未保存です。先に住所登録（LIFF）を開いてください。");
-    }
-    const payload = {
-      userId,
-      items: items.map(it=>({ id: it.id, qty: Number(it.qty||0) }))
-    };
-    const res = await fetch("/api/checkout", {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify(payload)
+  async function postJson(url, body) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     });
-    const data = await res.json().catch(()=> ({}));
-    if(!res.ok || !data.ok){
-      const err = new Error(data.error || `HTTP ${res.status}`);
-      err.detail = data;
-      throw err;
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data?.error || `HTTP ${res.status}`);
     }
-    return data; // {checkoutUrl, orderId, subtotal, shippingFee, size}
+    return data;
   }
 
-  async function callCod(items){
-    const userId = getUserIdMaybe();
-    if(!userId){
-      throw new Error("LIFFのuserIdが未保存です。先に住所登録（LIFF）を開いてください。");
-    }
-    const payload = {
-      userId,
-      items: items.map(it=>({ id: it.id, qty: Number(it.qty||0) }))
-    };
-    const res = await fetch("/api/cod/create", {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify(payload)
-    });
-    const data = await res.json().catch(()=> ({}));
-    if(!res.ok || !data.ok){
-      const err = new Error(data.error || `HTTP ${res.status}`);
-      err.detail = data;
-      throw err;
-    }
-    return data; // {orderId, subtotal, shippingFee, codFee, totalCod}
-  }
+  // ==========
+  // メイン
+  // ==========
+  document.addEventListener("DOMContentLoaded", () => {
+    const codBtn = $("codBtn");
 
-  async function main(){
-    const draft = readDraft();
-    if(!draft || !Array.isArray(draft.items) || draft.items.length===0){
-      setStatus("注文情報が見つかりません。商品一覧からやり直してください。");
-      btnCard.classList.add("disabled"); btnCard.disabled = true;
-      btnCod.classList.add("disabled"); btnCod.disabled = true;
+    if (!codBtn) {
+      console.warn("[confirm.js] #codBtn not found");
       return;
     }
 
-    const items = draft.items
-      .map(it=>({ id:String(it.id||"").trim(), name:it.name, price:Number(it.price||0), qty:Number(it.qty||0) }))
-      .filter(it=>it.id && it.qty>0);
-
-    if(items.length===0){
-      setStatus("カートが空です。");
-      btnCard.disabled = true; btnCod.disabled = true;
-      return;
-    }
-
-    renderItems(items);
-
-    const sub = items.reduce((s,it)=> s + it.price*it.qty, 0);
-    sumSubtotalEl.textContent = yen(sub);
-    sumCodEl.textContent = yen(COD_FEE);
-
-    // 送料・合計はサーバ計算（住所あり前提）
-    sumShippingEl.textContent = "—";
-    sumTotalCardEl.textContent = "—";
-    sumTotalCodEl.textContent = "—";
-
-    btnAddress.addEventListener("click", openAddress);
-    btnBack.addEventListener("click", ()=> history.back());
-
-    btnCard.addEventListener("click", async ()=>{
-      try{
-        btnCard.disabled = true; btnCod.disabled = true;
-        setStatus("Stripe決済画面へ移動します…（送料計算中）");
-
-        const r = await callCheckout(items);
-
-        sumShippingEl.textContent = yen(r.shippingFee);
-        sumTotalCardEl.textContent = yen(r.subtotal + r.shippingFee);
-        sumTotalCodEl.textContent = yen(r.subtotal + r.shippingFee + COD_FEE);
-
-        setStatus("Stripeへ移動します…");
-        location.href = r.checkoutUrl;
-      }catch(e){
-        console.error(e);
-        const msg = (e && e.detail && e.detail.error === "NO_ADDRESS")
-          ? "住所が未登録です。先に住所登録（LIFF）をしてください。"
-          : "決済開始に失敗しました：\n" + (e?.message || String(e));
-        setStatus(msg);
-        btnCard.disabled = false; btnCod.disabled = false;
+    // 「押せない」原因調査用（被さり検出）
+    codBtn.addEventListener("pointerdown", () => {
+      const r = codBtn.getBoundingClientRect();
+      const el = document.elementFromPoint(
+        r.left + r.width / 2,
+        r.top + r.height / 2
+      );
+      if (el && el !== codBtn && !codBtn.contains(el)) {
+        console.warn("[confirm.js] something covers codBtn:", el);
       }
     });
 
-    btnCod.addEventListener("click", async ()=>{
-      try{
-        btnCard.disabled = true; btnCod.disabled = true;
-        setStatus("代引き注文を作成しています…（送料計算中）");
+    codBtn.addEventListener("click", async () => {
+      setDisabled(codBtn, true, "確定中...");
 
-        const r = await callCod(items);
+      try {
+        // ==========
+        // ユーザーID
+        // ==========
+        const uid =
+          loadJson(KEY_UID) ||
+          localStorage.getItem(KEY_UID) ||
+          localStorage.getItem("userId") ||
+          "";
 
-        // 表示更新
-        sumShippingEl.textContent = yen(r.shippingFee);
-        sumTotalCardEl.textContent = yen(r.subtotal + r.shippingFee);
-        sumTotalCodEl.textContent = yen(r.totalCod);
+        if (!uid) {
+          throw new Error("NO_UID");
+        }
 
-        // 完了画面へ
-        location.href = "/public/cod-complete.html?orderId=" + encodeURIComponent(r.orderId);
-      }catch(e){
-        console.error(e);
-        const msg = (e && e.detail && e.detail.error === "NO_ADDRESS")
-          ? "住所が未登録です。先に住所登録（LIFF）をしてください。"
-          : "代引き注文に失敗しました：\n" + (e?.message || String(e));
-        setStatus(msg);
-        btnCard.disabled = false; btnCod.disabled = false;
+        // ==========
+        // カート
+        // ==========
+        const cart = loadJson(KEY_CART);
+        const itemsRaw = cart?.items || [];
+
+        const items = itemsRaw
+          .map(it => ({
+            id: it.id,
+            qty: Number(it.qty || 0),
+          }))
+          .filter(it => it.id && it.qty > 0);
+
+        if (items.length === 0) {
+          throw new Error("EMPTY_ITEMS");
+        }
+
+        // ==========
+        // サーバーへ確定
+        // ==========
+        const data = await postJson(API_COD, {
+          uid,
+          checkout: { items },
+        });
+
+        // ==========
+        // 確定情報を保存（confirm-cod.html で使う）
+        // ==========
+        localStorage.setItem(
+          KEY_LAST,
+          JSON.stringify({
+            orderId: data.orderId,
+            createdAt: new Date().toISOString(),
+            subtotal: data.subtotal,
+            shippingFee: data.shippingFee,
+            codFee: data.codFee,
+            total: data.totalCod,
+          })
+        );
+
+        // ==========
+        // 遷移
+        // ==========
+        const url =
+          `${REDIRECT_FALLBACK}?orderId=` +
+          encodeURIComponent(data.orderId || "");
+
+        window.location.href = url;
+
+      } catch (err) {
+        console.error("[confirm.js] error:", err);
+
+        let msg = "代引き注文の確定に失敗しました。";
+        if (err.message === "NO_UID") msg = "ユーザー情報が取得できません。";
+        if (err.message === "EMPTY_ITEMS") msg = "商品が選択されていません。";
+        if (err.message === "NO_ADDRESS") msg = "住所が未登録です。";
+
+        alert(msg);
+
+        setDisabled(codBtn, false, "代引きで注文確定");
       }
     });
-  }
-
-  main();
+  });
 })();

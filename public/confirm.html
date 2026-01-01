@@ -8,28 +8,84 @@
   <!-- LIFF（住所変更ボタンを確実に開くための保険） -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
-<style>
-  :root{
-    --bg:#f6f7f9;--card:#fff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;
-    --pri:#0b3a53;--pri2:#123b66;--danger:#b91c1c;
-  }
-  *{box-sizing:border-box}
-  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)}
-  .wrap{max-width:820px;margin:0 auto;padding:14px 14px 26px}
-  h1{margin:0 0 6px;font-size:18px}
-  .muted{color:var(--muted);font-size:13px;line-height:1.5}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-top:12px}
-  /* ……中略…… */
-
-  /* ★ここを追加 */
-  #addrText{
-    white-space: pre-line;
-  }
-</style>
-
+  <style>
+    :root{
+      --bg:#f6f7f9;--card:#fff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;
+      --pri:#0b3a53;--pri2:#123b66;--danger:#b91c1c;
+      --shadow:0 1px 3px rgba(0,0,0,.06);--radius:14px;
     }
-    .btnLinkPri
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)}
+    .wrap{max-width:820px;margin:0 auto;padding:14px 14px 26px}
+    h1{margin:0 0 6px;font-size:18px}
+    .muted{color:var(--muted);font-size:13px;line-height:1.5}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:12px;margin-top:12px;box-shadow:var(--shadow)}
+    .row{display:flex;justify-content:space-between;gap:10px;margin:0;padding:6px 0;font-size:14px}
+    .err{color:var(--danger);font-weight:900}
+
+    /* お届け先の改行を効かせる */
+    #addrText{ white-space: pre-line; }
+
+    /* 住所変更ボタン（押せない対策） */
+    .addrBtns{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;position:relative;z-index:20}
+    .btnLink{
+      display:inline-flex;align-items:center;justify-content:center;
+      border-radius:14px;padding:10px 12px;font-weight:900;
+      border:1px solid var(--line);background:#fff;color:var(--text);
+      text-decoration:none;
+      pointer-events:auto;
+      cursor:pointer;
+      min-width:180px;
+    }
+    .btnLinkPrimary{background:var(--pri);border-color:transparent;color:#fff}
+
+    /* 注文明細（見やすさ改善） */
+    .items{
+      margin-top:10px;
+      border-top:1px solid var(--line);
+    }
+    .item{
+      display:grid;
+      grid-template-columns: 1fr auto;
+      gap:6px 10px;
+      padding:12px 0;
+      border-bottom:1px dashed var(--line);
+      font-size:14px;
+    }
+    .item:last-child{border-bottom:none}
+    .item .name{font-weight:800}
+    .item .qty{
+      grid-column:1 / 2;
+      color:var(--muted);
+      font-size:13px;
+    }
+    .item .price{
+      grid-column:2 / 3;
+      grid-row:1 / 3;
+      align-self:center;
+      font-weight:900;
+      white-space:nowrap;
+    }
+
+    .row.total{
+      border-top:2px solid var(--line);
+      margin-top:6px;
+      padding-top:10px;
+      font-size:16px;
+      font-weight:900;
+    }
+
+    .btns{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+    button{
+      border:none;border-radius:14px;padding:12px 14px;
+      font-weight:900;cursor:pointer;flex:1;min-width:180px
+    }
+    #codBtn{background:var(--pri);color:#fff}
+    #backBtn{background:#fff;border:1px solid var(--line);color:#111827}
+    button:disabled{opacity:.55;cursor:not-allowed}
+  </style>
 </head>
+
 <body>
   <div class="wrap">
     <h1>注文内容の確認</h1>
@@ -39,7 +95,6 @@
       <div class="muted">お届け先</div>
       <div id="addrText" style="margin-top:6px;font-weight:900">—</div>
 
-      <!-- ✅ 住所変更：リンクではなく“ボタン”にする（押せない対策） -->
       <div class="addrBtns">
         <button class="btnLink btnLinkPrimary" id="addrBtn" type="button">住所登録・変更</button>
         <button class="btnLink" id="backBtn2" type="button">商品へ戻る</button>
@@ -51,16 +106,18 @@
       <div class="items" id="items"></div>
 
       <div class="row"><div>小計</div><div id="subtotal">0円</div></div>
-      <div class="row"><div>送料（住所から計算）</div><div id="shipping">—</div></div>
+      <div class="row"><div>送料</div><div id="shipping">—</div></div>
       <div class="row"><div>代引手数料</div><div id="codFee">—</div></div>
-      <div class="row" style="font-weight:900"><div>合計（代引）</div><div id="totalCod">—</div></div>
+      <div class="row total"><div>合計（代引）</div><div id="totalCod">—</div></div>
 
       <div class="btns">
         <button id="backBtn" type="button">商品へ戻る</button>
         <button id="codBtn" type="button">代引きで注文確定</button>
       </div>
 
-      <div class="muted" style="margin-top:8px">※カード決済を使う場合は、別途ボタンを追加できます（Stripe設定が必要）。</div>
+      <div class="muted" style="margin-top:8px">
+        ※表示の送料は目安です。最終金額は確定時の計算結果が適用されます。
+      </div>
     </div>
   </div>
 
@@ -113,6 +170,39 @@
     return Array.isArray(d.products)?d.products:[];
   }
 
+  async function postJson(url, body){
+    const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d?.error || ("HTTP "+r.status));
+    return d;
+  }
+
+  function openAddress(){
+    const url = location.origin + PATH_ADDRESS + "?returnTo=" + encodeURIComponent(PATH_CONFIRM);
+    try{
+      if(window.liff && typeof liff.openWindow === "function"){
+        liff.openWindow({ url, external:false });
+        return;
+      }
+    }catch(e){}
+    location.href = url;
+  }
+
+  async function ensureUid(){
+    let uid=(localStorage.getItem(KEY_UID)||"").trim();
+    if(uid) return uid;
+
+    // userId無し救済（LIFFが使える場合）
+    try{
+      if(window.liff && typeof liff.getProfile==="function"){
+        const prof = await liff.getProfile();
+        uid = (prof?.userId||"").trim();
+        if(uid) localStorage.setItem(KEY_UID, uid);
+      }
+    }catch(e){}
+    return (uid||"").trim();
+  }
+
   function renderItems(cartItems, products){
     const byId=Object.fromEntries(products.map(p=>[p.id,p]));
     itemsEl.innerHTML="";
@@ -123,50 +213,19 @@
       if(!p) continue;
       const line=Number(p.price||0)*Number(it.qty||0);
       subtotal += line;
+
       const div=document.createElement("div");
       div.className="item";
-      div.innerHTML=`<div>${p.name} × ${it.qty}</div><div>${yen(line)}</div>`;
+      div.innerHTML = `
+        <div class="name">${p.name || ""}${p.volume ? `（${p.volume}）` : ""}</div>
+        <div class="price">${yen(line)}</div>
+        <div class="qty">× ${it.qty} 点</div>
+      `;
       itemsEl.appendChild(div);
     }
 
     subtotalEl.textContent=yen(subtotal);
-  }
-
-  async function postJson(url, body){
-    const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok) throw new Error(d?.error || ("HTTP "+r.status));
-    return d;
-  }
-
-  function openAddress(){
-    const url = location.origin + PATH_ADDRESS + "?returnTo=" + encodeURIComponent(PATH_CONFIRM);
-
-    // LIFFが使えるなら openWindow を優先（“押せない/遷移しない”対策）
-    try{
-      if(window.liff && typeof liff.openWindow === "function"){
-        liff.openWindow({ url, external:false });
-        return;
-      }
-    }catch(e){}
-
-    location.href = url;
-  }
-
-  async function ensureUid(){
-    let uid=(localStorage.getItem(KEY_UID)||"").trim();
-    if(uid) return uid;
-
-    // もしLIFFが使えるならここで救済（userId無し→400回避）
-    try{
-      if(window.liff && typeof liff.getProfile==="function"){
-        const prof = await liff.getProfile();
-        uid = (prof?.userId||"").trim();
-        if(uid) localStorage.setItem(KEY_UID, uid);
-      }
-    }catch(e){}
-
-    return (uid||"").trim();
+    return subtotal;
   }
 
   async function main(){
@@ -189,50 +248,43 @@
         return;
       }
 
-      // 住所チェック：無ければ住所へ
+      // 住所チェック
       const addr=await getAddress(uid);
       if(!addr){
         openAddress();
         return;
       }
 
+      // ✅ 名前も表示
       const nameLine = addr.name ? `${addr.name} 様\n` : "";
-addrText.textContent =
-  `${nameLine}〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim();
-
+      addrText.textContent =
+        `${nameLine}〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim();
 
       const products=await getProducts();
       renderItems(items, products);
 
-  // ✅ 見積り（送料/代引手数料/合計を確定前に表示）
-shippingEl.textContent="計算中…";
-codFeeEl.textContent="計算中…";
-totalCodEl.textContent="計算中…";
+      // ✅ 見積りで送料/代引手数料/合計を確定前に表示
+      shippingEl.textContent="計算中…";
+      codFeeEl.textContent="計算中…";
+      totalCodEl.textContent="計算中…";
 
-try{
-  const quote = await postJson("/api/order/quote", { uid, checkout:{ items } });
+      try{
+        const quote = await postJson("/api/order/quote", { uid, checkout:{ items } });
+        shippingEl.textContent = `${yen(quote.shippingFee)}（ヤマト ${quote.size}サイズ）`;
+        codFeeEl.textContent   = yen(quote.codFee);
+        totalCodEl.textContent = yen(quote.totalCod);
+      }catch(e){
+        console.error(e);
+        shippingEl.textContent="—";
+        codFeeEl.textContent="—";
+        totalCodEl.textContent="—";
+        status.innerHTML = '<span class="err">送料計算に失敗しました（住所/在庫/商品を確認）</span>';
+      }
 
-  shippingEl.textContent = `${yen(quote.shippingFee)}（ヤマト ${quote.size}サイズ）`;
-  codFeeEl.textContent   = yen(quote.codFee);
-  totalCodEl.textContent = yen(quote.totalCod);
-}catch(e){
-  console.error(e);
-  shippingEl.textContent="—";
-  codFeeEl.textContent="—";
-  totalCodEl.textContent="—";
-  // 住所なしは住所登録へ
-  if((e?.message||"").includes("NO_ADDRESS")){
-    openAddress();
-    return;
-  }
-  status.innerHTML = '<span class="err">送料計算に失敗しました（住所/商品/在庫を確認）</span>';
-}
-
+      status.textContent="内容をご確認ください。";
 
       backBtn.onclick = ()=>location.href = PATH_PRODUCTS;
       backBtn2.onclick = ()=>location.href = PATH_PRODUCTS;
-
-      // 住所変更ボタン
       addrBtn.onclick = ()=>openAddress();
 
       codBtn.onclick=async ()=>{

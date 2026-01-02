@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+  <title>注文完了</title>
+  <style>
+    :root{--bg:#f6f7f9;--card:#fff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;--pri:#0b3a53;--radius:14px;}
+    body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)}
+    .wrap{max-width:720px;margin:0 auto;padding:14px}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin-top:12px}
+    .muted{color:var(--muted);font-size:13px;line-height:1.6}
+    .id{font-weight:900;font-size:18px;margin-top:8px}
+    .btn{display:block;width:100%;margin-top:12px;padding:12px 14px;border-radius:14px;border:none;background:var(--pri);color:#fff;font-weight:900;cursor:pointer}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1 style="margin:0 0 6px;font-size:18px">注文完了</h1>
+    <div class="muted" id="msg">完了しました。</div>
+
+    <div class="card">
+      <div class="muted">注文ID</div>
+      <div class="id" id="oid">—</div>
+    </div>
+
+    <button class="btn" id="toProducts" type="button">商品一覧へ</button>
+  </div>
+
+<script>
+(function(){
+  const qs = new URLSearchParams(location.search);
+  const method = (qs.get("method")||"").trim();
+  const orderId = (qs.get("orderId")||"").trim();
+
+  const msg = document.getElementById("msg");
+  const oid = document.getElementById("oid");
+
+  oid.textContent = orderId || "—";
+  msg.textContent = method === "card"
+    ? "クレジット決済が完了しました。ご注文ありがとうございました。"
+    : "代引き注文を受け付けました。ご注文ありがとうございました。";
+
+  document.getElementById("toProducts").onclick = ()=> location.href = "/products.html";
+})();
+</script>
+</body>
+</html>

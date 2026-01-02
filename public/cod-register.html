@@ -83,15 +83,16 @@
 (async function(){
   "use strict";
 
-  // ✅ 住所登録専用 LIFF（あなたが言ったやつ）
-  const LIFF_ID = "2008406620-4kyQVyqe";
-
+  // ===== query params =====
   const qs = new URLSearchParams(location.search);
   const returnTo = qs.get("returnTo") || qs.get("return") || qs.get("return_url") || "";
 
   // もし別ドメインAPIを叩く必要がある場合に備えて（同一ドメインなら空でOK）
   const API_BASE_RAW = (qs.get("api") || "").trim().replace(/\/+$/, "");
   const API_BASE = API_BASE_RAW || "";
+
+  // kind は address を既定（このページは住所登録専用）
+  const KIND = (qs.get("kind") || "address").trim() || "address";
 
   const $ = (id) => document.getElementById(id);
   const debugEl = $("debug");
@@ -111,13 +112,30 @@
     return { res, data, raw: text };
   }
 
+  // ✅ server の /api/liff/config から liffId を取る（直書き禁止）
+  async function getLiffIdFromServer(){
+    const u = apiUrl(`/api/liff/config?kind=${encodeURIComponent(KIND)}`);
+    const { res, data, raw } = await fetchJson(u, { cache:"no-store" });
+    addDebug(`CFG ${res.status} ${u}`);
+    if(!res.ok || !data?.ok || !data?.liffId){
+      addDebug(`CFG RAW: ${raw}`);
+      throw new Error(data?.error || "LIFF_ID fetch failed");
+    }
+    return String(data.liffId).trim();
+  }
+
   async function initLiff(){
     try{
-      await liff.init({ liffId: LIFF_ID });
+      const liffId = await getLiffIdFromServer();
+      addDebug(`LIFF_ID(from server)=${liffId}`);
+
+      await liff.init({ liffId });
+
       if(!liff.isLoggedIn()){
         liff.login({ redirectUri: location.href });
         return { ok:false, waitLogin:true };
       }
+
       const prof = await liff.getProfile();
       const userId = (prof?.userId || "").trim();
       if(!userId) return { ok:false, error:"NO_USER_ID" };
@@ -138,7 +156,6 @@
       addDebug(`GET1 ${res.status} ${u1}`);
       if(res.ok && data?.ok && data?.address) return { ok:true, address:data.address, used:"/api/liff/address/me" };
       if(res.status !== 404 && res.status !== 400){
-        // 404/400以外はそのまま返す（例えば500）
         return { ok:false, status:res.status, data, raw, used:"/api/liff/address/me" };
       }
     }catch(e){
@@ -161,15 +178,24 @@
     const u1 = apiUrl(`/api/liff/address`);
     const u2 = apiUrl(`/api/address/set`);
 
-    const opts = {
+    // server.js の /api/liff/address は { userId, address: {...} } を期待している
+    const payload1 = { userId: payload.userId, address: payload.address };
+
+    const opts1 = {
       method:"POST",
       headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload1)
     };
 
-    // 1) liff系
+    const opts2 = {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ userId: payload.userId, ...payload.address })
+    };
+
+    // 1) liff系（推奨）
     try{
-      const { res, data, raw } = await fetchJson(u1, opts);
+      const { res, data, raw } = await fetchJson(u1, opts1);
       addDebug(`POST1 ${res.status} ${u1}`);
       if(res.ok && data?.ok) return { ok:true, data, used:"/api/liff/address" };
       if(res.status !== 404 && res.status !== 400){
@@ -179,9 +205,9 @@
       addDebug(`POST1 fetch error: ${e?.message || e}`);
     }
 
-    // 2) address系
+    // 2) address系（互換）
     try{
-      const { res, data, raw } = await fetchJson(u2, opts);
+      const { res, data, raw } = await fetchJson(u2, opts2);
       addDebug(`POST2 ${res.status} ${u2}`);
       if(res.ok && data?.ok) return { ok:true, data, used:"/api/address/set" };
       return { ok:false, status:res.status, data, raw, used:"/api/address/set" };
@@ -193,9 +219,10 @@
   // ===== 起動 =====
   setDebug(
     `debug: start\n` +
-    `LIFF_ID=${LIFF_ID}\n` +
+    `kind=${KIND}\n` +
     `api=${API_BASE ? API_BASE : "(same-origin)"}\n` +
-    `returnTo=${returnTo ? "(set)" : "(none)"}`
+    `returnTo=${returnTo ? "(set)" : "(none)"}\n` +
+    `href=${location.href}`
   );
 
   const init = await initLiff();
@@ -203,7 +230,7 @@
     if(init.waitLogin) return;
     addDebug(`\nERR: LIFF init failed: ${init.error}`);
     debugEl.classList.add("err");
-    alert("初期化に失敗しました（住所登録LIFF）。LIFF ID/登録URLを確認してください。");
+    alert("初期化に失敗しました（LIFF）。/api/liff/config と LIFFのエンドポイントURLを確認してください。");
     return;
   }
 
@@ -238,8 +265,7 @@
   $("backBtn").onclick = goBack;
 
   $("saveBtn").onclick = async () => {
-    const payload = {
-      userId,
+    const address = {
       name: $("name").value.trim(),
       phone: $("phone").value.trim(),
       postal: $("postal").value.trim(),
@@ -250,13 +276,13 @@
     };
 
     // 必須チェック（サーバが400返す前に止める）
-    if(!payload.name || !payload.phone || !payload.postal || !payload.prefecture || !payload.city || !payload.address1){
+    if(!address.name || !address.phone || !address.postal || !address.prefecture || !address.city || !address.address1){
       alert("必須項目（名前/電話/郵便/都道府県/市区町村/番地）を入力してください。");
       return;
     }
 
     addDebug("\n--- SAVE ---");
-    const saved = await saveAddress(payload);
+    const saved = await saveAddress({ userId, address });
 
     if(!saved.ok){
       alert("保存に失敗しました（下のdebugに400のURLが出ます）");

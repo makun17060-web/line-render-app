@@ -769,6 +769,278 @@ const lineClient = new line.Client(lineConfig);
 
 // ============== Express ==============
 const app = express();
+// =========================
+// Admin APIs for admin.html
+// =========================
+
+// 既にあるなら二重に追加しないでOK
+app.use(express.json({ limit: "1mb" }));
+
+// public配信（既にあるなら不要）
+app.use("/public", express.static("public"));
+
+const ADMIN_TOKEN = (process.env.ADMIN_API_TOKEN || process.env.ADMIN_CODE || "").trim();
+
+// 地域表示（注文確認用：英語キー→漢字）
+const REGION_LABEL = {
+  hokkaido: "北海道",
+  tohoku:   "東北",
+  kanto:    "関東",
+  chubu:    "中部",
+  kansai:   "関西",
+  chugoku:  "中国",
+  shikoku:  "四国",
+  kyushu:   "九州",
+  okinawa:  "沖縄",
+};
+function regionToLabel(key) {
+  return REGION_LABEL[key] || key || "";
+}
+
+// 管理トークン検証（tokenは ?token= で来る想定）
+function requireAdmin(req, res) {
+  const token = String(req.query.token || "").trim();
+  if (!ADMIN_TOKEN || token !== ADMIN_TOKEN) {
+    res.status(401).send("unauthorized");
+    return false;
+  }
+  return true;
+}
+
+// LINE Push（既存の push 実装があるならそれを使ってOK）
+async function linePush(to, messages) {
+  const TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  if (!TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
+  const res = await fetch("https://api.line.me/v2/bot/message/push", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${TOKEN}`,
+    },
+    body: JSON.stringify({ to, messages }),
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`LINE push failed: ${res.status} ${t}`);
+  }
+}
+
+// LINE Multicast（最大500件ずつ）
+async function lineMulticast(toList, messages) {
+  const TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  if (!TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
+  const res = await fetch("https://api.line.me/v2/bot/message/multicast", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${TOKEN}`,
+    },
+    body: JSON.stringify({ to: toList, messages }),
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`LINE multicast failed: ${res.status} ${t}`);
+  }
+}
+
+// ※ orders テーブルがあなたの既存実装で既にある前提
+// 既存の insertOrderToDb() で入れている列に合わせて読み取ります
+app.get("/api/admin/orders", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const date = String(req.query.date || "").trim(); // YYYYMMDD
+  try {
+    let sql = `
+      SELECT
+        id, user_id, items, total, shipping_fee, payment_method, status,
+        name, zip, pref, address, created_at
+      FROM orders
+      ORDER BY created_at DESC
+      LIMIT 500
+    `;
+    let params = [];
+
+    // 日付フィルタ（JST）: created_at をJST日付で絞る
+    if (date && /^\d{8}$/.test(date)) {
+      sql = `
+        SELECT
+          id, user_id, items, total, shipping_fee, payment_method, status,
+          name, zip, pref, address, created_at
+        FROM orders
+        WHERE to_char((created_at AT TIME ZONE 'Asia/Tokyo'), 'YYYYMMDD') = $1
+        ORDER BY created_at DESC
+        LIMIT 500
+      `;
+      params = [date];
+    }
+
+    const r = await pool.query(sql, params);
+
+    // フロントが期待する形に寄せる
+    const items = (r.rows || []).map((row) => {
+      // items は JSON/JSONB の想定
+      const itemsArr = Array.isArray(row.items) ? row.items : [];
+      const addrObj = (() => {
+        try {
+          if (row.address && typeof row.address === "object") return row.address;
+          if (typeof row.address === "string") return JSON.parse(row.address);
+        } catch {}
+        // 互換（name/zip/pref/address）
+        return {
+          name: row.name || "",
+          postal: row.zip || "",
+          prefecture: row.pref || "",
+          city: "",
+          address1: row.address || "",
+          address2: "",
+          phone: "",
+        };
+      })();
+
+      // region（英語キー）を作れるなら作る（既存の pref→region関数がある場合はそれを使う）
+      // ここでは prefからざっくり判定したい場合の最小版（必要ならあなたの既存関数に置き換えて）
+      const pref = addrObj.prefecture || row.pref || "";
+      const regionKey =
+        /^(北海道)$/.test(pref) ? "hokkaido" :
+        /^(青森|岩手|宮城|秋田|山形|福島)/.test(pref) ? "tohoku" :
+        /^(茨城|栃木|群馬|埼玉|千葉|東京|神奈川)/.test(pref) ? "kanto" :
+        /^(新潟|富山|石川|福井|山梨|長野|岐阜|静岡|愛知)/.test(pref) ? "chubu" :
+        /^(三重|滋賀|京都|大阪|兵庫|奈良|和歌山)/.test(pref) ? "kansai" :
+        /^(鳥取|島根|岡山|広島|山口)/.test(pref) ? "chugoku" :
+        /^(徳島|香川|愛媛|高知)/.test(pref) ? "shikoku" :
+        /^(福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島)/.test(pref) ? "kyushu" :
+        /^(沖縄)/.test(pref) ? "okinawa" : "";
+
+      return {
+        ts: row.created_at,              // formatYmdで表示
+        orderNumber: row.id,             // あるなら注文番号扱い
+        userId: row.user_id,
+        lineUserId: row.user_id,
+        items: itemsArr,
+        subtotal: (Number(row.total || 0) - Number(row.shipping_fee || 0)), // ざっくり
+        shipping: Number(row.shipping_fee || 0),
+        codFee: row.payment_method === "cod" ? 330 : 0, // あなたの仕様に合わせて調整可
+        finalTotal: Number(row.total || 0),
+        payment: row.payment_method || "",
+        method: (row.status === "pickup" ? "pickup" : "delivery"), // あなたのstatus設計に合わせて調整可
+        region: regionToLabel(regionKey), // ★ここが「注文確認の漢字表示」
+        address: addrObj,
+      };
+    });
+
+    res.json({ items });
+  } catch (e) {
+    console.error("[api/admin/orders] failed", e?.stack || e);
+    res.status(500).send("failed");
+  }
+});
+
+// 発送通知（管理画面→ユーザーへPush）
+app.post("/api/admin/orders/notify-shipped", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  try {
+    const { userId, message } = req.body || {};
+    if (!userId || !message) return res.status(400).send("bad_request");
+
+    await linePush(String(userId), [{ type: "text", text: String(message) }]);
+
+    // ※ サーバー側に「発送済み」を保存したい場合は orders に shipped_notified_at を追加するのが理想
+    // ここでは返すだけにしておく（HTML側はlocalStorageで管理）
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[api/admin/orders/notify-shipped] failed", e?.stack || e);
+    res.status(500).send("failed");
+  }
+});
+
+// セグメント：プレビュー
+app.post("/api/admin/segment/preview", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  try {
+    const { type, date } = req.body || {};
+    const t = String(type || "");
+    const d = String(date || "").trim(); // YYYYMMDD
+    let userIds = [];
+
+    if (t === "orders") {
+      // 注文者：ordersから抽出
+      if (d && /^\d{8}$/.test(d)) {
+        const r = await pool.query(
+          `SELECT DISTINCT user_id
+           FROM orders
+           WHERE to_char((created_at AT TIME ZONE 'Asia/Tokyo'), 'YYYYMMDD') = $1
+             AND user_id IS NOT NULL AND user_id <> ''
+           LIMIT 2000`,
+          [d]
+        );
+        userIds = r.rows.map(x => x.user_id);
+      } else {
+        const r = await pool.query(
+          `SELECT DISTINCT user_id
+           FROM orders
+           WHERE user_id IS NOT NULL AND user_id <> ''
+           ORDER BY user_id
+           LIMIT 2000`
+        );
+        userIds = r.rows.map(x => x.user_id);
+      }
+    } else if (t === "activeChatters") {
+      // アクティブトーク送信者：あなたのDBに segment_users / last_seen_at がある前提
+      // 無い場合はこのブロックをあなたの実テーブルに合わせて修正します
+      const r = await pool.query(
+        `SELECT DISTINCT user_id
+         FROM segment_users
+         WHERE user_id IS NOT NULL AND user_id <> ''
+         ORDER BY user_id
+         LIMIT 2000`
+      );
+      userIds = r.rows.map(x => x.user_id);
+    } else if (t === "addresses") {
+      // 住所登録者：addressesテーブル（あなたのDB構造に合わせる）
+      const r = await pool.query(
+        `SELECT DISTINCT user_id
+         FROM addresses
+         WHERE user_id IS NOT NULL AND user_id <> ''
+         ORDER BY user_id
+         LIMIT 2000`
+      );
+      userIds = r.rows.map(x => x.user_id);
+    } else {
+      return res.status(400).send("bad_type");
+    }
+
+    res.json({ total: userIds.length, userIds });
+  } catch (e) {
+    console.error("[api/admin/segment/preview] failed", e?.stack || e);
+    res.status(500).send("failed");
+  }
+});
+
+// セグメント：送信（multicast 500件ずつ）
+app.post("/api/admin/segment/send", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  try {
+    const { userIds, message } = req.body || {};
+    const ids = Array.isArray(userIds) ? userIds.filter(Boolean) : [];
+    const msg = String(message || "").trim();
+    if (!ids.length || !msg) return res.status(400).send("bad_request");
+
+    const chunks = [];
+    for (let i = 0; i < ids.length; i += 500) chunks.push(ids.slice(i, i + 500));
+
+    for (const c of chunks) {
+      await lineMulticast(c, [{ type: "text", text: msg }]);
+    }
+
+    res.json({ requested: ids.length, sent: ids.length });
+  } catch (e) {
+    console.error("[api/admin/segment/send] failed", e?.stack || e);
+    res.status(500).send("failed");
+  }
+});
 
 // ============== Stripe (webhook must be before json parser) ==============
 const stripe = (STRIPE_SECRET_KEY && Stripe) ? new Stripe(STRIPE_SECRET_KEY) : null;

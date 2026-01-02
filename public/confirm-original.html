@@ -107,14 +107,21 @@
 (async function(){
   "use strict";
 
-  /* =============================
-     設定
-  ============================= */
-  const LIFF_ID_ORDER = "2008406620-Bd9Zo9od"; // オリジナル用LIFF
   const KEY_CART = "isoya_cart_original";
-  const COD_FEE = 330;
-
   const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
+
+  const $ = (id)=>document.getElementById(id);
+  const orderBtn = $("orderBtn");
+  const backBtn  = $("backBtn");
+  const addrBody = $("addrBody");
+
+  function disableOrder(msg){
+    orderBtn.classList.add("btnDisabled");
+    if(msg){
+      addrBody.className = "warn";
+      addrBody.innerHTML = msg;
+    }
+  }
 
   async function fetchJson(url, opts){
     const res = await fetch(url, opts);
@@ -124,22 +131,32 @@
     return { res, data, raw:text };
   }
 
-  /* =============================
-     LIFF
-  ============================= */
+  // ✅ LIFF ID はサーバから取得（ハードコードしない）
+  let LIFF_ID_ORDER = "";
+  try{
+    const { res, data } = await fetchJson("/api/liff/config?kind=order", { cache:"no-store" });
+    if(res.ok && data?.ok && data?.liffId) LIFF_ID_ORDER = String(data.liffId);
+  }catch(e){}
+  if(!LIFF_ID_ORDER){
+    alert("LIFF_ID_ORDER（または LIFF_ID_DEFAULT）が未設定です");
+    return;
+  }
+
+  // LIFF init
   await liff.init({ liffId: LIFF_ID_ORDER });
   if(!liff.isLoggedIn()){
     liff.login({ redirectUri: location.href });
     return;
   }
 
-  // userId を確実に取る
   const prof = await liff.getProfile();
   const userId = (prof?.userId || "").trim();
+  if(!userId){
+    alert("userId が取得できませんでした");
+    return;
+  }
 
-  /* =============================
-     カート読込
-  ============================= */
+  // カート読込
   const cart = JSON.parse(localStorage.getItem(KEY_CART) || '{"items":[]}');
   const item = cart.items?.[0];
   if(!item){
@@ -148,9 +165,7 @@
     return;
   }
 
-  /* =============================
-     商品情報取得
-  ============================= */
+  // 商品情報取得
   let product = null;
   try{
     const { res: r, data: d } = await fetchJson("/api/products", { cache:"no-store" });
@@ -159,29 +174,14 @@
   }catch(e){
     console.error(e);
   }
-
   if(!product){
     alert("商品情報が見つかりません（products.json を確認してください）");
     location.href = "/original-set.html";
     return;
   }
 
-  /* =============================
-     送料サイズ計算
-  ============================= */
-  function sizeByQty(q){
-    q = Math.max(1, Math.floor(Number(q||1)));
-    if(q === 1) return 80;
-    if(q === 2) return 100;
-    if(q <= 4) return 120;
-    return 140;
-  }
-  const shipSize = sizeByQty(item.qty);
-
-  /* =============================
-     商品表示
-  ============================= */
-  document.getElementById("itemCard").innerHTML = `
+  // 商品表示
+  $("itemCard").innerHTML = `
     <div class="row">
       <div class="name">${product.name || ""}</div>
       <span class="badge">${item.qty}個</span>
@@ -193,30 +193,16 @@
   `;
 
   const itemSum = Number(product.price||0) * Number(item.qty||0);
-  document.getElementById("sumItem").textContent = yen(itemSum);
+  $("sumItem").textContent = yen(itemSum);
 
-  // 送料は後でDB参照に置換OK（まずは 0 のまま）
-  const shipFee = 0;
-  document.getElementById("shipSize").textContent = shipSize;
-  document.getElementById("sumShip").textContent = yen(shipFee);
-
-  document.getElementById("sumCod").textContent = yen(COD_FEE);
-  document.getElementById("sumTotal").textContent =
-    "合計 " + yen(itemSum + shipFee + COD_FEE);
-
-  /* =============================
-     住所表示（あなたのAPIに合わせる）
-  ============================= */
-  const addrBody = document.getElementById("addrBody");
-
+  // 住所表示
+  let hasAddress = false;
   try{
     const u = `/api/address/get?userId=${encodeURIComponent(userId)}`;
     const { res: ar, data } = await fetchJson(u, { cache:"no-store" });
 
     if(ar.ok && data?.ok && data?.address){
       const ad = data.address;
-
-      // 見た目だけ郵便番号整形
       const postal = String(ad.postal||"").replace(/[^\d]/g,"");
       const postalFmt = postal.length === 7 ? (postal.slice(0,3)+"-"+postal.slice(3)) : (ad.postal||"");
 
@@ -226,32 +212,60 @@
         〒${postalFmt}<br>
         ${(ad.prefecture || "")}${(ad.city || "")}${(ad.address1 || "")} ${(ad.address2 || "")}
       `;
+      hasAddress = true;
     }else{
-      addrBody.className = "warn";
-      addrBody.innerHTML = `住所が未登録です（住所入力で登録してください）`;
+      disableOrder(`住所が未登録です（住所入力で登録してください）`);
     }
   }catch(e){
     console.error(e);
-    addrBody.className = "warn";
-    addrBody.innerHTML = `住所の読み込みに失敗しました（/api/address/get を確認）`;
+    disableOrder(`住所の読み込みに失敗しました（/api/address/get を確認）`);
   }
 
-  /* =============================
-     ボタン
-  ============================= */
-  document.getElementById("backBtn").onclick = ()=>{
-    location.href = "/original-set.html";
-  };
+  // 送料/合計（✅サーバ見積り：DB参照）
+  let quote = null;
+  if(hasAddress){
+    try{
+      const checkout = { items: [{ id: item.id, qty: Number(item.qty||1) }] };
+      const { res, data, raw } = await fetchJson("/api/order/quote", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ uid: userId, checkout })
+      });
+      if(!res.ok || data?.ok === false){
+        throw new Error(data?.error || raw || ("HTTP "+res.status));
+      }
+      quote = data;
+    }catch(e){
+      console.error(e);
+      disableOrder(`送料計算に失敗しました（/api/order/quote を確認）`);
+    }
+  }
 
-  document.getElementById("orderBtn").onclick = async ()=>{
-    const btn = document.getElementById("orderBtn");
-    btn.classList.add("btnDisabled");
+  if(quote?.ok){
+    $("shipSize").textContent = quote.size ?? "-";
+    $("sumShip").textContent  = yen(quote.shippingFee ?? 0);
+    $("sumCod").textContent   = yen(quote.codFee ?? 330);
+    $("sumTotal").textContent = "合計 " + yen(quote.totalCod ?? (itemSum + 330));
+  }else{
+    // 住所未登録等：とりあえず表示だけ
+    $("shipSize").textContent = "-";
+    $("sumShip").textContent  = yen(0);
+    $("sumCod").textContent   = yen(330);
+    $("sumTotal").textContent = "合計 " + yen(itemSum + 330);
+  }
 
+  // ボタン
+  backBtn.onclick = ()=>{ location.href = "/original-set.html"; };
+
+  orderBtn.onclick = async ()=>{
+    if(orderBtn.classList.contains("btnDisabled")) return;
+
+    orderBtn.classList.add("btnDisabled");
     try{
       const { res, data, raw } = await fetchJson("/api/orders/original", {
         method:"POST",
         headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify({ cart })
+        body: JSON.stringify({ uid: userId, cart })
       });
 
       if(!res.ok || data?.ok === false){
@@ -264,7 +278,7 @@
     }catch(e){
       console.error(e);
       alert("注文に失敗しました： " + (e?.message || e));
-      btn.classList.remove("btnDisabled");
+      orderBtn.classList.remove("btnDisabled");
     }
   };
 })();

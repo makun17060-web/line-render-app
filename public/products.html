@@ -93,9 +93,16 @@
 (async function(){
   "use strict";
 
+  // =========================
+  // ✅ 設定
+  // =========================
   const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
   const KEY_UID  = "isoya_userId";
   const KEY_CART = "isoya_cart";
+
+  // ✅ オリジナルセットを「あかしゃシリーズ画面」から消す
+  // - products.json は消さない（他画面では使える）
+  const ORIGINAL_SET_ID = "original-set-2000";
 
   const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
 
@@ -260,7 +267,18 @@
     const d = await r.json().catch(()=>({}));
     if(!r.ok || !d.ok) throw new Error(d?.error || ("HTTP "+r.status));
 
-    products = Array.isArray(d.products) ? d.products : [];
+    // =========================
+    // ✅ ここが修正点：オリジナルセットを除外
+    // =========================
+    const raw = Array.isArray(d.products) ? d.products : [];
+    products = raw.filter(p => {
+      const id = String(p?.id || "").trim();
+      const name = String(p?.name || "");
+      if (id === ORIGINAL_SET_ID) return false;
+      if (/オリジナルセット/.test(name)) return false; // 念のため
+      return true;
+    });
+
     statusEl.textContent = products.length ? "" : "商品がありません（products.json を確認）";
     gridEl.innerHTML = "";
     products.forEach(p => gridEl.appendChild(card(p)));

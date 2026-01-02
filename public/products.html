@@ -12,10 +12,19 @@
       --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280;
       --line:#e5e7eb; --pri:#0b3a53; --danger:#b91c1c;
       --shadow:0 1px 3px rgba(0,0,0,.06); --radius:14px;
+
+      /* ✅ 固定バー高さ（JSで実測して自動更新） */
+      --barH: 120px;
     }
     *{ box-sizing:border-box; }
     body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
-    .wrap{ max-width:1040px; margin:0 auto; padding:14px 14px 118px; }
+
+    /* ✅ 下の固定バーに隠れないように、padding-bottom をバー高さに追従させる */
+    .wrap{
+      max-width:1040px; margin:0 auto;
+      padding:14px 14px calc(var(--barH) + env(safe-area-inset-bottom) + 18px);
+    }
+
     h1{ margin:0 0 6px; font-size:18px; }
     .muted{ color:var(--muted); font-size:13px; line-height:1.5; }
     .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; margin-top:12px; }
@@ -67,6 +76,7 @@
       background:rgba(246,247,249,.92);
       backdrop-filter:blur(10px);
       padding:10px 12px;
+      padding-bottom: calc(10px + env(safe-area-inset-bottom));
     }
     .bar .inner{
       max-width:1040px; margin:0 auto;
@@ -112,86 +122,212 @@
   "use strict";
 
   const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
-  const ORIGINAL_SET_ID = "original-set-2000";
   const KEY_UID  = "isoya_userId";
   const KEY_CART = "isoya_cart";
+
+  // ✅ オリジナルセットをこの画面から非表示
+  const ORIGINAL_SET_ID = "original-set-2000";
+
   const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
 
   function loadCart(){
-    try{ return JSON.parse(localStorage.getItem(KEY_CART)||"") || {items:[]}; }
-    catch{ return {items:[]}; }
+    try{
+      const v = JSON.parse(localStorage.getItem(KEY_CART) || "");
+      if(v && typeof v==="object") return v;
+    }catch{}
+    return { items: [] };
   }
-  function saveCart(c){ localStorage.setItem(KEY_CART, JSON.stringify(c)); }
+  function saveCart(cart){ localStorage.setItem(KEY_CART, JSON.stringify(cart)); }
+
+  function normItems(items){
+    const map = new Map();
+    for(const it of (items||[])){
+      const id = String(it?.id||"").trim();
+      const qty = Math.max(0, Math.floor(Number(it?.qty||0)));
+      if(!id || qty<=0) continue;
+      map.set(id, (map.get(id)||0) + qty);
+    }
+    return Array.from(map.entries()).map(([id,qty])=>({id,qty}));
+  }
 
   async function ensureLiffUser(){
     await liff.init({ liffId: LIFF_ID_ORDER });
-    if(!liff.isLoggedIn()){ liff.login({ redirectUri: location.href }); return null; }
-    const p = await liff.getProfile();
-    localStorage.setItem(KEY_UID, p.userId);
-    return p.userId;
+    if(!liff.isLoggedIn()){
+      liff.login({ redirectUri: location.href });
+      return null;
+    }
+    const prof = await liff.getProfile();
+    const uid = (prof?.userId || "").trim();
+    if(uid) localStorage.setItem(KEY_UID, uid);
+    return uid;
   }
 
-  const statusEl = document.getElementById("status");
-  const gridEl   = document.getElementById("grid");
-  const sumEl    = document.getElementById("sum");
-  const clearBtn = document.getElementById("clearBtn");
-  const addrBtn  = document.getElementById("addrBtn");
-  const nextBtn  = document.getElementById("nextBtn");
+  const statusEl  = document.getElementById("status");
+  const gridEl    = document.getElementById("grid");
+  const sumEl     = document.getElementById("sum");
+  const clearBtn  = document.getElementById("clearBtn");
+  const addrBtn   = document.getElementById("addrBtn");
+  const nextBtn   = document.getElementById("nextBtn");
+
+  // ✅ 固定バーの高さを実測して、.wrap の下余白を自動調整
+  function syncBarHeight(){
+    const bar = document.querySelector(".bar");
+    if(!bar) return;
+    const h = Math.ceil(bar.getBoundingClientRect().height || 0);
+    if(h > 0) document.documentElement.style.setProperty("--barH", h + "px");
+  }
 
   let cart = loadCart();
+  cart.items = normItems(cart.items);
+
   let products = [];
 
   function renderSum(){
-    let sum=0,cnt=0;
-    for(const it of cart.items||[]){
-      const p = products.find(x=>x.id===it.id);
+    const byId = Object.fromEntries(products.map(p=>[p.id,p]));
+    let subtotal = 0, count = 0;
+    for(const it of cart.items){
+      const p = byId[it.id];
       if(!p) continue;
-      sum += p.price * it.qty;
-      cnt += it.qty;
+      subtotal += Number(p.price||0) * Number(it.qty||0);
+      count += Number(it.qty||0);
     }
-    sumEl.textContent = `カート：${cnt}点 / 小計 ${yen(sum)}`;
-    nextBtn.classList.toggle("btnDisabled", cnt===0);
+    sumEl.textContent = `カート：${count}点 / 小計 ${yen(subtotal)}`;
+    nextBtn.classList.toggle("btnDisabled", count===0);
+
+    // 合計表示が変わるとバーの折返しが変わることがあるので再計測
+    syncBarHeight();
+  }
+
+  function addToCart(product, qtyToAdd){
+    const id = String(product.id||"").trim();
+    const qty = Math.max(1, Math.floor(Number(qtyToAdd||1)));
+    const ex = cart.items.find(x => x.id === id);
+    if(ex) ex.qty += qty;
+    else cart.items.push({ id, qty });
+    cart.items = normItems(cart.items);
+    saveCart(cart);
+    renderSum();
   }
 
   function card(p){
-    const d=document.createElement("div");
-    d.className="card";
-    d.innerHTML=`
-      <div class="imgbox">${p.image?`<img src="${p.image}">`:""}</div>
+    const el = document.createElement("div");
+    el.className = "card";
+
+    const img = String(p.image||"").trim();
+    const stock = Number(p.stock||0);
+
+    el.innerHTML = `
+      <div class="imgbox">${img ? `<img src="${img}" alt="">` : ""}</div>
       <div class="body">
-        <div class="name">${p.name}</div>
-        <div class="desc">${p.desc||""}</div>
+        <div class="name">${p.name || ""}</div>
+        <div class="desc">${p.desc || ""}</div>
         <div class="row">
           <div class="price">${yen(p.price)}</div>
-          <span class="badge">${p.volume||""}</span>
+          <span class="badge">${p.volume ? `内容量 ${p.volume}` : `在庫 ${stock}`}</span>
         </div>
         <div class="controls">
-          <button class="btn btnAdd">カートに追加</button>
+          <div class="qty">
+            <button type="button" class="dec">−</button>
+            <input class="q" type="number" min="1" step="1" value="1" inputmode="numeric">
+            <button type="button" class="inc">＋</button>
+          </div>
+          <button type="button" class="btn btnAdd add">カートに追加</button>
         </div>
-      </div>`;
-    d.querySelector(".btnAdd").onclick=()=>{
-      cart.items.push({id:p.id,qty:1});
-      saveCart(cart); renderSum();
+      </div>
+    `;
+
+    const im = el.querySelector("img");
+    if(im) im.addEventListener("error", ()=> im.remove());
+
+    const q = el.querySelector(".q");
+    el.querySelector(".dec").onclick = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1))-1)); };
+    el.querySelector(".inc").onclick = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1))+1)); };
+    q.onchange = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1)))); };
+
+    const addBtn = el.querySelector(".add");
+    if(Number.isFinite(stock) && stock <= 0){
+      addBtn.disabled = true;
+      addBtn.textContent = "在庫なし";
+    }
+
+    addBtn.onclick = ()=>{
+      const add = Math.max(1, Math.floor(Number(q.value||1)));
+      const inCart = cart.items.find(x => x.id === p.id)?.qty || 0;
+      const next = inCart + add;
+      if(Number.isFinite(stock) && stock >= 0 && next > stock){
+        alert(`在庫不足です（在庫 ${stock}）。個数を減らしてください。`);
+        return;
+      }
+      addToCart(p, add);
     };
-    return d;
+
+    return el;
+  }
+
+  function goAddress(){
+    const ret = encodeURIComponent("/confirm.html");
+    location.href = `/cod-register.html?returnTo=${ret}`;
   }
 
   try{
-    await ensureLiffUser();
-    const r=await fetch("/api/products",{cache:"no-store"});
-    const d=await r.json();
-    products=(d.products||[]).filter(p=>p.id!==ORIGINAL_SET_ID);
-    gridEl.innerHTML="";
-    products.forEach(p=>gridEl.appendChild(card(p)));
-    renderSum();
-    statusEl.textContent="";
-  }catch{
-    statusEl.textContent="商品読み込み失敗";
+    const uid = await ensureLiffUser();
+    if(!uid){
+      statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">LIFFログイン中…</span>';
+      return;
+    }
+  }catch(e){
+    console.error(e);
+    statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">LIFF初期化に失敗しました（注文用LIFF）</span>';
+    return;
   }
 
-  addrBtn.onclick=()=>location.href="/cod-register.html";
-  clearBtn.onclick=()=>{cart={items:[]};saveCart(cart);renderSum();};
-  nextBtn.onclick=()=>location.href="/cod-register.html";
+  // 初回計測（描画前でもOK）
+  syncBarHeight();
+  window.addEventListener("resize", syncBarHeight);
+
+  addrBtn.onclick = goAddress;
+  nextBtn.onclick = ()=>{
+    if(nextBtn.classList.contains("btnDisabled")){
+      alert("カートが空です");
+      return;
+    }
+    goAddress();
+  };
+
+  clearBtn.onclick = ()=>{
+    if(!confirm("カートを空にしますか？")) return;
+    cart = { items: [] };
+    saveCart(cart);
+    renderSum();
+  };
+
+  try{
+    const r = await fetch("/api/products", { cache:"no-store" });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok || !d.ok) throw new Error(d?.error || ("HTTP "+r.status));
+
+    // ✅ オリジナルセット除外（ID + 名前）
+    const raw = Array.isArray(d.products) ? d.products : [];
+    products = raw.filter(p => {
+      const id = String(p?.id || "").trim();
+      const name = String(p?.name || "");
+      if (id === ORIGINAL_SET_ID) return false;
+      if (/オリジナルセット/.test(name)) return false;
+      return true;
+    });
+
+    statusEl.textContent = products.length ? "" : "商品がありません（products.json を確認）";
+    gridEl.innerHTML = "";
+    products.forEach(p => gridEl.appendChild(card(p)));
+
+    renderSum();
+    syncBarHeight(); // 商品描画後に再計測（重要）
+  }catch(e){
+    console.error(e);
+    statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">商品読み込み失敗：/api/products を確認してください</span>';
+    renderSum();
+    syncBarHeight();
+  }
 })();
 </script>
 </body>

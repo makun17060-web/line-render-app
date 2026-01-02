@@ -55,7 +55,7 @@
     </div>
 
     <div class="card">
-      <a class="btn btnAkasha" href="/products.html" id="goAkasha">🍘 あかしゃシリーズを購入</a>
+      <a class="btn btnAkasha" href="#" id="goAkasha">🍘 あかしゃシリーズを購入</a>
       <div class="note">単品・組み合わせ自由（混載OK）</div>
       <div class="sub">久助も「シリーズ扱い」で同梱できます</div>
       <div class="pill">カートに入れて住所入力へ</div>
@@ -67,6 +67,14 @@
   </div>
 
 <script>
+  const LIFF_ID_AKASHA = "2008406620-G5j1gjzM";
+
+document.getElementById("goAkasha").addEventListener("click", (e)=>{
+  e.preventDefault();
+  // LINEアプリ内で確実に開く
+  location.href = `https://liff.line.me/${LIFF_ID_AKASHA}`;
+});
+
 (async function(){
   "use strict";
 

@@ -40,7 +40,7 @@ const sanitizeBase = (u) =>
 const baseUrl = sanitizeBase(PUBLIC_BASE_URL || "https://line-render-app-1.onrender.com");
 
 // 画像 左上：ご注文はこちら（注文LIFF）
-const ORDER_LIFF_URL = `https://liff.line.me/${LIFF_ID_MINIAPP}`;
+const ORDER_LIFF_URL = `https://liff.line.me/${LIFF_ID_INDEX}`;
 
 // 画像 左下：住所登録（住所登録LIFF）
 let addressLiffUrl = (ADDRESS_LIFF_URL || "").trim();

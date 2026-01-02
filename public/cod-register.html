@@ -46,32 +46,34 @@
 <body>
 <div class="wrap">
   <h1>住所入力</h1>
-  <div class="muted">注文のために住所を入力してください（登録済みの場合は自動で表示されます）</div>
+  <div class="muted">
+    注文のために住所を入力してください（登録済みの場合は自動で表示されます）
+  </div>
 
   <div class="card">
     <label>お名前</label>
-    <input id="name" placeholder="例）磯屋 太郎">
+    <input id="name">
 
     <label>電話番号</label>
-    <input id="phone" placeholder="例）090-1234-5678">
+    <input id="phone">
 
     <label>郵便番号</label>
-    <input id="postal" placeholder="例）470-0000">
+    <input id="postal">
 
     <label>都道府県</label>
-    <input id="prefecture" placeholder="例）愛知県">
+    <input id="prefecture">
 
     <label>市区町村</label>
-    <input id="city" placeholder="例）知多郡武豊町">
+    <input id="city">
 
     <label>番地</label>
-    <input id="address1" placeholder="例）字〇〇 1-2-3">
+    <input id="address1">
 
     <label>建物名など（任意）</label>
-    <input id="address2" placeholder="任意">
+    <input id="address2">
 
     <button class="btn" id="saveBtn" type="button">保存して次へ</button>
-    <button class="btn btnSub" id="backBtn" type="button">商品へ戻る</button>
+    <button class="btn btnSub" id="backBtn" type="button">戻る</button>
 
     <div class="debug" id="debug">debug: 起動中…</div>
   </div>
@@ -81,57 +83,39 @@
 (async function(){
   "use strict";
 
-  const LIFF_ID_ADDRESS = "2008406620-4kyQVyqe"; // 住所入力用
-  const KEY_UID  = "isoya_userId";
-  const KEY_CART = "isoya_cart";
+  /* =============================
+     設定
+  ============================= */
+  const LIFF_ID_ADDRESS = "2008406620-4kyQVyqe"; // 住所登録用LIFF
+  const KEY_UID = "isoya_userId";
 
+  /* =============================
+     クエリ解析 & 安全化
+  ============================= */
   const qs = new URLSearchParams(location.search);
-  const returnTo = (qs.get("returnTo") || "/confirm.html").trim();
 
-  const $ = (id) => document.getElementById(id);
+  function safeReturnTo(p){
+    p = String(p||"").trim();
+    if(!p) return "";
+    if(p.startsWith("http://") || p.startsWith("https://")) return "";
+    if(!p.startsWith("/")) return "";
+    return p;
+  }
+
+  const mode = (qs.get("mode") || "").trim(); // "original" or ""
+  const returnTo = safeReturnTo(qs.get("returnTo")) ||
+    (mode === "original" ? "/confirm-original.html" : "/confirm.html");
+
+  const KEY_CART = (mode === "original")
+    ? "isoya_cart_original"
+    : "isoya_cart";
+
+  /* =============================
+     DOM
+  ============================= */
+  const $ = id => document.getElementById(id);
   const debugEl = $("debug");
-  const setDebug = (msg) => { debugEl.textContent = msg; };
-  const addDebug = (msg) => { debugEl.textContent += "\n" + msg; };
-
-  async function fetchJson(url, opts){
-    const res = await fetch(url, opts);
-    const text = await res.text();
-    let data = {};
-    try { data = text ? JSON.parse(text) : {}; } catch { data = { _raw: text }; }
-    return { res, data, raw: text };
-  }
-
-  async function initLiff(){
-    await liff.init({ liffId: LIFF_ID_ADDRESS });
-    if(!liff.isLoggedIn()){
-      liff.login({ redirectUri: location.href });
-      return null;
-    }
-    const prof = await liff.getProfile();
-    const userId = (prof?.userId || "").trim();
-    if(userId) localStorage.setItem(KEY_UID, userId);
-    return userId;
-  }
-
-  async function loadAddress(userId){
-    const u = `/api/address/get?userId=${encodeURIComponent(userId)}`;
-    const { res, data } = await fetchJson(u, { cache:"no-store" });
-    addDebug(`GET ${res.status} ${u}`);
-    if(res.ok && data?.ok && data?.address) return data.address;
-    return null;
-  }
-
-  async function saveAddress(payload){
-    const u = "/api/address/set";
-    const { res, data, raw } = await fetchJson(u, {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify(payload)
-    });
-    addDebug(`POST ${res.status} ${u}`);
-    if(res.ok && data?.ok) return data.address;
-    throw new Error(data?.error || raw || ("HTTP "+res.status));
-  }
+  const log = m => debugEl.textContent += "\n" + m;
 
   function hasCart(){
     try{
@@ -140,53 +124,67 @@
     }catch{ return false; }
   }
 
-  setDebug(
-    `debug:start\n`+
-    `LIFF_ID_ADDRESS=${LIFF_ID_ADDRESS}\n`+
-    `returnTo=${returnTo}\n`
-  );
-
-  let userId = "";
+  /* =============================
+     LIFF 初期化
+  ============================= */
   try{
-    userId = await initLiff();
-    if(!userId) return;
-    addDebug(`OK: userId=${userId}`);
-    debugEl.classList.add("ok");
+    await liff.init({ liffId: LIFF_ID_ADDRESS });
+    if(!liff.isLoggedIn()){
+      liff.login({ redirectUri: location.href });
+      return;
+    }
+    const prof = await liff.getProfile();
+    if(prof?.userId){
+      localStorage.setItem(KEY_UID, prof.userId);
+      log("OK: LIFF userId取得");
+    }
   }catch(e){
-    console.error(e);
     debugEl.classList.add("err");
-    addDebug(`ERR: LIFF init failed: ${e?.message || e}`);
-    alert("初期化に失敗しました（住所入力LIFF）。LIFF ID/登録URLを確認してください。");
+    log("ERR: LIFF初期化失敗");
+    alert("住所登録画面の初期化に失敗しました");
     return;
   }
 
-  // 既存住所ロード
+  log(`mode=${mode || "normal"}`);
+  log(`KEY_CART=${KEY_CART}`);
+  log(`returnTo=${returnTo}`);
+
+  /* =============================
+     既存住所ロード
+  ============================= */
   try{
-    const a = await loadAddress(userId);
-    if(a){
-      $("name").value = a.name || "";
-      $("phone").value = a.phone || "";
-      $("postal").value = a.postal || "";
-      $("prefecture").value = a.prefecture || "";
-      $("city").value = a.city || "";
-      $("address1").value = a.address1 || "";
-      $("address2").value = a.address2 || "";
-      addDebug("OK: address prefilled");
-    }else{
-      addDebug("INFO: no address yet");
+    const uid = localStorage.getItem(KEY_UID) || "";
+    const r = await fetch(`/api/address/get?userId=${encodeURIComponent(uid)}`, { cache:"no-store" });
+    const d = await r.json();
+    if(r.ok && d?.ok && d.address){
+      Object.entries(d.address).forEach(([k,v])=>{
+        if($(k)) $(k).value = v || "";
+      });
+      log("OK: 住所を自動入力");
     }
-  }catch(e){
-    addDebug(`WARN: loadAddress failed: ${e?.message || e}`);
+  }catch{
+    log("INFO: 既存住所なし");
   }
 
+  /* =============================
+     戻る
+  ============================= */
   $("backBtn").onclick = ()=>{
-    // カートがあるなら戻ってもOK。なければ商品へ。
-    location.href = "/products.html";
+    location.href = (mode === "original") ? "/original-set.html" : "/products.html";
   };
 
+  /* =============================
+     保存
+  ============================= */
   $("saveBtn").onclick = async ()=>{
+    if(!hasCart()){
+      alert("カートが空です。商品選択からやり直してください。");
+      location.href = (mode === "original") ? "/original-set.html" : "/products.html";
+      return;
+    }
+
     const payload = {
-      userId,
+      userId: localStorage.getItem(KEY_UID) || "",
       name: $("name").value.trim(),
       phone: $("phone").value.trim(),
       postal: $("postal").value.trim(),
@@ -196,26 +194,27 @@
       address2: $("address2").value.trim(),
     };
 
-    if(!payload.name || !payload.phone || !payload.postal || !payload.prefecture || !payload.city || !payload.address1){
-      alert("必須項目（名前/電話/郵便/都道府県/市区町村/番地）を入力してください。");
-      return;
-    }
-    if(!hasCart()){
-      alert("カートが空です。先に商品を選んでください。");
-      location.href = "/products.html";
+    if(!payload.name || !payload.phone || !payload.postal ||
+       !payload.prefecture || !payload.city || !payload.address1){
+      alert("必須項目をすべて入力してください");
       return;
     }
 
-    addDebug("\n--- SAVE ---");
     try{
-      await saveAddress(payload);
-      alert("住所を保存しました。");
-      location.href = returnTo || "/confirm.html";
+      const r = await fetch("/api/address/set", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify(payload)
+      });
+      const d = await r.json();
+      if(!r.ok || !d?.ok) throw new Error(d?.error || "save failed");
+
+      alert("住所を保存しました");
+      location.href = returnTo;
     }catch(e){
-      console.error(e);
       debugEl.classList.add("err");
-      addDebug(`ERR: save failed: ${e?.message || e}`);
-      alert("保存に失敗しました。下のdebugを確認してください。");
+      log("ERR: 保存失敗 " + e.message);
+      alert("住所の保存に失敗しました");
     }
   };
 })();

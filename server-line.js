@@ -1,12 +1,15 @@
 /**
- * server.js — 真の全部入り “完全・全部入り” 丸ごと版（cod-register一本化 対応版）
+ * server.js — 真の全部入り “完全・全部入り” 丸ごと版（token渡し confirm対応 + LIFF env吸収版）
  *
- * ✅ 追加したこと（今回の修正点）
- * - /api/liff/config を実装（cod-register.html の「liffId取得失敗」を解消）
- * - /api/liff/open を実装（/api/liff/opened の別名として互換）
- * - /api/liff/address /api/liff/address/me を実装（/api/address/* の別名として互換）
- * - liff-address.html /address.html を cod-register.html へ 302 リダイレクト（削除しても壊れない）
- * - LINE Bot が返す「住所登録URL」を cod-register.html に統一
+ * ✅ 追加（今回）
+ * - AUTH_TOKEN_SECRET を使った「confirm用 token 発行/検証」
+ *   - POST /api/auth/issue-token  （products → confirmへ渡す t を発行）
+ *   - GET  /api/auth/whoami?t=... （t → uid 復元：quote/cod/create用）
+ *   - GET  /api/auth/address?t=...（t → DB住所取得：confirm表示用）
+ *
+ * ✅ /api/liff/config のENVキー吸収
+ * - LIFF_ID_ORDER / LIFF_ID_ADDRESS（あなたの運用）
+ * - 互換: LIFF_ID_DEFAULT / LIFF_ID_COD
  *
  * ✅ Render Disk 永続化（超重要）
  * - DATA_DIR=/var/data（デフォルト）: products.json / sessions.json / logs
@@ -23,11 +26,13 @@
  * - LINE_CHANNEL_SECRET
  * - DATABASE_URL（Postgres）
  *
- * ✅ LIFF（今回追加）
- * - LIFF_ID_DEFAULT（例 2008406620-QQFfWP1w）←まずこれだけでOK
- *   任意で分けるなら:
- *   - LIFF_ID_COD
- *   - LIFF_ID_ORDER
+ * ✅ LIFF
+ * - LIFF_ID_ORDER（例: 2008406620-xxxx）  … products（ミニアプリ側）
+ * - LIFF_ID_ADDRESS（例: 2008406620-yyyy）… 住所登録（cod-register）
+ *   ※分けないなら LIFF_ID_DEFAULT だけでもOK（両方に使う）
+ *
+ * ✅ confirm token（今回追加）
+ * - AUTH_TOKEN_SECRET（長いランダム文字列）
  *
  * ✅ Stripe 利用するなら
  * - STRIPE_SECRET_KEY
@@ -46,7 +51,7 @@ const express = require("express");
 const line = require("@line/bot-sdk");
 const { Pool } = require("pg");
 
-// Stripeは環境変数がある時だけ require（無い環境で落ちないように）
+// Stripeは環境変数がある時だけ require
 let Stripe = null;
 try { Stripe = require("stripe"); } catch {}
 
@@ -57,12 +62,15 @@ const {
 
   PUBLIC_BASE_URL,        // 例: https://xxxxx.onrender.com
   LIFF_BASE_URL,          // 例: https://xxxxx.onrender.com
-  LIFF_CHANNEL_ID,        // 任意
+  LIFF_CHANNEL_ID,        // 任意（id_token verifyしたいなら）
 
-  // ★今回追加（cod-register.html が /api/liff/config で取得）
+  // LIFF（複数キー混在を吸収）
   LIFF_ID_DEFAULT = "",
   LIFF_ID_COD = "",
   LIFF_ID_ORDER = "",
+
+  // ★あなたが実際に使ってるキー名（混在対策）
+  LIFF_ID_ADDRESS = "",
 
   DATA_DIR = "/var/data",
   UPLOAD_DIR = "/var/data/uploads",
@@ -80,6 +88,9 @@ const {
   KEYWORD_KUSUKE = "久助",
 
   ORIGINAL_SET_PRODUCT_ID = "original-set-2000",
+
+  // ★confirm token用
+  AUTH_TOKEN_SECRET = "",
 } = process.env;
 
 if (!LINE_CHANNEL_ACCESS_TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
@@ -114,7 +125,7 @@ const SHIPPING_REGION_BY_PREF = {
   "沖縄県": "okinawa",
 };
 
-// サイズ別 送料（税込の例）※あなたの表に合わせて調整OK
+// サイズ別 送料（税込例）
 const SHIPPING_YAMATO = {
   hokkaido: { 60: 1300, 80: 1550, 100: 1800, 120: 2050, 140: 2300 },
   tohoku:   { 60:  900, 80: 1100, 100: 1300, 120: 1500, 140: 1700 },
@@ -279,7 +290,6 @@ function calcShippingFee(prefecture, size) {
   const table = SHIPPING_YAMATO[region] || SHIPPING_YAMATO["chubu"];
   return Number(table[size] || table[80] || 0);
 }
-
 function calcPackageSizeFromItems(items, productsById) {
   let hasOriginalSet = false;
   let originalQty = 0;
@@ -340,7 +350,6 @@ async function ensureDb() {
     );
   `);
 
-  // ★addresses は既存DBに寄せる
   await pool.query(`
     CREATE TABLE IF NOT EXISTS addresses (
       id BIGSERIAL PRIMARY KEY,
@@ -359,11 +368,14 @@ async function ensureDb() {
     );
   `);
 
-  // ★既存テーブルでも upsert が動くよう、ユニークindexを作る（存在すればスキップ）
-  //   ※もし既に重複データがあると index 作成が失敗します。その場合はログに出ます（要整理）
-  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_user_id_uidx ON addresses(user_id) WHERE user_id IS NOT NULL;`); } catch(e){ logErr("CREATE UNIQUE INDEX addresses_user_id_uidx failed", e?.message||e); }
-  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_member_code_uidx ON addresses(member_code) WHERE member_code IS NOT NULL;`); } catch(e){ logErr("CREATE UNIQUE INDEX addresses_member_code_uidx failed", e?.message||e); }
-  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_address_key_uidx ON addresses(address_key) WHERE address_key IS NOT NULL;`); } catch(e){ logErr("CREATE UNIQUE INDEX addresses_address_key_uidx failed", e?.message||e); }
+  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_user_id_uidx ON addresses(user_id) WHERE user_id IS NOT NULL;`); }
+  catch(e){ logErr("CREATE UNIQUE INDEX addresses_user_id_uidx failed", e?.message||e); }
+
+  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_member_code_uidx ON addresses(member_code) WHERE member_code IS NOT NULL;`); }
+  catch(e){ logErr("CREATE UNIQUE INDEX addresses_member_code_uidx failed", e?.message||e); }
+
+  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_address_key_uidx ON addresses(address_key) WHERE address_key IS NOT NULL;`); }
+  catch(e){ logErr("CREATE UNIQUE INDEX addresses_address_key_uidx failed", e?.message||e); }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS orders (
@@ -484,8 +496,6 @@ async function upsertAddress(userId, addr) {
 
   const addressKey = addr.address_key ? String(addr.address_key).trim() : makeAddressKey(addr);
 
-  // ★ user_id にユニークがある想定（ensureDbで index 作成）
-  //   もし index 作成に失敗（重複）しているとここでエラーになります（ログ確認）
   let saved;
   try {
     const q = `
@@ -519,7 +529,6 @@ async function upsertAddress(userId, addr) {
     saved = r.rows[0];
   } catch (e) {
     const msg = String(e?.message || "");
-    // member_code 衝突など → 再発行してリトライ
     if (msg.includes("member_code") || msg.includes("duplicate key")) {
       const newCode = await issueUniqueMemberCode();
       const q2 = `
@@ -927,22 +936,34 @@ app.post("/api/admin/upload-image", requireAdmin, async (req, res) => {
 });
 
 // =========================
-// LIFF config（cod-register.html が使用）
+// LIFF config（cod-register / products が使用）
+// ★ENVキー混在吸収：LIFF_ID_ADDRESS / LIFF_ID_ORDER / LIFF_ID_DEFAULT / LIFF_ID_COD
 // =========================
-app.get("/api/liff/config", (req, res) => {
-  const kind = String(req.query.kind || "order");
+function resolveLiffIds() {
+  const order =
+    String(LIFF_ID_ORDER || "").trim() ||
+    String(LIFF_ID_DEFAULT || "").trim();
 
-  const ORDER   = (process.env.LIFF_ID_ORDER || "").trim();
-  const ADDRESS = (process.env.LIFF_ID_ADDRESS || "").trim();
+  const address =
+    String(LIFF_ID_ADDRESS || "").trim() ||
+    String(LIFF_ID_COD || "").trim() ||
+    String(LIFF_ID_DEFAULT || "").trim();
+
+  return { order, address };
+}
+
+app.get("/api/liff/config", (req, res) => {
+  const kind = String(req.query.kind || "order").trim().toLowerCase();
+  const { order, address } = resolveLiffIds();
 
   let liffId = "";
-  if (kind === "address" || kind === "register" || kind === "cod") liffId = ADDRESS;
-  else liffId = ORDER;
+  if (kind === "address" || kind === "register" || kind === "cod") liffId = address;
+  else liffId = order;
 
   if (!liffId) return res.status(400).json({ ok:false, error:"LIFF_ID_NOT_SET", kind });
+  res.setHeader("Cache-Control", "no-store");
   return res.json({ ok:true, liffId });
 });
-
 
 // ============== Address API (旧/現行) ==============
 app.get("/api/address/get", async (req, res) => {
@@ -984,7 +1005,7 @@ app.post("/api/address/set", async (req, res) => {
 });
 
 // =========================
-// ★互換：cod-register.html 用（/api/liff/address/me, /api/liff/address）
+// 互換：cod-register 用（/api/liff/address/me, /api/liff/address）
 // =========================
 app.get("/api/liff/address/me", async (req, res) => {
   try {
@@ -1067,7 +1088,7 @@ app.post("/api/liff/opened", async (req, res) => {
   }
 });
 
-// ★互換：/api/liff/open（cod-register.html が呼ぶ名前）
+// 互換：/api/liff/open
 app.post("/api/liff/open", async (req, res) => {
   try {
     const userId = String(req.body?.userId || "").trim();
@@ -1076,6 +1097,155 @@ app.post("/api/liff/open", async (req, res) => {
     res.json({ ok:true });
   } catch (e) {
     logErr("POST /api/liff/open", e?.stack || e);
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
+
+// =========================
+// ★ confirm token（今回追加）
+// - 署名つき token を発行して confirm.html?t=... で受け渡し
+// =========================
+function b64url(bufOrStr) {
+  const buf = Buffer.isBuffer(bufOrStr) ? bufOrStr : Buffer.from(String(bufOrStr));
+  return buf.toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+function b64urlJson(obj) { return b64url(JSON.stringify(obj)); }
+function b64urlToBuf(s) {
+  const t = String(s).replace(/-/g, "+").replace(/_/g, "/");
+  const pad = t.length % 4 ? "=".repeat(4 - (t.length % 4)) : "";
+  return Buffer.from(t + pad, "base64");
+}
+
+/** 5分トークン（aud=confirm, uid, exp） */
+function signToken(payload, secret) {
+  if (!secret) throw new Error("AUTH_TOKEN_SECRET_NOT_SET");
+  const header = { alg: "HS256", typ: "JWT" };
+  const h = b64urlJson(header);
+  const p = b64urlJson(payload);
+  const data = `${h}.${p}`;
+  const sig = crypto.createHmac("sha256", secret).update(data).digest();
+  return `${data}.${b64url(sig)}`;
+}
+function verifyToken(token, secret) {
+  if (!secret) throw new Error("AUTH_TOKEN_SECRET_NOT_SET");
+  const t = String(token || "").trim();
+  const parts = t.split(".");
+  if (parts.length !== 3) throw new Error("bad_token");
+
+  const [h, p, s] = parts;
+  const data = `${h}.${p}`;
+  const expect = crypto.createHmac("sha256", secret).update(data).digest();
+  const got = b64urlToBuf(s);
+
+  // timingSafeEqualは長さ一致が必要
+  if (got.length !== expect.length || !crypto.timingSafeEqual(got, expect)) {
+    throw new Error("bad_signature");
+  }
+
+  const payload = JSON.parse(b64urlToBuf(p).toString("utf8"));
+  const now = Math.floor(Date.now() / 1000);
+  if (payload?.exp && now > payload.exp) throw new Error("expired");
+  return payload;
+}
+
+// （任意）id_token が来たら verify して uid を確定（LIFF_CHANNEL_ID があるときのみ）
+async function uidFromIdTokenIfPossible(idToken) {
+  const tok = String(idToken || "").trim();
+  if (!tok) return null;
+  if (!LIFF_CHANNEL_ID) return null;
+
+  const params = new URLSearchParams();
+  params.set("id_token", tok);
+  params.set("client_id", LIFF_CHANNEL_ID);
+
+  const r = await fetch("https://api.line.me/oauth2/v2.1/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params.toString(),
+  });
+  const data = await r.json().catch(()=> ({}));
+  if (!r.ok) return null;
+
+  // verifyの戻りに sub が入る（ユーザー識別子）
+  const uid = String(data?.sub || "").trim();
+  return uid || null;
+}
+
+/**
+ * POST /api/auth/issue-token
+ * body: { userId } または { id_token }（LIFF_CHANNEL_ID設定時は id_token 推奨）
+ * -> { ok:true, token, expiresInSec }
+ */
+app.post("/api/auth/issue-token", async (req, res) => {
+  try {
+    if (!AUTH_TOKEN_SECRET) return res.status(500).json({ ok:false, error:"AUTH_TOKEN_SECRET_NOT_SET" });
+
+    // 可能なら id_token から確定（より安全）
+    const uidByIdToken = await uidFromIdTokenIfPossible(req.body?.id_token);
+    const userId = String(uidByIdToken || req.body?.userId || "").trim();
+    if (!userId) return res.status(400).json({ ok:false, error:"userId required" });
+
+    // DBに存在するユーザーなら touch（任意）
+    try { await touchUser(userId, "seen"); } catch {}
+
+    const now = Math.floor(Date.now() / 1000);
+    const exp = now + 5 * 60; // 5分
+    const token = signToken({ aud: "confirm", uid: userId, iat: now, exp }, AUTH_TOKEN_SECRET);
+
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok:true, token, expiresInSec: 300 });
+  } catch (e) {
+    logErr("POST /api/auth/issue-token", e?.stack || e);
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
+
+/** GET /api/auth/whoami?t=... -> { ok:true, uid } */
+app.get("/api/auth/whoami", async (req, res) => {
+  try {
+    if (!AUTH_TOKEN_SECRET) return res.status(500).json({ ok:false, error:"AUTH_TOKEN_SECRET_NOT_SET" });
+
+    const t = String(req.query.t || "").trim();
+    if (!t) return res.status(400).json({ ok:false, error:"token required" });
+
+    const payload = verifyToken(t, AUTH_TOKEN_SECRET);
+    if (payload.aud !== "confirm") return res.status(401).json({ ok:false, error:"bad_audience" });
+
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok:true, uid: payload.uid });
+  } catch (e) {
+    const msg = String(e?.message || "");
+    if (msg.includes("expired") || msg.includes("bad_signature") || msg.includes("bad_token")) {
+      return res.status(401).json({ ok:false, error:"invalid_or_expired_token" });
+    }
+    logErr("GET /api/auth/whoami", e?.stack || e);
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
+
+/** GET /api/auth/address?t=... -> { ok:true, address } */
+app.get("/api/auth/address", async (req, res) => {
+  try {
+    if (!AUTH_TOKEN_SECRET) return res.status(500).json({ ok:false, error:"AUTH_TOKEN_SECRET_NOT_SET" });
+
+    const t = String(req.query.t || "").trim();
+    if (!t) return res.status(400).json({ ok:false, error:"token required" });
+
+    const payload = verifyToken(t, AUTH_TOKEN_SECRET);
+    if (payload.aud !== "confirm") return res.status(401).json({ ok:false, error:"bad_audience" });
+
+    const uid = String(payload.uid || "").trim();
+    if (!uid) return res.status(401).json({ ok:false, error:"no_uid" });
+
+    const addr = await getAddressByUserId(uid);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok:true, address: addr });
+  } catch (e) {
+    const msg = String(e?.message || "");
+    if (msg.includes("expired") || msg.includes("bad_signature") || msg.includes("bad_token")) {
+      return res.status(401).json({ ok:false, error:"invalid_or_expired_token" });
+    }
+    logErr("GET /api/auth/address", e?.stack || e);
     res.status(500).json({ ok:false, error:"server_error" });
   }
 });
@@ -1218,50 +1388,6 @@ app.post("/api/order/cod/create", async (req, res) => {
   } catch (e) {
     const code = e?.code || "";
     logErr("POST /api/order/cod/create", code, e?.stack || e);
-
-    if (code === "NO_ADDRESS") return res.status(409).json({ ok:false, error:"NO_ADDRESS" });
-    if (code === "OUT_OF_STOCK") return res.status(409).json({ ok:false, error:"OUT_OF_STOCK", productId: e.productId });
-    if (code === "EMPTY_ITEMS") return res.status(400).json({ ok:false, error:"EMPTY_ITEMS" });
-
-    res.status(500).json({ ok:false, error:"server_error" });
-  }
-});
-
-// 代引き確定 → confirm-cod.html へ
-app.post("/api/order/cod/confirm", async (req, res) => {
-  try {
-    const uid = String(req.body?.uid || "").trim();
-    const checkout = req.body?.checkout || null;
-
-    await touchUser(uid, "seen");
-    const built = await buildOrderFromCheckout(uid, checkout);
-
-    const codFee = Number(COD_FEE || 330);
-    const totalCod = built.subtotal + built.shippingFee + codFee;
-
-    const orderId = await insertOrderToDb({
-      userId: built.userId,
-      items: built.items,
-      total: totalCod,
-      shippingFee: built.shippingFee,
-      paymentMethod: "cod",
-      status: "confirmed",
-      rawEvent: { type: "cod_confirm_v1" },
-    });
-
-    res.json({
-      ok: true,
-      orderId,
-      subtotal: built.subtotal,
-      shippingFee: built.shippingFee,
-      codFee,
-      totalCod,
-      size: built.size,
-      redirect: `/confirm-cod.html?orderId=${encodeURIComponent(orderId)}`
-    });
-  } catch (e) {
-    const code = e?.code || "";
-    logErr("POST /api/order/cod/confirm", code, e?.stack || e);
 
     if (code === "NO_ADDRESS") return res.status(409).json({ ok:false, error:"NO_ADDRESS" });
     if (code === "OUT_OF_STOCK") return res.status(409).json({ ok:false, error:"OUT_OF_STOCK", productId: e.productId });
@@ -1429,7 +1555,7 @@ async function onFollow(ev) {
   try { await touchUser(userId, "seen", displayName); } catch {}
 
   const urlProducts = liffUrl("/products.html");
-  const urlAddress  = liffUrl("/cod-register.html"); // ★統一
+  const urlAddress  = liffUrl("/cod-register.html");
 
   await lineClient.pushMessage(userId, {
     type: "text",
@@ -1467,13 +1593,11 @@ async function onTextMessage(ev) {
 
   const sess = getSession(userId);
 
-  // セッション中は入力を処理
   if (sess) {
     await handleSessionInput(userId, text, ev);
     return;
   }
 
-  // 起動キーワード2つだけ
   if (text === KEYWORD_DIRECT) {
     setSession(userId, { kind: "direct", step: "start" });
     await replyDirectStart(ev.replyToken);
@@ -1488,13 +1612,11 @@ async function onTextMessage(ev) {
     await replyKusukeStart(ev.replyToken, userId, qty);
     return;
   }
-
-  // それ以外は無反応（要望）
 }
 
 async function replyDirectStart(replyToken) {
   const urlProducts = liffUrl("/products.html");
-  const urlAddress  = liffUrl("/cod-register.html"); // ★統一
+  const urlAddress  = liffUrl("/cod-register.html");
   await lineClient.replyMessage(replyToken, {
     type: "text",
     text: `ミニアプリで注文できます：\n${urlProducts}\n\n住所登録：\n${urlAddress}`
@@ -1504,7 +1626,7 @@ async function replyDirectStart(replyToken) {
 async function replyKusukeStart(replyToken, userId, qtyPreset) {
   const addr = await getAddressByUserId(userId);
   if (!addr) {
-    const url = liffUrl("/cod-register.html"); // ★統一
+    const url = liffUrl("/cod-register.html");
     await lineClient.replyMessage(replyToken, {
       type: "text",
       text:

@@ -72,7 +72,7 @@
     <!-- 住所 -->
     <div class="card" id="addrCard">
       <div class="muted">配送先</div>
-      <div id="addrBody"></div>
+      <div id="addrBody" class="muted">読み込み中…</div>
     </div>
 
     <!-- 合計 -->
@@ -90,13 +90,16 @@
         <div id="sumCod">330円</div>
       </div>
       <div class="total" id="sumTotal">合計 0円</div>
+      <div class="muted" style="margin-top:8px">
+        ※ オリジナルセットは「単品（あかしゃ等）との混載不可」です。
+      </div>
     </div>
   </div>
 
   <div class="bar">
     <div class="inner">
-      <button class="btn btnBack" id="backBtn">数量を変更</button>
-      <button class="btn btnOrder" id="orderBtn">この内容で注文する</button>
+      <button class="btn btnBack" id="backBtn" type="button">数量を変更</button>
+      <button class="btn btnOrder" id="orderBtn" type="button">この内容で注文する</button>
     </div>
   </div>
 
@@ -113,6 +116,14 @@
 
   const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
 
+  async function fetchJson(url, opts){
+    const res = await fetch(url, opts);
+    const text = await res.text();
+    let data = {};
+    try{ data = text ? JSON.parse(text) : {}; }catch{ data = { _raw:text }; }
+    return { res, data, raw:text };
+  }
+
   /* =============================
      LIFF
   ============================= */
@@ -121,6 +132,10 @@
     liff.login({ redirectUri: location.href });
     return;
   }
+
+  // userId を確実に取る
+  const prof = await liff.getProfile();
+  const userId = (prof?.userId || "").trim();
 
   /* =============================
      カート読込
@@ -136,14 +151,26 @@
   /* =============================
      商品情報取得
   ============================= */
-  const r = await fetch("/api/products", { cache:"no-store" });
-  const d = await r.json();
-  const product = d.products.find(p => p.id === item.id);
+  let product = null;
+  try{
+    const { res: r, data: d } = await fetchJson("/api/products", { cache:"no-store" });
+    if(!r.ok || !d?.products) throw new Error("products load failed");
+    product = (Array.isArray(d.products) ? d.products : []).find(p => p.id === item.id) || null;
+  }catch(e){
+    console.error(e);
+  }
+
+  if(!product){
+    alert("商品情報が見つかりません（products.json を確認してください）");
+    location.href = "/original-set.html";
+    return;
+  }
 
   /* =============================
      送料サイズ計算
   ============================= */
   function sizeByQty(q){
+    q = Math.max(1, Math.floor(Number(q||1)));
     if(q === 1) return 80;
     if(q === 2) return 100;
     if(q <= 4) return 120;
@@ -152,11 +179,11 @@
   const shipSize = sizeByQty(item.qty);
 
   /* =============================
-     表示
+     商品表示
   ============================= */
   document.getElementById("itemCard").innerHTML = `
     <div class="row">
-      <div class="name">${product.name}</div>
+      <div class="name">${product.name || ""}</div>
       <span class="badge">${item.qty}個</span>
     </div>
     <div class="row">
@@ -165,11 +192,11 @@
     </div>
   `;
 
-  const itemSum = product.price * item.qty;
+  const itemSum = Number(product.price||0) * Number(item.qty||0);
   document.getElementById("sumItem").textContent = yen(itemSum);
 
-  // 送料はサーバー側計算に合わせて後で差し替えOK
-  const shipFee = 0; // ←仮（confirm.js 完成版ではDB参照）
+  // 送料は後でDB参照に置換OK（まずは 0 のまま）
+  const shipFee = 0;
   document.getElementById("shipSize").textContent = shipSize;
   document.getElementById("sumShip").textContent = yen(shipFee);
 
@@ -178,19 +205,35 @@
     "合計 " + yen(itemSum + shipFee + COD_FEE);
 
   /* =============================
-     住所表示（簡易）
+     住所表示（あなたのAPIに合わせる）
   ============================= */
-  const ar = await fetch("/api/address/me");
-  if(ar.ok){
-    const ad = await ar.json();
-    document.getElementById("addrBody").innerHTML = `
-      ${ad.name}<br>
-      〒${ad.postal}<br>
-      ${ad.prefecture}${ad.city}${ad.address1} ${ad.address2 || ""}
-    `;
-  }else{
-    document.getElementById("addrBody").innerHTML =
-      `<span class="warn">住所が未登録です</span>`;
+  const addrBody = document.getElementById("addrBody");
+
+  try{
+    const u = `/api/address/get?userId=${encodeURIComponent(userId)}`;
+    const { res: ar, data } = await fetchJson(u, { cache:"no-store" });
+
+    if(ar.ok && data?.ok && data?.address){
+      const ad = data.address;
+
+      // 見た目だけ郵便番号整形
+      const postal = String(ad.postal||"").replace(/[^\d]/g,"");
+      const postalFmt = postal.length === 7 ? (postal.slice(0,3)+"-"+postal.slice(3)) : (ad.postal||"");
+
+      addrBody.className = "";
+      addrBody.innerHTML = `
+        ${ad.name || ""}<br>
+        〒${postalFmt}<br>
+        ${(ad.prefecture || "")}${(ad.city || "")}${(ad.address1 || "")} ${(ad.address2 || "")}
+      `;
+    }else{
+      addrBody.className = "warn";
+      addrBody.innerHTML = `住所が未登録です（住所入力で登録してください）`;
+    }
+  }catch(e){
+    console.error(e);
+    addrBody.className = "warn";
+    addrBody.innerHTML = `住所の読み込みに失敗しました（/api/address/get を確認）`;
   }
 
   /* =============================
@@ -201,21 +244,27 @@
   };
 
   document.getElementById("orderBtn").onclick = async ()=>{
-    document.getElementById("orderBtn").classList.add("btnDisabled");
+    const btn = document.getElementById("orderBtn");
+    btn.classList.add("btnDisabled");
 
-    const res = await fetch("/api/orders/original", {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ cart })
-    });
+    try{
+      const { res, data, raw } = await fetchJson("/api/orders/original", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ cart })
+      });
 
-    if(res.ok){
+      if(!res.ok || data?.ok === false){
+        throw new Error(data?.error || raw || ("HTTP "+res.status));
+      }
+
       alert("ご注文ありがとうございました");
       localStorage.removeItem(KEY_CART);
-      liff.closeWindow();
-    }else{
-      alert("注文に失敗しました");
-      document.getElementById("orderBtn").classList.remove("btnDisabled");
+      try{ liff.closeWindow(); }catch{}
+    }catch(e){
+      console.error(e);
+      alert("注文に失敗しました： " + (e?.message || e));
+      btn.classList.remove("btnDisabled");
     }
   };
 })();

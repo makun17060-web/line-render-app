@@ -1,15 +1,8 @@
 /**
- * server.js — 真の全部入り “完全・全部入り” 丸ごと版（token渡し confirm対応 + LIFF env吸収版）
+ * server.js — 真の全部入り “完全・全部入り” 丸ごと版（cod-register一本化 対応版）
  *
- * ✅ 追加（今回）
- * - AUTH_TOKEN_SECRET を使った「confirm用 token 発行/検証」
- *   - POST /api/auth/issue-token  （products → confirmへ渡す t を発行）
- *   - GET  /api/auth/whoami?t=... （t → uid 復元：quote/cod/create用）
- *   - GET  /api/auth/address?t=...（t → DB住所取得：confirm表示用）
- *
- * ✅ /api/liff/config のENVキー吸収
- * - LIFF_ID_ORDER / LIFF_ID_ADDRESS（あなたの運用）
- * - 互換: LIFF_ID_DEFAULT / LIFF_ID_COD
+ * ✅ 追加したこと（今回の修正点）
+ * - 注文完了時に「管理者 + 注文者」へ明細をPush（代引き確定時 / Stripe支払い完了時）
  *
  * ✅ Render Disk 永続化（超重要）
  * - DATA_DIR=/var/data（デフォルト）: products.json / sessions.json / logs
@@ -25,14 +18,13 @@
  * - LINE_CHANNEL_ACCESS_TOKEN
  * - LINE_CHANNEL_SECRET
  * - DATABASE_URL（Postgres）
+ * - ADMIN_USER_ID（管理者へ通知するなら必須）
  *
  * ✅ LIFF
- * - LIFF_ID_ORDER（例: 2008406620-xxxx）  … products（ミニアプリ側）
- * - LIFF_ID_ADDRESS（例: 2008406620-yyyy）… 住所登録（cod-register）
- *   ※分けないなら LIFF_ID_DEFAULT だけでもOK（両方に使う）
- *
- * ✅ confirm token（今回追加）
- * - AUTH_TOKEN_SECRET（長いランダム文字列）
+ * - LIFF_ID_DEFAULT（例 2008406620-QQFfWP1w）←まずこれだけでOK
+ *   任意で分けるなら:
+ *   - LIFF_ID_ORDER（注文側）
+ *   - LIFF_ID_ADDRESS（住所側） ← /api/liff/config が参照（※あなたの運用で使用）
  *
  * ✅ Stripe 利用するなら
  * - STRIPE_SECRET_KEY
@@ -51,7 +43,7 @@ const express = require("express");
 const line = require("@line/bot-sdk");
 const { Pool } = require("pg");
 
-// Stripeは環境変数がある時だけ require
+// Stripeは環境変数がある時だけ require（無い環境で落ちないように）
 let Stripe = null;
 try { Stripe = require("stripe"); } catch {}
 
@@ -62,20 +54,22 @@ const {
 
   PUBLIC_BASE_URL,        // 例: https://xxxxx.onrender.com
   LIFF_BASE_URL,          // 例: https://xxxxx.onrender.com
-  LIFF_CHANNEL_ID,        // 任意（id_token verifyしたいなら）
+  LIFF_CHANNEL_ID,        // 任意（/api/liff/verify で使用）
 
-  // LIFF（複数キー混在を吸収）
+  // LIFF（configで返す）
   LIFF_ID_DEFAULT = "",
-  LIFF_ID_COD = "",
+  LIFF_ID_COD = "",       // 互換（未使用でもOK）
   LIFF_ID_ORDER = "",
-
-  // ★あなたが実際に使ってるキー名（混在対策）
-  LIFF_ID_ADDRESS = "",
+  LIFF_ID_ADDRESS = "",   // ★/api/liff/config が参照
 
   DATA_DIR = "/var/data",
   UPLOAD_DIR = "/var/data/uploads",
 
   ADMIN_API_TOKEN = "",
+
+  // ★注文通知（追加）
+  ADMIN_USER_ID = "",
+  ADMIN_USER_IDS = "",
 
   STRIPE_SECRET_KEY = "",
   STRIPE_WEBHOOK_SECRET = "",
@@ -88,9 +82,6 @@ const {
   KEYWORD_KUSUKE = "久助",
 
   ORIGINAL_SET_PRODUCT_ID = "original-set-2000",
-
-  // ★confirm token用
-  AUTH_TOKEN_SECRET = "",
 } = process.env;
 
 if (!LINE_CHANNEL_ACCESS_TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
@@ -125,7 +116,7 @@ const SHIPPING_REGION_BY_PREF = {
   "沖縄県": "okinawa",
 };
 
-// サイズ別 送料（税込例）
+// サイズ別 送料（税込の例）※あなたの表に合わせて調整OK
 const SHIPPING_YAMATO = {
   hokkaido: { 60: 1300, 80: 1550, 100: 1800, 120: 2050, 140: 2300 },
   tohoku:   { 60:  900, 80: 1100, 100: 1300, 120: 1500, 140: 1700 },
@@ -290,6 +281,7 @@ function calcShippingFee(prefecture, size) {
   const table = SHIPPING_YAMATO[region] || SHIPPING_YAMATO["chubu"];
   return Number(table[size] || table[80] || 0);
 }
+
 function calcPackageSizeFromItems(items, productsById) {
   let hasOriginalSet = false;
   let originalQty = 0;
@@ -661,12 +653,95 @@ async function insertOrderToDb({ userId, items, total, shippingFee, paymentMetho
   return r.rows[0]?.id;
 }
 
+async function getOrderById(orderId){
+  const r = await pool.query(
+    `SELECT id, user_id, payment_method, status, items, total, shipping_fee, name, zip, pref, address, created_at
+     FROM orders WHERE id=$1`,
+    [orderId]
+  );
+  return r.rows[0] || null;
+}
+
 // ============== LINE client ==============
 const lineConfig = {
   channelAccessToken: LINE_CHANNEL_ACCESS_TOKEN,
   channelSecret: LINE_CHANNEL_SECRET,
 };
 const lineClient = new line.Client(lineConfig);
+
+// =========================
+// ★ 注文通知（管理者＋注文者）
+// =========================
+function formatYen(n){ return (Number(n)||0).toLocaleString("ja-JP") + "円"; }
+
+function getAdminTargets(){
+  const list = [];
+  if (ADMIN_USER_ID) list.push(String(ADMIN_USER_ID).trim());
+  if (ADMIN_USER_IDS) {
+    for (const u of String(ADMIN_USER_IDS).split(",")) {
+      const t = u.trim();
+      if (t) list.push(t);
+    }
+  }
+  return Array.from(new Set(list)).filter(Boolean);
+}
+
+function buildOrderText({ orderId, paymentMethod, items, subtotal, shippingFee, codFee, total, addr }) {
+  const payLabel = paymentMethod === "cod" ? "代引" : "クレジット";
+  const addrText = addr
+    ? `〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim()
+    : "—";
+
+  const lines = [];
+  lines.push("【ご注文ありがとうございます】");
+  lines.push(`注文ID：${orderId}`);
+  lines.push(`支払：${payLabel}`);
+  lines.push("");
+  lines.push("【お届け先】");
+  if (addr?.name) lines.push(`${addr.name} 様`);
+  lines.push(addrText);
+  if (addr?.phone) lines.push(`TEL：${addr.phone}`);
+  lines.push("");
+  lines.push("【明細】");
+  for (const it of (items || [])) {
+    const name = `${it.name || it.id || ""}${it.volume ? `（${it.volume}）` : ""}`;
+    const qty = Number(it.qty || 0);
+    const line = Number(it.lineTotal ?? (Number(it.price||0) * qty));
+    lines.push(`・${name} × ${qty} ＝ ${formatYen(line)}`);
+  }
+  lines.push("");
+  lines.push(`小計：${formatYen(subtotal)}`);
+  lines.push(`送料：${formatYen(shippingFee)}`);
+  if (paymentMethod === "cod") lines.push(`代引手数料：${formatYen(codFee)}`);
+  lines.push(`合計：${formatYen(total)}`);
+
+  return lines.join("\n");
+}
+
+async function pushText(to, text){
+  if (!to) return;
+  await lineClient.pushMessage(to, { type:"text", text });
+}
+
+async function notifyOrderBoth({ userId, orderId, paymentMethod, items, subtotal, shippingFee, codFee, total, addr }) {
+  const text = buildOrderText({ orderId, paymentMethod, items, subtotal, shippingFee, codFee, total, addr });
+
+  // 注文者へ
+  if (userId) {
+    try { await pushText(userId, text); }
+    catch(e){ logErr("push to user failed", e?.message||e); }
+  }
+
+  // 管理者へ
+  const admins = getAdminTargets();
+  if (admins.length) {
+    const adminText = "【管理者通知】\n" + text + (userId ? `\n\nuserId：${userId}` : "");
+    for (const a of admins) {
+      try { await pushText(a, adminText); }
+      catch(e){ logErr("push to admin failed", e?.message||e); }
+    }
+  }
+}
 
 // ============== Express ==============
 const app = express();
@@ -705,8 +780,41 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
       const orderId = session?.metadata?.orderId;
+
       if (orderId) {
         await pool.query(`UPDATE orders SET status='paid' WHERE id=$1`, [orderId]);
+
+        // ★支払い完了通知（管理者＋注文者）
+        try{
+          const o = await getOrderById(orderId);
+          if (o) {
+            const items = Array.isArray(o.items) ? o.items : [];
+            const addr = {
+              name: o.name || "",
+              postal: o.zip || "",
+              prefecture: o.pref || "",
+              city: "",
+              address1: o.address || "",
+              address2: "",
+              phone: ""
+            };
+            const subtotal = Math.max(0, Number(o.total||0) - Number(o.shipping_fee||0));
+            await notifyOrderBoth({
+              userId: o.user_id,
+              orderId: o.id,
+              paymentMethod: "card",
+              items,
+              subtotal,
+              shippingFee: Number(o.shipping_fee||0),
+              codFee: 0,
+              total: Number(o.total||0),
+              addr
+            });
+          }
+        }catch(e){
+          logErr("notifyOrderBoth(card) failed", e?.message||e);
+        }
+
         logInfo("Order paid:", orderId);
       }
     }
@@ -936,32 +1044,26 @@ app.post("/api/admin/upload-image", requireAdmin, async (req, res) => {
 });
 
 // =========================
-// LIFF config（cod-register / products が使用）
-// ★ENVキー混在吸収：LIFF_ID_ADDRESS / LIFF_ID_ORDER / LIFF_ID_DEFAULT / LIFF_ID_COD
+// LIFF config（cod-register.html が使用）
 // =========================
-function resolveLiffIds() {
-  const order =
-    String(LIFF_ID_ORDER || "").trim() ||
-    String(LIFF_ID_DEFAULT || "").trim();
-
-  const address =
-    String(LIFF_ID_ADDRESS || "").trim() ||
-    String(LIFF_ID_COD || "").trim() ||
-    String(LIFF_ID_DEFAULT || "").trim();
-
-  return { order, address };
-}
-
 app.get("/api/liff/config", (req, res) => {
-  const kind = String(req.query.kind || "order").trim().toLowerCase();
-  const { order, address } = resolveLiffIds();
+  const kind = String(req.query.kind || "order").trim();
+
+  // 優先順位：明示 > DEFAULT
+  const ORDER =
+    (process.env.LIFF_ID_ORDER || "").trim() ||
+    (process.env.LIFF_ID_DEFAULT || "").trim();
+
+  const ADDRESS =
+    (process.env.LIFF_ID_ADDRESS || "").trim() ||
+    (process.env.LIFF_ID_COD || "").trim() ||
+    (process.env.LIFF_ID_DEFAULT || "").trim();
 
   let liffId = "";
-  if (kind === "address" || kind === "register" || kind === "cod") liffId = address;
-  else liffId = order;
+  if (kind === "address" || kind === "register" || kind === "cod") liffId = ADDRESS;
+  else liffId = ORDER;
 
   if (!liffId) return res.status(400).json({ ok:false, error:"LIFF_ID_NOT_SET", kind });
-  res.setHeader("Cache-Control", "no-store");
   return res.json({ ok:true, liffId });
 });
 
@@ -1005,7 +1107,7 @@ app.post("/api/address/set", async (req, res) => {
 });
 
 // =========================
-// 互換：cod-register 用（/api/liff/address/me, /api/liff/address）
+// ★互換：cod-register.html 用（/api/liff/address/me, /api/liff/address）
 // =========================
 app.get("/api/liff/address/me", async (req, res) => {
   try {
@@ -1088,7 +1190,7 @@ app.post("/api/liff/opened", async (req, res) => {
   }
 });
 
-// 互換：/api/liff/open
+// ★互換：/api/liff/open（cod-register.html が呼ぶ名前）
 app.post("/api/liff/open", async (req, res) => {
   try {
     const userId = String(req.body?.userId || "").trim();
@@ -1097,155 +1199,6 @@ app.post("/api/liff/open", async (req, res) => {
     res.json({ ok:true });
   } catch (e) {
     logErr("POST /api/liff/open", e?.stack || e);
-    res.status(500).json({ ok:false, error:"server_error" });
-  }
-});
-
-// =========================
-// ★ confirm token（今回追加）
-// - 署名つき token を発行して confirm.html?t=... で受け渡し
-// =========================
-function b64url(bufOrStr) {
-  const buf = Buffer.isBuffer(bufOrStr) ? bufOrStr : Buffer.from(String(bufOrStr));
-  return buf.toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-}
-function b64urlJson(obj) { return b64url(JSON.stringify(obj)); }
-function b64urlToBuf(s) {
-  const t = String(s).replace(/-/g, "+").replace(/_/g, "/");
-  const pad = t.length % 4 ? "=".repeat(4 - (t.length % 4)) : "";
-  return Buffer.from(t + pad, "base64");
-}
-
-/** 5分トークン（aud=confirm, uid, exp） */
-function signToken(payload, secret) {
-  if (!secret) throw new Error("AUTH_TOKEN_SECRET_NOT_SET");
-  const header = { alg: "HS256", typ: "JWT" };
-  const h = b64urlJson(header);
-  const p = b64urlJson(payload);
-  const data = `${h}.${p}`;
-  const sig = crypto.createHmac("sha256", secret).update(data).digest();
-  return `${data}.${b64url(sig)}`;
-}
-function verifyToken(token, secret) {
-  if (!secret) throw new Error("AUTH_TOKEN_SECRET_NOT_SET");
-  const t = String(token || "").trim();
-  const parts = t.split(".");
-  if (parts.length !== 3) throw new Error("bad_token");
-
-  const [h, p, s] = parts;
-  const data = `${h}.${p}`;
-  const expect = crypto.createHmac("sha256", secret).update(data).digest();
-  const got = b64urlToBuf(s);
-
-  // timingSafeEqualは長さ一致が必要
-  if (got.length !== expect.length || !crypto.timingSafeEqual(got, expect)) {
-    throw new Error("bad_signature");
-  }
-
-  const payload = JSON.parse(b64urlToBuf(p).toString("utf8"));
-  const now = Math.floor(Date.now() / 1000);
-  if (payload?.exp && now > payload.exp) throw new Error("expired");
-  return payload;
-}
-
-// （任意）id_token が来たら verify して uid を確定（LIFF_CHANNEL_ID があるときのみ）
-async function uidFromIdTokenIfPossible(idToken) {
-  const tok = String(idToken || "").trim();
-  if (!tok) return null;
-  if (!LIFF_CHANNEL_ID) return null;
-
-  const params = new URLSearchParams();
-  params.set("id_token", tok);
-  params.set("client_id", LIFF_CHANNEL_ID);
-
-  const r = await fetch("https://api.line.me/oauth2/v2.1/verify", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params.toString(),
-  });
-  const data = await r.json().catch(()=> ({}));
-  if (!r.ok) return null;
-
-  // verifyの戻りに sub が入る（ユーザー識別子）
-  const uid = String(data?.sub || "").trim();
-  return uid || null;
-}
-
-/**
- * POST /api/auth/issue-token
- * body: { userId } または { id_token }（LIFF_CHANNEL_ID設定時は id_token 推奨）
- * -> { ok:true, token, expiresInSec }
- */
-app.post("/api/auth/issue-token", async (req, res) => {
-  try {
-    if (!AUTH_TOKEN_SECRET) return res.status(500).json({ ok:false, error:"AUTH_TOKEN_SECRET_NOT_SET" });
-
-    // 可能なら id_token から確定（より安全）
-    const uidByIdToken = await uidFromIdTokenIfPossible(req.body?.id_token);
-    const userId = String(uidByIdToken || req.body?.userId || "").trim();
-    if (!userId) return res.status(400).json({ ok:false, error:"userId required" });
-
-    // DBに存在するユーザーなら touch（任意）
-    try { await touchUser(userId, "seen"); } catch {}
-
-    const now = Math.floor(Date.now() / 1000);
-    const exp = now + 5 * 60; // 5分
-    const token = signToken({ aud: "confirm", uid: userId, iat: now, exp }, AUTH_TOKEN_SECRET);
-
-    res.setHeader("Cache-Control", "no-store");
-    res.json({ ok:true, token, expiresInSec: 300 });
-  } catch (e) {
-    logErr("POST /api/auth/issue-token", e?.stack || e);
-    res.status(500).json({ ok:false, error:"server_error" });
-  }
-});
-
-/** GET /api/auth/whoami?t=... -> { ok:true, uid } */
-app.get("/api/auth/whoami", async (req, res) => {
-  try {
-    if (!AUTH_TOKEN_SECRET) return res.status(500).json({ ok:false, error:"AUTH_TOKEN_SECRET_NOT_SET" });
-
-    const t = String(req.query.t || "").trim();
-    if (!t) return res.status(400).json({ ok:false, error:"token required" });
-
-    const payload = verifyToken(t, AUTH_TOKEN_SECRET);
-    if (payload.aud !== "confirm") return res.status(401).json({ ok:false, error:"bad_audience" });
-
-    res.setHeader("Cache-Control", "no-store");
-    res.json({ ok:true, uid: payload.uid });
-  } catch (e) {
-    const msg = String(e?.message || "");
-    if (msg.includes("expired") || msg.includes("bad_signature") || msg.includes("bad_token")) {
-      return res.status(401).json({ ok:false, error:"invalid_or_expired_token" });
-    }
-    logErr("GET /api/auth/whoami", e?.stack || e);
-    res.status(500).json({ ok:false, error:"server_error" });
-  }
-});
-
-/** GET /api/auth/address?t=... -> { ok:true, address } */
-app.get("/api/auth/address", async (req, res) => {
-  try {
-    if (!AUTH_TOKEN_SECRET) return res.status(500).json({ ok:false, error:"AUTH_TOKEN_SECRET_NOT_SET" });
-
-    const t = String(req.query.t || "").trim();
-    if (!t) return res.status(400).json({ ok:false, error:"token required" });
-
-    const payload = verifyToken(t, AUTH_TOKEN_SECRET);
-    if (payload.aud !== "confirm") return res.status(401).json({ ok:false, error:"bad_audience" });
-
-    const uid = String(payload.uid || "").trim();
-    if (!uid) return res.status(401).json({ ok:false, error:"no_uid" });
-
-    const addr = await getAddressByUserId(uid);
-    res.setHeader("Cache-Control", "no-store");
-    res.json({ ok:true, address: addr });
-  } catch (e) {
-    const msg = String(e?.message || "");
-    if (msg.includes("expired") || msg.includes("bad_signature") || msg.includes("bad_token")) {
-      return res.status(401).json({ ok:false, error:"invalid_or_expired_token" });
-    }
-    logErr("GET /api/auth/address", e?.stack || e);
     res.status(500).json({ ok:false, error:"server_error" });
   }
 });
@@ -1353,7 +1306,7 @@ app.post("/api/order/quote", async (req, res) => {
   }
 });
 
-// 代引き：作成
+// 代引き：作成（★ここで「注文完了通知」）
 app.post("/api/order/cod/create", async (req, res) => {
   try {
     const uid = String(req.body?.uid || "").trim();
@@ -1371,9 +1324,26 @@ app.post("/api/order/cod/create", async (req, res) => {
       total: totalCod,
       shippingFee: built.shippingFee,
       paymentMethod: "cod",
-      status: "new",
+      status: "confirmed",
       rawEvent: { type: "cod_create_v2" },
     });
+
+    // ★注文完了通知（管理者＋注文者）
+    try{
+      await notifyOrderBoth({
+        userId: built.userId,
+        orderId,
+        paymentMethod: "cod",
+        items: built.items,
+        subtotal: built.subtotal,
+        shippingFee: built.shippingFee,
+        codFee,
+        total: totalCod,
+        addr: built.addr
+      });
+    }catch(e){
+      logErr("notifyOrderBoth(cod) failed", e?.message||e);
+    }
 
     res.json({
       ok: true,
@@ -1688,6 +1658,23 @@ async function finalizeKusukeOrder(replyToken, userId, qty) {
       status: "confirmed",
       rawEvent: { type: "line_kusuke" },
     });
+
+    // ★久助も通知（管理者＋注文者）
+    try{
+      await notifyOrderBoth({
+        userId,
+        orderId,
+        paymentMethod:"cod",
+        items: built.items,
+        subtotal: built.subtotal,
+        shippingFee: built.shippingFee,
+        codFee,
+        total: totalCod,
+        addr: built.addr
+      });
+    }catch(e){
+      logErr("notifyOrderBoth(kusuke) failed", e?.message||e);
+    }
 
     const a = built.addr;
     const addrText =

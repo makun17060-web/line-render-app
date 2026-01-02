@@ -5,201 +5,47 @@
   <title>注文管理 & セグメント配信</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      margin: 0;
-      padding: 12px;
-      background: #f5f5f5;
-      color: #333;
-    }
-    h1 {
-      margin: 0 0 8px;
-      font-size: 20px;
-    }
-    .subtitle {
-      font-size: 12px;
-      color: #666;
-      margin-bottom: 12px;
-    }
-    .top-bar {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 12px;
-    }
-    .top-bar label {
-      font-size: 12px;
-      color: #555;
-    }
-    input[type="text"],
-    input[type="date"],
-    textarea,
-    select {
-      font-size: 13px;
-      padding: 4px 6px;
-      border-radius: 4px;
-      border: 1px solid #ccc;
-      box-sizing: border-box;
-    }
-    textarea {
-      width: 100%;
-      min-height: 80px;
-      resize: vertical;
-    }
-    button {
-      cursor: pointer;
-    }
-    .btn {
-      padding: 6px 10px;
-      border-radius: 999px;
-      border: none;
-      font-size: 13px;
-      font-weight: 600;
-    }
-    .btn-primary {
-      background: #00b900;
-      color: #fff;
-    }
-    .btn-secondary {
-      background: #fff;
-      border: 1px solid #ccc;
-      color: #333;
-    }
-    .btn-danger {
-      background: #e53935;
-      color: #fff;
-    }
-    .btn:disabled {
-      opacity: 0.5;
-      cursor: default;
-    }
-    .tabs {
-      display: flex;
-      gap: 4px;
-      margin-bottom: 8px;
-      border-bottom: 1px solid #ddd;
-    }
-    .tab {
-      padding: 6px 10px;
-      border-radius: 6px 6px 0 0;
-      font-size: 13px;
-      cursor: pointer;
-      background: #eee;
-    }
-    .tab.active {
-      background: #fff;
-      border: 1px solid #ddd;
-      border-bottom-color: #fff;
-    }
-    .tab-content {
-      background: #fff;
-      border: 1px solid #ddd;
-      border-radius: 0 6px 6px 6px;
-      padding: 10px;
-      margin-bottom: 16px;
-    }
-
-    .info {
-      font-size: 11px;
-      color: #666;
-      margin-top: 4px;
-    }
-
-    .orders-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 12px;
-    }
-    .orders-table th,
-    .orders-table td {
-      border: 1px solid #ddd;
-      padding: 4px 6px;
-      vertical-align: top;
-    }
-    .orders-table th {
-      background: #fafafa;
-      position: sticky;
-      top: 0;
-      z-index: 1;
-    }
-    .status-label {
-      font-size: 11px;
-      padding: 2px 6px;
-      border-radius: 999px;
-      display: inline-block;
-    }
-    .status-new {
-      background: #e3f2fd;
-      color: #1565c0;
-    }
-    .status-notified {
-      background: #e8f5e9;
-      color: #2e7d32;
-    }
-    .status-failed {
-      background: #ffebee;
-      color: #c62828;
-    }
-    .small {
-      font-size: 11px;
-      color: #555;
-    }
-    .muted {
-      color: #888;
-    }
-    .mono {
-      font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      font-size: 11px;
-    }
-    .segment-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      align-items: center;
-      margin-bottom: 8px;
-    }
-    .segment-row label {
-      font-size: 12px;
-      color: #555;
-    }
-    .segment-result {
-      font-size: 12px;
-      background: #fafafa;
-      border-radius: 4px;
-      padding: 6px;
-      border: 1px solid #eee;
-      max-height: 150px;
-      overflow: auto;
-      white-space: pre-wrap;
-    }
-    .badge {
-      display: inline-block;
-      padding: 2px 6px;
-      border-radius: 999px;
-      font-size: 10px;
-      background: #eee;
-      color: #555;
-    }
-    .badge-orders {
-      background: #e3f2fd;
-      color: #1565c0;
-    }
-    .badge-chat {
-      background: #f3e5f5;
-      color: #6a1b9a;
-    }
-    .badge-addr {
-      background: #e8f5e9;
-      color: #2e7d32;
-    }
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin:0; padding:12px; background:#f5f5f5; color:#333; }
+    h1 { margin:0 0 8px; font-size:20px; }
+    .subtitle { font-size:12px; color:#666; margin-bottom:12px; }
+    .top-bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:12px; }
+    .top-bar label { font-size:12px; color:#555; }
+    input[type="text"], input[type="date"], textarea, select { font-size:13px; padding:4px 6px; border-radius:4px; border:1px solid #ccc; box-sizing:border-box; }
+    textarea { width:100%; min-height:80px; resize:vertical; }
+    button { cursor:pointer; }
+    .btn { padding:6px 10px; border-radius:999px; border:none; font-size:13px; font-weight:600; }
+    .btn-primary { background:#00b900; color:#fff; }
+    .btn-secondary { background:#fff; border:1px solid #ccc; color:#333; }
+    .btn-danger { background:#e53935; color:#fff; }
+    .btn:disabled { opacity:0.5; cursor:default; }
+    .tabs { display:flex; gap:4px; margin-bottom:8px; border-bottom:1px solid #ddd; }
+    .tab { padding:6px 10px; border-radius:6px 6px 0 0; font-size:13px; cursor:pointer; background:#eee; }
+    .tab.active { background:#fff; border:1px solid #ddd; border-bottom-color:#fff; }
+    .tab-content { background:#fff; border:1px solid #ddd; border-radius:0 6px 6px 6px; padding:10px; margin-bottom:16px; }
+    .info { font-size:11px; color:#666; margin-top:4px; }
+    .orders-table { width:100%; border-collapse:collapse; font-size:12px; }
+    .orders-table th, .orders-table td { border:1px solid #ddd; padding:4px 6px; vertical-align:top; }
+    .orders-table th { background:#fafafa; position:sticky; top:0; z-index:1; }
+    .status-label { font-size:11px; padding:2px 6px; border-radius:999px; display:inline-block; }
+    .status-new { background:#e3f2fd; color:#1565c0; }
+    .status-notified { background:#e8f5e9; color:#2e7d32; }
+    .status-failed { background:#ffebee; color:#c62828; }
+    .small { font-size:11px; color:#555; }
+    .muted { color:#888; }
+    .mono { font-family:"SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:11px; }
+    .segment-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px; }
+    .segment-row label { font-size:12px; color:#555; }
+    .segment-result { font-size:12px; background:#fafafa; border-radius:4px; padding:6px; border:1px solid #eee; max-height:150px; overflow:auto; white-space:pre-wrap; }
+    .badge { display:inline-block; padding:2px 6px; border-radius:999px; font-size:10px; background:#eee; color:#555; }
+    .badge-orders { background:#e3f2fd; color:#1565c0; }
+    .badge-chat { background:#f3e5f5; color:#6a1b9a; }
+    .badge-addr { background:#e8f5e9; color:#2e7d32; }
+    .warn { color:#b71c1c; font-weight:700; }
   </style>
 </head>
 <body>
   <h1>注文管理 & セグメント配信</h1>
-  <div class="subtitle">
-    手造りえびせんべい 磯屋 / 管理者専用ページ（URLをお客さまに共有しないでください）
-  </div>
+  <div class="subtitle">手造りえびせんべい 磯屋 / 管理者専用ページ（URLをお客さまに共有しないでください）</div>
 
   <div class="top-bar">
     <label>
@@ -235,15 +81,12 @@
             <th>発送通知 / 明細印字</th>
           </tr>
         </thead>
-        <tbody id="ordersTbody">
-          <!-- JSで埋め込み -->
-        </tbody>
+        <tbody id="ordersTbody"></tbody>
       </table>
     </div>
     <div class="info">
-      ・「発送通知」ボタンは1回押すと「通知済み」になり、再読み込みしても有効です（同じブラウザでのみ有効）。<br/>
-      ・「明細印字」ボタンで1件ずつ A4 縦の注文明細書（印刷ダイアログ）が開きます。<br/>
-      ・複数PCで管理する場合は、サーバー側に発送済みフラグを保存するAPIも用意すると安全です。
+      ・発送通知の金額は「server側で確定した金額（itemsSubtotal/shipping/codFee/finalTotal）」を優先して表示します。<br/>
+      ・itemsSubtotal 等が無い古い注文は、items から再計算して表示します（ズレ防止）。<br/>
     </div>
   </div>
 
@@ -270,14 +113,9 @@
     <div class="segment-result mono" id="segmentResult"></div>
 
     <div style="margin-top:8px;">
-      <label class="small">
-        送信メッセージ（テキスト）：
-      </label>
+      <label class="small">送信メッセージ（テキスト）：</label>
       <textarea id="segmentMessage" placeholder="例）磯屋です。〇月△日の久助入荷のご案内です…"></textarea>
-      <div class="info">
-        ・プレビューで取得したユーザーID一覧に、このメッセージが配信されます。<br/>
-        ・LINEの仕様上、配信には多少の時間がかかる場合があります。
-      </div>
+      <div class="info">・プレビューで取得したユーザーID一覧に、このメッセージが配信されます。</div>
       <button class="btn btn-primary" id="segmentSendBtn">この条件で配信する</button>
     </div>
   </div>
@@ -287,7 +125,7 @@
       "use strict";
 
       const ADMIN_TOKEN_KEY = "iso-admin-token";
-      const SHIP_STATE_KEY = "iso-ship-state-v1"; // { orderKey: { status, ts, lastError } }
+      const SHIP_STATE_KEY  = "iso-ship-state-v1"; // { orderKey: { status, ts, lastError } }
 
       const adminTokenInput = document.getElementById("adminToken");
       const reloadBtn = document.getElementById("reloadBtn");
@@ -308,45 +146,24 @@
       const segmentMessageEl = document.getElementById("segmentMessage");
       const segmentSendBtn = document.getElementById("segmentSendBtn");
 
-      // 共通：金額フォーマット
       const yen = (n) => Number(n || 0).toLocaleString("ja-JP") + "円";
 
-      // ===== localStorage helpers =====
-      function loadAdminToken() {
-        return localStorage.getItem(ADMIN_TOKEN_KEY) || "";
-      }
-      function saveAdminToken(v) {
-        localStorage.setItem(ADMIN_TOKEN_KEY, v || "");
-      }
+      function loadAdminToken() { return localStorage.getItem(ADMIN_TOKEN_KEY) || ""; }
+      function saveAdminToken(v) { localStorage.setItem(ADMIN_TOKEN_KEY, v || ""); }
       function loadShipState() {
-        try {
-          const raw = localStorage.getItem(SHIP_STATE_KEY) || "{}";
-          const v = JSON.parse(raw);
-          if (!v || typeof v !== "object") return {};
-          return v;
-        } catch {
-          return {};
-        }
+        try { return JSON.parse(localStorage.getItem(SHIP_STATE_KEY) || "{}") || {}; }
+        catch { return {}; }
       }
       function saveShipState(state) {
-        try {
-          localStorage.setItem(SHIP_STATE_KEY, JSON.stringify(state || {}));
-        } catch (e) {
-          console.warn("saveShipState error:", e);
-        }
+        try { localStorage.setItem(SHIP_STATE_KEY, JSON.stringify(state || {})); }
+        catch (e) { console.warn("saveShipState error:", e); }
       }
 
-      // ===== 共通 fetch（token付き） =====
-      function getToken() {
-        return (adminTokenInput.value || "").trim();
-      }
+      function getToken() { return (adminTokenInput.value || "").trim(); }
 
       async function apiFetch(path, options = {}) {
         const token = getToken();
-        if (!token) {
-          alert("管理トークンを入力してください。");
-          throw new Error("no_admin_token");
-        }
+        if (!token) { alert("管理トークンを入力してください。"); throw new Error("no_admin_token"); }
         const url = path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token);
         const res = await fetch(url, options);
         if (!res.ok) {
@@ -354,14 +171,9 @@
           console.error("API error:", res.status, text);
           throw new Error("API error: " + res.status);
         }
-        try {
-          return await res.json();
-        } catch {
-          return null;
-        }
+        try { return await res.json(); } catch { return null; }
       }
 
-      // ===== 注文管理ロジック =====
       function formatYmd(ts) {
         if (!ts) return "";
         const d = new Date(ts);
@@ -375,13 +187,76 @@
       }
 
       function buildOrderKey(o, index) {
-        // できるだけ安定するように：注文番号 > ts+ユーザーID > インデックス
         if (o.orderNumber) return "ord:" + o.orderNumber;
         const ts = o.ts || o.timestamp || "";
         const uid = o.userId || o.lineUserId || "";
         if (ts && uid) return "ord:" + uid + ":" + ts;
         if (ts) return "ord:" + ts;
         return "idx:" + index;
+      }
+
+      function escapeHtml(str) {
+        return String(str || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      // 明細/計算のために items を統一
+      function buildItemsArray(o) {
+        if (Array.isArray(o.items) && o.items.length > 0) {
+          return o.items.map((it) => {
+            const name = it.name || it.id || "商品";
+            let unitPrice = Number(it.price || it.unitPrice || 0);
+
+            // 単価が無い古いデータの救済（久助だけ）
+            if (!unitPrice && /久助/.test(name)) unitPrice = 250;
+
+            return { name, unitPrice, qty: Number(it.qty || it.quantity || 0) || 0 };
+          });
+        }
+        if (o.productName || o.productId) {
+          let name = o.productName || o.productId;
+          let unitPrice = Number(o.price || o.unitPrice || 0);
+          if (!unitPrice && /久助/.test(name)) unitPrice = 250;
+          return [{ name, unitPrice, qty: Number(o.qty || 1) }];
+        }
+        return [];
+      }
+
+      function calcItemsSubtotal(o) {
+        const items = buildItemsArray(o);
+        return items.reduce((sum, it) => sum + (Number(it.unitPrice || 0) * Number(it.qty || 0)), 0);
+      }
+
+      function pickNumber(v) {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : 0;
+      }
+
+      // server確定値を優先しつつ、無ければ安全に再計算
+      function getAmounts(o) {
+        const itemsSubtotalCalc = calcItemsSubtotal(o);
+
+        const shipping = pickNumber(o.shipping);
+        const codFee   = pickNumber(o.codFee);
+
+        const itemsSubtotal =
+          o.itemsSubtotal != null ? pickNumber(o.itemsSubtotal) :
+          o.itemsTotal    != null ? pickNumber(o.itemsTotal) :
+          o.subtotal      != null ? pickNumber(o.subtotal) :
+          itemsSubtotalCalc;
+
+        const finalTotal =
+          o.finalTotal != null ? pickNumber(o.finalTotal) :
+          o.total      != null ? pickNumber(o.total) :
+          (itemsSubtotal + shipping + codFee);
+
+        const mismatch = (Math.abs(itemsSubtotal - itemsSubtotalCalc) >= 1);
+
+        return { itemsSubtotal, itemsSubtotalCalc, shipping, codFee, finalTotal, mismatch };
       }
 
       function orderItemsText(o) {
@@ -391,15 +266,13 @@
       }
 
       function orderTotalText(o) {
-        const itemsTotal = o.itemsTotal ?? o.subtotal ?? o.total ?? 0;
-        const shipping = o.shipping ?? 0;
-        const codFee = o.codFee ?? 0;
-        const finalTotal = o.finalTotal ?? (Number(itemsTotal) + Number(shipping) + Number(codFee));
+        const a = getAmounts(o);
         let lines = [];
-        lines.push(`商品合計：${yen(itemsTotal)}`);
-        lines.push(`送料：${yen(shipping)}`);
-        if (codFee) lines.push(`代引手数料：${yen(codFee)}`);
-        lines.push(`合計：${yen(finalTotal)}`);
+        lines.push(`商品合計：${yen(a.itemsSubtotal)}`);
+        lines.push(`送料：${yen(a.shipping)}`);
+        if (a.codFee) lines.push(`代引手数料：${yen(a.codFee)}`);
+        lines.push(`合計：${yen(a.finalTotal)}`);
+        if (a.mismatch) lines.push(`※警告：items再計算(${yen(a.itemsSubtotalCalc)})と不一致`);
         return lines.join("\n");
       }
 
@@ -411,73 +284,16 @@
         const zip = a.postal || a.zip || "";
         const line1 = (a.prefecture || a.pref || "") + (a.city || "") + (a.address1 || a.addr1 || "");
         const line2 = a.address2 || a.addr2 || "";
-        return [
-          zip ? `〒${zip}` : "",
-          line1 || "",
-          line2 || "",
-          name ? `氏名：${name}` : "",
-          tel ? `TEL：${tel}` : "",
-        ].filter(Boolean).join("\n");
+        return [ zip ? `〒${zip}` : "", line1 || "", line2 || "", name ? `氏名：${name}` : "", tel ? `TEL：${tel}` : "" ]
+          .filter(Boolean).join("\n");
       }
 
-      // 明細印字用：アイテム配列を統一的に作る
-      function buildItemsArray(o) {
-        if (Array.isArray(o.items) && o.items.length > 0) {
-          return o.items.map((it) => {
-            const name = it.name || it.id || "商品";
-            let unitPrice = Number(it.price || 0);
-
-            // ★任意：久助の単価補完（単価が無い場合のみ）
-            if (!unitPrice && /久助/.test(name)) unitPrice = 250;
-
-            return {
-              name,
-              unitPrice,
-              qty: Number(it.qty || 0) || 0,
-            };
-          });
-        }
-        if (o.productName || o.productId) {
-          let name = o.productName || o.productId;
-          let unitPrice = Number(o.price || o.unitPrice || 0);
-
-          // ★任意：久助の単価補完
-          if (!unitPrice && /久助/.test(name)) unitPrice = 250;
-
-          return [
-            {
-              name,
-              unitPrice,
-              qty: Number(o.qty || 1),
-            },
-          ];
-        }
-        return [];
-      }
-
-      // HTMLエスケープ
-      function escapeHtml(str) {
-        return String(str || "")
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;")
-          .replace(/'/g, "&#39;");
-      }
-
-      // ===== 明細印字（A4・崩れ防止） =====
       function printOrderDetail(o) {
         const w = window.open("", "_blank");
-        if (!w) {
-          alert("ポップアップがブロックされました。ブラウザの設定を確認してください。");
-          return;
-        }
+        if (!w) { alert("ポップアップがブロックされました。ブラウザの設定を確認してください。"); return; }
 
         const items = buildItemsArray(o);
-        const itemsTotal = o.itemsTotal ?? o.subtotal ?? o.total ?? 0;
-        const shipping = o.shipping ?? 0;
-        const codFee = o.codFee ?? 0;
-        const finalTotal = o.finalTotal ?? (Number(itemsTotal) + Number(shipping) + Number(codFee));
+        const amt = getAmounts(o);
 
         const a = o.address || o.addr || {};
         const name = a.name || (a.lastName || "") + (a.firstName || "");
@@ -491,53 +307,47 @@
         const region = o.region || "";
 
         const paymentText =
-          payment === "cod"
-            ? "代金引換"
-            : payment === "bank"
-            ? "銀行振込"
-            : payment === "cash"
-            ? "現金"
-            : payment || "";
+          payment === "cod" ? "代金引換" :
+          payment === "bank" ? "銀行振込" :
+          payment === "cash" ? "現金" :
+          payment || "";
 
         const methodText =
-          method === "pickup"
-            ? "店頭受取"
-            : method === "delivery"
-            ? (region ? `宅配（${region}）` : "宅配")
-            : method || "";
+          method === "pickup" ? "店頭受取" :
+          method === "delivery" ? (region ? `宅配（${region}）` : "宅配") :
+          method || "";
 
         const orderTs = formatYmd(o.ts);
         const orderNo = o.orderNumber || "";
 
         const itemRows = items.length
-          ? items
-              .map((it) => {
-                const lineTotal = Number(it.unitPrice || 0) * Number(it.qty || 0);
-                return `
+          ? items.map((it) => {
+              const lineTotal = Number(it.unitPrice || 0) * Number(it.qty || 0);
+              return `
               <tr>
                 <td>${escapeHtml(it.name)}</td>
                 <td class="num">${it.unitPrice ? yen(it.unitPrice) : ""}</td>
                 <td class="num">${it.qty}</td>
                 <td class="num">${lineTotal ? yen(lineTotal) : ""}</td>
               </tr>`;
-              })
-              .join("")
-          : `
-            <tr>
-              <td colspan="4" style="text-align:center;">商品情報がありません</td>
-            </tr>`;
+            }).join("")
+          : `<tr><td colspan="4" style="text-align:center;">商品情報がありません</td></tr>`;
 
         const shippingRow =
-          shipping || codFee
+          amt.shipping || amt.codFee
             ? `
             <tr>
               <td colspan="3" class="label">送料・手数料</td>
               <td class="num">
-                ${shipping ? "送料 " + yen(shipping) : ""}
-                ${codFee ? "<br>代引手数料 " + yen(codFee) : ""}
+                ${amt.shipping ? "送料 " + yen(amt.shipping) : ""}
+                ${amt.codFee ? "<br>代引手数料 " + yen(amt.codFee) : ""}
               </td>
             </tr>`
             : "";
+
+        const warnRow = amt.mismatch
+          ? `<div class="note warn">※警告：保存された商品合計(${yen(amt.itemsSubtotal)})とitems再計算(${yen(amt.itemsSubtotalCalc)})が一致しません</div>`
+          : "";
 
         const html = `
 <!DOCTYPE html>
@@ -546,53 +356,27 @@
 <meta charset="UTF-8" />
 <title>注文明細書 - 手造りえびせんべい 磯屋</title>
 <style>
-  /* 画面表示 */
-  body {
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    margin: 20px;
-    color: #333;
-  }
+  body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 20px; color: #333; }
   h1 { font-size: 20px; margin: 0 0 8px; }
   .shop-name { font-size: 14px; margin-bottom: 16px; }
-  .header-row {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    align-items: flex-start;
-    margin-bottom: 12px;
-    font-size: 12px;
-  }
-  .order-info, .customer-info { width: 50%; }
-  .section-title {
-    font-weight: 700;
-    border-bottom: 2px solid #000;
-    margin: 0 0 6px;
-    padding-bottom: 2px;
-    font-size: 13px;
-  }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
-    margin-top: 8px;
-  }
-  th, td { border: 1px solid #000; padding: 5px 6px; }
-  th { background: #f5f5f5; }
-  td.num { text-align: right; }
-  td.label { text-align: right; font-weight: 700; }
-  .totals { margin-top: 10px; width: 55%; margin-left: auto; }
-  .note { margin-top: 14px; font-size: 11px; }
+  .header-row { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:12px; font-size:12px; }
+  .order-info, .customer-info { width:50%; }
+  .section-title { font-weight:700; border-bottom:2px solid #000; margin:0 0 6px; padding-bottom:2px; font-size:13px; }
+  table { width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; }
+  th, td { border:1px solid #000; padding:5px 6px; }
+  th { background:#f5f5f5; }
+  td.num { text-align:right; }
+  td.label { text-align:right; font-weight:700; }
+  .totals { margin-top:10px; width:55%; margin-left:auto; }
+  .note { margin-top:14px; font-size:11px; }
+  .warn { color:#b71c1c; font-weight:700; }
 
-  /* 印刷設定（A4固定） */
-  @page {
-    size: A4 portrait;
-    margin: 10mm 10mm 12mm 10mm;
-  }
+  @page { size:A4 portrait; margin:10mm 10mm 12mm 10mm; }
   @media print {
-    body { margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    table { page-break-inside: auto; }
-    tr, td, th { page-break-inside: avoid; }
-    .header-row { page-break-inside: avoid; }
+    body { margin:0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    table { page-break-inside:auto; }
+    tr, td, th { page-break-inside:avoid; }
+    .header-row { page-break-inside:avoid; }
   }
 </style>
 </head>
@@ -628,44 +412,34 @@
         <th style="width:25%;">金額</th>
       </tr>
     </thead>
-    <tbody>
-      ${itemRows}
-    </tbody>
+    <tbody>${itemRows}</tbody>
   </table>
 
   <table class="totals">
     <tbody>
       <tr>
         <td class="label">商品合計</td>
-        <td class="num">${yen(itemsTotal)}</td>
+        <td class="num">${yen(amt.itemsSubtotal)}</td>
       </tr>
       ${shippingRow}
       <tr>
         <td class="label">お支払合計</td>
-        <td class="num">${yen(finalTotal)}</td>
+        <td class="num">${yen(amt.finalTotal)}</td>
       </tr>
     </tbody>
   </table>
 
-  <div class="note">
-    ※この明細書はお客様へのお渡し用、またはお店での控えとしてご利用ください。
-  </div>
+  ${warnRow}
+
+  <div class="note">※この明細書はお客様へのお渡し用、またはお店での控えとしてご利用ください。</div>
 </body>
 </html>`;
 
-        const doc = w.document;
-        doc.open();
-        doc.write(html);
-        doc.close();
-
+        w.document.open();
+        w.document.write(html);
+        w.document.close();
         w.focus();
-
-        // ★重要：描画完了後に印刷（崩れ防止）
-        w.onload = () => {
-          w.print();
-          // 印刷後に閉じたい場合は有効化
-          // w.close();
-        };
+        w.onload = () => { w.print(); };
       }
 
       async function loadOrders() {
@@ -675,7 +449,6 @@
         const dateFilter = (dateFilterInput.value || "").replace(/-/g, "");
         const params = [];
         if (dateFilter) params.push("date=" + encodeURIComponent(dateFilter));
-
         const path = "/api/admin/orders" + (params.length ? "?" + params.join("&") : "");
 
         let data;
@@ -698,20 +471,12 @@
 
           const tr = document.createElement("tr");
 
-          // 状態
           const tdStatus = document.createElement("td");
           const label = document.createElement("span");
           label.classList.add("status-label");
-          if (!state) {
-            label.classList.add("status-new");
-            label.textContent = "未通知";
-          } else if (state.status === "ok") {
-            label.classList.add("status-notified");
-            label.textContent = "通知済み";
-          } else {
-            label.classList.add("status-failed");
-            label.textContent = "エラー";
-          }
+          if (!state) { label.classList.add("status-new"); label.textContent = "未通知"; }
+          else if (state.status === "ok") { label.classList.add("status-notified"); label.textContent = "通知済み"; }
+          else { label.classList.add("status-failed"); label.textContent = "エラー"; }
           tdStatus.appendChild(label);
           if (state && state.lastError) {
             const err = document.createElement("div");
@@ -721,12 +486,10 @@
           }
           tr.appendChild(tdStatus);
 
-          // 日時
           const tdTs = document.createElement("td");
           tdTs.textContent = formatYmd(o.ts);
           tr.appendChild(tdTs);
 
-          // ユーザー
           const tdUser = document.createElement("td");
           const uid = o.userId || o.lineUserId || "";
           const addrObj = o.address || o.addr || {};
@@ -736,39 +499,31 @@
             (uid ? `<div class="mono muted">${escapeHtml(uid)}</div>` : "");
           tr.appendChild(tdUser);
 
-          // 内容
           const tdItems = document.createElement("td");
           tdItems.className = "small";
           tdItems.textContent = orderItemsText(o);
           tr.appendChild(tdItems);
 
-          // 金額
           const tdTotal = document.createElement("td");
           tdTotal.className = "small";
           tdTotal.textContent = orderTotalText(o);
           tr.appendChild(tdTotal);
 
-          // 住所
           const tdAddr = document.createElement("td");
           tdAddr.className = "small";
           tdAddr.textContent = orderAddressText(o);
           tr.appendChild(tdAddr);
 
-          // 発送通知 / 明細印字
           const tdNotify = document.createElement("td");
 
-          // 明細印字ボタン
           const printBtn = document.createElement("button");
           printBtn.className = "btn btn-secondary";
           printBtn.textContent = "明細印字";
           printBtn.style.display = "block";
           printBtn.style.marginBottom = "4px";
-          printBtn.addEventListener("click", () => {
-            printOrderDetail(o);
-          });
+          printBtn.addEventListener("click", () => printOrderDetail(o));
           tdNotify.appendChild(printBtn);
 
-          // 発送通知ボタン
           const btn = document.createElement("button");
           btn.className = "btn btn-primary";
           btn.textContent = state && state.status === "ok" ? "通知済み" : "発送通知を送る";
@@ -776,10 +531,7 @@
 
           btn.addEventListener("click", async () => {
             const uidForNotify = o.lineUserId || o.userId || "";
-            if (!uidForNotify) {
-              alert("ユーザーIDが無いため、LINEに通知できません。");
-              return;
-            }
+            if (!uidForNotify) { alert("ユーザーIDが無いため、LINEに通知できません。"); return; }
             if (!confirm("この注文の発送通知を送信しますか？")) return;
 
             btn.disabled = true;
@@ -787,6 +539,7 @@
 
             const itemsText = orderItemsText(o);
             const totalText = orderTotalText(o);
+
             const msg =
               "【発送のお知らせ】\n" +
               "手造りえびせんべい 磯屋です。\n\n" +
@@ -805,6 +558,7 @@
                 body: JSON.stringify({
                   userId: uidForNotify,
                   orderKey: key,
+                  orderNumber: o.orderNumber || null,
                   message: msg,
                 }),
               });
@@ -822,11 +576,7 @@
               alert("通知送信に失敗しました。サーバー側のAPI実装を確認してください。");
 
               const st = loadShipState();
-              st[key] = {
-                status: "failed",
-                ts: new Date().toISOString(),
-                lastError: e.message || String(e),
-              };
+              st[key] = { status:"failed", ts:new Date().toISOString(), lastError: e.message || String(e) };
               saveShipState(st);
 
               btn.disabled = false;
@@ -849,29 +599,16 @@
         });
       }
 
-      // ===== セグメント配信ロジック =====
       async function previewSegment() {
         const type = segmentTypeSelect.value;
         const date = (segmentDateInput.value || "").replace(/-/g, "");
-
         const body = { type };
         if (date) body.date = date;
 
-        let badgeClass = "badge";
-        let badgeLabel = "";
-        if (type === "orders") {
-          badgeClass += " badge-orders";
-          badgeLabel = "注文者";
-          body.type = "orders";
-        } else if (type === "activeChatters") {
-          badgeClass += " badge-chat";
-          badgeLabel = "アクティブトーク送信者";
-          body.type = "activeChatters";
-        } else if (type === "addresses") {
-          badgeClass += " badge-addr";
-          badgeLabel = "住所登録者";
-          body.type = "addresses";
-        }
+        let badgeClass = "badge", badgeLabel = "";
+        if (type === "orders") { badgeClass += " badge-orders"; badgeLabel = "注文者"; body.type = "orders"; }
+        else if (type === "activeChatters") { badgeClass += " badge-chat"; badgeLabel = "アクティブトーク送信者"; body.type = "activeChatters"; }
+        else if (type === "addresses") { badgeClass += " badge-addr"; badgeLabel = "住所登録者"; body.type = "addresses"; }
 
         segmentSummaryEl.textContent = "プレビュー中…";
         segmentResultEl.textContent = "";
@@ -886,21 +623,16 @@
           const ids = Array.isArray(res.userIds) ? res.userIds : [];
           const total = res.total ?? ids.length;
 
-          segmentSummaryEl.innerHTML =
-            `<span class="${badgeClass}">${badgeLabel}</span> 対象ユーザー数：${total} 件`;
+          segmentSummaryEl.innerHTML = `<span class="${badgeClass}">${badgeLabel}</span> 対象ユーザー数：${total} 件`;
 
           const previewIds = ids.slice(0, 50);
           let text = "";
-          if (previewIds.length === 0) {
-            text = "該当するユーザーがいませんでした。";
-          } else {
+          if (previewIds.length === 0) text = "該当するユーザーがいませんでした。";
+          else {
             text = "配信対象となるユーザーID（先頭50件）:\n\n" + previewIds.join("\n");
-            if (ids.length > previewIds.length) {
-              text += `\n\n… 他 ${ids.length - previewIds.length} 件`;
-            }
+            if (ids.length > previewIds.length) text += `\n\n… 他 ${ids.length - previewIds.length} 件`;
           }
           segmentResultEl.textContent = text;
-
           window.__segmentLastResult = { type, date, userIds: ids };
         } catch (e) {
           console.error("segment preview error:", e);
@@ -916,13 +648,8 @@
           return;
         }
         const msg = (segmentMessageEl.value || "").trim();
-        if (!msg) {
-          alert("送信メッセージを入力してください。");
-          return;
-        }
-        if (!confirm(`この条件で ${last.userIds.length} 名にメッセージを送信しますか？`)) {
-          return;
-        }
+        if (!msg) { alert("送信メッセージを入力してください。"); return; }
+        if (!confirm(`この条件で ${last.userIds.length} 名にメッセージを送信しますか？`)) return;
 
         segmentSendBtn.disabled = true;
         segmentSendBtn.textContent = "送信中…";
@@ -931,10 +658,7 @@
           const res = await apiFetch("/api/admin/segment/send", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              userIds: last.userIds,
-              message: msg,
-            }),
+            body: JSON.stringify({ userIds: last.userIds, message: msg }),
           });
 
           const sent = res.sent ?? res.requested ?? 0;
@@ -948,48 +672,27 @@
         }
       }
 
-      // ===== タブ切り替え =====
       function setActiveTab(name) {
-        tabs.forEach((tab) => {
-          const t = tab.getAttribute("data-tab");
-          tab.classList.toggle("active", t === name);
-        });
+        tabs.forEach((tab) => tab.classList.toggle("active", tab.getAttribute("data-tab") === name));
         tabOrders.style.display = name === "orders" ? "block" : "none";
         tabSegment.style.display = name === "segment" ? "block" : "none";
       }
 
-      // ===== 初期化 =====
       document.addEventListener("DOMContentLoaded", () => {
         const t = loadAdminToken();
         if (t) adminTokenInput.value = t;
 
-        adminTokenInput.addEventListener("change", () => {
-          saveAdminToken(adminTokenInput.value || "");
-        });
-
+        adminTokenInput.addEventListener("change", () => saveAdminToken(adminTokenInput.value || ""));
         reloadBtn.addEventListener("click", loadOrders);
         dateFilterInput.addEventListener("change", loadOrders);
 
-        // 今日を初期日付に
         const now = new Date();
-        const y = now.getFullYear();
-        const m = String(now.getMonth() + 1).padStart(2, "0");
-        const d = String(now.getDate()).padStart(2, "0");
-        dateFilterInput.value = `${y}-${m}-${d}`;
+        dateFilterInput.value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;
 
-        if (t) {
-          loadOrders();
-        } else {
-          ordersSummaryEl.textContent = "管理トークンを入力して「注文を読み込み」を押してください。";
-        }
+        if (t) loadOrders();
+        else ordersSummaryEl.textContent = "管理トークンを入力して「注文を読み込み」を押してください。";
 
-        tabs.forEach((tab) => {
-          tab.addEventListener("click", () => {
-            const name = tab.getAttribute("data-tab");
-            setActiveTab(name);
-          });
-        });
-
+        tabs.forEach((tab) => tab.addEventListener("click", () => setActiveTab(tab.getAttribute("data-tab"))));
         segmentPreviewBtn.addEventListener("click", previewSegment);
         segmentSendBtn.addEventListener("click", sendSegment);
       });

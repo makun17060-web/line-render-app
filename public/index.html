@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>ご注文方法選択</title>
+
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+  <style>
+    :root{
+      --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280; --line:#e5e7eb;
+      --akasha:#0b3a53; --original:#7a1f1f;
+      --shadow:0 1px 4px rgba(0,0,0,.08); --radius:16px;
+    }
+    *{ box-sizing:border-box; }
+    body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
+    .wrap{ max-width:760px; margin:0 auto; padding:16px 14px 28px; }
+    h1{ margin:0 0 6px; font-size:20px; }
+    .muted{ color:var(--muted); font-size:13px; line-height:1.6; }
+    .card{
+      background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+      box-shadow:var(--shadow); padding:16px; margin-top:14px;
+    }
+    .btn{
+      display:block; width:100%;
+      padding:16px 14px; border-radius:14px;
+      font-weight:900; font-size:16px;
+      text-align:center; text-decoration:none;
+      border:none; cursor:pointer;
+    }
+    .btnOriginal{ background:var(--original); color:#fff; }
+    .btnAkasha{ background:var(--akasha); color:#fff; }
+    .note{ margin-top:10px; font-size:13px; color:#374151; }
+    .sub{ margin-top:6px; font-size:12px; color:var(--muted); }
+    .pill{
+      display:inline-block; margin-top:8px;
+      font-size:12px; padding:2px 10px; border-radius:999px;
+      border:1px solid var(--line); background:#fafafa; color:#374151;
+    }
+    .warn{ color:#b91c1c; font-weight:900; }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <h1>ご注文はこちら</h1>
+    <div class="muted" id="status">読み込み中…</div>
+
+    <div class="card">
+      <a class="btn btnOriginal" href="/original-set.html" id="goOriginal">🎁 オリジナルセットを購入</a>
+      <div class="note">詰め合わせ商品・贈答向け</div>
+      <div class="sub"><span class="warn">※ 単品（あかしゃシリーズ等）との混載はできません</span></div>
+      <div class="pill">数量で送料サイズが変わります</div>
+    </div>
+
+    <div class="card">
+      <a class="btn btnAkasha" href="/products.html" id="goAkasha">🍘 あかしゃシリーズを購入</a>
+      <div class="note">単品・組み合わせ自由（混載OK）</div>
+      <div class="sub">久助も「シリーズ扱い」で同梱できます</div>
+      <div class="pill">カートに入れて住所入力へ</div>
+    </div>
+
+    <div class="muted" style="margin-top:16px">
+      ※ LINE内から開いている場合は、この画面で注文種類を選んでください。
+    </div>
+  </div>
+
+<script>
+(async function(){
+  "use strict";
+
+  // 入口もLIFFにしたい場合だけ設定してください（不要なら空でOK）
+  // const LIFF_ID_HOME = "あなたのLIFF_ID";
+  const LIFF_ID_HOME = ""; // ←使わないなら空
+
+  const statusEl = document.getElementById("status");
+
+  try{
+    if(LIFF_ID_HOME){
+      await liff.init({ liffId: LIFF_ID_HOME });
+      if(!liff.isLoggedIn()){
+        liff.login({ redirectUri: location.href });
+        return;
+      }
+    }
+    statusEl.textContent = "";
+  }catch(e){
+    console.error(e);
+    // LIFF失敗でもボタン遷移は使えるようにしておく
+    statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">LIFF初期化に失敗しました（ただし注文画面への移動は可能です）</span>';
+  }
+})();
+</script>
+</body>
+</html>

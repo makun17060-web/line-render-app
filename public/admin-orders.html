@@ -1,702 +1,229 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8" />
-  <title>注文管理 & セグメント配信</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <style>
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin:0; padding:12px; background:#f5f5f5; color:#333; }
-    h1 { margin:0 0 8px; font-size:20px; }
-    .subtitle { font-size:12px; color:#666; margin-bottom:12px; }
-    .top-bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:12px; }
-    .top-bar label { font-size:12px; color:#555; }
-    input[type="text"], input[type="date"], textarea, select { font-size:13px; padding:4px 6px; border-radius:4px; border:1px solid #ccc; box-sizing:border-box; }
-    textarea { width:100%; min-height:80px; resize:vertical; }
-    button { cursor:pointer; }
-    .btn { padding:6px 10px; border-radius:999px; border:none; font-size:13px; font-weight:600; }
-    .btn-primary { background:#00b900; color:#fff; }
-    .btn-secondary { background:#fff; border:1px solid #ccc; color:#333; }
-    .btn-danger { background:#e53935; color:#fff; }
-    .btn:disabled { opacity:0.5; cursor:default; }
-    .tabs { display:flex; gap:4px; margin-bottom:8px; border-bottom:1px solid #ddd; }
-    .tab { padding:6px 10px; border-radius:6px 6px 0 0; font-size:13px; cursor:pointer; background:#eee; }
-    .tab.active { background:#fff; border:1px solid #ddd; border-bottom-color:#fff; }
-    .tab-content { background:#fff; border:1px solid #ddd; border-radius:0 6px 6px 6px; padding:10px; margin-bottom:16px; }
-    .info { font-size:11px; color:#666; margin-top:4px; }
-    .orders-table { width:100%; border-collapse:collapse; font-size:12px; }
-    .orders-table th, .orders-table td { border:1px solid #ddd; padding:4px 6px; vertical-align:top; }
-    .orders-table th { background:#fafafa; position:sticky; top:0; z-index:1; }
-    .status-label { font-size:11px; padding:2px 6px; border-radius:999px; display:inline-block; }
-    .status-new { background:#e3f2fd; color:#1565c0; }
-    .status-notified { background:#e8f5e9; color:#2e7d32; }
-    .status-failed { background:#ffebee; color:#c62828; }
-    .small { font-size:11px; color:#555; }
-    .muted { color:#888; }
-    .mono { font-family:"SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:11px; }
-    .segment-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px; }
-    .segment-row label { font-size:12px; color:#555; }
-    .segment-result { font-size:12px; background:#fafafa; border-radius:4px; padding:6px; border:1px solid #eee; max-height:150px; overflow:auto; white-space:pre-wrap; }
-    .badge { display:inline-block; padding:2px 6px; border-radius:999px; font-size:10px; background:#eee; color:#555; }
-    .badge-orders { background:#e3f2fd; color:#1565c0; }
-    .badge-chat { background:#f3e5f5; color:#6a1b9a; }
-    .badge-addr { background:#e8f5e9; color:#2e7d32; }
-    .warn { color:#b71c1c; font-weight:700; }
-  </style>
-</head>
-<body>
-  <h1>注文管理 & セグメント配信</h1>
-  <div class="subtitle">手造りえびせんべい 磯屋 / 管理者専用ページ（URLをお客さまに共有しないでください）</div>
+// ===== Admin Orders APIs (fix totals mismatch + shipped notify) =====
+const express = require("express");
+const { Pool } = require("pg");
 
-  <div class="top-bar">
-    <label>
-      管理トークン:
-      <input type="text" id="adminToken" placeholder="ADMIN_API_TOKEN または ADMIN_CODE" size="26" />
-    </label>
-    <button class="btn btn-secondary" id="reloadBtn">注文を読み込み</button>
-    <label>
-      日付（JST）:
-      <input type="date" id="dateFilter" />
-    </label>
-    <span class="info">※トークンはブラウザに保存されます（localStorage）。</span>
-  </div>
+// 既存のapp/lineClient/poolがあるならそれを使ってOK
+// ここでは pool/lineClient が既に定義されている前提にしています。
+// もし無ければ下を使ってください：
+// const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+// const { Client } = require("@line/bot-sdk"); const lineClient = new Client({ channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN });
 
-  <div class="tabs">
-    <div class="tab active" data-tab="orders">注文一覧・発送通知</div>
-    <div class="tab" data-tab="segment">セグメント配信</div>
-  </div>
-
-  <!-- ===== 注文管理タブ ===== -->
-  <div class="tab-content" id="tab-orders">
-    <div class="small muted" id="ordersSummary">注文を読み込んでいません。</div>
-    <div style="overflow:auto; max-height:70vh; margin-top:6px;">
-      <table class="orders-table" id="ordersTable">
-        <thead>
-          <tr>
-            <th>状態</th>
-            <th>注文日時</th>
-            <th>ユーザー</th>
-            <th>内容</th>
-            <th>金額</th>
-            <th>住所</th>
-            <th>発送通知 / 明細印字</th>
-          </tr>
-        </thead>
-        <tbody id="ordersTbody"></tbody>
-      </table>
-    </div>
-    <div class="info">
-      ・発送通知の金額は「server側で確定した金額（itemsSubtotal/shipping/codFee/finalTotal）」を優先して表示します。<br/>
-      ・itemsSubtotal 等が無い古い注文は、items から再計算して表示します（ズレ防止）。<br/>
-    </div>
-  </div>
-
-  <!-- ===== セグメント配信タブ ===== -->
-  <div class="tab-content" id="tab-segment" style="display:none;">
-    <div class="segment-row">
-      <label>
-        種別:
-        <select id="segmentType">
-          <option value="orders">注文者（ORDERS_LOGベース）</option>
-          <option value="activeChatters">アクティブなトーク送信者</option>
-          <option value="addresses">住所登録者</option>
-        </select>
-      </label>
-      <label>
-        日付（任意・JST）:
-        <input type="date" id="segmentDate" />
-      </label>
-      <button class="btn btn-secondary" id="segmentPreviewBtn">対象をプレビュー</button>
-    </div>
-    <div class="segment-row">
-      <span id="segmentSummary" class="small muted">まだプレビューしていません。</span>
-    </div>
-    <div class="segment-result mono" id="segmentResult"></div>
-
-    <div style="margin-top:8px;">
-      <label class="small">送信メッセージ（テキスト）：</label>
-      <textarea id="segmentMessage" placeholder="例）磯屋です。〇月△日の久助入荷のご案内です…"></textarea>
-      <div class="info">・プレビューで取得したユーザーID一覧に、このメッセージが配信されます。</div>
-      <button class="btn btn-primary" id="segmentSendBtn">この条件で配信する</button>
-    </div>
-  </div>
-
-  <script>
-    (function () {
-      "use strict";
-
-      const ADMIN_TOKEN_KEY = "iso-admin-token";
-      const SHIP_STATE_KEY  = "iso-ship-state-v1"; // { orderKey: { status, ts, lastError } }
-
-      const adminTokenInput = document.getElementById("adminToken");
-      const reloadBtn = document.getElementById("reloadBtn");
-      const dateFilterInput = document.getElementById("dateFilter");
-
-      const ordersSummaryEl = document.getElementById("ordersSummary");
-      const ordersTbody = document.getElementById("ordersTbody");
-
-      const tabs = document.querySelectorAll(".tab");
-      const tabOrders = document.getElementById("tab-orders");
-      const tabSegment = document.getElementById("tab-segment");
-
-      const segmentTypeSelect = document.getElementById("segmentType");
-      const segmentDateInput = document.getElementById("segmentDate");
-      const segmentPreviewBtn = document.getElementById("segmentPreviewBtn");
-      const segmentSummaryEl = document.getElementById("segmentSummary");
-      const segmentResultEl = document.getElementById("segmentResult");
-      const segmentMessageEl = document.getElementById("segmentMessage");
-      const segmentSendBtn = document.getElementById("segmentSendBtn");
-
-      const yen = (n) => Number(n || 0).toLocaleString("ja-JP") + "円";
-
-      function loadAdminToken() { return localStorage.getItem(ADMIN_TOKEN_KEY) || ""; }
-      function saveAdminToken(v) { localStorage.setItem(ADMIN_TOKEN_KEY, v || ""); }
-      function loadShipState() {
-        try { return JSON.parse(localStorage.getItem(SHIP_STATE_KEY) || "{}") || {}; }
-        catch { return {}; }
-      }
-      function saveShipState(state) {
-        try { localStorage.setItem(SHIP_STATE_KEY, JSON.stringify(state || {})); }
-        catch (e) { console.warn("saveShipState error:", e); }
-      }
-
-      function getToken() { return (adminTokenInput.value || "").trim(); }
-
-      async function apiFetch(path, options = {}) {
-        const token = getToken();
-        if (!token) { alert("管理トークンを入力してください。"); throw new Error("no_admin_token"); }
-        const url = path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token);
-        const res = await fetch(url, options);
-        if (!res.ok) {
-          const text = await res.text().catch(() => "");
-          console.error("API error:", res.status, text);
-          throw new Error("API error: " + res.status);
-        }
-        try { return await res.json(); } catch { return null; }
-      }
-
-      function formatYmd(ts) {
-        if (!ts) return "";
-        const d = new Date(ts);
-        if (isNaN(d.getTime())) return ts;
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, "0");
-        const dd = String(d.getDate()).padStart(2, "0");
-        const hh = String(d.getHours()).padStart(2, "0");
-        const mi = String(d.getMinutes()).padStart(2, "0");
-        return `${y}-${m}-${dd} ${hh}:${mi}`;
-      }
-
-      function buildOrderKey(o, index) {
-        if (o.orderNumber) return "ord:" + o.orderNumber;
-        const ts = o.ts || o.timestamp || "";
-        const uid = o.userId || o.lineUserId || "";
-        if (ts && uid) return "ord:" + uid + ":" + ts;
-        if (ts) return "ord:" + ts;
-        return "idx:" + index;
-      }
-
-      function escapeHtml(str) {
-        return String(str || "")
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;")
-          .replace(/'/g, "&#39;");
-      }
-
-      // 明細/計算のために items を統一
-      function buildItemsArray(o) {
-        if (Array.isArray(o.items) && o.items.length > 0) {
-          return o.items.map((it) => {
-            const name = it.name || it.id || "商品";
-            let unitPrice = Number(it.price || it.unitPrice || 0);
-
-            // 単価が無い古いデータの救済（久助だけ）
-            if (!unitPrice && /久助/.test(name)) unitPrice = 250;
-
-            return { name, unitPrice, qty: Number(it.qty || it.quantity || 0) || 0 };
-          });
-        }
-        if (o.productName || o.productId) {
-          let name = o.productName || o.productId;
-          let unitPrice = Number(o.price || o.unitPrice || 0);
-          if (!unitPrice && /久助/.test(name)) unitPrice = 250;
-          return [{ name, unitPrice, qty: Number(o.qty || 1) }];
-        }
-        return [];
-      }
-
-      function calcItemsSubtotal(o) {
-        const items = buildItemsArray(o);
-        return items.reduce((sum, it) => sum + (Number(it.unitPrice || 0) * Number(it.qty || 0)), 0);
-      }
-
-      function pickNumber(v) {
-        const n = Number(v);
-        return Number.isFinite(n) ? n : 0;
-      }
-
-      // server確定値を優先しつつ、無ければ安全に再計算
-      function getAmounts(o) {
-        const itemsSubtotalCalc = calcItemsSubtotal(o);
-
-        const shipping = pickNumber(o.shipping);
-        const codFee   = pickNumber(o.codFee);
-
-        const itemsSubtotal =
-          o.itemsSubtotal != null ? pickNumber(o.itemsSubtotal) :
-          o.itemsTotal    != null ? pickNumber(o.itemsTotal) :
-          o.subtotal      != null ? pickNumber(o.subtotal) :
-          itemsSubtotalCalc;
-
-        const finalTotal =
-          o.finalTotal != null ? pickNumber(o.finalTotal) :
-          o.total      != null ? pickNumber(o.total) :
-          (itemsSubtotal + shipping + codFee);
-
-        const mismatch = (Math.abs(itemsSubtotal - itemsSubtotalCalc) >= 1);
-
-        return { itemsSubtotal, itemsSubtotalCalc, shipping, codFee, finalTotal, mismatch };
-      }
-
-      function orderItemsText(o) {
-        const items = buildItemsArray(o);
-        if (!items.length) return "（内容不明）";
-        return items.map((it) => `・${it.name} x ${it.qty}`).join("\n");
-      }
-
-      function orderTotalText(o) {
-        const a = getAmounts(o);
-        let lines = [];
-        lines.push(`商品合計：${yen(a.itemsSubtotal)}`);
-        lines.push(`送料：${yen(a.shipping)}`);
-        if (a.codFee) lines.push(`代引手数料：${yen(a.codFee)}`);
-        lines.push(`合計：${yen(a.finalTotal)}`);
-        if (a.mismatch) lines.push(`※警告：items再計算(${yen(a.itemsSubtotalCalc)})と不一致`);
-        return lines.join("\n");
-      }
-
-      function orderAddressText(o) {
-        const a = o.address || o.addr || null;
-        if (!a) return "";
-        const name = a.name || (a.lastName || "") + (a.firstName || "");
-        const tel = a.phone || a.tel || "";
-        const zip = a.postal || a.zip || "";
-        const line1 = (a.prefecture || a.pref || "") + (a.city || "") + (a.address1 || a.addr1 || "");
-        const line2 = a.address2 || a.addr2 || "";
-        return [ zip ? `〒${zip}` : "", line1 || "", line2 || "", name ? `氏名：${name}` : "", tel ? `TEL：${tel}` : "" ]
-          .filter(Boolean).join("\n");
-      }
-
-      function printOrderDetail(o) {
-        const w = window.open("", "_blank");
-        if (!w) { alert("ポップアップがブロックされました。ブラウザの設定を確認してください。"); return; }
-
-        const items = buildItemsArray(o);
-        const amt = getAmounts(o);
-
-        const a = o.address || o.addr || {};
-        const name = a.name || (a.lastName || "") + (a.firstName || "");
-        const tel = a.phone || a.tel || "";
-        const zip = a.postal || a.zip || "";
-        const line1 = (a.prefecture || a.pref || "") + (a.city || "") + (a.address1 || a.addr1 || "");
-        const line2 = a.address2 || a.addr2 || "";
-
-        const payment = o.payment || "";
-        const method = o.method || "";
-        const region = o.region || "";
-
-        const paymentText =
-          payment === "cod" ? "代金引換" :
-          payment === "bank" ? "銀行振込" :
-          payment === "cash" ? "現金" :
-          payment || "";
-
-        const methodText =
-          method === "pickup" ? "店頭受取" :
-          method === "delivery" ? (region ? `宅配（${region}）` : "宅配") :
-          method || "";
-
-        const orderTs = formatYmd(o.ts);
-        const orderNo = o.orderNumber || "";
-
-        const itemRows = items.length
-          ? items.map((it) => {
-              const lineTotal = Number(it.unitPrice || 0) * Number(it.qty || 0);
-              return `
-              <tr>
-                <td>${escapeHtml(it.name)}</td>
-                <td class="num">${it.unitPrice ? yen(it.unitPrice) : ""}</td>
-                <td class="num">${it.qty}</td>
-                <td class="num">${lineTotal ? yen(lineTotal) : ""}</td>
-              </tr>`;
-            }).join("")
-          : `<tr><td colspan="4" style="text-align:center;">商品情報がありません</td></tr>`;
-
-        const shippingRow =
-          amt.shipping || amt.codFee
-            ? `
-            <tr>
-              <td colspan="3" class="label">送料・手数料</td>
-              <td class="num">
-                ${amt.shipping ? "送料 " + yen(amt.shipping) : ""}
-                ${amt.codFee ? "<br>代引手数料 " + yen(amt.codFee) : ""}
-              </td>
-            </tr>`
-            : "";
-
-        const warnRow = amt.mismatch
-          ? `<div class="note warn">※警告：保存された商品合計(${yen(amt.itemsSubtotal)})とitems再計算(${yen(amt.itemsSubtotalCalc)})が一致しません</div>`
-          : "";
-
-        const html = `
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8" />
-<title>注文明細書 - 手造りえびせんべい 磯屋</title>
-<style>
-  body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 20px; color: #333; }
-  h1 { font-size: 20px; margin: 0 0 8px; }
-  .shop-name { font-size: 14px; margin-bottom: 16px; }
-  .header-row { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:12px; font-size:12px; }
-  .order-info, .customer-info { width:50%; }
-  .section-title { font-weight:700; border-bottom:2px solid #000; margin:0 0 6px; padding-bottom:2px; font-size:13px; }
-  table { width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; }
-  th, td { border:1px solid #000; padding:5px 6px; }
-  th { background:#f5f5f5; }
-  td.num { text-align:right; }
-  td.label { text-align:right; font-weight:700; }
-  .totals { margin-top:10px; width:55%; margin-left:auto; }
-  .note { margin-top:14px; font-size:11px; }
-  .warn { color:#b71c1c; font-weight:700; }
-
-  @page { size:A4 portrait; margin:10mm 10mm 12mm 10mm; }
-  @media print {
-    body { margin:0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    table { page-break-inside:auto; }
-    tr, td, th { page-break-inside:avoid; }
-    .header-row { page-break-inside:avoid; }
+function requireAdmin(req) {
+  const token = (req.query.token || "").trim();
+  const okToken = (process.env.ADMIN_API_TOKEN || process.env.ADMIN_CODE || "").trim();
+  if (!okToken) throw new Error("ADMIN_API_TOKEN/ADMIN_CODE not set");
+  if (!token || token !== okToken) {
+    const e = new Error("unauthorized");
+    e.status = 401;
+    throw e;
   }
-</style>
-</head>
-<body>
-  <h1>注文明細書</h1>
-  <div class="shop-name">手造りえびせんべい 磯屋</div>
+}
 
-  <div class="header-row">
-    <div class="order-info">
-      <div class="section-title">注文情報</div>
-      <div>注文日時：${escapeHtml(orderTs)}</div>
-      <div>注文番号：${escapeHtml(orderNo)}</div>
-      <div>受取方法：${escapeHtml(methodText)}</div>
-      <div>お支払い方法：${escapeHtml(paymentText)}</div>
-    </div>
-    <div class="customer-info">
-      <div class="section-title">お客様情報</div>
-      <div>${zip ? "〒" + escapeHtml(zip) : ""}</div>
-      <div>${escapeHtml(line1)}</div>
-      <div>${escapeHtml(line2)}</div>
-      <div>${name ? "氏名：" + escapeHtml(name) : ""}</div>
-      <div>${tel ? "TEL：" + escapeHtml(tel) : ""}</div>
-    </div>
-  </div>
+function yen(n) {
+  return Number(n || 0).toLocaleString("ja-JP") + "円";
+}
 
-  <div class="section-title">ご注文内容</div>
-  <table>
-    <thead>
-      <tr>
-        <th style="width:50%;">商品名</th>
-        <th style="width:15%;">単価</th>
-        <th style="width:10%;">数量</th>
-        <th style="width:25%;">金額</th>
-      </tr>
-    </thead>
-    <tbody>${itemRows}</tbody>
-  </table>
+function buildItemsArray(order) {
+  const items = Array.isArray(order.items) ? order.items : [];
+  return items.map((it) => {
+    const name = it.name || it.id || "商品";
+    let price = Number(it.price ?? it.unitPrice ?? 0);
+    const qty = Number(it.qty || 0) || 0;
 
-  <table class="totals">
-    <tbody>
-      <tr>
-        <td class="label">商品合計</td>
-        <td class="num">${yen(amt.itemsSubtotal)}</td>
-      </tr>
-      ${shippingRow}
-      <tr>
-        <td class="label">お支払合計</td>
-        <td class="num">${yen(amt.finalTotal)}</td>
-      </tr>
-    </tbody>
-  </table>
+    // 久助：単価が無いときだけ補完（運用：250円）
+    if (!price && /久助/.test(name)) price = 250;
 
-  ${warnRow}
+    return { name, price, qty };
+  });
+}
 
-  <div class="note">※この明細書はお客様へのお渡し用、またはお店での控えとしてご利用ください。</div>
-</body>
-</html>`;
+function sumItems(items) {
+  return (items || []).reduce((s, it) => s + (Number(it.price || 0) * Number(it.qty || 0)), 0);
+}
 
-        w.document.open();
-        w.document.write(html);
-        w.document.close();
-        w.focus();
-        w.onload = () => { w.print(); };
-      }
+function normalizeOrderTotals(orderRow) {
+  const shipping = Number(orderRow.shipping ?? 0) || 0;
+  const codFee = Number(orderRow.cod_fee ?? 0) || 0;
 
-      async function loadOrders() {
-        ordersSummaryEl.textContent = "読み込み中…";
-        ordersTbody.innerHTML = "";
+  // DBのitems_subtotal（誤ってcodが混ざってる可能性あり）
+  const itemsSubtotalRaw = Number(orderRow.items_subtotal ?? 0) || 0;
 
-        const dateFilter = (dateFilterInput.value || "").replace(/-/g, "");
-        const params = [];
-        if (dateFilter) params.push("date=" + encodeURIComponent(dateFilter));
-        const path = "/api/admin/orders" + (params.length ? "?" + params.join("&") : "");
+  const items = buildItemsArray(orderRow);
+  const itemsCalc = sumItems(items);
 
-        let data;
-        try {
-          data = await apiFetch(path);
-        } catch (e) {
-          ordersSummaryEl.textContent = "読み込みエラー：" + e.message;
-          console.error(e);
-          return;
-        }
+  let itemsSubtotal = itemsSubtotalRaw;
+  let warning = "";
 
-        const items = Array.isArray(data.items) ? data.items : [];
-        ordersSummaryEl.textContent = `取得件数：${items.length} 件`;
+  // 代引混在パターン：items_subtotal - items_calc == cod_fee
+  if (itemsCalc > 0 && codFee > 0 && (itemsSubtotalRaw - itemsCalc) === codFee) {
+    itemsSubtotal = itemsCalc;
+    warning = `fix: items_subtotal included cod_fee(${codFee})`;
+  } else if (itemsSubtotalRaw === 0 && itemsCalc > 0) {
+    itemsSubtotal = itemsCalc;
+    warning = "fix: items_subtotal was 0";
+  } else if (itemsCalc > 0 && itemsSubtotalRaw > 0 && itemsSubtotalRaw !== itemsCalc) {
+    warning = `warn: mismatch raw=${itemsSubtotalRaw} calc=${itemsCalc}`;
+  }
 
-        const shipState = loadShipState();
+  const finalTotal = Number(orderRow.final_total ?? 0) || (itemsSubtotal + shipping + codFee);
 
-        items.forEach((o, idx) => {
-          const key = buildOrderKey(o, idx);
-          const state = shipState[key] || null;
+  return { items, itemsCalc, itemsSubtotalRaw, itemsSubtotal, shipping, codFee, finalTotal, warning };
+}
 
-          const tr = document.createElement("tr");
+// GET /api/admin/orders?date=YYYYMMDD
+app.get("/api/admin/orders", async (req, res) => {
+  try {
+    requireAdmin(req);
 
-          const tdStatus = document.createElement("td");
-          const label = document.createElement("span");
-          label.classList.add("status-label");
-          if (!state) { label.classList.add("status-new"); label.textContent = "未通知"; }
-          else if (state.status === "ok") { label.classList.add("status-notified"); label.textContent = "通知済み"; }
-          else { label.classList.add("status-failed"); label.textContent = "エラー"; }
-          tdStatus.appendChild(label);
-          if (state && state.lastError) {
-            const err = document.createElement("div");
-            err.className = "small muted";
-            err.textContent = state.lastError;
-            tdStatus.appendChild(err);
-          }
-          tr.appendChild(tdStatus);
+    const date = String(req.query.date || "").trim(); // JSTの日付フィルタを想定（YYYYMMDD）
+    // 既存スキーマに合わせて調整してください：
+    // orders(ts timestamptz, order_number, user_id, line_user_id, address jsonb, items jsonb, items_subtotal int, shipping int, cod_fee int, final_total int, payment text, method text, region text)
+    const where = [];
+    const params = [];
+    if (date && /^\d{8}$/.test(date)) {
+      // JST日付の0:00〜24:00 をUTCに変換するのが理想だが、簡易版：
+      // ここは “tsをJSTで文字列化して前方一致” などあなたの実装に合わせてOK
+      // 例として server側でJST基準の範囲を作る：
+      const y = date.slice(0,4), m = date.slice(4,6), d = date.slice(6,8);
+      const startJst = `${y}-${m}-${d}T00:00:00+09:00`;
+      const endJst   = `${y}-${m}-${d}T23:59:59.999+09:00`;
+      where.push(`ts >= $${params.length+1} AND ts <= $${params.length+2}`);
+      params.push(startJst, endJst);
+    }
 
-          const tdTs = document.createElement("td");
-          tdTs.textContent = formatYmd(o.ts);
-          tr.appendChild(tdTs);
+    const sql =
+      `SELECT
+         id, ts, order_number, user_id, line_user_id,
+         address, items,
+         items_subtotal, shipping, cod_fee, final_total,
+         payment, method, region
+       FROM orders
+       ${where.length ? "WHERE " + where.join(" AND ") : ""}
+       ORDER BY ts DESC
+       LIMIT 300`;
 
-          const tdUser = document.createElement("td");
-          const uid = o.userId || o.lineUserId || "";
-          const addrObj = o.address || o.addr || {};
-          const name = addrObj.name || (addrObj.lastName || "") + (addrObj.firstName || "");
-          tdUser.innerHTML =
-            (name ? `<div>${escapeHtml(name)}</div>` : "") +
-            (uid ? `<div class="mono muted">${escapeHtml(uid)}</div>` : "");
-          tr.appendChild(tdUser);
+    const r = await pool.query(sql, params);
 
-          const tdItems = document.createElement("td");
-          tdItems.className = "small";
-          tdItems.textContent = orderItemsText(o);
-          tr.appendChild(tdItems);
+    const itemsOut = r.rows.map((row) => {
+      const t = normalizeOrderTotals(row);
+      return {
+        ts: row.ts,
+        orderNumber: row.order_number || "",
+        userId: row.user_id || row.line_user_id || "",
+        lineUserId: row.line_user_id || row.user_id || "",
+        address: row.address || null,
+        items: Array.isArray(row.items) ? row.items : [],
+        // adminが使いやすいように統一キーでも返す
+        itemsSubtotal: t.itemsSubtotal,
+        shipping: t.shipping,
+        codFee: t.codFee,
+        finalTotal: t.finalTotal,
+        payment: row.payment || "",
+        method: row.method || "",
+        region: row.region || "",
+        // デバッグ
+        warn: t.warning ? { type: t.warning, raw: t.itemsSubtotalRaw, calc: t.itemsCalc } : null,
+      };
+    });
 
-          const tdTotal = document.createElement("td");
-          tdTotal.className = "small";
-          tdTotal.textContent = orderTotalText(o);
-          tr.appendChild(tdTotal);
+    res.json({ ok: true, items: itemsOut });
+  } catch (e) {
+    console.error("[admin/orders]", e);
+    res.status(e.status || 500).json({ ok: false, error: e.message || String(e) });
+  }
+});
 
-          const tdAddr = document.createElement("td");
-          tdAddr.className = "small";
-          tdAddr.textContent = orderAddressText(o);
-          tr.appendChild(tdAddr);
+// POST /api/admin/orders/notify-shipped
+// body: { userId, orderNumber?, orderKey?, message? }
+app.post("/api/admin/orders/notify-shipped", express.json(), async (req, res) => {
+  try {
+    requireAdmin(req);
 
-          const tdNotify = document.createElement("td");
+    const userId = (req.body.userId || "").trim();
+    const orderNumber = (req.body.orderNumber || "").trim();
+    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
 
-          const printBtn = document.createElement("button");
-          printBtn.className = "btn btn-secondary";
-          printBtn.textContent = "明細印字";
-          printBtn.style.display = "block";
-          printBtn.style.marginBottom = "4px";
-          printBtn.addEventListener("click", () => printOrderDetail(o));
-          tdNotify.appendChild(printBtn);
+    let order = null;
+    if (orderNumber) {
+      const r = await pool.query(
+        `SELECT * FROM orders WHERE order_number = $1 LIMIT 1`,
+        [orderNumber]
+      );
+      order = r.rows[0] || null;
+    }
 
-          const btn = document.createElement("button");
-          btn.className = "btn btn-primary";
-          btn.textContent = state && state.status === "ok" ? "通知済み" : "発送通知を送る";
-          btn.disabled = !!state && state.status === "ok";
+    // messageが来ても、金額はサーバーで組み立てる（安全）
+    let msg;
+    if (order) {
+      const t = normalizeOrderTotals(order);
+      const itemsTxt = t.items.length
+        ? t.items.map(it => `・${it.name} x ${it.qty}`).join("\n")
+        : "（内容不明）";
 
-          btn.addEventListener("click", async () => {
-            const uidForNotify = o.lineUserId || o.userId || "";
-            if (!uidForNotify) { alert("ユーザーIDが無いため、LINEに通知できません。"); return; }
-            if (!confirm("この注文の発送通知を送信しますか？")) return;
+      const totalTxt =
+        `商品合計：${yen(t.itemsSubtotal)}\n` +
+        `送料：${yen(t.shipping)}\n` +
+        (t.codFee ? `代引手数料：${yen(t.codFee)}\n` : "") +
+        `合計：${yen(t.finalTotal)}`;
 
-            btn.disabled = true;
-            btn.textContent = "送信中…";
+      msg =
+        "【発送のお知らせ】\n" +
+        "手造りえびせんべい 磯屋です。\n\n" +
+        "ご注文いただいた商品を、本日発送いたしました。\n\n" +
+        "▼ご注文内容\n" + itemsTxt + "\n\n" +
+        totalTxt + "\n\n" +
+        "商品到着まで今しばらくお待ちくださいませ。";
+    } else {
+      // orderNumber無し/見つからない場合は、受け取ったmessageを送る（最低限）
+      msg = (req.body.message || "").trim();
+      if (!msg) return res.status(400).json({ ok: false, error: "order not found and message empty" });
+    }
 
-            const itemsText = orderItemsText(o);
-            const totalText = orderTotalText(o);
+    await lineClient.pushMessage(userId, { type: "text", text: msg });
 
-            const msg =
-              "【発送のお知らせ】\n" +
-              "手造りえびせんべい 磯屋です。\n\n" +
-              "ご注文いただいた商品を、本日発送いたしました。\n\n" +
-              "▼ご注文内容\n" +
-              itemsText +
-              "\n\n" +
-              totalText +
-              "\n\n" +
-              "商品到着まで今しばらくお待ちくださいませ。";
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[admin/notify-shipped]", e);
+    res.status(e.status || 500).json({ ok: false, error: e.message || String(e) });
+  }
+});
 
-            try {
-              await apiFetch("/api/admin/orders/notify-shipped", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  userId: uidForNotify,
-                  orderKey: key,
-                  orderNumber: o.orderNumber || null,
-                  message: msg,
-                }),
-              });
+// （任意）POST /api/admin/orders/repair-mismatch
+// body: { orderNumbers: ["...","..."] }
+app.post("/api/admin/orders/repair-mismatch", express.json(), async (req, res) => {
+  try {
+    requireAdmin(req);
 
-              const st = loadShipState();
-              st[key] = { status: "ok", ts: new Date().toISOString() };
-              saveShipState(st);
+    const orderNumbers = Array.isArray(req.body.orderNumbers) ? req.body.orderNumbers.map(s => String(s||"").trim()).filter(Boolean) : [];
+    if (orderNumbers.length === 0) return res.status(400).json({ ok: false, error: "orderNumbers required" });
 
-              btn.textContent = "通知済み";
-              label.classList.remove("status-new", "status-failed");
-              label.classList.add("status-notified");
-              label.textContent = "通知済み";
-            } catch (e) {
-              console.error("notify shipped error:", e);
-              alert("通知送信に失敗しました。サーバー側のAPI実装を確認してください。");
+    const q = `
+      WITH calc AS (
+        SELECT
+          o.id,
+          o.order_number,
+          o.items_subtotal,
+          o.cod_fee,
+          COALESCE(SUM((COALESCE((it->>'price')::int,0))*(COALESCE((it->>'qty')::int,0))),0) AS items_calc
+        FROM orders o
+        CROSS JOIN LATERAL jsonb_array_elements(o.items) it
+        WHERE o.order_number = ANY($1)
+        GROUP BY o.id, o.order_number, o.items_subtotal, o.cod_fee
+      )
+      UPDATE orders u
+      SET
+        items_subtotal = c.items_calc,
+        final_total = (c.items_calc + u.shipping + u.cod_fee)
+      FROM calc c
+      WHERE u.id = c.id
+        AND (c.items_subtotal - c.items_calc) = c.cod_fee
+      RETURNING u.order_number, c.items_subtotal AS before_items_subtotal, c.items_calc AS after_items_subtotal, u.cod_fee;
+    `;
 
-              const st = loadShipState();
-              st[key] = { status:"failed", ts:new Date().toISOString(), lastError: e.message || String(e) };
-              saveShipState(st);
-
-              btn.disabled = false;
-              btn.textContent = "再試行";
-              label.classList.remove("status-new", "status-notified");
-              label.classList.add("status-failed");
-              label.textContent = "エラー";
-            }
-          });
-
-          tdNotify.appendChild(btn);
-
-          const keyDiv = document.createElement("div");
-          keyDiv.className = "mono muted small";
-          keyDiv.textContent = key;
-          tdNotify.appendChild(keyDiv);
-
-          tr.appendChild(tdNotify);
-          ordersTbody.appendChild(tr);
-        });
-      }
-
-      async function previewSegment() {
-        const type = segmentTypeSelect.value;
-        const date = (segmentDateInput.value || "").replace(/-/g, "");
-        const body = { type };
-        if (date) body.date = date;
-
-        let badgeClass = "badge", badgeLabel = "";
-        if (type === "orders") { badgeClass += " badge-orders"; badgeLabel = "注文者"; body.type = "orders"; }
-        else if (type === "activeChatters") { badgeClass += " badge-chat"; badgeLabel = "アクティブトーク送信者"; body.type = "activeChatters"; }
-        else if (type === "addresses") { badgeClass += " badge-addr"; badgeLabel = "住所登録者"; body.type = "addresses"; }
-
-        segmentSummaryEl.textContent = "プレビュー中…";
-        segmentResultEl.textContent = "";
-
-        try {
-          const res = await apiFetch("/api/admin/segment/preview", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          });
-
-          const ids = Array.isArray(res.userIds) ? res.userIds : [];
-          const total = res.total ?? ids.length;
-
-          segmentSummaryEl.innerHTML = `<span class="${badgeClass}">${badgeLabel}</span> 対象ユーザー数：${total} 件`;
-
-          const previewIds = ids.slice(0, 50);
-          let text = "";
-          if (previewIds.length === 0) text = "該当するユーザーがいませんでした。";
-          else {
-            text = "配信対象となるユーザーID（先頭50件）:\n\n" + previewIds.join("\n");
-            if (ids.length > previewIds.length) text += `\n\n… 他 ${ids.length - previewIds.length} 件`;
-          }
-          segmentResultEl.textContent = text;
-          window.__segmentLastResult = { type, date, userIds: ids };
-        } catch (e) {
-          console.error("segment preview error:", e);
-          segmentSummaryEl.textContent = "プレビュー中にエラーが発生しました：" + e.message;
-          segmentResultEl.textContent = "";
-        }
-      }
-
-      async function sendSegment() {
-        const last = window.__segmentLastResult;
-        if (!last || !Array.isArray(last.userIds) || last.userIds.length === 0) {
-          alert("先に「対象をプレビュー」でユーザーを取得してください。");
-          return;
-        }
-        const msg = (segmentMessageEl.value || "").trim();
-        if (!msg) { alert("送信メッセージを入力してください。"); return; }
-        if (!confirm(`この条件で ${last.userIds.length} 名にメッセージを送信しますか？`)) return;
-
-        segmentSendBtn.disabled = true;
-        segmentSendBtn.textContent = "送信中…";
-
-        try {
-          const res = await apiFetch("/api/admin/segment/send", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ userIds: last.userIds, message: msg }),
-          });
-
-          const sent = res.sent ?? res.requested ?? 0;
-          alert(`セグメント配信をリクエストしました。\n送信件数（レスポンス）：${sent} 通`);
-        } catch (e) {
-          console.error("segment send error:", e);
-          alert("セグメント配信APIでエラーが発生しました：" + e.message);
-        } finally {
-          segmentSendBtn.disabled = false;
-          segmentSendBtn.textContent = "この条件で配信する";
-        }
-      }
-
-      function setActiveTab(name) {
-        tabs.forEach((tab) => tab.classList.toggle("active", tab.getAttribute("data-tab") === name));
-        tabOrders.style.display = name === "orders" ? "block" : "none";
-        tabSegment.style.display = name === "segment" ? "block" : "none";
-      }
-
-      document.addEventListener("DOMContentLoaded", () => {
-        const t = loadAdminToken();
-        if (t) adminTokenInput.value = t;
-
-        adminTokenInput.addEventListener("change", () => saveAdminToken(adminTokenInput.value || ""));
-        reloadBtn.addEventListener("click", loadOrders);
-        dateFilterInput.addEventListener("change", loadOrders);
-
-        const now = new Date();
-        dateFilterInput.value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;
-
-        if (t) loadOrders();
-        else ordersSummaryEl.textContent = "管理トークンを入力して「注文を読み込み」を押してください。";
-
-        tabs.forEach((tab) => tab.addEventListener("click", () => setActiveTab(tab.getAttribute("data-tab"))));
-        segmentPreviewBtn.addEventListener("click", previewSegment);
-        segmentSendBtn.addEventListener("click", sendSegment);
-      });
-    })();
-  </script>
-</body>
-</html>
+    const r = await pool.query(q, [orderNumbers]);
+    res.json({ ok: true, repaired: r.rows });
+  } catch (e) {
+    console.error("[admin/repair-mismatch]", e);
+    res.status(e.status || 500).json({ ok: false, error: e.message || String(e) });
+  }
+});

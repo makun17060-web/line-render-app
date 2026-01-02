@@ -1,22 +1,240 @@
-function qp(name){ return new URLSearchParams(location.search).get(name); }
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>ご利用方法（初めての方へ）</title>
 
-function safeReturnTo(v){
-  if (!v) return "";
-  const s = String(v);
-  if (!s.startsWith("/")) return "";
-  if (s.startsWith("//")) return "";
-  if (s.includes("://")) return "";
-  return s;
+  <!-- LIFF SDK -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+  <style>
+    :root{
+      --bg:#f7f7f7; --card:#fff; --text:#1f2937; --muted:#6b7280;
+      --primary:#0b3a53; --accent:#7a1f1f; --border:#e5e7eb;
+      --radius:14px;
+    }
+    body{
+      margin:0;
+      font-family: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      background:var(--bg);
+      color:var(--text);
+    }
+    .wrap{ max-width:720px; margin:0 auto; padding:14px 14px 28px; }
+    .topbar{ display:flex; gap:10px; align-items:center; justify-content:space-between; margin-bottom:10px; }
+    .badge{ font-size:12px; color:var(--muted); }
+    h1{ font-size:20px; margin:6px 0 2px; }
+    .lead{ font-size:14px; color:var(--muted); line-height:1.7; margin:0 0 10px; }
+
+    .card{
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius:var(--radius);
+      padding:12px;
+      margin:10px 0;
+      box-shadow:0 1px 3px rgba(0,0,0,.05);
+    }
+    .step{ display:flex; gap:10px; align-items:flex-start; }
+    .num{
+      min-width:34px; height:34px; border-radius:10px;
+      background:#eef2ff; color:var(--primary);
+      display:flex; align-items:center; justify-content:center;
+      font-weight:800;
+    }
+    .stitle{ font-weight:800; margin:0 0 3px; font-size:16px; }
+    .sdesc{ margin:0; color:var(--muted); font-size:14px; line-height:1.7; }
+
+    .actions{ display:grid; grid-template-columns:1fr; gap:10px; margin-top:12px; }
+    .btn{
+      border:0; border-radius:14px;
+      padding:13px 14px;
+      font-size:16px; font-weight:800;
+      cursor:pointer;
+    }
+    .btn.primary{ background:var(--primary); color:#fff; }
+    .btn.accent{ background:var(--accent); color:#fff; }
+    .btn.ghost{ background:#fff; color:var(--text); border:1px solid var(--border); }
+
+    .note{ font-size:13px; color:var(--muted); line-height:1.7; }
+    .hr{ height:1px; background:var(--border); margin:12px 0; }
+    .small{ font-size:12px; color:var(--muted); }
+  </style>
+</head>
+
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div>
+      <div class="badge" id="envBadge">LIFF</div>
+      <h1>ご利用方法（初めての方へ）</h1>
+      <p class="lead">
+        LINE上で完結します。履歴が残るので、聞き間違いがなく安心です。
+      </p>
+    </div>
+    <button class="btn ghost" id="btnClose" style="padding:10px 12px; font-size:14px;">
+      閉じる
+    </button>
+  </div>
+
+  <!-- STEP 1 -->
+  <div class="card">
+    <div class="step">
+      <div class="num">1</div>
+      <div>
+        <p class="stitle">商品を選ぶ</p>
+        <p class="sdesc">「商品一覧」から、商品と数量をお選びください。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 2 -->
+  <div class="card">
+    <div class="step">
+      <div class="num">2</div>
+      <div>
+        <p class="stitle">お届け先を入力</p>
+        <p class="sdesc">初回のみ住所登録が必要です。次回以降は自動で反映されます。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 3 -->
+  <div class="card">
+    <div class="step">
+      <div class="num">3</div>
+      <div>
+        <p class="stitle">お支払い</p>
+        <p class="sdesc">クレジットカード、または代金引換をお選びください。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 4 -->
+  <div class="card">
+    <div class="step">
+      <div class="num">4</div>
+      <div>
+        <p class="stitle">発送・お届け</p>
+        <p class="sdesc">発送後、LINEでお知らせします。</p>
+      </div>
+    </div>
+
+    <div class="hr"></div>
+
+    <p class="stitle" style="margin:0 0 6px;">操作がご不安な方へ</p>
+    <p class="note">
+      ご家族による<strong>代理注文</strong>も可能です。<br>
+      お届け先を本人様に指定していただければ、そのまま発送します。
+    </p>
+  </div>
+
+  <!-- ACTIONS -->
+  <div class="card">
+    <p class="stitle" style="margin:0 0 8px;">すぐに進む</p>
+
+    <div class="actions">
+      <button class="btn primary" id="btnOrder">ご注文はこちら</button>
+      <button class="btn ghost" id="btnAddress">住所登録／変更</button>
+      <button class="btn ghost" id="btnShipping">配送・送料</button>
+      <button class="btn accent" id="btnChat">お問い合わせ（LINE）</button>
+    </div>
+
+    <p class="small" style="margin-top:10px;">
+      ※ LINEアプリ内で開くと、そのままお問い合わせできます。
+    </p>
+  </div>
+
+</div>
+
+<script>
+/* ===========================
+   リンク（/public をやめて統一）
+=========================== */
+const LINKS = {
+  ORDER_URL:   "https://line-render-app-1.onrender.com/products.html",
+  ADDRESS_URL: "https://line-render-app-1.onrender.com/cod-register.html",
+  SHIPPING_URL:"https://line-render-app-1.onrender.com/shipping-calc.html",
+  CHAT_TEXT:   "お問い合わせ",
+};
+
+/* ===========================
+   共通関数
+=========================== */
+function isInLiff(){
+  try { return window.liff && liff.isInClient(); }
+  catch { return false; }
 }
 
-async function finishAfterSaved(){
-  const from = qp("from");                 // howto
-  const returnTo = safeReturnTo(qp("returnTo")); // /confirm.html 等
-
-  if (from === "howto") {
-    if (window.liff && liff.isInClient()) { liff.closeWindow(); return; }
-    history.back(); return;
+async function ensureLiff(){
+  if (!window.liff || !liff.init) return false;
+  try {
+    // howto自体はLIFF初期化できればOK（できなくても遷移は可能）
+    await liff.init({ liffId: "2008406620-QQFfWP1w" });
+    return true;
+  } catch (e) {
+    console.log("LIFF init error:", e);
+    return false;
   }
-  if (returnTo) { location.href = returnTo; return; }
-  location.href = "/products.html";
 }
+
+function openUrl(url, external=false){
+  const inClient = isInLiff();
+  if (inClient && external){
+    try { liff.openWindow({ url, external:true }); return; } catch {}
+  }
+  window.location.href = url;
+}
+
+/* ===========================
+   初期化
+=========================== */
+document.addEventListener("DOMContentLoaded", async () => {
+  const inClient = isInLiff();
+  document.getElementById("envBadge").textContent =
+    inClient ? "LINEアプリ内（LIFF）" : "ブラウザ表示";
+
+  if (inClient) await ensureLiff();
+
+  document.getElementById("btnClose").onclick = () => {
+    if (inClient && window.liff && liff.closeWindow) liff.closeWindow();
+    else window.location.href = LINKS.ORDER_URL;
+  };
+
+  document.getElementById("btnOrder").onclick =
+    () => openUrl(LINKS.ORDER_URL, false);
+
+  /**
+   * ✅ 住所登録（howtoから）
+   * - 完了したら「それで終わり」にしたいので、returnToは渡さない
+   * - 代わりに from=howto を渡す（cod-register側で保存後 closeWindow する）
+   */
+  document.getElementById("btnAddress").onclick = () => {
+    openUrl(`${LINKS.ADDRESS_URL}?from=howto`, false);
+  };
+
+  /**
+   * 配送・送料（howtoに戻すのはOK）
+   */
+  document.getElementById("btnShipping").onclick = () => {
+    const ret = encodeURIComponent(location.href);
+    openUrl(`${LINKS.SHIPPING_URL}?returnTo=${ret}`, false);
+  };
+
+  document.getElementById("btnChat").onclick = async () => {
+    if (!inClient){
+      alert("LINEアプリ内で開くと、そのままお問い合わせできます。");
+      return;
+    }
+    try {
+      await liff.sendMessages([{ type:"text", text: LINKS.CHAT_TEXT }]);
+      liff.closeWindow();
+    } catch (e) {
+      alert("お問い合わせの送信に失敗しました。");
+      console.log(e);
+    }
+  };
+});
+</script>
+</body>
+</html>

@@ -1,13 +1,14 @@
 /**
  * server.js — “完全・全部入り” 丸ごと版（住所登録完了通知 + 友だち追加通知 + 注文完了通知：注文者/管理者）
  *
- * ✅ 今回の追加（あなたの要望）
+ * ✅ 今回の修正版（あなたの依頼：そのまま全部置き換え版）
+ * 0) 【超重要】LINE /webhook を express.json() より前へ（署名検証が壊れない）
  * 1) 住所登録完了したら管理者にPush（/api/address/set と /api/liff/address の両方）
  * 2) 友だち追加（follow）時に管理者へPush
  * 3) 注文完了通知（注文者/管理者）を確実化
- *    - 代引：confirmed のタイミング（/api/order/cod/confirm /api/orders/original / 久助注文）
- *    - カード：Stripe webhook の checkout.session.completed（支払い完了）で通知
- *    - 二重送信防止：orders に notified_user_at / notified_admin_at を追加して記録
+ *    - 代引：confirmed のタイミングで通知
+ *    - カード：Stripe webhook checkout.session.completed で通知
+ *    - 二重送信防止：orders.notified_*_at を原子的にUPDATE…RETURNINGで確実化（失敗時はNULLへ戻す）
  *
  * ✅ 既存（維持）
  * - 送料をDB shipping_yamato_taxed から読む（失敗時はサーバ内表へフォールバック）
@@ -171,6 +172,12 @@ const lineConfig = {
 };
 const lineClient = new line.Client(lineConfig);
 
+// ============== DB (Postgres) ==============
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
+
 // ============== 通知（住所登録 / 注文完了 / 友だち追加） ==============
 
 async function notifyAdminAddressSaved({ userId, address }) {
@@ -219,28 +226,31 @@ function formatItemLines(items) {
     .join("\n");
 }
 
-async function markNotified(orderId, which /* 'user'|'admin' */) {
-  if (!orderId) return;
-  if (which === "user") {
-    await pool.query(`UPDATE orders SET notified_user_at = COALESCE(notified_user_at, now()) WHERE id=$1`, [orderId]);
-  } else if (which === "admin") {
-    await pool.query(`UPDATE orders SET notified_admin_at = COALESCE(notified_admin_at, now()) WHERE id=$1`, [orderId]);
-  }
-}
-async function wasNotified(orderId, which) {
+/**
+ * ✅ 二重送信防止を原子的に（UPDATE … WHERE col IS NULL RETURNING）
+ * 送信に失敗したら NULL へ戻して再送可能にする
+ */
+async function markNotifiedOnce(orderId, which /* 'user'|'admin' */) {
+  if (!orderId) return false;
+  const col = which === "admin" ? "notified_admin_at" : "notified_user_at";
   const r = await pool.query(
-    `SELECT notified_user_at, notified_admin_at FROM orders WHERE id=$1`,
+    `UPDATE orders
+       SET ${col} = now()
+     WHERE id=$1 AND ${col} IS NULL
+     RETURNING id`,
     [orderId]
   );
-  const row = r.rows[0] || {};
-  if (which === "user") return !!row.notified_user_at;
-  if (which === "admin") return !!row.notified_admin_at;
-  return false;
+  return (r.rowCount || 0) > 0;
+}
+
+async function clearNotified(orderId, which) {
+  if (!orderId) return;
+  const col = which === "admin" ? "notified_admin_at" : "notified_user_at";
+  await pool.query(`UPDATE orders SET ${col}=NULL WHERE id=$1`, [orderId]).catch(()=>{});
 }
 
 /**
  * ✅ 注文完了通知（注文者/管理者）
- * - 二重送信防止（orders.notified_*_at）
  */
 async function notifyOrderCompleted({ orderId, userId, addr, items, shippingFee, codFee = 0, total, paymentMethod, size }) {
   if (!orderId || !userId) return;
@@ -249,8 +259,8 @@ async function notifyOrderCompleted({ orderId, userId, addr, items, shippingFee,
   const addrText = formatAddressText(a);
   const itemLines = formatItemLines(items);
 
-  // --- user ---
-  if (!(await wasNotified(orderId, "user"))) {
+  // --- user（最初の1回だけ）---
+  if (await markNotifiedOnce(orderId, "user")) {
     const msgForUser =
       `ご注文ありがとうございます。\n` +
       `【注文ID】${orderId}\n\n` +
@@ -263,14 +273,14 @@ async function notifyOrderCompleted({ orderId, userId, addr, items, shippingFee,
 
     try {
       await lineClient.pushMessage(userId, { type: "text", text: msgForUser });
-      await markNotified(orderId, "user");
     } catch (e) {
+      await clearNotified(orderId, "user");
       logErr("notifyOrderCompleted push user failed", e?.message || e);
     }
   }
 
-  // --- admin ---
-  if (ADMIN_USER_ID && !(await wasNotified(orderId, "admin"))) {
+  // --- admin（最初の1回だけ）---
+  if (ADMIN_USER_ID && await markNotifiedOnce(orderId, "admin")) {
     const msgForAdmin =
       `【注文完了】\n` +
       `注文ID: ${orderId}\n` +
@@ -285,8 +295,8 @@ async function notifyOrderCompleted({ orderId, userId, addr, items, shippingFee,
 
     try {
       await lineClient.pushMessage(ADMIN_USER_ID, { type: "text", text: msgForAdmin });
-      await markNotified(orderId, "admin");
     } catch (e) {
+      await clearNotified(orderId, "admin");
       logErr("notifyOrderCompleted push admin failed", e?.message || e);
     }
   }
@@ -407,12 +417,12 @@ const shippingCache = {
 const SHIPPING_CACHE_TTL_MS = 5 * 60 * 1000;
 function cacheKey(region, size) { return `${region}:${String(size)}`; }
 
-async function reloadShippingCacheIfNeeded(pool) {
+async function reloadShippingCacheIfNeeded(poolRef) {
   const now = Date.now();
   if (shippingCache.loadedAt && (now - shippingCache.loadedAt) < SHIPPING_CACHE_TTL_MS) return;
 
   try {
-    const r = await pool.query(`SELECT region, size, fee FROM shipping_yamato_taxed`);
+    const r = await poolRef.query(`SELECT region, size, fee FROM shipping_yamato_taxed`);
     const m = new Map();
     for (const row of (r.rows || [])) {
       const region = String(row.region || "").trim();
@@ -435,18 +445,18 @@ async function reloadShippingCacheIfNeeded(pool) {
  * 3) 旧互換：shipping_yamato_${region}_taxed を試す（あれば）
  * 4) フォールバック：サーバ内 SHIPPING_YAMATO
  */
-async function calcShippingFee(pool, prefecture, size) {
+async function calcShippingFee(poolRef, prefecture, size) {
   const region = detectRegionFromPref(prefecture);
   const s = Number(size || 0) || 80;
 
   // 1) cache
-  await reloadShippingCacheIfNeeded(pool);
+  await reloadShippingCacheIfNeeded(poolRef);
   const ck = cacheKey(region, s);
   if (shippingCache.map.has(ck)) return Number(shippingCache.map.get(ck));
 
   // 2) unified table
   try {
-    const r = await pool.query(
+    const r = await poolRef.query(
       `SELECT fee FROM shipping_yamato_taxed WHERE region=$1 AND size=$2 LIMIT 1`,
       [region, s]
     );
@@ -461,7 +471,7 @@ async function calcShippingFee(pool, prefecture, size) {
   try {
     const safeRegion = region.replace(/[^a-z0-9_]/gi, "");
     const table = `shipping_yamato_${safeRegion}_taxed`;
-    const r2 = await pool.query(`SELECT fee FROM ${table} WHERE size=$1 LIMIT 1`, [s]);
+    const r2 = await poolRef.query(`SELECT fee FROM ${table} WHERE size=$1 LIMIT 1`, [s]);
     if (r2.rowCount > 0) return Number(r2.rows[0]?.fee || 0);
   } catch {}
 
@@ -512,12 +522,7 @@ function calcPackageSizeFromItems(items, productsById) {
   return 140;
 }
 
-// ============== DB (Postgres) ==============
-const pool = new Pool({
-  connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-});
-
+// ============== DB setup ==============
 async function ensureDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -919,7 +924,9 @@ function stripeCancelUrl(req) {
   return `${base}/stripe-cancel.html`;
 }
 
-// Stripe webhook（jsonより先）
+/**
+ * ✅ Stripe webhook（rawより先）
+ */
 app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   try {
     if (!stripe || !STRIPE_WEBHOOK_SECRET) return res.status(400).send("stripe not configured");
@@ -947,18 +954,21 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
           const ord = await getOrderById(orderId);
           if (ord) {
             const addr = userId ? await getAddressByUserId(userId) : null;
-            const items = Array.isArray(ord.items) ? ord.items : ord.items?.items || ord.items; // 念のため
-            const sizeGuess = null; // items から再計算するなら buildOrderFromCheckout が必要だが、ここでは省略
+
+            // ✅ JSONBは通常配列で返るので素直に配列扱い
+            const items = Array.isArray(ord.items) ? ord.items : [];
+
+            // サイズが必要なら items から再計算するのが正しいが、ここでは空で送る（表示に影響するだけ）
             await notifyOrderCompleted({
               orderId: ord.id,
               userId: ord.user_id,
               addr,
-              items: items || [],
+              items,
               shippingFee: ord.shipping_fee,
               codFee: 0,
               total: ord.total,
               paymentMethod: "card",
-              size: sizeGuess || "",
+              size: "",
             });
           }
         } catch (e) {
@@ -974,7 +984,22 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
   }
 });
 
-// ここから通常JSON
+/**
+ * ✅【超重要】LINE webhook も raw が必要
+ * express.json() より前に置くこと（署名検証が壊れない）
+ */
+app.post("/webhook", line.middleware(lineConfig), async (req, res) => {
+  try {
+    const events = req.body.events || [];
+    await Promise.all(events.map(handleEvent));
+    res.status(200).end();
+  } catch (e) {
+    logErr("Webhook error", e?.stack || e);
+    res.status(500).end();
+  }
+});
+
+// ✅ ここから通常JSON
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
@@ -1719,18 +1744,7 @@ app.post("/api/admin/blast/once", requireAdmin, async (req, res) => {
   }
 });
 
-// ============== LINE Webhook ==============
-app.post("/webhook", line.middleware(lineConfig), async (req, res) => {
-  try {
-    const events = req.body.events || [];
-    await Promise.all(events.map(handleEvent));
-    res.status(200).end();
-  } catch (e) {
-    logErr("Webhook error", e?.stack || e);
-    res.status(500).end();
-  }
-});
-
+// ============== LINE handlers ==============
 async function handleEvent(ev) {
   const type = ev.type;
   const userId = ev?.source?.userId || "";

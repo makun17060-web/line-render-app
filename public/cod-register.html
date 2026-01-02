@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>住所登録</title>
+  <title>住所入力</title>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
@@ -17,7 +17,6 @@
     .wrap{ max-width:720px; margin:0 auto; padding:14px 14px 28px; }
     h1{ font-size:18px; margin:0 0 6px; }
     .muted{ color:var(--muted); font-size:13px; line-height:1.5; }
-
     .card{
       background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
       padding:14px; margin-top:12px;
@@ -34,7 +33,6 @@
       font-weight:900; font-size:16px; cursor:pointer;
     }
     .btnSub{ background:#fff; color:var(--text); border:1px solid var(--border); }
-
     .debug{
       margin-top:12px; font-size:12px; white-space:pre-line;
       color:#374151; background:#fff; border:1px dashed var(--border);
@@ -47,8 +45,8 @@
 
 <body>
 <div class="wrap">
-  <h1>住所登録</h1>
-  <div class="muted">初回のみ入力が必要です（保存後は自動反映されます）</div>
+  <h1>住所入力</h1>
+  <div class="muted">注文のために住所を入力してください（登録済みの場合は自動で表示されます）</div>
 
   <div class="card">
     <label>お名前</label>
@@ -72,8 +70,8 @@
     <label>建物名など（任意）</label>
     <input id="address2" placeholder="任意">
 
-    <button class="btn" id="saveBtn" type="button">保存する</button>
-    <button class="btn btnSub" id="backBtn" type="button">戻る</button>
+    <button class="btn" id="saveBtn" type="button">保存して次へ</button>
+    <button class="btn btnSub" id="backBtn" type="button">商品へ戻る</button>
 
     <div class="debug" id="debug">debug: 起動中…</div>
   </div>
@@ -83,26 +81,17 @@
 (async function(){
   "use strict";
 
-  // ===== query params =====
+  const LIFF_ID_ADDRESS = "2008406620-4kyQVyqe"; // 住所入力用
+  const KEY_UID  = "isoya_userId";
+  const KEY_CART = "isoya_cart";
+
   const qs = new URLSearchParams(location.search);
-  const returnTo = qs.get("returnTo") || qs.get("return") || qs.get("return_url") || "";
-
-  // もし別ドメインAPIを叩く必要がある場合に備えて（同一ドメインなら空でOK）
-  const API_BASE_RAW = (qs.get("api") || "").trim().replace(/\/+$/, "");
-  const API_BASE = API_BASE_RAW || "";
-
-  // kind は address を既定（このページは住所登録専用）
-  const KIND = (qs.get("kind") || "address").trim() || "address";
+  const returnTo = (qs.get("returnTo") || "/confirm.html").trim();
 
   const $ = (id) => document.getElementById(id);
   const debugEl = $("debug");
   const setDebug = (msg) => { debugEl.textContent = msg; };
   const addDebug = (msg) => { debugEl.textContent += "\n" + msg; };
-
-  function apiUrl(path){
-    if(!path.startsWith("/")) path = "/" + path;
-    return API_BASE ? (API_BASE + path) : path;
-  }
 
   async function fetchJson(url, opts){
     const res = await fetch(url, opts);
@@ -112,160 +101,92 @@
     return { res, data, raw: text };
   }
 
-  // ✅ server の /api/liff/config から liffId を取る（直書き禁止）
-  async function getLiffIdFromServer(){
-    const u = apiUrl(`/api/liff/config?kind=${encodeURIComponent(KIND)}`);
-    const { res, data, raw } = await fetchJson(u, { cache:"no-store" });
-    addDebug(`CFG ${res.status} ${u}`);
-    if(!res.ok || !data?.ok || !data?.liffId){
-      addDebug(`CFG RAW: ${raw}`);
-      throw new Error(data?.error || "LIFF_ID fetch failed");
-    }
-    return String(data.liffId).trim();
-  }
-
   async function initLiff(){
-    try{
-      const liffId = await getLiffIdFromServer();
-      addDebug(`LIFF_ID(from server)=${liffId}`);
-
-      await liff.init({ liffId });
-
-      if(!liff.isLoggedIn()){
-        liff.login({ redirectUri: location.href });
-        return { ok:false, waitLogin:true };
-      }
-
-      const prof = await liff.getProfile();
-      const userId = (prof?.userId || "").trim();
-      if(!userId) return { ok:false, error:"NO_USER_ID" };
-      return { ok:true, userId };
-    }catch(e){
-      return { ok:false, error: (e?.message || String(e)) };
+    await liff.init({ liffId: LIFF_ID_ADDRESS });
+    if(!liff.isLoggedIn()){
+      liff.login({ redirectUri: location.href });
+      return null;
     }
+    const prof = await liff.getProfile();
+    const userId = (prof?.userId || "").trim();
+    if(userId) localStorage.setItem(KEY_UID, userId);
+    return userId;
   }
 
-  // ✅ GET: /api/liff/address/me → /api/address/get の順で試す
   async function loadAddress(userId){
-    const u1 = apiUrl(`/api/liff/address/me?userId=${encodeURIComponent(userId)}`);
-    const u2 = apiUrl(`/api/address/get?userId=${encodeURIComponent(userId)}`);
-
-    // 1) liff系
-    try{
-      const { res, data, raw } = await fetchJson(u1, { cache:"no-store" });
-      addDebug(`GET1 ${res.status} ${u1}`);
-      if(res.ok && data?.ok && data?.address) return { ok:true, address:data.address, used:"/api/liff/address/me" };
-      if(res.status !== 404 && res.status !== 400){
-        return { ok:false, status:res.status, data, raw, used:"/api/liff/address/me" };
-      }
-    }catch(e){
-      addDebug(`GET1 fetch error: ${e?.message || e}`);
-    }
-
-    // 2) address系
-    try{
-      const { res, data, raw } = await fetchJson(u2, { cache:"no-store" });
-      addDebug(`GET2 ${res.status} ${u2}`);
-      if(res.ok && data?.ok && data?.address) return { ok:true, address:data.address, used:"/api/address/get" };
-      return { ok:false, status:res.status, data, raw, used:"/api/address/get" };
-    }catch(e){
-      return { ok:false, error:(e?.message || String(e)), used:"/api/address/get" };
-    }
+    const u = `/api/address/get?userId=${encodeURIComponent(userId)}`;
+    const { res, data } = await fetchJson(u, { cache:"no-store" });
+    addDebug(`GET ${res.status} ${u}`);
+    if(res.ok && data?.ok && data?.address) return data.address;
+    return null;
   }
 
-  // ✅ POST: /api/liff/address → /api/address/set の順で試す
   async function saveAddress(payload){
-    const u1 = apiUrl(`/api/liff/address`);
-    const u2 = apiUrl(`/api/address/set`);
-
-    // server.js の /api/liff/address は { userId, address: {...} } を期待している
-    const payload1 = { userId: payload.userId, address: payload.address };
-
-    const opts1 = {
+    const u = "/api/address/set";
+    const { res, data, raw } = await fetchJson(u, {
       method:"POST",
       headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify(payload1)
-    };
-
-    const opts2 = {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ userId: payload.userId, ...payload.address })
-    };
-
-    // 1) liff系（推奨）
-    try{
-      const { res, data, raw } = await fetchJson(u1, opts1);
-      addDebug(`POST1 ${res.status} ${u1}`);
-      if(res.ok && data?.ok) return { ok:true, data, used:"/api/liff/address" };
-      if(res.status !== 404 && res.status !== 400){
-        return { ok:false, status:res.status, data, raw, used:"/api/liff/address" };
-      }
-    }catch(e){
-      addDebug(`POST1 fetch error: ${e?.message || e}`);
-    }
-
-    // 2) address系（互換）
-    try{
-      const { res, data, raw } = await fetchJson(u2, opts2);
-      addDebug(`POST2 ${res.status} ${u2}`);
-      if(res.ok && data?.ok) return { ok:true, data, used:"/api/address/set" };
-      return { ok:false, status:res.status, data, raw, used:"/api/address/set" };
-    }catch(e){
-      return { ok:false, error:(e?.message || String(e)), used:"/api/address/set" };
-    }
+      body: JSON.stringify(payload)
+    });
+    addDebug(`POST ${res.status} ${u}`);
+    if(res.ok && data?.ok) return data.address;
+    throw new Error(data?.error || raw || ("HTTP "+res.status));
   }
 
-  // ===== 起動 =====
+  function hasCart(){
+    try{
+      const c = JSON.parse(localStorage.getItem(KEY_CART) || "");
+      return Array.isArray(c?.items) && c.items.length > 0;
+    }catch{ return false; }
+  }
+
   setDebug(
-    `debug: start\n` +
-    `kind=${KIND}\n` +
-    `api=${API_BASE ? API_BASE : "(same-origin)"}\n` +
-    `returnTo=${returnTo ? "(set)" : "(none)"}\n` +
-    `href=${location.href}`
+    `debug:start\n`+
+    `LIFF_ID_ADDRESS=${LIFF_ID_ADDRESS}\n`+
+    `returnTo=${returnTo}\n`
   );
 
-  const init = await initLiff();
-  if(!init.ok){
-    if(init.waitLogin) return;
-    addDebug(`\nERR: LIFF init failed: ${init.error}`);
+  let userId = "";
+  try{
+    userId = await initLiff();
+    if(!userId) return;
+    addDebug(`OK: userId=${userId}`);
+    debugEl.classList.add("ok");
+  }catch(e){
+    console.error(e);
     debugEl.classList.add("err");
-    alert("初期化に失敗しました（LIFF）。/api/liff/config と LIFFのエンドポイントURLを確認してください。");
+    addDebug(`ERR: LIFF init failed: ${e?.message || e}`);
+    alert("初期化に失敗しました（住所入力LIFF）。LIFF ID/登録URLを確認してください。");
     return;
   }
 
-  const userId = init.userId;
-  addDebug(`\nOK: userId=${userId}`);
-  debugEl.classList.add("ok");
-
   // 既存住所ロード
-  const got = await loadAddress(userId);
-  if(got.ok){
-    const a = got.address;
-    $("name").value = a.name || "";
-    $("phone").value = a.phone || "";
-    $("postal").value = a.postal || "";
-    $("prefecture").value = a.prefecture || "";
-    $("city").value = a.city || "";
-    $("address1").value = a.address1 || "";
-    $("address2").value = a.address2 || "";
-    addDebug(`OK: loaded via ${got.used}`);
-  }else{
-    addDebug(`WARN: address load failed via ${got.used || "unknown"}`);
-    if(got.status) addDebug(`status=${got.status}`);
-    if(got.data) addDebug(`data=${JSON.stringify(got.data)}`);
+  try{
+    const a = await loadAddress(userId);
+    if(a){
+      $("name").value = a.name || "";
+      $("phone").value = a.phone || "";
+      $("postal").value = a.postal || "";
+      $("prefecture").value = a.prefecture || "";
+      $("city").value = a.city || "";
+      $("address1").value = a.address1 || "";
+      $("address2").value = a.address2 || "";
+      addDebug("OK: address prefilled");
+    }else{
+      addDebug("INFO: no address yet");
+    }
+  }catch(e){
+    addDebug(`WARN: loadAddress failed: ${e?.message || e}`);
   }
 
-  function goBack(){
-    if(returnTo) location.href = returnTo;
-    else if(liff.isInClient()) liff.closeWindow();
-    else history.back();
-  }
+  $("backBtn").onclick = ()=>{
+    // カートがあるなら戻ってもOK。なければ商品へ。
+    location.href = "/products.html";
+  };
 
-  $("backBtn").onclick = goBack;
-
-  $("saveBtn").onclick = async () => {
-    const address = {
+  $("saveBtn").onclick = async ()=>{
+    const payload = {
+      userId,
       name: $("name").value.trim(),
       phone: $("phone").value.trim(),
       postal: $("postal").value.trim(),
@@ -275,29 +196,28 @@
       address2: $("address2").value.trim(),
     };
 
-    // 必須チェック（サーバが400返す前に止める）
-    if(!address.name || !address.phone || !address.postal || !address.prefecture || !address.city || !address.address1){
+    if(!payload.name || !payload.phone || !payload.postal || !payload.prefecture || !payload.city || !payload.address1){
       alert("必須項目（名前/電話/郵便/都道府県/市区町村/番地）を入力してください。");
+      return;
+    }
+    if(!hasCart()){
+      alert("カートが空です。先に商品を選んでください。");
+      location.href = "/products.html";
       return;
     }
 
     addDebug("\n--- SAVE ---");
-    const saved = await saveAddress({ userId, address });
-
-    if(!saved.ok){
-      alert("保存に失敗しました（下のdebugに400のURLが出ます）");
+    try{
+      await saveAddress(payload);
+      alert("住所を保存しました。");
+      location.href = returnTo || "/confirm.html";
+    }catch(e){
+      console.error(e);
       debugEl.classList.add("err");
-      addDebug(`ERR: save failed via ${saved.used || "unknown"}`);
-      if(saved.status) addDebug(`status=${saved.status}`);
-      if(saved.data) addDebug(`data=${JSON.stringify(saved.data)}`);
-      return;
+      addDebug(`ERR: save failed: ${e?.message || e}`);
+      alert("保存に失敗しました。下のdebugを確認してください。");
     }
-
-    addDebug(`OK: saved via ${saved.used}`);
-    alert("保存しました");
-    goBack();
   };
-
 })();
 </script>
 </body>

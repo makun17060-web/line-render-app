@@ -15,7 +15,7 @@
     }
     *{ box-sizing:border-box; }
     body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
-    .wrap{ max-width:760px; margin:0 auto; padding:14px 14px 120px; }
+    .wrap{ max-width:760px; margin:0 auto; padding:14px 14px 140px; }
     h1{ margin:0 0 6px; font-size:18px; }
     .muted{ color:var(--muted); font-size:13px; line-height:1.6; }
 
@@ -38,7 +38,6 @@
     }
     .warn{ color:var(--danger); font-weight:900; }
 
-    /* bottom bar */
     .bar{
       position:fixed; left:0; right:0; bottom:0;
       border-top:1px solid var(--line);
@@ -48,7 +47,8 @@
     }
     .bar .inner{
       max-width:760px; margin:0 auto;
-      display:flex; justify-content:space-between; align-items:center; gap:10px;
+      display:flex; flex-wrap:wrap;
+      justify-content:space-between; align-items:center; gap:10px;
     }
     .btn{
       border:none; border-radius:14px;
@@ -56,7 +56,8 @@
       cursor:pointer;
     }
     .btnBack{ background:#fff; border:1px solid var(--line); }
-    .btnOrder{ background:var(--pri); color:#fff; min-width:220px; }
+    .btnCod{ background:var(--pri); color:#fff; min-width:220px; }
+    .btnCard{ background:#0b3a53; color:#fff; min-width:220px; }
     .btnDisabled{ opacity:.55; cursor:not-allowed; pointer-events:none; }
   </style>
 </head>
@@ -66,16 +67,13 @@
     <h1>注文内容の確認</h1>
     <div class="muted">オリジナルセット専用の確認画面です</div>
 
-    <!-- 商品 -->
     <div class="card" id="itemCard"></div>
 
-    <!-- 住所 -->
     <div class="card" id="addrCard">
       <div class="muted">配送先</div>
       <div id="addrBody" class="muted">読み込み中…</div>
     </div>
 
-    <!-- 合計 -->
     <div class="card">
       <div class="row">
         <div>商品合計</div>
@@ -99,7 +97,10 @@
   <div class="bar">
     <div class="inner">
       <button class="btn btnBack" id="backBtn" type="button">数量を変更</button>
-      <button class="btn btnOrder" id="orderBtn" type="button">この内容で注文する</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+        <button class="btn btnCod" id="codBtn" type="button">代引きで注文</button>
+        <button class="btn btnCard" id="cardBtn" type="button">クレジットで支払う</button>
+      </div>
     </div>
   </div>
 
@@ -107,21 +108,11 @@
 (async function(){
   "use strict";
 
+  const LIFF_ID_ORDER = "2008406620-Bd9Zo9od"; // オリジナル用LIFF
   const KEY_CART = "isoya_cart_original";
+  const COD_FEE = 330;
+
   const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
-
-  const $ = (id)=>document.getElementById(id);
-  const orderBtn = $("orderBtn");
-  const backBtn  = $("backBtn");
-  const addrBody = $("addrBody");
-
-  function disableOrder(msg){
-    orderBtn.classList.add("btnDisabled");
-    if(msg){
-      addrBody.className = "warn";
-      addrBody.innerHTML = msg;
-    }
-  }
 
   async function fetchJson(url, opts){
     const res = await fetch(url, opts);
@@ -131,32 +122,16 @@
     return { res, data, raw:text };
   }
 
-  // ✅ LIFF ID はサーバから取得（ハードコードしない）
-  let LIFF_ID_ORDER = "";
-  try{
-    const { res, data } = await fetchJson("/api/liff/config?kind=order", { cache:"no-store" });
-    if(res.ok && data?.ok && data?.liffId) LIFF_ID_ORDER = String(data.liffId);
-  }catch(e){}
-  if(!LIFF_ID_ORDER){
-    alert("LIFF_ID_ORDER（または LIFF_ID_DEFAULT）が未設定です");
-    return;
-  }
-
-  // LIFF init
+  // LIFF
   await liff.init({ liffId: LIFF_ID_ORDER });
   if(!liff.isLoggedIn()){
     liff.login({ redirectUri: location.href });
     return;
   }
-
   const prof = await liff.getProfile();
   const userId = (prof?.userId || "").trim();
-  if(!userId){
-    alert("userId が取得できませんでした");
-    return;
-  }
 
-  // カート読込
+  // cart
   const cart = JSON.parse(localStorage.getItem(KEY_CART) || '{"items":[]}');
   const item = cart.items?.[0];
   if(!item){
@@ -165,23 +140,39 @@
     return;
   }
 
-  // 商品情報取得
-  let product = null;
-  try{
-    const { res: r, data: d } = await fetchJson("/api/products", { cache:"no-store" });
-    if(!r.ok || !d?.products) throw new Error("products load failed");
-    product = (Array.isArray(d.products) ? d.products : []).find(p => p.id === item.id) || null;
-  }catch(e){
-    console.error(e);
-  }
-  if(!product){
-    alert("商品情報が見つかりません（products.json を確認してください）");
+  // 念のため「混載禁止」強制（1商品だけ）
+  if(Array.isArray(cart.items) && cart.items.length !== 1){
+    alert("オリジナルセットは単品との混載ができません。いったんカートを空にしてやり直してください。");
     location.href = "/original-set.html";
     return;
   }
 
-  // 商品表示
-  $("itemCard").innerHTML = `
+  // products
+  const { res: pr, data: pd } = await fetchJson("/api/products", { cache:"no-store" });
+  if(!pr.ok || !pd?.ok) {
+    alert("商品読み込みに失敗しました");
+    location.href = "/original-set.html";
+    return;
+  }
+  const product = (pd.products || []).find(p => p.id === item.id);
+  if(!product){
+    alert("商品情報が見つかりません");
+    location.href = "/original-set.html";
+    return;
+  }
+
+  // size rule (original set)
+  function sizeByQty(q){
+    q = Math.max(1, Math.floor(Number(q||1)));
+    if(q === 1) return 80;
+    if(q === 2) return 100;
+    if(q <= 4) return 120;
+    return 140;
+  }
+  const shipSize = sizeByQty(item.qty);
+
+  // render item
+  document.getElementById("itemCard").innerHTML = `
     <div class="row">
       <div class="name">${product.name || ""}</div>
       <span class="badge">${item.qty}個</span>
@@ -193,92 +184,122 @@
   `;
 
   const itemSum = Number(product.price||0) * Number(item.qty||0);
-  $("sumItem").textContent = yen(itemSum);
+  document.getElementById("sumItem").textContent = yen(itemSum);
+  document.getElementById("shipSize").textContent = shipSize;
 
-  // 住所表示
-  let hasAddress = false;
+  // address
+  const addrBody = document.getElementById("addrBody");
+  let addrOk = false;
   try{
     const u = `/api/address/get?userId=${encodeURIComponent(userId)}`;
-    const { res: ar, data } = await fetchJson(u, { cache:"no-store" });
-
-    if(ar.ok && data?.ok && data?.address){
-      const ad = data.address;
-      const postal = String(ad.postal||"").replace(/[^\d]/g,"");
-      const postalFmt = postal.length === 7 ? (postal.slice(0,3)+"-"+postal.slice(3)) : (ad.postal||"");
-
+    const { res: ar, data: ad } = await fetchJson(u, { cache:"no-store" });
+    if(ar.ok && ad?.ok && ad?.address){
+      const a = ad.address;
+      addrOk = true;
+      const postal = String(a.postal||"").replace(/[^\d]/g,"");
+      const postalFmt = postal.length === 7 ? (postal.slice(0,3)+"-"+postal.slice(3)) : (a.postal||"");
       addrBody.className = "";
       addrBody.innerHTML = `
-        ${ad.name || ""}<br>
+        ${a.name || ""}<br>
         〒${postalFmt}<br>
-        ${(ad.prefecture || "")}${(ad.city || "")}${(ad.address1 || "")} ${(ad.address2 || "")}
+        ${(a.prefecture||"")}${(a.city||"")}${(a.address1||"")} ${(a.address2||"")}
       `;
-      hasAddress = true;
     }else{
-      disableOrder(`住所が未登録です（住所入力で登録してください）`);
+      addrBody.className = "warn";
+      addrBody.textContent = "住所が未登録です（住所入力で登録してください）";
     }
   }catch(e){
-    console.error(e);
-    disableOrder(`住所の読み込みに失敗しました（/api/address/get を確認）`);
+    addrBody.className = "warn";
+    addrBody.textContent = "住所の読み込みに失敗しました";
   }
 
-  // 送料/合計（✅サーバ見積り：DB参照）
-  let quote = null;
-  if(hasAddress){
+  // quote (送料はサーバ計算を使う)
+  let shipFee = 0;
+  try{
+    const checkout = { items: [{ id: item.id, qty: item.qty }] };
+    const { res: qr, data: qd, raw } = await fetchJson("/api/order/quote", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ uid: userId, checkout })
+    });
+    if(!qr.ok || !qd?.ok) throw new Error(qd?.error || raw || ("HTTP "+qr.status));
+    shipFee = Number(qd.shippingFee || 0);
+    document.getElementById("sumShip").textContent = yen(shipFee);
+
+    // 代引合計表示（カードは代引手数料なしだが、画面の「合計」は代引前提でOK）
+    document.getElementById("sumCod").textContent = yen(COD_FEE);
+    document.getElementById("sumTotal").textContent =
+      "合計 " + yen(itemSum + shipFee + COD_FEE);
+  }catch(e){
+    // 送料が取れない時は0表示のまま
+    document.getElementById("sumShip").textContent = yen(0);
+    document.getElementById("sumTotal").textContent =
+      "合計 " + yen(itemSum + 0 + COD_FEE);
+  }
+
+  // buttons
+  const backBtn = document.getElementById("backBtn");
+  const codBtn  = document.getElementById("codBtn");
+  const cardBtn = document.getElementById("cardBtn");
+
+  backBtn.onclick = ()=> location.href = "/original-set.html";
+
+  function disableBoth(){
+    codBtn.classList.add("btnDisabled");
+    cardBtn.classList.add("btnDisabled");
+  }
+  function enableBoth(){
+    codBtn.classList.remove("btnDisabled");
+    cardBtn.classList.remove("btnDisabled");
+  }
+
+  // 代引き
+  codBtn.onclick = async ()=>{
+    if(!addrOk){
+      alert("住所が未登録です。先に住所入力をしてください。");
+      location.href = "/cod-register.html?returnTo=" + encodeURIComponent("/confirm-original.html");
+      return;
+    }
+    disableBoth();
     try{
-      const checkout = { items: [{ id: item.id, qty: Number(item.qty||1) }] };
-      const { res, data, raw } = await fetchJson("/api/order/quote", {
+      const checkout = { items: [{ id: item.id, qty: item.qty }] };
+      const { res, data, raw } = await fetchJson("/api/order/cod/create", {
         method:"POST",
         headers:{ "Content-Type":"application/json" },
         body: JSON.stringify({ uid: userId, checkout })
       });
-      if(!res.ok || data?.ok === false){
-        throw new Error(data?.error || raw || ("HTTP "+res.status));
-      }
-      quote = data;
-    }catch(e){
-      console.error(e);
-      disableOrder(`送料計算に失敗しました（/api/order/quote を確認）`);
-    }
-  }
-
-  if(quote?.ok){
-    $("shipSize").textContent = quote.size ?? "-";
-    $("sumShip").textContent  = yen(quote.shippingFee ?? 0);
-    $("sumCod").textContent   = yen(quote.codFee ?? 330);
-    $("sumTotal").textContent = "合計 " + yen(quote.totalCod ?? (itemSum + 330));
-  }else{
-    // 住所未登録等：とりあえず表示だけ
-    $("shipSize").textContent = "-";
-    $("sumShip").textContent  = yen(0);
-    $("sumCod").textContent   = yen(330);
-    $("sumTotal").textContent = "合計 " + yen(itemSum + 330);
-  }
-
-  // ボタン
-  backBtn.onclick = ()=>{ location.href = "/original-set.html"; };
-
-  orderBtn.onclick = async ()=>{
-    if(orderBtn.classList.contains("btnDisabled")) return;
-
-    orderBtn.classList.add("btnDisabled");
-    try{
-      const { res, data, raw } = await fetchJson("/api/orders/original", {
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify({ uid: userId, cart })
-      });
-
-      if(!res.ok || data?.ok === false){
-        throw new Error(data?.error || raw || ("HTTP "+res.status));
-      }
-
-      alert("ご注文ありがとうございました");
+      if(!res.ok || !data?.ok) throw new Error(data?.error || raw || ("HTTP "+res.status));
+      alert("代引き注文を受け付けました。");
       localStorage.removeItem(KEY_CART);
       try{ liff.closeWindow(); }catch{}
     }catch(e){
-      console.error(e);
-      alert("注文に失敗しました： " + (e?.message || e));
-      orderBtn.classList.remove("btnDisabled");
+      alert("代引き注文に失敗しました： " + (e?.message || e));
+      enableBoth();
+    }
+  };
+
+  // クレジット（Stripe Checkoutへ）
+  cardBtn.onclick = async ()=>{
+    if(!addrOk){
+      alert("住所が未登録です。先に住所入力をしてください。");
+      location.href = "/cod-register.html?returnTo=" + encodeURIComponent("/confirm-original.html");
+      return;
+    }
+    disableBoth();
+    try{
+      const checkout = { items: [{ id: item.id, qty: item.qty }] };
+      const { res, data, raw } = await fetchJson("/api/pay/stripe/create", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ uid: userId, checkout })
+      });
+      if(!res.ok || !data?.ok) throw new Error(data?.error || raw || ("HTTP "+res.status));
+      if(!data.url) throw new Error("stripe url missing");
+      // Stripe決済ページへ
+      location.href = data.url;
+    }catch(e){
+      alert("クレジット決済に失敗しました： " + (e?.message || e));
+      enableBoth();
     }
   };
 })();

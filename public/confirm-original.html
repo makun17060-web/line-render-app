@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>注文内容の確認（オリジナルセット）</title>
+
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+  <style>
+    :root{
+      --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280;
+      --line:#e5e7eb; --pri:#7a1f1f; --danger:#b91c1c;
+      --shadow:0 1px 3px rgba(0,0,0,.06); --radius:14px;
+    }
+    *{ box-sizing:border-box; }
+    body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
+    .wrap{ max-width:760px; margin:0 auto; padding:14px 14px 120px; }
+    h1{ margin:0 0 6px; font-size:18px; }
+    .muted{ color:var(--muted); font-size:13px; line-height:1.6; }
+
+    .card{
+      background:var(--card); border:1px solid var(--line);
+      border-radius:var(--radius); box-shadow:var(--shadow);
+      padding:14px; margin-top:12px;
+    }
+    .row{ display:flex; justify-content:space-between; align-items:center; gap:10px; }
+    .name{ font-weight:900; }
+    .price{ font-weight:900; color:var(--pri); }
+    .badge{
+      font-size:12px; border:1px solid var(--line);
+      background:#fafafa; border-radius:999px;
+      padding:2px 8px; white-space:nowrap;
+    }
+    .total{
+      font-size:18px; font-weight:900; color:var(--pri);
+      text-align:right; margin-top:10px;
+    }
+    .warn{ color:var(--danger); font-weight:900; }
+
+    /* bottom bar */
+    .bar{
+      position:fixed; left:0; right:0; bottom:0;
+      border-top:1px solid var(--line);
+      background:rgba(246,247,249,.92);
+      backdrop-filter:blur(10px);
+      padding:10px 12px;
+    }
+    .bar .inner{
+      max-width:760px; margin:0 auto;
+      display:flex; justify-content:space-between; align-items:center; gap:10px;
+    }
+    .btn{
+      border:none; border-radius:14px;
+      padding:12px 14px; font-weight:900;
+      cursor:pointer;
+    }
+    .btnBack{ background:#fff; border:1px solid var(--line); }
+    .btnOrder{ background:var(--pri); color:#fff; min-width:220px; }
+    .btnDisabled{ opacity:.55; cursor:not-allowed; pointer-events:none; }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <h1>注文内容の確認</h1>
+    <div class="muted">オリジナルセット専用の確認画面です</div>
+
+    <!-- 商品 -->
+    <div class="card" id="itemCard"></div>
+
+    <!-- 住所 -->
+    <div class="card" id="addrCard">
+      <div class="muted">配送先</div>
+      <div id="addrBody"></div>
+    </div>
+
+    <!-- 合計 -->
+    <div class="card">
+      <div class="row">
+        <div>商品合計</div>
+        <div id="sumItem">0円</div>
+      </div>
+      <div class="row">
+        <div>送料（サイズ <span id="shipSize">-</span>）</div>
+        <div id="sumShip">0円</div>
+      </div>
+      <div class="row">
+        <div>代引き手数料</div>
+        <div id="sumCod">330円</div>
+      </div>
+      <div class="total" id="sumTotal">合計 0円</div>
+    </div>
+  </div>
+
+  <div class="bar">
+    <div class="inner">
+      <button class="btn btnBack" id="backBtn">数量を変更</button>
+      <button class="btn btnOrder" id="orderBtn">この内容で注文する</button>
+    </div>
+  </div>
+
+<script>
+(async function(){
+  "use strict";
+
+  /* =============================
+     設定
+  ============================= */
+  const LIFF_ID_ORDER = "2008406620-Bd9Zo9od"; // オリジナル用LIFF
+  const KEY_CART = "isoya_cart_original";
+  const COD_FEE = 330;
+
+  const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
+
+  /* =============================
+     LIFF
+  ============================= */
+  await liff.init({ liffId: LIFF_ID_ORDER });
+  if(!liff.isLoggedIn()){
+    liff.login({ redirectUri: location.href });
+    return;
+  }
+
+  /* =============================
+     カート読込
+  ============================= */
+  const cart = JSON.parse(localStorage.getItem(KEY_CART) || '{"items":[]}');
+  const item = cart.items?.[0];
+  if(!item){
+    alert("カートが空です");
+    location.href = "/original-set.html";
+    return;
+  }
+
+  /* =============================
+     商品情報取得
+  ============================= */
+  const r = await fetch("/api/products", { cache:"no-store" });
+  const d = await r.json();
+  const product = d.products.find(p => p.id === item.id);
+
+  /* =============================
+     送料サイズ計算
+  ============================= */
+  function sizeByQty(q){
+    if(q === 1) return 80;
+    if(q === 2) return 100;
+    if(q <= 4) return 120;
+    return 140;
+  }
+  const shipSize = sizeByQty(item.qty);
+
+  /* =============================
+     表示
+  ============================= */
+  document.getElementById("itemCard").innerHTML = `
+    <div class="row">
+      <div class="name">${product.name}</div>
+      <span class="badge">${item.qty}個</span>
+    </div>
+    <div class="row">
+      <div class="muted">単価</div>
+      <div class="price">${yen(product.price)}</div>
+    </div>
+  `;
+
+  const itemSum = product.price * item.qty;
+  document.getElementById("sumItem").textContent = yen(itemSum);
+
+  // 送料はサーバー側計算に合わせて後で差し替えOK
+  const shipFee = 0; // ←仮（confirm.js 完成版ではDB参照）
+  document.getElementById("shipSize").textContent = shipSize;
+  document.getElementById("sumShip").textContent = yen(shipFee);
+
+  document.getElementById("sumCod").textContent = yen(COD_FEE);
+  document.getElementById("sumTotal").textContent =
+    "合計 " + yen(itemSum + shipFee + COD_FEE);
+
+  /* =============================
+     住所表示（簡易）
+  ============================= */
+  const ar = await fetch("/api/address/me");
+  if(ar.ok){
+    const ad = await ar.json();
+    document.getElementById("addrBody").innerHTML = `
+      ${ad.name}<br>
+      〒${ad.postal}<br>
+      ${ad.prefecture}${ad.city}${ad.address1} ${ad.address2 || ""}
+    `;
+  }else{
+    document.getElementById("addrBody").innerHTML =
+      `<span class="warn">住所が未登録です</span>`;
+  }
+
+  /* =============================
+     ボタン
+  ============================= */
+  document.getElementById("backBtn").onclick = ()=>{
+    location.href = "/original-set.html";
+  };
+
+  document.getElementById("orderBtn").onclick = async ()=>{
+    document.getElementById("orderBtn").classList.add("btnDisabled");
+
+    const res = await fetch("/api/orders/original", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ cart })
+    });
+
+    if(res.ok){
+      alert("ご注文ありがとうございました");
+      localStorage.removeItem(KEY_CART);
+      liff.closeWindow();
+    }else{
+      alert("注文に失敗しました");
+      document.getElementById("orderBtn").classList.remove("btnDisabled");
+    }
+  };
+})();
+</script>
+</body>
+</html>

@@ -929,25 +929,20 @@ app.post("/api/admin/upload-image", requireAdmin, async (req, res) => {
 // =========================
 // LIFF config（cod-register.html が使用）
 // =========================
-app.get("/api/liff/config", async (req, res) => {
-  try {
-    const kind = String(req.query.kind || "").trim();
+app.get("/api/liff/config", (req, res) => {
+  const kind = String(req.query.kind || "order");
 
-    const liffId =
-      (kind === "cod" && LIFF_ID_COD) ? LIFF_ID_COD :
-      (kind === "order" && LIFF_ID_ORDER) ? LIFF_ID_ORDER :
-      (LIFF_ID_DEFAULT || LIFF_ID_COD || LIFF_ID_ORDER || "");
+  const ORDER   = (process.env.LIFF_ID_ORDER || "").trim();
+  const ADDRESS = (process.env.LIFF_ID_ADDRESS || "").trim();
 
-    if (!liffId) {
-      return res.status(400).json({ ok:false, error:"LIFF_ID is not set", kind });
-    }
-    res.setHeader("Cache-Control", "no-store");
-    res.json({ ok:true, liffId });
-  } catch (e) {
-    logErr("GET /api/liff/config", e?.stack || e);
-    res.status(500).json({ ok:false, error:"server_error" });
-  }
+  let liffId = "";
+  if (kind === "address" || kind === "register" || kind === "cod") liffId = ADDRESS;
+  else liffId = ORDER;
+
+  if (!liffId) return res.status(400).json({ ok:false, error:"LIFF_ID_NOT_SET", kind });
+  return res.json({ ok:true, liffId });
 });
+
 
 // ============== Address API (旧/現行) ==============
 app.get("/api/address/get", async (req, res) => {

@@ -1,229 +1,195 @@
-// ===== Admin Orders APIs (fix totals mismatch + shipped notify) =====
+// =========================
+// Admin API (orders)
+// =========================
 const express = require("express");
 const { Pool } = require("pg");
 
-// 既存のapp/lineClient/poolがあるならそれを使ってOK
-// ここでは pool/lineClient が既に定義されている前提にしています。
-// もし無ければ下を使ってください：
-// const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
-// const { Client } = require("@line/bot-sdk"); const lineClient = new Client({ channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN });
+const ADMIN_API_TOKEN = (process.env.ADMIN_API_TOKEN || process.env.ADMIN_CODE || "").trim();
+const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 
-function requireAdmin(req) {
-  const token = (req.query.token || "").trim();
-  const okToken = (process.env.ADMIN_API_TOKEN || process.env.ADMIN_CODE || "").trim();
-  if (!okToken) throw new Error("ADMIN_API_TOKEN/ADMIN_CODE not set");
-  if (!token || token !== okToken) {
-    const e = new Error("unauthorized");
-    e.status = 401;
-    throw e;
+const COD_FEE = 330;
+
+function requireAdmin(req, res, next) {
+  const token = String(req.query.token || "").trim();
+  if (!ADMIN_API_TOKEN || token !== ADMIN_API_TOKEN) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
   }
+  next();
 }
 
-function yen(n) {
-  return Number(n || 0).toLocaleString("ja-JP") + "円";
-}
-
-function buildItemsArray(order) {
-  const items = Array.isArray(order.items) ? order.items : [];
-  return items.map((it) => {
-    const name = it.name || it.id || "商品";
-    let price = Number(it.price ?? it.unitPrice ?? 0);
-    const qty = Number(it.qty || 0) || 0;
-
-    // 久助：単価が無いときだけ補完（運用：250円）
-    if (!price && /久助/.test(name)) price = 250;
-
-    return { name, price, qty };
+async function linePush(to, text) {
+  if (!LINE_CHANNEL_ACCESS_TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is missing");
+  const r = await fetch("https://api.line.me/v2/bot/message/push", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`,
+    },
+    body: JSON.stringify({
+      to,
+      messages: [{ type: "text", text }],
+    }),
   });
-}
-
-function sumItems(items) {
-  return (items || []).reduce((s, it) => s + (Number(it.price || 0) * Number(it.qty || 0)), 0);
-}
-
-function normalizeOrderTotals(orderRow) {
-  const shipping = Number(orderRow.shipping ?? 0) || 0;
-  const codFee = Number(orderRow.cod_fee ?? 0) || 0;
-
-  // DBのitems_subtotal（誤ってcodが混ざってる可能性あり）
-  const itemsSubtotalRaw = Number(orderRow.items_subtotal ?? 0) || 0;
-
-  const items = buildItemsArray(orderRow);
-  const itemsCalc = sumItems(items);
-
-  let itemsSubtotal = itemsSubtotalRaw;
-  let warning = "";
-
-  // 代引混在パターン：items_subtotal - items_calc == cod_fee
-  if (itemsCalc > 0 && codFee > 0 && (itemsSubtotalRaw - itemsCalc) === codFee) {
-    itemsSubtotal = itemsCalc;
-    warning = `fix: items_subtotal included cod_fee(${codFee})`;
-  } else if (itemsSubtotalRaw === 0 && itemsCalc > 0) {
-    itemsSubtotal = itemsCalc;
-    warning = "fix: items_subtotal was 0";
-  } else if (itemsCalc > 0 && itemsSubtotalRaw > 0 && itemsSubtotalRaw !== itemsCalc) {
-    warning = `warn: mismatch raw=${itemsSubtotalRaw} calc=${itemsCalc}`;
+  if (!r.ok) {
+    const t = await r.text().catch(() => "");
+    throw new Error(`LINE push failed: ${r.status} ${t}`);
   }
-
-  const finalTotal = Number(orderRow.final_total ?? 0) || (itemsSubtotal + shipping + codFee);
-
-  return { items, itemsCalc, itemsSubtotalRaw, itemsSubtotal, shipping, codFee, finalTotal, warning };
+  return true;
 }
 
-// GET /api/admin/orders?date=YYYYMMDD
-app.get("/api/admin/orders", async (req, res) => {
-  try {
-    requireAdmin(req);
+// pool が既にあるならそれを使ってOK
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
 
-    const date = String(req.query.date || "").trim(); // JSTの日付フィルタを想定（YYYYMMDD）
-    // 既存スキーマに合わせて調整してください：
-    // orders(ts timestamptz, order_number, user_id, line_user_id, address jsonb, items jsonb, items_subtotal int, shipping int, cod_fee int, final_total int, payment text, method text, region text)
-    const where = [];
+// items(jsonb) から商品合計を計算
+function calcItemsSum(items) {
+  const arr = Array.isArray(items) ? items : [];
+  let sum = 0;
+  for (const it of arr) {
+    const price = Number(it?.price || 0);
+    const qty = Number(it?.qty || 0);
+    sum += (price * qty);
+  }
+  return sum;
+}
+
+// GET /api/admin/orders?date=YYYYMMDD&token=...
+app.get("/api/admin/orders", requireAdmin, async (req, res) => {
+  const date = String(req.query.date || "").trim(); // YYYYMMDD
+  try {
     const params = [];
-    if (date && /^\d{8}$/.test(date)) {
-      // JST日付の0:00〜24:00 をUTCに変換するのが理想だが、簡易版：
-      // ここは “tsをJSTで文字列化して前方一致” などあなたの実装に合わせてOK
-      // 例として server側でJST基準の範囲を作る：
-      const y = date.slice(0,4), m = date.slice(4,6), d = date.slice(6,8);
-      const startJst = `${y}-${m}-${d}T00:00:00+09:00`;
-      const endJst   = `${y}-${m}-${d}T23:59:59.999+09:00`;
-      where.push(`ts >= $${params.length+1} AND ts <= $${params.length+2}`);
-      params.push(startJst, endJst);
+    let where = "";
+    if (date) {
+      // created_at は timestamp without time zone
+      where = "WHERE o.created_at::date = to_date($1,'YYYYMMDD')";
+      params.push(date);
     }
 
-    const sql =
-      `SELECT
-         id, ts, order_number, user_id, line_user_id,
-         address, items,
-         items_subtotal, shipping, cod_fee, final_total,
-         payment, method, region
-       FROM orders
-       ${where.length ? "WHERE " + where.join(" AND ") : ""}
-       ORDER BY ts DESC
-       LIMIT 300`;
+    const sql = `
+      SELECT
+        o.id,
+        o.user_id,
+        o.member_code,
+        o.phone,
+        o.items,
+        o.total,
+        o.shipping_fee,
+        o.payment_method,
+        o.status,
+        o.name,
+        o.zip,
+        o.pref,
+        o.address,
+        o.source,
+        o.created_at,
+        o.notified_user_at,
+        o.notified_admin_at,
+        o.notified_kind
+      FROM orders o
+      ${where}
+      ORDER BY o.created_at DESC, o.id DESC
+      LIMIT 500
+    `;
 
     const r = await pool.query(sql, params);
 
-    const itemsOut = r.rows.map((row) => {
-      const t = normalizeOrderTotals(row);
+    const items = r.rows.map((row) => {
+      const payment = String(row.payment_method || "").toLowerCase();
+      const codFee = (payment === "cod") ? COD_FEE : 0;
+
+      const shipping = Number(row.shipping_fee || 0);
+      const totalDb  = Number(row.total || 0);
+
+      // ★重要：商品合計は total - shipping - codFee（代引が商品に混ざらない）
+      const itemsFromTotal = totalDb - shipping - codFee;
+
+      // items再計算（検算）
+      const itemsCalc = calcItemsSum(row.items);
+
+      const warn = (itemsCalc !== 0 && itemsFromTotal !== itemsCalc);
+      const diff = itemsFromTotal - itemsCalc;
+
       return {
-        ts: row.ts,
-        orderNumber: row.order_number || "",
-        userId: row.user_id || row.line_user_id || "",
-        lineUserId: row.line_user_id || row.user_id || "",
-        address: row.address || null,
-        items: Array.isArray(row.items) ? row.items : [],
-        // adminが使いやすいように統一キーでも返す
-        itemsSubtotal: t.itemsSubtotal,
-        shipping: t.shipping,
-        codFee: t.codFee,
-        finalTotal: t.finalTotal,
-        payment: row.payment || "",
-        method: row.method || "",
-        region: row.region || "",
-        // デバッグ
-        warn: t.warning ? { type: t.warning, raw: t.itemsSubtotalRaw, calc: t.itemsCalc } : null,
+        id: row.id,
+        orderNumber: row.id,          // ★order_number無いのでここが注文番号
+        userId: row.user_id,
+        lineUserId: row.user_id,
+
+        ts: row.created_at,
+        created_at: row.created_at,
+
+        items: row.items || [],
+        payment_method: row.payment_method,
+        payment: row.payment_method,
+
+        // admin が使いやすい形に寄せる
+        total: totalDb,
+        shipping_fee: shipping,
+        shipping: shipping,
+        codFee,
+
+        // 表示用の分解（これがズレない）
+        itemsTotal: itemsFromTotal,
+        finalTotal: totalDb,
+
+        // 住所は admin.html が address オブジェクトも読めるように
+        address: {
+          name: row.name || "",
+          phone: row.phone || "",
+          postal: row.zip || "",
+          prefecture: row.pref || "",
+          city: "",
+          address1: row.address || "",
+          address2: "",
+        },
+
+        // 検算情報（adminが警告出せる）
+        warn: warn ? { itemsCalc, itemsFromTotal, diff } : null,
+
+        status: row.status,
+        source: row.source,
+        member_code: row.member_code,
+        notified_user_at: row.notified_user_at,
+        notified_admin_at: row.notified_admin_at,
+        notified_kind: row.notified_kind,
       };
     });
 
-    res.json({ ok: true, items: itemsOut });
+    res.json({ ok: true, items });
   } catch (e) {
-    console.error("[admin/orders]", e);
-    res.status(e.status || 500).json({ ok: false, error: e.message || String(e) });
+    console.error("[/api/admin/orders] error:", e);
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
-// POST /api/admin/orders/notify-shipped
-// body: { userId, orderNumber?, orderKey?, message? }
-app.post("/api/admin/orders/notify-shipped", express.json(), async (req, res) => {
+// POST /api/admin/orders/notify-shipped?token=...
+app.post("/api/admin/orders/notify-shipped", requireAdmin, express.json(), async (req, res) => {
   try {
-    requireAdmin(req);
+    const { orderId, userId, message } = req.body || {};
+    const oid = Number(orderId);
+    const uid = String(userId || "").trim();
 
-    const userId = (req.body.userId || "").trim();
-    const orderNumber = (req.body.orderNumber || "").trim();
-    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
+    if (!uid) return res.status(400).json({ ok: false, error: "see body.userId" });
 
-    let order = null;
-    if (orderNumber) {
-      const r = await pool.query(
-        `SELECT * FROM orders WHERE order_number = $1 LIMIT 1`,
-        [orderNumber]
+    // 送信
+    await linePush(uid, String(message || "").trim() || "【発送のお知らせ】\n発送いたしました。");
+
+    // DBに発送通知済みを保存（id列で更新）
+    if (isFinite(oid) && oid > 0) {
+      await pool.query(
+        `UPDATE orders
+         SET notified_user_at = NOW(),
+             notified_kind = 'shipped'
+         WHERE id = $1`,
+        [oid]
       );
-      order = r.rows[0] || null;
     }
-
-    // messageが来ても、金額はサーバーで組み立てる（安全）
-    let msg;
-    if (order) {
-      const t = normalizeOrderTotals(order);
-      const itemsTxt = t.items.length
-        ? t.items.map(it => `・${it.name} x ${it.qty}`).join("\n")
-        : "（内容不明）";
-
-      const totalTxt =
-        `商品合計：${yen(t.itemsSubtotal)}\n` +
-        `送料：${yen(t.shipping)}\n` +
-        (t.codFee ? `代引手数料：${yen(t.codFee)}\n` : "") +
-        `合計：${yen(t.finalTotal)}`;
-
-      msg =
-        "【発送のお知らせ】\n" +
-        "手造りえびせんべい 磯屋です。\n\n" +
-        "ご注文いただいた商品を、本日発送いたしました。\n\n" +
-        "▼ご注文内容\n" + itemsTxt + "\n\n" +
-        totalTxt + "\n\n" +
-        "商品到着まで今しばらくお待ちくださいませ。";
-    } else {
-      // orderNumber無し/見つからない場合は、受け取ったmessageを送る（最低限）
-      msg = (req.body.message || "").trim();
-      if (!msg) return res.status(400).json({ ok: false, error: "order not found and message empty" });
-    }
-
-    await lineClient.pushMessage(userId, { type: "text", text: msg });
 
     res.json({ ok: true });
   } catch (e) {
-    console.error("[admin/notify-shipped]", e);
-    res.status(e.status || 500).json({ ok: false, error: e.message || String(e) });
-  }
-});
-
-// （任意）POST /api/admin/orders/repair-mismatch
-// body: { orderNumbers: ["...","..."] }
-app.post("/api/admin/orders/repair-mismatch", express.json(), async (req, res) => {
-  try {
-    requireAdmin(req);
-
-    const orderNumbers = Array.isArray(req.body.orderNumbers) ? req.body.orderNumbers.map(s => String(s||"").trim()).filter(Boolean) : [];
-    if (orderNumbers.length === 0) return res.status(400).json({ ok: false, error: "orderNumbers required" });
-
-    const q = `
-      WITH calc AS (
-        SELECT
-          o.id,
-          o.order_number,
-          o.items_subtotal,
-          o.cod_fee,
-          COALESCE(SUM((COALESCE((it->>'price')::int,0))*(COALESCE((it->>'qty')::int,0))),0) AS items_calc
-        FROM orders o
-        CROSS JOIN LATERAL jsonb_array_elements(o.items) it
-        WHERE o.order_number = ANY($1)
-        GROUP BY o.id, o.order_number, o.items_subtotal, o.cod_fee
-      )
-      UPDATE orders u
-      SET
-        items_subtotal = c.items_calc,
-        final_total = (c.items_calc + u.shipping + u.cod_fee)
-      FROM calc c
-      WHERE u.id = c.id
-        AND (c.items_subtotal - c.items_calc) = c.cod_fee
-      RETURNING u.order_number, c.items_subtotal AS before_items_subtotal, c.items_calc AS after_items_subtotal, u.cod_fee;
-    `;
-
-    const r = await pool.query(q, [orderNumbers]);
-    res.json({ ok: true, repaired: r.rows });
-  } catch (e) {
-    console.error("[admin/repair-mismatch]", e);
-    res.status(e.status || 500).json({ ok: false, error: e.message || String(e) });
+    console.error("[/api/admin/orders/notify-shipped] error:", e);
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });

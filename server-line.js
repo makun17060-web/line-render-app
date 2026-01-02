@@ -973,6 +973,106 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
 // ここから通常JSON
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
+// =========================
+// 送料見積り（住所未登録でも使える）
+// POST /api/shipping/quote
+// body: { pref: "愛知県", items: [{ product_id: "original-set"|"akasha"|"kusuke"|"<実ID>", qty: 1 }] }
+// =========================
+app.post("/api/shipping/quote", async (req, res) => {
+  try {
+    const pref = String(req.body?.pref || "").trim();
+    const inItems = Array.isArray(req.body?.items) ? req.body.items : [];
+
+    if (!pref) return res.status(400).json({ ok:false, error:"pref required" });
+    if (!inItems.length) return res.status(400).json({ ok:false, error:"items required" });
+
+    const products = await loadProducts();
+    const byId = Object.fromEntries(products.map(p => [p.id, p]));
+
+    // --- カテゴリID → 実在商品IDへ寄せる（見積り用） ---
+    const findKusukeId = () => {
+      const p = products.find(x => String(x.id||"").toLowerCase().includes("kusuke") || String(x.name||"").includes("久助"));
+      return p?.id || null;
+    };
+    const findAkashaId = () => {
+      // 「あかしゃ系」代表（久助・オリジナルセット除外）
+      const p = products.find(x =>
+        isAkashaLikeProduct(x) &&
+        !(String(x.id||"") === String(ORIGINAL_SET_PRODUCT_ID||"")) &&
+        !(String(x.id||"").toLowerCase().includes("kusuke") || String(x.name||"").includes("久助"))
+      );
+      return p?.id || null;
+    };
+
+    const mapped = [];
+    for (const it of inItems) {
+      let pid = String(it?.product_id || it?.id || "").trim();
+      const qty = Math.max(1, Math.floor(Number(it?.qty || 0)));
+
+      if (!pid) continue;
+
+      if (pid === "original-set") pid = String(ORIGINAL_SET_PRODUCT_ID || "original-set-2000");
+      if (pid === "kusuke") {
+        const id = findKusukeId();
+        if (id) pid = id;
+      }
+      if (pid === "akasha") {
+        const id = findAkashaId();
+        // 代表が無い場合でもサイズ判定だけ成立させるためダミーを入れる
+        if (id) pid = id;
+      }
+
+      mapped.push({ id: pid, qty });
+    }
+
+    if (!mapped.length) return res.status(400).json({ ok:false, error:"items invalid" });
+
+    // --- 商品が見つからない場合のガード ---
+    // （akasha が代表商品無しのときはダミーでサイズだけ計算したいので特別処理）
+    const sizeItems = [];
+    let subtotal = 0;
+
+    for (const it of mapped) {
+      const p = byId[it.id];
+      if (p) {
+        sizeItems.push({
+          id: p.id,
+          name: p.name,
+          qty: it.qty,
+          price: Number(p.price || 0),
+        });
+        subtotal += Number(p.price || 0) * it.qty;
+      } else {
+        // ダミー：サイズ計算用（価格0）
+        sizeItems.push({
+          id: it.id,
+          name: "（見積り用）",
+          qty: it.qty,
+          price: 0,
+          // isAkashaLikeProduct が true になるように id を akasha 扱いに寄せる
+        });
+      }
+    }
+
+    // size計算は既存関数を利用
+    const size = calcPackageSizeFromItems(sizeItems, byId);
+    const shipping_fee = await calcShippingFee(pool, pref, size);
+
+    const total = subtotal + Number(shipping_fee || 0);
+
+    res.json({
+      ok: true,
+      region: detectRegionFromPref(pref),
+      size,
+      shipping_fee,
+      subtotal,
+      total,
+    });
+  } catch (e) {
+    console.error("[api/shipping/quote] failed", e?.stack || e);
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
 
 // =========================
 // ★ liff-address 廃止 → cod-register へ転送（staticより先に置く）

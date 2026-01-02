@@ -139,7 +139,7 @@
   "use strict";
 
   /* ===== 設定 ===== */
-  const LIFF_ID  = "2008406620-G5j1gjzM"; // ★あなたの LIFF ID
+  const LIFF_ID  = "2008406620-G5j1gjzM"; // ★products の LIFF ID
   const KEY_UID  = "isoya_userId";
   const KEY_CART = "isoya_cart";
 
@@ -187,6 +187,14 @@
       set.add(productGroup(p));
     }
     return set;
+  }
+
+  async function fetchJson(url, opts){
+    const res = await fetch(url, opts);
+    const text = await res.text();
+    let data = {};
+    try { data = text ? JSON.parse(text) : {}; } catch { data = { _raw:text }; }
+    return { res, data, raw:text };
   }
 
   /* ===== LIFF 初期化（userId保存）===== */
@@ -316,7 +324,28 @@
     return el;
   }
 
-  function goConfirm(expectGroup){
+  // =========================
+  // ★ confirm が非LIFF なので、token を発行して ?t=... を付けて遷移
+  // =========================
+  async function issueConfirmToken(){
+    const uid = (localStorage.getItem(KEY_UID) || "").trim();
+    if(!uid) throw new Error("NO_UID");
+
+    const { res, data } = await fetchJson("/api/auth/issue-token", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ userId: uid })
+    });
+
+    if(!res.ok || !data?.ok || !data?.token){
+      const err = new Error(data?.error || ("ISSUE_TOKEN_FAILED_HTTP_"+res.status));
+      err.detail = data;
+      throw err;
+    }
+    return String(data.token);
+  }
+
+  async function goConfirm(expectGroup){
     const groups = cartGroups(cart.items, products);
 
     if(groups.size === 0){
@@ -339,8 +368,17 @@
       return;
     }
 
-    // ★ルート配信に統一（/public を混ぜない）
-    location.href = "/confirm.html";
+    // token発行 → confirmへ
+    try{
+      const t = await issueConfirmToken();
+      location.href = "/confirm.html?t=" + encodeURIComponent(t);
+    }catch(e){
+      console.error("[products] issueConfirmToken failed", e);
+      alert(
+        "確認画面へ進めませんでした。\n\n" +
+        "サーバー側で AUTH_TOKEN_SECRET を設定し、/api/auth/issue-token がOKか確認してください。"
+      );
+    }
   }
 
   /* ===== イベント ===== */

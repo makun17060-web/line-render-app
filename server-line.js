@@ -2,11 +2,15 @@
  * server.js — 追記版 “完全・全部入り” 丸ごと版（修正版）
  *
  * ✅ 今回の追記（重要）
- * 0) 友だち追加（follow）時に管理者へ通知（ADMIN_USER_ID があれば）
- * 1) 注文完了時に「注文者 + 管理者」へ明細通知（push）
- *    - 代引き確定（cod/confirm, original, 久助確定）で通知
- *    - Stripeは webhook（checkout.session.completed）で paid になったタイミングで通知
- *    - 二重通知防止：orders.notified_at を追加してガード
+ * 1) 送料をDBから読む（DBテーブル shipping_yamato_taxed を作成＆自動seed）
+ *    - region + size → fee をDB参照
+ *    - もしDB参照に失敗したら、従来どおりサーバ内テーブル（SHIPPING_YAMATO）へフォールバック
+ * 2) LIFF_ID_ADDRESS の“別名対応”を追加（env名ゆれで400にならない）
+ *    - LIFF_ID_ADDRESS / LIFF_ID_COD / LIFF_ID_DEFAULT を全部受ける
+ * 3) オリジナルセット専用注文APIを追加：POST /api/orders/original（代引き）
+ *    - 混載不可をサーバ側で強制
+ *    - 送料はDB見積り
+ *    - 注文者/管理者へ明細Push（任意：ADMIN_USER_ID）
  *
  * ✅ Render Disk 永続化（超重要）
  * - DATA_DIR=/var/data（デフォルト）: products.json / sessions.json / logs
@@ -23,12 +27,15 @@
  * - LINE_CHANNEL_SECRET
  * - DATABASE_URL（Postgres）
  *
- * ✅ 管理者通知（任意）
- * - ADMIN_USER_ID（管理者のLINE userId）
+ * ✅ LIFF（推奨）
+ * - LIFF_ID_DEFAULT（まずこれだけでOK）
+ *   任意で分けるなら:
+ *   - LIFF_ID_ORDER（注文ミニアプリ） ※ original-set/confirm もこれを使うのがシンプル
+ *   - LIFF_ID_ADDRESS（住所登録）  ※ LIFF_ID_COD でもOK（別名）
  *
  * ✅ Stripe 利用するなら
  * - STRIPE_SECRET_KEY
- * - STRIPE_WEBHOOK_SECRET
+ * - STRIPE_WEBHOOK_SECRET（Webhook受けるなら）
  * - PUBLIC_BASE_URL（例 https://xxxx.onrender.com）
  */
 
@@ -51,19 +58,22 @@ const {
   LINE_CHANNEL_SECRET,
   DATABASE_URL,
 
-  PUBLIC_BASE_URL,
-  LIFF_BASE_URL,
-  LIFF_CHANNEL_ID,
+  PUBLIC_BASE_URL,        // 例: https://xxxxx.onrender.com
+  LIFF_BASE_URL,          // 例: https://xxxxx.onrender.com
+  LIFF_CHANNEL_ID,        // 任意（id_token verifyしたい場合）
 
+  // ✅ LIFF ID（env名ゆれ吸収）
   LIFF_ID_DEFAULT = "",
   LIFF_ID_ORDER = "",
-  LIFF_ID_ADDRESS = "",
-  LIFF_ID_COD = "",
+  LIFF_ID_ADDRESS = "",   // ★正式
+  LIFF_ID_COD = "",       // ★別名（=住所登録に使ってもOK）
 
   DATA_DIR = "/var/data",
   UPLOAD_DIR = "/var/data/uploads",
 
   ADMIN_API_TOKEN = "",
+
+  // ★注文明細を管理者にも送る（任意）
   ADMIN_USER_ID = "",
 
   STRIPE_SECRET_KEY = "",
@@ -111,7 +121,7 @@ const SHIPPING_REGION_BY_PREF = {
   "沖縄県": "okinawa",
 };
 
-// サイズ別 送料（税込の例）※フォールバック
+// サイズ別 送料（税込の例）※あなたの表に合わせて調整OK（フォールバック）
 const SHIPPING_YAMATO = {
   hokkaido: { 60: 1300, 80: 1550, 100: 1800, 120: 2050, 140: 2300 },
   tohoku:   { 60:  900, 80: 1100, 100: 1300, 120: 1500, 140: 1700 },
@@ -308,17 +318,19 @@ async function reloadShippingCacheIfNeeded(pool) {
  * ✅ DBから送料取得（優先順位）
  * 1) キャッシュ（shipping_yamato_taxed）
  * 2) shipping_yamato_taxed 直接SELECT
- * 3) legacy per-region table（あれば）
+ * 3) 旧互換：shipping_yamato_${region}_taxed (size->fee) を試す（あれば）
  * 4) フォールバック：サーバ内 SHIPPING_YAMATO
  */
 async function calcShippingFee(pool, prefecture, size) {
   const region = detectRegionFromPref(prefecture);
   const s = Number(size || 0) || 80;
 
+  // 1) cache
   await reloadShippingCacheIfNeeded(pool);
   const ck = cacheKey(region, s);
   if (shippingCache.map.has(ck)) return Number(shippingCache.map.get(ck));
 
+  // 2) unified table
   try {
     const r = await pool.query(
       `SELECT fee FROM shipping_yamato_taxed WHERE region=$1 AND size=$2 LIMIT 1`,
@@ -331,6 +343,7 @@ async function calcShippingFee(pool, prefecture, size) {
     }
   } catch {}
 
+  // 3) legacy per-region table (optional)
   try {
     const safeRegion = region.replace(/[^a-z0-9_]/gi, "");
     const table = `shipping_yamato_${safeRegion}_taxed`;
@@ -338,6 +351,7 @@ async function calcShippingFee(pool, prefecture, size) {
     if (r2.rowCount > 0) return Number(r2.rows[0]?.fee || 0);
   } catch {}
 
+  // 4) fallback memory table
   const table = SHIPPING_YAMATO[region] || SHIPPING_YAMATO["chubu"];
   return Number(table[s] || table[80] || 0);
 }
@@ -420,9 +434,14 @@ async function ensureDb() {
     );
   `);
 
-  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_user_id_uidx ON addresses(user_id) WHERE user_id IS NOT NULL;`); } catch(e){ logErr("CREATE UNIQUE INDEX addresses_user_id_uidx failed", e?.message||e); }
-  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_member_code_uidx ON addresses(member_code) WHERE member_code IS NOT NULL;`); } catch(e){ logErr("CREATE UNIQUE INDEX addresses_member_code_uidx failed", e?.message||e); }
-  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_address_key_uidx ON addresses(address_key) WHERE address_key IS NOT NULL;`); } catch(e){ logErr("CREATE UNIQUE INDEX addresses_address_key_uidx failed", e?.message||e); }
+  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_user_id_uidx ON addresses(user_id) WHERE user_id IS NOT NULL;`); }
+  catch(e){ logErr("CREATE UNIQUE INDEX addresses_user_id_uidx failed", e?.message||e); }
+
+  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_member_code_uidx ON addresses(member_code) WHERE member_code IS NOT NULL;`); }
+  catch(e){ logErr("CREATE UNIQUE INDEX addresses_member_code_uidx failed", e?.message||e); }
+
+  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_address_key_uidx ON addresses(address_key) WHERE address_key IS NOT NULL;`); }
+  catch(e){ logErr("CREATE UNIQUE INDEX addresses_address_key_uidx failed", e?.message||e); }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS orders (
@@ -442,10 +461,6 @@ async function ensureDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `);
-
-  // ✅ 二重通知防止カラム（なければ追加）
-  try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;`); } catch {}
-  try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS notified_kind TEXT;`); } catch {}
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS segment_users (
@@ -475,6 +490,7 @@ async function ensureDb() {
     );
   `);
 
+  // ✅ 送料テーブル（オンライン側もDB参照に統一）
   await pool.query(`
     CREATE TABLE IF NOT EXISTS shipping_yamato_taxed (
       region TEXT NOT NULL,
@@ -787,85 +803,6 @@ function stripeCancelUrl(req) {
   return `${base}/stripe-cancel.html`;
 }
 
-function liffUrl(pathname, reqForFallback = null) {
-  const base = LIFF_BASE || (reqForFallback ? originFromReq(reqForFallback) : "");
-  if (!base) return pathname;
-  if (!pathname.startsWith("/")) pathname = "/" + pathname;
-  return base + pathname;
-}
-
-// ============== 通知（注文完了） ==============
-function formatAddrText(a) {
-  if (!a) return "";
-  return `〒${a.postal || ""} ${a.prefecture || ""}${a.city || ""}${a.address1 || ""} ${a.address2 || ""}`.trim();
-}
-function formatItemLines(items) {
-  return (items || []).map(x => `・${x.name}${x.volume ? `（${x.volume}）` : ""} × ${x.qty}（${x.price}円）`).join("\n");
-}
-
-/**
- * ✅ 注文完了通知（注文者＋管理者） 二重送信防止つき
- * - orders.notified_at が埋まっていたら何もしない
- */
-async function notifyOrderCompleted({ orderId, userId, items, shippingFee, codFee, total, size, paymentMethod, title = "新規注文" }) {
-  if (!orderId || !userId) return;
-
-  // 二重通知ガード（DBで）
-  try {
-    const g = await pool.query(`SELECT notified_at FROM orders WHERE id=$1`, [orderId]);
-    if (g.rowCount > 0 && g.rows[0]?.notified_at) {
-      return; // already notified
-    }
-  } catch {}
-
-  const addr = await getAddressByUserId(userId).catch(()=>null);
-  const addrText = formatAddrText(addr);
-  const itemLines = formatItemLines(items);
-
-  const codFeeNum = Number(codFee || 0);
-  const shippingFeeNum = Number(shippingFee || 0);
-  const totalNum = Number(total || 0);
-
-  const msgForUser =
-    `ご注文ありがとうございます。\n` +
-    `【注文ID】${orderId}\n` +
-    `【支払い】${paymentMethod === "card" ? "クレジット" : "代引" }\n\n` +
-    `【内容】\n${itemLines}\n\n` +
-    (size ? `【送料】ヤマト ${size}サイズ：${shippingFeeNum}円\n` : `【送料】${shippingFeeNum}円\n`) +
-    (paymentMethod === "cod" ? `【代引手数料】${codFeeNum}円\n` : "") +
-    `【合計】${totalNum}円\n\n` +
-    `【お届け先】\n${addrText}\n\n` +
-    `住所変更：\n${liffUrl("/cod-register.html")}`;
-
-  const msgForAdmin =
-    `【${title}】\n` +
-    `注文ID: ${orderId}\n` +
-    `userId: ${userId}\n` +
-    `支払い: ${paymentMethod === "card" ? "カード" : "代引"}\n\n` +
-    `${itemLines}\n\n` +
-    (size ? `送料: ${shippingFeeNum}円（${size}）\n` : `送料: ${shippingFeeNum}円\n`) +
-    (paymentMethod === "cod" ? `代引手数料: ${codFeeNum}円\n` : "") +
-    `合計: ${totalNum}円\n\n` +
-    `お届け先:\n${addr?.name || ""}\n${addrText}\nTEL:${addr?.phone || ""}`;
-
-  // push（失敗しても注文自体は止めない）
-  try { await lineClient.pushMessage(userId, { type: "text", text: msgForUser }); }
-  catch(e){ logErr("notify push to user failed", e?.message || e); }
-
-  if (ADMIN_USER_ID) {
-    try { await lineClient.pushMessage(ADMIN_USER_ID, { type: "text", text: msgForAdmin }); }
-    catch(e){ logErr("notify push to admin failed", e?.message || e); }
-  }
-
-  // notified_at を更新（通知できた/できないに関わらず「送信を試みた」扱いで二重防止）
-  try {
-    await pool.query(`UPDATE orders SET notified_at=now(), notified_kind=$2 WHERE id=$1 AND notified_at IS NULL`, [
-      orderId,
-      "order_completed",
-    ]);
-  } catch {}
-}
-
 // Stripe webhook（必要なら）
 app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   try {
@@ -883,41 +820,9 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
       const orderId = session?.metadata?.orderId;
-      const userId  = session?.metadata?.userId;
-
       if (orderId) {
         await pool.query(`UPDATE orders SET status='paid' WHERE id=$1`, [orderId]);
         logInfo("Order paid:", orderId);
-
-        // ✅ paid のタイミングで「注文完了通知」
-        try {
-          const r = await pool.query(`SELECT id, user_id, items, total, shipping_fee, payment_method FROM orders WHERE id=$1`, [orderId]);
-          const row = r.rows?.[0];
-          if (row) {
-            const items = Array.isArray(row.items) ? row.items : (row.items || []);
-            // size は items+products から再計算（DBに持ってないので）
-            let size = "";
-            try {
-              const products = await loadProducts();
-              const productsById = Object.fromEntries(products.map(p => [p.id, p]));
-              size = calcPackageSizeFromItems(items, productsById);
-            } catch {}
-
-            await notifyOrderCompleted({
-              orderId: row.id,
-              userId: row.user_id || userId,
-              items,
-              shippingFee: row.shipping_fee,
-              codFee: 0,
-              total: row.total,
-              size,
-              paymentMethod: "card",
-              title: "カード決済（入金完了）",
-            });
-          }
-        } catch (e) {
-          logErr("notify after stripe paid failed", e?.message || e);
-        }
       }
     }
 
@@ -946,16 +851,17 @@ app.get("/address.html", redirectToCodRegister);
 app.get("/public/address.html", redirectToCodRegister);
 app.get("/address", (req, res) => res.redirect(302, "/cod-register.html"));
 
-// confirm-cod 名称ゆれ吸収
+// confirm-cod 名称ゆれ吸収（必要なら）
 app.get("/confirm_cod.html", (req, res) => res.sendFile(path.join(__dirname, "public", "confirm-cod.html")));
 app.get("/confirm-cod",      (req, res) => res.sendFile(path.join(__dirname, "public", "confirm-cod.html")));
 
-// ===== 静的配信 =====
+// ===== 静的配信（Cannot GET 撃退の肝） =====
 app.use(express.static(path.join(__dirname, "public")));
 app.use("/public", express.static(path.join(__dirname, "public")));
 app.use("/uploads", express.static(UPLOAD_DIR));
 app.use("/public/uploads", express.static(UPLOAD_DIR)); // 互換
 
+// health
 app.get("/health", (req, res) => res.json({ ok: true, time: nowISO() }));
 
 // ============== Admin auth ==============
@@ -1144,7 +1050,8 @@ app.post("/api/admin/upload-image", requireAdmin, async (req, res) => {
 });
 
 // =========================
-// LIFF config
+// LIFF config（cod-register.html 等が使用）
+// ✅ env名ゆれ吸収：LIFF_ID_ADDRESS / LIFF_ID_COD / LIFF_ID_DEFAULT
 // =========================
 app.get("/api/liff/config", (req, res) => {
   const kind = String(req.query.kind || "order").trim();
@@ -1160,7 +1067,7 @@ app.get("/api/liff/config", (req, res) => {
   return res.json({ ok:true, liffId });
 });
 
-// ============== Address API ==============
+// ============== Address API (旧/現行) ==============
 app.get("/api/address/get", async (req, res) => {
   try {
     const userId = String(req.query.userId || "").trim();
@@ -1199,7 +1106,9 @@ app.post("/api/address/set", async (req, res) => {
   }
 });
 
-// 互換：cod-register.html 用
+// =========================
+// ★互換：cod-register.html 用（/api/liff/address/me, /api/liff/address）
+// =========================
 app.get("/api/liff/address/me", async (req, res) => {
   try {
     const userId = String(req.query.userId || "").trim();
@@ -1267,7 +1176,7 @@ app.post("/api/liff/verify", async (req, res) => {
   }
 });
 
-// LIFF 起動ログ
+// LIFF 起動ログ（現行：/api/liff/opened）
 app.post("/api/liff/opened", async (req, res) => {
   try {
     const userId = String(req.body?.userId || "").trim();
@@ -1281,7 +1190,7 @@ app.post("/api/liff/opened", async (req, res) => {
   }
 });
 
-// 互換：/api/liff/open
+// ★互換：/api/liff/open（cod-register.html が呼ぶ名前）
 app.post("/api/liff/open", async (req, res) => {
   try {
     const userId = String(req.body?.userId || "").trim();
@@ -1397,7 +1306,7 @@ app.post("/api/order/quote", async (req, res) => {
   }
 });
 
-// 代引き：作成（※ここでは“仮”として通知しない。完了は cod/confirm で通知）
+// 代引き：作成
 app.post("/api/order/cod/create", async (req, res) => {
   try {
     const uid = String(req.body?.uid || "").trim();
@@ -1441,7 +1350,7 @@ app.post("/api/order/cod/create", async (req, res) => {
   }
 });
 
-// ✅ 追加：オリジナルセット専用（混載不可）代引き注文（=完了扱いで通知）
+// ✅ 追加：オリジナルセット専用（混載不可）代引き注文
 app.post("/api/orders/original", async (req, res) => {
   try {
     const uid = String(req.body?.uid || req.body?.userId || "").trim();
@@ -1451,6 +1360,7 @@ app.post("/api/orders/original", async (req, res) => {
 
     await touchUser(uid, "seen");
 
+    // 混載不可を強制：1件だけ、かつ ORIGINAL_SET_PRODUCT_ID のみ
     const items = cart.items.filter(x => x && x.id && Number(x.qty) > 0);
     if (items.length !== 1) {
       return res.status(409).json({ ok:false, error:"MIX_NOT_ALLOWED" });
@@ -1459,8 +1369,12 @@ app.post("/api/orders/original", async (req, res) => {
     const id = String(it.id || "").trim();
     const qty = Math.max(1, Math.floor(Number(it.qty || 1)));
 
-    if (id !== ORIGINAL_SET_PRODUCT_ID) return res.status(409).json({ ok:false, error:"NOT_ORIGINAL_SET" });
-    if (qty > 6) return res.status(400).json({ ok:false, error:"QTY_TOO_LARGE", max: 6 });
+    if (id !== ORIGINAL_SET_PRODUCT_ID) {
+      return res.status(409).json({ ok:false, error:"NOT_ORIGINAL_SET" });
+    }
+    if (qty > 6) {
+      return res.status(400).json({ ok:false, error:"QTY_TOO_LARGE", max: 6 });
+    }
 
     const built = await buildOrderFromCheckout(uid, { items: [{ id, qty }] });
 
@@ -1477,18 +1391,39 @@ app.post("/api/orders/original", async (req, res) => {
       rawEvent: { type: "original_set_cod" },
     });
 
-    // ✅ 注文完了通知（注文者＋管理者）
-    await notifyOrderCompleted({
-      orderId,
-      userId: built.userId,
-      items: built.items,
-      shippingFee: built.shippingFee,
-      codFee,
-      total: totalCod,
-      size: built.size,
-      paymentMethod: "cod",
-      title: "新規注文（オリジナルセット）",
-    });
+    // 注文者/管理者へPush（任意）
+    const a = built.addr;
+    const addrText = `〒${a.postal || ""} ${a.prefecture || ""}${a.city || ""}${a.address1 || ""} ${a.address2 || ""}`.trim();
+    const itemLines = built.items.map(x => `・${x.name} × ${x.qty}（${x.price}円）`).join("\n");
+
+    const msgForUser =
+      `ご注文ありがとうございます。\n` +
+      `【注文ID】${orderId}\n\n` +
+      `【内容】\n${itemLines}\n\n` +
+      `【送料】ヤマト ${built.size}サイズ：${built.shippingFee}円\n` +
+      `【代引手数料】${codFee}円\n` +
+      `【合計】${totalCod}円\n\n` +
+      `【お届け先】\n${addrText}\n\n` +
+      `住所変更：\n${liffUrl("/cod-register.html")}`;
+
+    try { await lineClient.pushMessage(built.userId, { type:"text", text: msgForUser }); } catch(e) {
+      logErr("push to user failed", e?.message || e);
+    }
+
+    if (ADMIN_USER_ID) {
+      const msgForAdmin =
+        `【新規注文】オリジナルセット\n` +
+        `注文ID: ${orderId}\n` +
+        `userId: ${built.userId}\n\n` +
+        `${itemLines}\n\n` +
+        `送料: ${built.shippingFee}円（${built.size}）\n` +
+        `代引手数料: ${codFee}円\n` +
+        `合計: ${totalCod}円\n\n` +
+        `お届け先:\n${a.name || ""}\n${addrText}\nTEL:${a.phone || ""}`;
+      try { await lineClient.pushMessage(ADMIN_USER_ID, { type:"text", text: msgForAdmin }); } catch(e) {
+        logErr("push to admin failed", e?.message || e);
+      }
+    }
 
     res.json({
       ok: true,
@@ -1511,7 +1446,7 @@ app.post("/api/orders/original", async (req, res) => {
   }
 });
 
-// 代引き確定（=完了扱いで通知）
+// 代引き確定 → confirm-cod.html へ（必要なら使う）
 app.post("/api/order/cod/confirm", async (req, res) => {
   try {
     const uid = String(req.body?.uid || "").trim();
@@ -1531,19 +1466,6 @@ app.post("/api/order/cod/confirm", async (req, res) => {
       paymentMethod: "cod",
       status: "confirmed",
       rawEvent: { type: "cod_confirm_v1" },
-    });
-
-    // ✅ 注文完了通知（注文者＋管理者）
-    await notifyOrderCompleted({
-      orderId,
-      userId: built.userId,
-      items: built.items,
-      shippingFee: built.shippingFee,
-      codFee,
-      total: totalCod,
-      size: built.size,
-      paymentMethod: "cod",
-      title: "新規注文（代引）",
     });
 
     res.json({
@@ -1680,6 +1602,13 @@ app.post("/webhook", line.middleware(lineConfig), async (req, res) => {
   }
 });
 
+function liffUrl(pathname, reqForFallback = null) {
+  const base = LIFF_BASE || (reqForFallback ? originFromReq(reqForFallback) : "");
+  if (!base) return pathname;
+  if (!pathname.startsWith("/")) pathname = "/" + pathname;
+  return base + pathname;
+}
+
 async function handleEvent(ev) {
   const type = ev.type;
   const userId = ev?.source?.userId || "";
@@ -1721,7 +1650,6 @@ async function onFollow(ev) {
   const urlProducts = liffUrl("/products.html");
   const urlAddress  = liffUrl("/cod-register.html");
 
-  // ✅ ユーザーへ案内
   await lineClient.pushMessage(userId, {
     type: "text",
     text:
@@ -1731,17 +1659,6 @@ async function onFollow(ev) {
       "住所登録がまだの場合は、ミニアプリ内の「住所登録」からお願いします。\n\n" +
       `商品一覧：\n${urlProducts}\n\n住所登録：\n${urlAddress}`,
   });
-
-  // ✅ 管理者へ通知（希望）
-  if (ADMIN_USER_ID) {
-    const msg =
-      `【友だち追加】\n` +
-      `userId: ${userId}\n` +
-      (displayName ? `表示名: ${displayName}\n` : "") +
-      `日時: ${new Date().toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}`;
-    try { await lineClient.pushMessage(ADMIN_USER_ID, { type:"text", text: msg }); }
-    catch(e){ logErr("follow notify to admin failed", e?.message || e); }
-  }
 }
 
 async function onUnfollow() {
@@ -1869,25 +1786,20 @@ async function finalizeKusukeOrder(replyToken, userId, qty) {
       rawEvent: { type: "line_kusuke" },
     });
 
-    // ✅ 注文完了通知（注文者＋管理者）
-    await notifyOrderCompleted({
-      orderId,
-      userId,
-      items: built.items,
-      shippingFee: built.shippingFee,
-      codFee,
-      total: totalCod,
-      size: built.size,
-      paymentMethod: "cod",
-      title: "新規注文（久助）",
-    });
+    const a = built.addr;
+    const addrText =
+      `〒${a.postal || ""} ${a.prefecture || ""}${a.city || ""}${a.address1 || ""} ${a.address2 || ""}`.trim();
 
-    // 返信も残す（ユーザーのトーク上に見える）
     await lineClient.replyMessage(replyToken, {
       type:"text",
       text:
         `久助 注文を受け付けました（注文ID: ${orderId}）\n\n` +
-        `明細はこの後届きます。`
+        `【内容】\n${kusuke.name} × ${qty}\n単価：${kusuke.price}円\n\n` +
+        `【送料】ヤマト ${built.size}サイズ：${built.shippingFee}円\n` +
+        `【代引手数料】${codFee}円\n\n` +
+        `【合計（代引）】${totalCod}円\n\n` +
+        `【お届け先】\n${addrText}\n\n` +
+        `住所変更：\n${liffUrl("/cod-register.html")}`
     });
   } catch (e) {
     const code = e?.code || "";

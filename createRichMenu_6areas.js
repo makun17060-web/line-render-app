@@ -69,7 +69,7 @@ const shippingUrl = (SHIPPING_URL || `${baseUrl}/public/shipping.html`).trim();
   // 1行目
   { // 左上：ご注文はこちら（URIでOK：最短で注文LIFFが開く）
     bounds: { x: 0, y: 0, width: 833, height: 843 },
-    action: { type: "uri", label: "ご注文はこちら", uri: ORDER_LIFF_URL },
+    action: { type: "uri", label: "ご注文はこちら", uri: "https://line-render-app-1.onrender.com/public/index.html"},
   },
   { // 中央上：ECショップ
     bounds: { x: 833, y: 0, width: 834, height: 843 },

@@ -20,8 +20,26 @@
     .muted{ color:var(--muted); font-size:13px; line-height:1.5; }
     .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; margin-top:12px; }
     .card{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow); }
-    .imgbox{ height:160px; background:#eaecef; }
-    .imgbox img{ width:100%; height:100%; object-fit:cover; display:block; }
+
+    /* =========================
+       ✅ 商品画像：絶対に切らない
+       ========================= */
+    .imgbox{
+      height:200px;
+      background:#fff;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+    }
+    .imgbox img{
+      max-width:100%;
+      max-height:100%;
+      width:auto;
+      height:auto;
+      object-fit:contain;
+      display:block;
+    }
+
     .body{ padding:12px; }
     .name{ font-weight:900; font-size:15px; }
     .desc{ margin-top:6px; color:var(--muted); font-size:12px; min-height:34px; }
@@ -93,201 +111,87 @@
 (async function(){
   "use strict";
 
-  // =========================
-  // ✅ 設定
-  // =========================
   const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
+  const ORIGINAL_SET_ID = "original-set-2000";
   const KEY_UID  = "isoya_userId";
   const KEY_CART = "isoya_cart";
-
-  // ✅ オリジナルセットを「あかしゃシリーズ画面」から消す
-  // - products.json は消さない（他画面では使える）
-  const ORIGINAL_SET_ID = "original-set-2000";
-
   const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
 
   function loadCart(){
-    try{
-      const v = JSON.parse(localStorage.getItem(KEY_CART) || "");
-      if(v && typeof v==="object") return v;
-    }catch{}
-    return { items: [] };
+    try{ return JSON.parse(localStorage.getItem(KEY_CART)||"") || {items:[]}; }
+    catch{ return {items:[]}; }
   }
-  function saveCart(cart){ localStorage.setItem(KEY_CART, JSON.stringify(cart)); }
-
-  function normItems(items){
-    const map = new Map();
-    for(const it of (items||[])){
-      const id = String(it?.id||"").trim();
-      const qty = Math.max(0, Math.floor(Number(it?.qty||0)));
-      if(!id || qty<=0) continue;
-      map.set(id, (map.get(id)||0) + qty);
-    }
-    return Array.from(map.entries()).map(([id,qty])=>({id,qty}));
-  }
+  function saveCart(c){ localStorage.setItem(KEY_CART, JSON.stringify(c)); }
 
   async function ensureLiffUser(){
     await liff.init({ liffId: LIFF_ID_ORDER });
-    if(!liff.isLoggedIn()){
-      liff.login({ redirectUri: location.href });
-      return null;
-    }
-    const prof = await liff.getProfile();
-    const uid = (prof?.userId || "").trim();
-    if(uid) localStorage.setItem(KEY_UID, uid);
-    return uid;
+    if(!liff.isLoggedIn()){ liff.login({ redirectUri: location.href }); return null; }
+    const p = await liff.getProfile();
+    localStorage.setItem(KEY_UID, p.userId);
+    return p.userId;
   }
 
-  const statusEl  = document.getElementById("status");
-  const gridEl    = document.getElementById("grid");
-  const sumEl     = document.getElementById("sum");
-  const clearBtn  = document.getElementById("clearBtn");
-  const addrBtn   = document.getElementById("addrBtn");
-  const nextBtn   = document.getElementById("nextBtn");
+  const statusEl = document.getElementById("status");
+  const gridEl   = document.getElementById("grid");
+  const sumEl    = document.getElementById("sum");
+  const clearBtn = document.getElementById("clearBtn");
+  const addrBtn  = document.getElementById("addrBtn");
+  const nextBtn  = document.getElementById("nextBtn");
 
   let cart = loadCart();
-  cart.items = normItems(cart.items);
-
   let products = [];
 
   function renderSum(){
-    const byId = Object.fromEntries(products.map(p=>[p.id,p]));
-    let subtotal = 0, count = 0;
-    for(const it of cart.items){
-      const p = byId[it.id];
+    let sum=0,cnt=0;
+    for(const it of cart.items||[]){
+      const p = products.find(x=>x.id===it.id);
       if(!p) continue;
-      subtotal += Number(p.price||0) * Number(it.qty||0);
-      count += Number(it.qty||0);
+      sum += p.price * it.qty;
+      cnt += it.qty;
     }
-    sumEl.textContent = `カート：${count}点 / 小計 ${yen(subtotal)}`;
-    nextBtn.classList.toggle("btnDisabled", count===0);
-  }
-
-  function addToCart(product, qtyToAdd){
-    const id = String(product.id||"").trim();
-    const qty = Math.max(1, Math.floor(Number(qtyToAdd||1)));
-    const ex = cart.items.find(x => x.id === id);
-    if(ex) ex.qty += qty;
-    else cart.items.push({ id, qty });
-    cart.items = normItems(cart.items);
-    saveCart(cart);
-    renderSum();
+    sumEl.textContent = `カート：${cnt}点 / 小計 ${yen(sum)}`;
+    nextBtn.classList.toggle("btnDisabled", cnt===0);
   }
 
   function card(p){
-    const el = document.createElement("div");
-    el.className = "card";
-
-    const img = String(p.image||"").trim();
-    const stock = Number(p.stock||0);
-
-    el.innerHTML = `
-      <div class="imgbox">${img ? `<img src="${img}" alt="">` : ""}</div>
+    const d=document.createElement("div");
+    d.className="card";
+    d.innerHTML=`
+      <div class="imgbox">${p.image?`<img src="${p.image}">`:""}</div>
       <div class="body">
-        <div class="name">${p.name || ""}</div>
-        <div class="desc">${p.desc || ""}</div>
+        <div class="name">${p.name}</div>
+        <div class="desc">${p.desc||""}</div>
         <div class="row">
           <div class="price">${yen(p.price)}</div>
-          <span class="badge">${p.volume ? `内容量 ${p.volume}` : `在庫 ${stock}`}</span>
+          <span class="badge">${p.volume||""}</span>
         </div>
         <div class="controls">
-          <div class="qty">
-            <button type="button" class="dec">−</button>
-            <input class="q" type="number" min="1" step="1" value="1" inputmode="numeric">
-            <button type="button" class="inc">＋</button>
-          </div>
-          <button type="button" class="btn btnAdd add">カートに追加</button>
+          <button class="btn btnAdd">カートに追加</button>
         </div>
-      </div>
-    `;
-
-    const im = el.querySelector("img");
-    if(im) im.addEventListener("error", ()=> im.remove());
-
-    const q = el.querySelector(".q");
-    el.querySelector(".dec").onclick = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1))-1)); };
-    el.querySelector(".inc").onclick = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1))+1)); };
-    q.onchange = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1)))); };
-
-    const addBtn = el.querySelector(".add");
-    if(Number.isFinite(stock) && stock <= 0){
-      addBtn.disabled = true;
-      addBtn.textContent = "在庫なし";
-    }
-
-    addBtn.onclick = ()=>{
-      const add = Math.max(1, Math.floor(Number(q.value||1)));
-      const inCart = cart.items.find(x => x.id === p.id)?.qty || 0;
-      const next = inCart + add;
-      if(Number.isFinite(stock) && stock >= 0 && next > stock){
-        alert(`在庫不足です（在庫 ${stock}）。個数を減らしてください。`);
-        return;
-      }
-      addToCart(p, add);
+      </div>`;
+    d.querySelector(".btnAdd").onclick=()=>{
+      cart.items.push({id:p.id,qty:1});
+      saveCart(cart); renderSum();
     };
-
-    return el;
-  }
-
-  function goAddress(){
-    const ret = encodeURIComponent("/confirm.html");
-    location.href = `/cod-register.html?returnTo=${ret}`;
+    return d;
   }
 
   try{
-    const uid = await ensureLiffUser();
-    if(!uid){
-      statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">LIFFログイン中…</span>';
-      return;
-    }
-  }catch(e){
-    console.error(e);
-    statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">LIFF初期化に失敗しました（注文用LIFF）</span>';
-    return;
+    await ensureLiffUser();
+    const r=await fetch("/api/products",{cache:"no-store"});
+    const d=await r.json();
+    products=(d.products||[]).filter(p=>p.id!==ORIGINAL_SET_ID);
+    gridEl.innerHTML="";
+    products.forEach(p=>gridEl.appendChild(card(p)));
+    renderSum();
+    statusEl.textContent="";
+  }catch{
+    statusEl.textContent="商品読み込み失敗";
   }
 
-  addrBtn.onclick = goAddress;
-  nextBtn.onclick = ()=>{
-    if(nextBtn.classList.contains("btnDisabled")){
-      alert("カートが空です");
-      return;
-    }
-    goAddress();
-  };
-
-  clearBtn.onclick = ()=>{
-    if(!confirm("カートを空にしますか？")) return;
-    cart = { items: [] };
-    saveCart(cart);
-    renderSum();
-  };
-
-  try{
-    const r = await fetch("/api/products", { cache:"no-store" });
-    const d = await r.json().catch(()=>({}));
-    if(!r.ok || !d.ok) throw new Error(d?.error || ("HTTP "+r.status));
-
-    // =========================
-    // ✅ ここが修正点：オリジナルセットを除外
-    // =========================
-    const raw = Array.isArray(d.products) ? d.products : [];
-    products = raw.filter(p => {
-      const id = String(p?.id || "").trim();
-      const name = String(p?.name || "");
-      if (id === ORIGINAL_SET_ID) return false;
-      if (/オリジナルセット/.test(name)) return false; // 念のため
-      return true;
-    });
-
-    statusEl.textContent = products.length ? "" : "商品がありません（products.json を確認）";
-    gridEl.innerHTML = "";
-    products.forEach(p => gridEl.appendChild(card(p)));
-    renderSum();
-  }catch(e){
-    console.error(e);
-    statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">商品読み込み失敗：/api/products を確認してください</span>';
-    renderSum();
-  }
+  addrBtn.onclick=()=>location.href="/cod-register.html";
+  clearBtn.onclick=()=>{cart={items:[]};saveCart(cart);renderSum();};
+  nextBtn.onclick=()=>location.href="/cod-register.html";
 })();
 </script>
 </body>

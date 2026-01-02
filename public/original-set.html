@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>オリジナルセット（購入）</title>
+
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+  <style>
+    :root{
+      --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280;
+      --line:#e5e7eb; --pri:#7a1f1f; --danger:#b91c1c;
+      --shadow:0 1px 3px rgba(0,0,0,.06); --radius:14px;
+    }
+    *{ box-sizing:border-box; }
+    body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
+    .wrap{ max-width:760px; margin:0 auto; padding:14px 14px 118px; }
+    h1{ margin:0 0 6px; font-size:18px; }
+    .muted{ color:var(--muted); font-size:13px; line-height:1.6; }
+    .card{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow); margin-top:12px; }
+    .body{ padding:14px; }
+    .name{ font-weight:900; font-size:16px; }
+    .desc{ margin-top:8px; color:var(--muted); font-size:13px; }
+    .row{ display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:12px; }
+    .price{ font-weight:900; color:var(--pri); font-size:18px; }
+    .badge{ font-size:12px; border:1px solid var(--line); background:#fafafa; border-radius:999px; padding:2px 8px; white-space:nowrap; }
+    .qty{ display:flex; align-items:center; gap:6px; margin-top:12px; }
+    .qty button{
+      width:40px; height:40px; border-radius:12px; border:1px solid var(--line);
+      background:#fff; font-size:20px; cursor:pointer;
+    }
+    .qty input{
+      width:72px; height:40px; border-radius:12px; border:1px solid var(--line);
+      text-align:center; font-size:16px; font-weight:900;
+    }
+    .warn{ color:var(--danger); font-weight:900; }
+    .mini{ font-size:12px; color:var(--muted); line-height:1.5; margin-top:6px; }
+
+    /* bottom bar */
+    .bar{
+      position:fixed; left:0; right:0; bottom:0;
+      border-top:1px solid var(--line);
+      background:rgba(246,247,249,.92);
+      backdrop-filter:blur(10px);
+      padding:10px 12px;
+    }
+    .bar .inner{
+      max-width:760px; margin:0 auto;
+      display:flex; justify-content:space-between; align-items:center; gap:10px;
+    }
+    .bar .right{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+    .btn{ border:none; border-radius:14px; padding:12px 14px; font-weight:900; cursor:pointer; }
+    .btnBack{ background:#fff; border:1px solid var(--line); color:var(--text); }
+    .btnAddr{ background:#fff; border:1px solid var(--line); color:var(--text); }
+    .btnNext{ background:var(--pri); color:#fff; min-width:220px; }
+    .btnDisabled{ opacity:.55; cursor:not-allowed; pointer-events:none; }
+
+    table{ width:100%; border-collapse:collapse; margin-top:10px; font-size:13px; }
+    th,td{ border:1px solid var(--line); padding:8px; text-align:left; background:#fff; }
+    th{ background:#fafafa; }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <h1>オリジナルセット（購入）</h1>
+    <div class="muted" id="status">読み込み中…</div>
+
+    <div class="card">
+      <div class="body">
+        <div class="name" id="pname">オリジナルセット</div>
+        <div class="desc" id="pdesc">
+          贈答向けの詰め合わせセットです。<span class="warn">単品（あかしゃ等）との混載はできません。</span>
+        </div>
+
+        <div class="row">
+          <div class="price" id="pprice">0円</div>
+          <span class="badge" id="pvolume">内容量</span>
+        </div>
+
+        <div class="qty">
+          <button type="button" id="dec">−</button>
+          <input id="qty" type="number" min="1" step="1" value="1" inputmode="numeric">
+          <button type="button" id="inc">＋</button>
+        </div>
+
+        <div class="mini">
+          送料サイズは数量で決まります：<br>
+          1個→80 / 2個→100 / 3～4個→120 / 5～6個→140
+        </div>
+
+        <table>
+          <thead><tr><th>数量</th><th>送料サイズ</th></tr></thead>
+          <tbody id="sizeTable"></tbody>
+        </table>
+
+        <div class="mini">
+          ※この画面で選んだ数量は「オリジナルセット専用カート」に保存されます。<br>
+          ※住所入力後は最終確認画面へ進みます。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="bar">
+    <div class="inner">
+      <div class="muted" id="sum">数量 0 / 小計 0円</div>
+      <div class="right">
+        <button class="btn btnBack" id="backBtn" type="button">戻る</button>
+        <button class="btn btnAddr" id="addrBtn" type="button">住所入力（登録／変更）</button>
+        <button class="btn btnNext" id="nextBtn" type="button">次へ（住所入力）</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(async function(){
+  "use strict";
+
+  // 注文用LIFF（あなたの products.html と同じでOK）
+  const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
+
+  // 既存と混ざらないよう「オリジナル専用キー」にする
+  const KEY_UID  = "isoya_userId";
+  const KEY_CART = "isoya_cart_original"; // ★別キー
+
+  // オリジナルセットの商品ID（products.json にある想定）
+  const ORIGINAL_ID = (window.ORIGINAL_SET_PRODUCT_ID || "original-set-2000").trim();
+
+  const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
+
+  function loadCart(){
+    try{
+      const v = JSON.parse(localStorage.getItem(KEY_CART) || "");
+      if(v && typeof v==="object") return v;
+    }catch{}
+    return { items: [] };
+  }
+  function saveCart(cart){ localStorage.setItem(KEY_CART, JSON.stringify(cart)); }
+
+  function normItems(items){
+    const map = new Map();
+    for(const it of (items||[])){
+      const id = String(it?.id||"").trim();
+      const qty = Math.max(0, Math.floor(Number(it?.qty||0)));
+      if(!id || qty<=0) continue;
+      map.set(id, (map.get(id)||0) + qty);
+    }
+    return Array.from(map.entries()).map(([id,qty])=>({id,qty}));
+  }
+
+  async function ensureLiffUser(){
+    await liff.init({ liffId: LIFF_ID_ORDER });
+    if(!liff.isLoggedIn()){
+      liff.login({ redirectUri: location.href });
+      return null;
+    }
+    const prof = await liff.getProfile();
+    const uid = (prof?.userId || "").trim();
+    if(uid) localStorage.setItem(KEY_UID, uid);
+    return uid;
+  }
+
+  const statusEl = document.getElementById("status");
+  const sumEl    = document.getElementById("sum");
+  const backBtn  = document.getElementById("backBtn");
+  const addrBtn  = document.getElementById("addrBtn");
+  const nextBtn  = document.getElementById("nextBtn");
+
+  const pnameEl  = document.getElementById("pname");
+  const pdescEl  = document.getElementById("pdesc");
+  const ppriceEl = document.getElementById("pprice");
+  const pvolEl   = document.getElementById("pvolume");
+
+  const decBtn   = document.getElementById("dec");
+  const incBtn   = document.getElementById("inc");
+  const qtyEl    = document.getElementById("qty");
+  const sizeTable= document.getElementById("sizeTable");
+
+  let products = [];
+  let product = null;
+
+  let cart = loadCart();
+  cart.items = normItems(cart.items);
+
+  function sizeByQty(q){
+    q = Number(q)||0;
+    if(q<=0) return 0;
+    if(q===1) return 80;
+    if(q===2) return 100;
+    if(q<=4) return 120;
+    return 140; // 5-6想定。7以上は運用で制限してOK
+  }
+
+  function renderSizeTable(){
+    const rows = [
+      {q:"1", s:"80"},
+      {q:"2", s:"100"},
+      {q:"3〜4", s:"120"},
+      {q:"5〜6", s:"140"},
+    ];
+    sizeTable.innerHTML = rows.map(r=>`<tr><td>${r.q}</td><td>${r.s}</td></tr>`).join("");
+  }
+
+  function getQtyInCart(){
+    const it = cart.items.find(x => x.id === ORIGINAL_ID);
+    return it ? Number(it.qty||0) : 0;
+  }
+
+  function setQtyInCart(qty){
+    qty = Math.max(1, Math.floor(Number(qty||1)));
+    // 7以上を禁止したいならここで止める（運用次第）
+    if(qty > 6){
+      alert("オリジナルセットは1回の注文で最大6個までにしてください。");
+      qty = 6;
+    }
+    cart.items = [{ id: ORIGINAL_ID, qty }]; // ★オリジナルは単一固定
+    cart.items = normItems(cart.items);
+    saveCart(cart);
+  }
+
+  function renderSum(){
+    const qty = getQtyInCart();
+    const price = Number(product?.price || 0);
+    const subtotal = price * qty;
+    const size = sizeByQty(qty);
+    sumEl.textContent = `数量 ${qty} / 小計 ${yen(subtotal)}（送料サイズ ${size}）`;
+    nextBtn.classList.toggle("btnDisabled", qty<=0);
+  }
+
+  function goAddress(){
+    // 住所入力後、オリジナル専用の確認画面へ戻したい（後で作成OK）
+    const ret = encodeURIComponent("/confirm-original.html");
+    location.href = `/cod-register.html?returnTo=${ret}&mode=original`;
+  }
+
+  backBtn.onclick = ()=>{ location.href = "/index.html"; };
+  addrBtn.onclick = goAddress;
+  nextBtn.onclick = ()=>{
+    if(nextBtn.classList.contains("btnDisabled")){
+      alert("数量を選んでください");
+      return;
+    }
+    goAddress();
+  };
+
+  decBtn.onclick = ()=>{
+    const v = Math.max(1, Math.floor(Number(qtyEl.value||1)) - 1);
+    qtyEl.value = String(v);
+    setQtyInCart(v);
+    renderSum();
+  };
+  incBtn.onclick = ()=>{
+    const v = Math.max(1, Math.floor(Number(qtyEl.value||1)) + 1);
+    qtyEl.value = String(v);
+    setQtyInCart(v);
+    renderSum();
+  };
+  qtyEl.onchange = ()=>{
+    let v = Math.max(1, Math.floor(Number(qtyEl.value||1)));
+    if(v > 6){
+      alert("オリジナルセットは1回の注文で最大6個までにしてください。");
+      v = 6;
+    }
+    qtyEl.value = String(v);
+    setQtyInCart(v);
+    renderSum();
+  };
+
+  renderSizeTable();
+
+  // LIFFログイン
+  try{
+    const uid = await ensureLiffUser();
+    if(!uid){
+      statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">LIFFログイン中…</span>';
+      return;
+    }
+  }catch(e){
+    console.error(e);
+    statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">LIFF初期化に失敗しました（注文用LIFF）</span>';
+    return;
+  }
+
+  // 商品情報（products.json）から ORIGINAL_ID を引く
+  try{
+    const r = await fetch("/api/products", { cache:"no-store" });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok || !d.ok) throw new Error(d?.error || ("HTTP "+r.status));
+
+    products = Array.isArray(d.products) ? d.products : [];
+    product = products.find(p => String(p.id||"").trim() === ORIGINAL_ID) || null;
+
+    if(!product){
+      // products.jsonに無い場合でも最低限動かす
+      statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">オリジナルセットの商品IDが見つかりません（products.json を確認）</span>';
+      pnameEl.textContent = "オリジナルセット";
+      ppriceEl.textContent = yen(0);
+      pvolEl.textContent = "内容量";
+    }else{
+      statusEl.textContent = "";
+      pnameEl.textContent = product.name || "オリジナルセット";
+      pdescEl.innerHTML = `${product.desc || "贈答向けの詰め合わせセットです。"} <span class="warn">単品との混載はできません。</span>`;
+      ppriceEl.textContent = yen(product.price);
+      pvolEl.textContent = product.volume ? `内容量 ${product.volume}` : "内容量";
+    }
+
+    // 初期数量：カートにあればそれ、なければ1
+    const initQty = Math.max(1, Math.floor(getQtyInCart() || 1));
+    qtyEl.value = String(initQty);
+    setQtyInCart(initQty);
+    renderSum();
+
+  }catch(e){
+    console.error(e);
+    statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">商品読み込み失敗：/api/products を確認してください</span>';
+    // 最低限動かす
+    const initQty = 1;
+    qtyEl.value = String(initQty);
+    setQtyInCart(initQty);
+    renderSum();
+  }
+})();
+</script>
+</body>
+</html>

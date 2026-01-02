@@ -2,41 +2,18 @@
  * server.js — 追記版 “完全・全部入り” 丸ごと版（修正版）
  *
  * ✅ 今回の追記（重要）
+ * 0) ★注文完了通知（注文者＋管理者）を “全ルート” に統一実装
+ *    - 代引：/api/order/cod/create, /api/order/cod/confirm, /api/orders/original, 久助注文
+ *    - カード：Stripe webhook（checkout.session.completed）で「決済完了＝注文完了」通知
+ *    - 重複防止：orders.notified_at を追加し、送信済みなら二重送信しない
+ *
  * 1) 送料をDBから読む（DBテーブル shipping_yamato_taxed を作成＆自動seed）
- *    - region + size → fee をDB参照
- *    - もしDB参照に失敗したら、従来どおりサーバ内テーブル（SHIPPING_YAMATO）へフォールバック
- * 2) LIFF_ID_ADDRESS の“別名対応”を追加（env名ゆれで400にならない）
- *    - LIFF_ID_ADDRESS / LIFF_ID_COD / LIFF_ID_DEFAULT を全部受ける
- * 3) オリジナルセット専用注文APIを追加：POST /api/orders/original（代引き）
- *    - 混載不可をサーバ側で強制
- *    - 送料はDB見積り
- *    - 注文者/管理者へ明細Push（任意：ADMIN_USER_ID）
+ * 2) LIFF_ID_ADDRESS の“別名対応”
+ * 3) オリジナルセット専用注文API：POST /api/orders/original（代引き）
  *
  * ✅ Render Disk 永続化（超重要）
  * - DATA_DIR=/var/data（デフォルト）: products.json / sessions.json / logs
  * - UPLOAD_DIR=/var/data/uploads（デフォルト）: 画像アップロード永続
- *
- * ✅ 静的配信
- * - /              → __dirname/public
- * - /public        → __dirname/public（互換）
- * - /uploads       → UPLOAD_DIR
- * - /public/uploads→ UPLOAD_DIR
- *
- * ✅ 必須 ENV
- * - LINE_CHANNEL_ACCESS_TOKEN
- * - LINE_CHANNEL_SECRET
- * - DATABASE_URL（Postgres）
- *
- * ✅ LIFF（推奨）
- * - LIFF_ID_DEFAULT（まずこれだけでOK）
- *   任意で分けるなら:
- *   - LIFF_ID_ORDER（注文ミニアプリ） ※ original-set/confirm もこれを使うのがシンプル
- *   - LIFF_ID_ADDRESS（住所登録）  ※ LIFF_ID_COD でもOK（別名）
- *
- * ✅ Stripe 利用するなら
- * - STRIPE_SECRET_KEY
- * - STRIPE_WEBHOOK_SECRET（Webhook受けるなら）
- * - PUBLIC_BASE_URL（例 https://xxxx.onrender.com）
  */
 
 "use strict";
@@ -462,6 +439,13 @@ async function ensureDb() {
     );
   `);
 
+  // ✅ 追加：通知済みフラグ（重複通知防止）
+  try {
+    await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;`);
+  } catch (e) {
+    logErr("ALTER TABLE orders ADD COLUMN notified_at failed", e?.message || e);
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS segment_users (
       user_id TEXT PRIMARY KEY,
@@ -803,7 +787,139 @@ function stripeCancelUrl(req) {
   return `${base}/stripe-cancel.html`;
 }
 
+// =========================
+// ★★ 注文完了通知（統一実装）
+// =========================
+function yen(n) {
+  const x = Number(n || 0);
+  return `${x.toLocaleString("ja-JP")}円`;
+}
+function joinAddrText(a) {
+  if (!a) return "";
+  const line1 = `〒${a.postal || ""} ${a.prefecture || ""}${a.city || ""}${a.address1 || ""} ${a.address2 || ""}`.trim();
+  const line2 = `${a.name || ""}`.trim();
+  const line3 = a.phone ? `TEL:${a.phone}` : "";
+  return [line2, line1, line3].filter(Boolean).join("\n");
+}
+function buildItemLines(items) {
+  return (items || []).map(x => {
+    const v = x.volume ? `（${x.volume}）` : "";
+    return `・${x.name}${v} × ${x.qty}（${yen(x.price)}）`;
+  }).join("\n");
+}
+async function pushTextSafe(to, text) {
+  if (!to) return;
+  try {
+    await lineClient.pushMessage(to, { type: "text", text: String(text || "") });
+  } catch (e) {
+    logErr("pushTextSafe failed", to, e?.message || e);
+  }
+}
+async function getOrderRow(orderId) {
+  const r = await pool.query(
+    `SELECT id, user_id, items, total, shipping_fee, payment_method, status, notified_at, created_at
+     FROM orders WHERE id=$1`,
+    [orderId]
+  );
+  return r.rows[0] || null;
+}
+async function markOrderNotified(orderId) {
+  try {
+    await pool.query(`UPDATE orders SET notified_at=now() WHERE id=$1 AND notified_at IS NULL`, [orderId]);
+  } catch (e) {
+    logErr("markOrderNotified failed", orderId, e?.message || e);
+  }
+}
+
+/**
+ * ✅ 注文完了通知：注文者＋管理者
+ * - 重複防止：orders.notified_at があればスキップ
+ * - card は webhook で呼ぶ（決済完了が注文完了）
+ * - cod は create/confirm 等で呼ぶ（「注文確定」扱いにしたいルートで呼ぶ）
+ */
+async function notifyOrderCompleted({
+  orderId,
+  userId,
+  items,
+  shippingFee,
+  total,
+  paymentMethod,
+  codFee = 0,
+  size = null,
+  addr = null,
+  title = "新規注文",
+  isPaid = false,
+}) {
+  const row = await getOrderRow(orderId);
+  if (row?.notified_at) {
+    logInfo("notify skipped (already notified):", orderId);
+    return { ok: true, skipped: true };
+  }
+
+  const a = addr || (await getAddressByUserId(userId).catch(()=>null));
+  const addrText = joinAddrText(a);
+
+  // サイズが無い場合は推定（表示用）
+  let computedSize = size;
+  if (!computedSize) {
+    try {
+      const products = await loadProducts();
+      const productsById = Object.fromEntries(products.map(p => [p.id, p]));
+      computedSize = calcPackageSizeFromItems(items || [], productsById);
+    } catch {}
+  }
+
+  const itemLines = buildItemLines(items || []);
+  const shipLine = (computedSize ? `ヤマト ${computedSize}サイズ` : "ヤマト") + `：${yen(shippingFee)}`;
+
+  const payLabel = paymentMethod === "card" ? "クレジット" : "代引";
+  const paidLine = paymentMethod === "card"
+    ? (isPaid ? "決済：完了" : "決済：未完了")
+    : "支払い：代引（到着時）";
+
+  // 注文者メッセージ
+  const msgForUser =
+    `ご注文ありがとうございます。\n` +
+    `【注文ID】${orderId}\n` +
+    `【支払い】${payLabel}\n` +
+    `${paidLine}\n\n` +
+    `【内容】\n${itemLines}\n\n` +
+    `【送料】${shipLine}\n` +
+    (paymentMethod === "cod" ? `【代引手数料】${yen(codFee)}\n` : "") +
+    `【合計】${yen(total)}\n\n` +
+    (addrText ? `【お届け先】\n${addrText}\n\n` : "") +
+    `住所変更：\n${liffUrl("/cod-register.html")}`;
+
+  await pushTextSafe(userId, msgForUser);
+
+  // 管理者メッセージ（任意）
+  if (ADMIN_USER_ID) {
+    const msgForAdmin =
+      `【${title}】\n` +
+      `注文ID: ${orderId}\n` +
+      `userId: ${userId}\n` +
+      `支払い: ${payLabel}${paymentMethod === "card" ? (isPaid ? "（決済完了）" : "（未決済）") : ""}\n\n` +
+      `${itemLines}\n\n` +
+      `送料: ${yen(shippingFee)}${computedSize ? `（${computedSize}）` : ""}\n` +
+      (paymentMethod === "cod" ? `代引手数料: ${yen(codFee)}\n` : "") +
+      `合計: ${yen(total)}\n\n` +
+      (addrText ? `お届け先:\n${addrText}` : "お届け先:（住所未取得）");
+    await pushTextSafe(ADMIN_USER_ID, msgForAdmin);
+  }
+
+  await markOrderNotified(orderId);
+  return { ok: true };
+}
+
+function liffUrl(pathname, reqForFallback = null) {
+  const base = LIFF_BASE || (reqForFallback ? originFromReq(reqForFallback) : "");
+  if (!base) return pathname;
+  if (!pathname.startsWith("/")) pathname = "/" + pathname;
+  return base + pathname;
+}
+
 // Stripe webhook（必要なら）
+// ★決済完了時に「注文完了通知（注文者＋管理者）」を送る
 app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   try {
     if (!stripe || !STRIPE_WEBHOOK_SECRET) return res.status(400).send("stripe not configured");
@@ -820,9 +936,30 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
       const orderId = session?.metadata?.orderId;
+      const userId  = session?.metadata?.userId;
+
       if (orderId) {
         await pool.query(`UPDATE orders SET status='paid' WHERE id=$1`, [orderId]);
         logInfo("Order paid:", orderId);
+
+        // DBから注文を取り直して通知
+        const row = await getOrderRow(orderId);
+        if (row) {
+          const items = Array.isArray(row.items) ? row.items : (row.items || []);
+          await notifyOrderCompleted({
+            orderId: row.id,
+            userId: row.user_id || userId || "",
+            items,
+            shippingFee: row.shipping_fee,
+            total: row.total,
+            paymentMethod: row.payment_method || "card",
+            codFee: 0,
+            size: null,
+            addr: null,
+            title: "新規注文（カード）",
+            isPaid: true,
+          });
+        }
       }
     }
 
@@ -1306,7 +1443,7 @@ app.post("/api/order/quote", async (req, res) => {
   }
 });
 
-// 代引き：作成
+// 代引き：作成（＝注文完了通知を送るように変更）
 app.post("/api/order/cod/create", async (req, res) => {
   try {
     const uid = String(req.body?.uid || "").trim();
@@ -1324,8 +1461,23 @@ app.post("/api/order/cod/create", async (req, res) => {
       total: totalCod,
       shippingFee: built.shippingFee,
       paymentMethod: "cod",
-      status: "new",
+      status: "confirmed",
       rawEvent: { type: "cod_create_v2" },
+    });
+
+    // ★注文完了通知（注文者＋管理者）
+    await notifyOrderCompleted({
+      orderId,
+      userId: built.userId,
+      items: built.items,
+      shippingFee: built.shippingFee,
+      total: totalCod,
+      paymentMethod: "cod",
+      codFee,
+      size: built.size,
+      addr: built.addr,
+      title: "新規注文（代引）",
+      isPaid: false,
     });
 
     res.json({
@@ -1350,7 +1502,7 @@ app.post("/api/order/cod/create", async (req, res) => {
   }
 });
 
-// ✅ 追加：オリジナルセット専用（混載不可）代引き注文
+// ✅ 追加：オリジナルセット専用（混載不可）代引き注文（通知済み実装）
 app.post("/api/orders/original", async (req, res) => {
   try {
     const uid = String(req.body?.uid || req.body?.userId || "").trim();
@@ -1391,39 +1543,20 @@ app.post("/api/orders/original", async (req, res) => {
       rawEvent: { type: "original_set_cod" },
     });
 
-    // 注文者/管理者へPush（任意）
-    const a = built.addr;
-    const addrText = `〒${a.postal || ""} ${a.prefecture || ""}${a.city || ""}${a.address1 || ""} ${a.address2 || ""}`.trim();
-    const itemLines = built.items.map(x => `・${x.name} × ${x.qty}（${x.price}円）`).join("\n");
-
-    const msgForUser =
-      `ご注文ありがとうございます。\n` +
-      `【注文ID】${orderId}\n\n` +
-      `【内容】\n${itemLines}\n\n` +
-      `【送料】ヤマト ${built.size}サイズ：${built.shippingFee}円\n` +
-      `【代引手数料】${codFee}円\n` +
-      `【合計】${totalCod}円\n\n` +
-      `【お届け先】\n${addrText}\n\n` +
-      `住所変更：\n${liffUrl("/cod-register.html")}`;
-
-    try { await lineClient.pushMessage(built.userId, { type:"text", text: msgForUser }); } catch(e) {
-      logErr("push to user failed", e?.message || e);
-    }
-
-    if (ADMIN_USER_ID) {
-      const msgForAdmin =
-        `【新規注文】オリジナルセット\n` +
-        `注文ID: ${orderId}\n` +
-        `userId: ${built.userId}\n\n` +
-        `${itemLines}\n\n` +
-        `送料: ${built.shippingFee}円（${built.size}）\n` +
-        `代引手数料: ${codFee}円\n` +
-        `合計: ${totalCod}円\n\n` +
-        `お届け先:\n${a.name || ""}\n${addrText}\nTEL:${a.phone || ""}`;
-      try { await lineClient.pushMessage(ADMIN_USER_ID, { type:"text", text: msgForAdmin }); } catch(e) {
-        logErr("push to admin failed", e?.message || e);
-      }
-    }
+    // ★注文完了通知（統一関数）
+    await notifyOrderCompleted({
+      orderId,
+      userId: built.userId,
+      items: built.items,
+      shippingFee: built.shippingFee,
+      total: totalCod,
+      paymentMethod: "cod",
+      codFee,
+      size: built.size,
+      addr: built.addr,
+      title: "新規注文（オリジナルセット/代引）",
+      isPaid: false,
+    });
 
     res.json({
       ok: true,
@@ -1447,6 +1580,7 @@ app.post("/api/orders/original", async (req, res) => {
 });
 
 // 代引き確定 → confirm-cod.html へ（必要なら使う）
+// ★ここも「注文完了通知」を送る（create側で送っていても notified_at で二重送信しない）
 app.post("/api/order/cod/confirm", async (req, res) => {
   try {
     const uid = String(req.body?.uid || "").trim();
@@ -1466,6 +1600,21 @@ app.post("/api/order/cod/confirm", async (req, res) => {
       paymentMethod: "cod",
       status: "confirmed",
       rawEvent: { type: "cod_confirm_v1" },
+    });
+
+    // ★注文完了通知（注文者＋管理者）
+    await notifyOrderCompleted({
+      orderId,
+      userId: built.userId,
+      items: built.items,
+      shippingFee: built.shippingFee,
+      total: totalCod,
+      paymentMethod: "cod",
+      codFee,
+      size: built.size,
+      addr: built.addr,
+      title: "新規注文（代引）",
+      isPaid: false,
     });
 
     res.json({
@@ -1497,7 +1646,7 @@ app.get("/api/order/status", async (req, res) => {
     if (!orderId) return res.status(400).json({ ok:false, error:"orderId required" });
 
     const r = await pool.query(
-      `SELECT id, status, payment_method, total, shipping_fee, created_at
+      `SELECT id, status, payment_method, total, shipping_fee, created_at, notified_at
        FROM orders WHERE id=$1`,
       [orderId]
     );
@@ -1601,13 +1750,6 @@ app.post("/webhook", line.middleware(lineConfig), async (req, res) => {
     res.status(500).end();
   }
 });
-
-function liffUrl(pathname, reqForFallback = null) {
-  const base = LIFF_BASE || (reqForFallback ? originFromReq(reqForFallback) : "");
-  if (!base) return pathname;
-  if (!pathname.startsWith("/")) pathname = "/" + pathname;
-  return base + pathname;
-}
 
 async function handleEvent(ev) {
   const type = ev.type;
@@ -1786,20 +1928,24 @@ async function finalizeKusukeOrder(replyToken, userId, qty) {
       rawEvent: { type: "line_kusuke" },
     });
 
-    const a = built.addr;
-    const addrText =
-      `〒${a.postal || ""} ${a.prefecture || ""}${a.city || ""}${a.address1 || ""} ${a.address2 || ""}`.trim();
+    // ★注文完了通知（統一関数）＋ 返信（「注文受付」トークもそのまま）
+    await notifyOrderCompleted({
+      orderId,
+      userId,
+      items: built.items,
+      shippingFee: built.shippingFee,
+      total: totalCod,
+      paymentMethod: "cod",
+      codFee,
+      size: built.size,
+      addr: built.addr,
+      title: "新規注文（久助/代引）",
+      isPaid: false,
+    });
 
     await lineClient.replyMessage(replyToken, {
       type:"text",
-      text:
-        `久助 注文を受け付けました（注文ID: ${orderId}）\n\n` +
-        `【内容】\n${kusuke.name} × ${qty}\n単価：${kusuke.price}円\n\n` +
-        `【送料】ヤマト ${built.size}サイズ：${built.shippingFee}円\n` +
-        `【代引手数料】${codFee}円\n\n` +
-        `【合計（代引）】${totalCod}円\n\n` +
-        `【お届け先】\n${addrText}\n\n` +
-        `住所変更：\n${liffUrl("/cod-register.html")}`
+      text: `久助 注文を受け付けました（注文ID: ${orderId}）`
     });
   } catch (e) {
     const code = e?.code || "";

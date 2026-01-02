@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
   <title>注文内容の確認</title>
 
-  <!-- LIFF（住所変更ボタンの保険：LIFF内なら openWindow を使える） -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
   <style>
@@ -22,29 +21,13 @@
     .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:12px;margin-top:12px;box-shadow:var(--shadow)}
     .row{display:flex;justify-content:space-between;gap:10px;margin:0;padding:6px 0;font-size:14px}
     .err{color:var(--danger);font-weight:900}
-
-    /* お届け先の改行を効かせる */
     #addrText{ white-space: pre-line; }
 
-    /* 住所変更ボタン（押せない対策） */
-    .addrBtns{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;position:relative;z-index:20}
-    .btnLink{
-      display:inline-flex;align-items:center;justify-content:center;
-      border-radius:14px;padding:10px 12px;font-weight:900;
-      border:1px solid var(--line);background:#fff;color:var(--text);
-      text-decoration:none;pointer-events:auto;cursor:pointer;min-width:180px;
-    }
-    .btnLinkPrimary{background:var(--pri);border-color:transparent;color:#fff}
-
-    /* 注文明細（見やすさ改善） */
     .items{margin-top:10px;border-top:1px solid var(--line)}
     .item{
-      display:grid;
-      grid-template-columns: 1fr auto;
-      gap:6px 10px;
-      padding:12px 0;
-      border-bottom:1px dashed var(--line);
-      font-size:14px;
+      display:grid; grid-template-columns: 1fr auto;
+      gap:6px 10px; padding:12px 0;
+      border-bottom:1px dashed var(--line); font-size:14px;
     }
     .item:last-child{border-bottom:none}
     .item .name{font-weight:800}
@@ -53,10 +36,8 @@
 
     .row.total{
       border-top:2px solid var(--line);
-      margin-top:6px;
-      padding-top:10px;
-      font-size:16px;
-      font-weight:900;
+      margin-top:6px; padding-top:10px;
+      font-size:16px; font-weight:900;
     }
 
     .btns{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
@@ -64,9 +45,9 @@
       border:none;border-radius:14px;padding:12px 14px;
       font-weight:900;cursor:pointer;flex:1;min-width:180px
     }
+    #backBtn{background:#fff;border:1px solid var(--line);color:#111827}
     #cardBtn{background:var(--pri2);color:#fff}
     #codBtn{background:var(--pri);color:#fff}
-    #backBtn{background:#fff;border:1px solid var(--line);color:#111827}
     button:disabled{opacity:.55;cursor:not-allowed}
   </style>
 </head>
@@ -79,10 +60,8 @@
     <div class="card">
       <div class="muted">お届け先</div>
       <div id="addrText" style="margin-top:6px;font-weight:900">—</div>
-
-      <div class="addrBtns">
-        <button class="btnLink btnLinkPrimary" id="addrBtn" type="button">住所登録・変更</button>
-        <button class="btnLink" id="backBtn2" type="button">商品へ戻る</button>
+      <div class="muted" style="margin-top:8px">
+        ※住所を修正したい場合は「戻る」で住所入力へ戻ってください。
       </div>
     </div>
 
@@ -96,33 +75,26 @@
       <div class="row total"><div>合計（代引）</div><div id="totalCod">—</div></div>
 
       <div class="btns">
-        <button id="backBtn" type="button">商品へ戻る</button>
+        <button id="backBtn" type="button">戻る（住所入力へ）</button>
         <button id="cardBtn" type="button">クレジットで支払う</button>
         <button id="codBtn" type="button">代引きで注文確定</button>
       </div>
 
       <div class="muted" style="margin-top:8px">
-        ※クレジットは次の画面で最終確認後、Stripeの決済画面へ進みます。<br>
-        ※送料は見積り表示です。最終金額は確定時の計算結果が適用されます。
+        ※クレジットはStripe決済画面へ進みます。<br>
+        ※送料は見積り表示です（確定時に再計算されます）。
       </div>
     </div>
   </div>
 
 <script>
-(function(){
+(async function(){
   "use strict";
 
+  const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
+
   const KEY_CART="isoya_cart";
-  const KEY_LAST="isoya_last_order";
-  const KEY_CARD="isoya_card_checkout";
-
-  // ★ /public を捨ててルート配信に統一（server.js が対応）
-  const PATH_PRODUCTS = "/products.html";
-  const PATH_CONFIRM_COD  = "/confirm-cod.html";
-  const PATH_CONFIRM_CARD = "/confirm-card.html";
-
-  // ★ 住所登録は cod-register.html に統一
-  const PATH_COD_REGISTER = "/cod-register.html";
+  const KEY_UID ="isoya_userId";
 
   const status=document.getElementById("status");
   const addrText=document.getElementById("addrText");
@@ -133,72 +105,38 @@
   const totalCodEl=document.getElementById("totalCod");
 
   const backBtn=document.getElementById("backBtn");
-  const backBtn2=document.getElementById("backBtn2");
-  const addrBtn=document.getElementById("addrBtn");
   const cardBtn=document.getElementById("cardBtn");
   const codBtn=document.getElementById("codBtn");
 
   const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
   const loadJson=k=>{try{return JSON.parse(localStorage.getItem(k)||"");}catch{return null;}};
 
-  const qs = new URLSearchParams(location.search);
-  const token = (qs.get("t") || "").trim();
-
-  function setBusy(disabled, codText, cardText){
+  function setBusy(disabled){
     codBtn.disabled = disabled;
     cardBtn.disabled = disabled;
-    codBtn.textContent  = codText  || (disabled ? "確定中…" : "代引きで注文確定");
-    cardBtn.textContent = cardText || (disabled ? "移動中…" : "クレジットで支払う");
-    codBtn.style.pointerEvents  = disabled ? "none" : "auto";
-    cardBtn.style.pointerEvents = disabled ? "none" : "auto";
-  }
-
-  async function fetchJson(url, opts){
-    const res = await fetch(url, opts);
-    const text = await res.text();
-    let data = {};
-    try { data = text ? JSON.parse(text) : {}; } catch { data = { _raw:text }; }
-    return { res, data, raw:text };
-  }
-
-  async function getWhoAmI(t){
-    const { res, data } = await fetchJson(`/api/auth/whoami?t=${encodeURIComponent(t)}`, { cache:"no-store" });
-    if(!res.ok || !data?.ok || !data?.uid) throw new Error(data?.error || ("WHOAMI_HTTP_"+res.status));
-    return String(data.uid);
-  }
-
-  async function getAddressByToken(t){
-    const { res, data } = await fetchJson(`/api/auth/address?t=${encodeURIComponent(t)}`, { cache:"no-store" });
-    if(!res.ok || !data?.ok) throw new Error(data?.error || ("ADDR_HTTP_"+res.status));
-    return data.address || null;
-  }
-
-  async function getProducts(){
-    const { res, data } = await fetchJson("/api/products",{ cache:"no-store" });
-    if(!res.ok || !data?.ok) throw new Error(data?.error||("HTTP "+res.status));
-    return Array.isArray(data.products)?data.products:[];
+    codBtn.textContent  = disabled ? "確定中…" : "代引きで注文確定";
+    cardBtn.textContent = disabled ? "移動中…" : "クレジットで支払う";
   }
 
   async function postJson(url, body){
-    const { res, data } = await fetchJson(url,{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify(body)
-    });
-    if(!res.ok) throw new Error(data?.error || ("HTTP "+res.status));
-    return data;
+    const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d?.error || ("HTTP "+r.status));
+    return d;
   }
 
-  function openCodRegister(){
-    // tokenは5分で切れる想定。住所変更後は productsへ戻して再度confirmへ進ませるのが安全
-    const url = location.origin + PATH_COD_REGISTER + "?returnTo=" + encodeURIComponent(PATH_PRODUCTS);
-    try{
-      if(window.liff && typeof liff.openWindow === "function"){
-        liff.openWindow({ url, external:false });
-        return;
-      }
-    }catch(e){}
-    location.href = url;
+  async function getAddress(userId){
+    const r=await fetch(`/api/address/get?userId=${encodeURIComponent(userId)}`,{cache:"no-store"});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d?.error||("HTTP "+r.status));
+    return d?.address || null;
+  }
+
+  async function getProducts(){
+    const r=await fetch("/api/products",{cache:"no-store"});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok || !d.ok) throw new Error(d?.error||("HTTP "+r.status));
+    return Array.isArray(d.products)?d.products:[];
   }
 
   function renderItems(cartItems, products){
@@ -228,119 +166,93 @@
     return subtotal;
   }
 
-  async function main(){
-    try{
-      status.textContent="確認中…";
-
-      if(!token){
-        status.innerHTML='<span class="err">トークンがありません。商品一覧に戻ります。</span>';
-        setTimeout(()=>location.replace(PATH_PRODUCTS), 700);
-        return;
-      }
-
-      // token → uid を復元（quote/cod/create に必要）
-      let uid = "";
-      try{
-        uid = await getWhoAmI(token);
-      }catch(e){
-        console.error(e);
-        status.innerHTML='<span class="err">セッションが切れました（トークン期限切れ）。商品一覧からやり直してください。</span>';
-        setTimeout(()=>location.replace(PATH_PRODUCTS), 900);
-        return;
-      }
-
-      const cart=loadJson(KEY_CART) || {items:[]};
-      const items=(cart.items||[]).filter(x=>x?.id && Number(x.qty||0)>0);
-
-      if(items.length===0){
-        status.innerHTML='<span class="err">カートが空です。商品一覧に戻ります。</span>';
-        setTimeout(()=>location.replace(PATH_PRODUCTS), 700);
-        return;
-      }
-
-      // token → 住所取得（DB）
-      let addr = null;
-      try{
-        addr = await getAddressByToken(token);
-      }catch(e){
-        console.error(e);
-        status.innerHTML='<span class="err">住所取得に失敗しました。商品一覧からやり直してください。</span>';
-        setTimeout(()=>location.replace(PATH_PRODUCTS), 900);
-        return;
-      }
-
-      if(!addr){
-        // 住所未登録なら登録へ
-        openCodRegister();
-        return;
-      }
-
-      const nameLine = addr.name ? `${addr.name} 様\n` : "";
-      addrText.textContent =
-        `${nameLine}〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim();
-
-      const products=await getProducts();
-      renderItems(items, products);
-
-      // 見積り（送料/代引/合計）
-      shippingEl.textContent="計算中…";
-      codFeeEl.textContent="計算中…";
-      totalCodEl.textContent="計算中…";
-      try{
-        const quote = await postJson("/api/order/quote", { uid, checkout:{ items } });
-        shippingEl.textContent = `${yen(quote.shippingFee)}（ヤマト ${quote.size}サイズ）`;
-        codFeeEl.textContent   = yen(quote.codFee);
-        totalCodEl.textContent = yen(quote.totalCod);
-      }catch(e){
-        console.error(e);
-        shippingEl.textContent="—";
-        codFeeEl.textContent="—";
-        totalCodEl.textContent="—";
-      }
-
-      status.textContent="内容をご確認ください。";
-
-      backBtn.onclick  = ()=>location.href = PATH_PRODUCTS;
-      backBtn2.onclick = ()=>location.href = PATH_PRODUCTS;
-      addrBtn.onclick  = ()=>openCodRegister();
-
-      // クレジット：confirm-card へ（uid/items を保存）
-      cardBtn.onclick = ()=>{
-        localStorage.setItem(KEY_CARD, JSON.stringify({ uid, items }));
-        location.href = PATH_CONFIRM_CARD;
-      };
-
-      // 代引き確定
-      codBtn.onclick=async ()=>{
-        setBusy(true, "確定中…", "待機中…");
-        try{
-          const data=await postJson("/api/order/cod/create", { uid, checkout:{ items } });
-
-          localStorage.setItem(KEY_LAST, JSON.stringify({
-            orderId: data.orderId,
-            subtotal: data.subtotal,
-            shippingFee: data.shippingFee,
-            codFee: data.codFee,
-            totalCod: data.totalCod,
-            size: data.size,
-            createdAt: new Date().toISOString()
-          }));
-
-          location.href = `${PATH_CONFIRM_COD}?orderId=${encodeURIComponent(data.orderId||"")}`;
-        }catch(e){
-          console.error(e);
-          alert("代引き確定に失敗しました: "+(e?.message||e));
-          setBusy(false);
-        }
-      };
-
-    }catch(e){
-      console.error(e);
-      status.innerHTML='<span class="err">読み込みに失敗しました（住所API/商品API/DBを確認）</span>';
+  async function ensureLiffUser(){
+    await liff.init({ liffId: LIFF_ID_ORDER });
+    if(!liff.isLoggedIn()){
+      liff.login({ redirectUri: location.href });
+      return null;
     }
+    const prof = await liff.getProfile();
+    const uid = (prof?.userId||"").trim();
+    if(uid) localStorage.setItem(KEY_UID, uid);
+    return uid;
   }
 
-  main();
+  try{
+    status.textContent="確認中…";
+
+    const uid = await ensureLiffUser();
+    if(!uid) return;
+
+    const cart=loadJson(KEY_CART) || {items:[]};
+    const items=(cart.items||[]).filter(x=>x?.id && Number(x.qty||0)>0);
+    if(items.length===0){
+      status.innerHTML='<span class="err">カートが空です。商品一覧に戻ります。</span>';
+      setTimeout(()=>location.replace("/products.html"), 600);
+      return;
+    }
+
+    // 住所が無ければ住所入力へ（ボタンは出さない）
+    const addr=await getAddress(uid).catch(()=>null);
+    if(!addr){
+      location.replace(`/cod-register.html?returnTo=${encodeURIComponent("/confirm.html")}`);
+      return;
+    }
+
+    const nameLine = addr.name ? `${addr.name} 様\n` : "";
+    addrText.textContent =
+      `${nameLine}〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim();
+
+    const products=await getProducts();
+    renderItems(items, products);
+
+    // 見積り（送料/代引/合計）
+    shippingEl.textContent="計算中…";
+    codFeeEl.textContent="計算中…";
+    totalCodEl.textContent="計算中…";
+
+    const quote = await postJson("/api/order/quote", { uid, checkout:{ items } });
+    shippingEl.textContent = `${yen(quote.shippingFee)}（ヤマト ${quote.size}サイズ）`;
+    codFeeEl.textContent   = yen(quote.codFee);
+    totalCodEl.textContent = yen(quote.totalCod);
+
+    status.textContent="内容をご確認ください。";
+
+    backBtn.onclick = ()=>location.href = `/cod-register.html?returnTo=${encodeURIComponent("/confirm.html")}`;
+
+    // クレジット：Stripeへ
+    cardBtn.onclick = async ()=>{
+      setBusy(true);
+      try{
+        const data = await postJson("/api/pay/stripe/create", { uid, checkout:{ items } });
+        if(!data?.url) throw new Error("stripe url missing");
+        location.href = data.url; // Stripeへ
+      }catch(e){
+        console.error(e);
+        alert("クレジット決済の開始に失敗しました: " + (e?.message||e));
+        setBusy(false);
+      }
+    };
+
+    // 代引き：確定→完了へ
+    codBtn.onclick = async ()=>{
+      setBusy(true);
+      try{
+        const data = await postJson("/api/order/cod/create", { uid, checkout:{ items } });
+        // カートを空に
+        localStorage.setItem(KEY_CART, JSON.stringify({ items: [] }));
+        location.href = `/complete.html?method=cod&orderId=${encodeURIComponent(data.orderId||"")}`;
+      }catch(e){
+        console.error(e);
+        alert("代引き確定に失敗しました: " + (e?.message||e));
+        setBusy(false);
+      }
+    };
+
+  }catch(e){
+    console.error(e);
+    status.innerHTML='<span class="err">読み込みに失敗しました（住所API/商品API/DBを確認）</span>';
+  }
 })();
 </script>
 </body>

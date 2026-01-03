@@ -1,444 +1,2131 @@
-<!doctype html>
-<html lang="ja">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>管理：発送通知・注文明細（タブ切替）</title>
-<style>
-  :root{ --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280; --line:#e5e7eb; --pri:#0b3a53; }
-  body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
-  .wrap{ max-width:1180px; margin:0 auto; padding:14px; }
-  h1{ margin:0 0 10px; font-size:18px; }
-  .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-  .card{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; margin:10px 0; }
-  input,select,textarea{ padding:10px; border:1px solid var(--line); border-radius:10px; font-size:14px; background:#fff; }
-  textarea{ width:100%; min-height:76px; }
-  button{ padding:10px 12px; border:0; border-radius:10px; background:var(--pri); color:#fff; cursor:pointer; font-size:14px; }
-  button.sub{ background:#334155; }
-  button.ghost{ background:#fff; color:#111; border:1px solid var(--line); }
-  button.danger{ background:#b91c1c; }
-  table{ width:100%; border-collapse:collapse; }
-  th,td{ text-align:left; border-top:1px solid var(--line); padding:10px; vertical-align:top; font-size:13px; }
-  th{ color:#374151; font-weight:700; background:#fafafa; }
-  .muted{ color:var(--muted); }
-  .pill{ display:inline-block; padding:3px 8px; border-radius:999px; border:1px solid var(--line); font-size:12px; }
-  .right{ text-align:right; white-space:nowrap; }
-  .mono{ font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+/**
+ * server.js — 追記版 “完全・全部入り” 丸ごと版（修正版）
+ *
+ * ✅ 修正点（今回）
+ * - /api/admin/orders の subtotal（小計）が代引手数料込みになっていたのを修正
+ *   subtotal = total - shipping - (codなら330)
+ *
+ * ✅ 仕様（維持）
+ * - requireAdmin は1個だけ
+ * - 注文完了通知（注文者＋管理者）統一
+ * - 送料はDB優先
+ * - LIFF_ID_ADDRESS の別名対応
+ * - オリジナルセット専用注文API
+ * - Render Disk 永続化
+ */
 
-  /* Tabs */
-  .tabs{ display:flex; gap:8px; align-items:center; }
-  .tabbtn{
-    padding:10px 12px; border-radius:999px; border:1px solid var(--line);
-    background:#fff; color:#111; cursor:pointer; font-size:13px;
+"use strict";
+
+const fs = require("fs");
+const fsp = require("fs/promises");
+const path = require("path");
+const crypto = require("crypto");
+
+const express = require("express");
+const line = require("@line/bot-sdk");
+const { Pool } = require("pg");
+
+let Stripe = null;
+try { Stripe = require("stripe"); } catch {}
+
+const {
+  LINE_CHANNEL_ACCESS_TOKEN,
+  LINE_CHANNEL_SECRET,
+  DATABASE_URL,
+
+  PUBLIC_BASE_URL,
+  LIFF_BASE_URL,
+  LIFF_CHANNEL_ID,
+
+  LIFF_ID_DEFAULT = "",
+  LIFF_ID_ORDER = "",
+  LIFF_ID_ADDRESS = "",
+  LIFF_ID_COD = "",
+
+  DATA_DIR = "/var/data",
+  UPLOAD_DIR = "/var/data/uploads",
+
+  ADMIN_API_TOKEN = "",
+  ADMIN_CODE = "",
+  ADMIN_USER_ID = "",
+
+  STRIPE_SECRET_KEY = "",
+  STRIPE_WEBHOOK_SECRET = "",
+  STRIPE_SUCCESS_URL = "",
+  STRIPE_CANCEL_URL = "",
+
+  COD_FEE = "330",
+
+  KEYWORD_DIRECT = "直接注文",
+  KEYWORD_KUSUKE = "久助",
+
+  ORIGINAL_SET_PRODUCT_ID = "original-set-2000",
+} = process.env;
+
+if (!LINE_CHANNEL_ACCESS_TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
+if (!LINE_CHANNEL_SECRET) throw new Error("LINE_CHANNEL_SECRET is required");
+if (!DATABASE_URL) throw new Error("DATABASE_URL is required");
+
+const BASE_URL = (PUBLIC_BASE_URL || "").replace(/\/$/, "");
+const LIFF_BASE = (LIFF_BASE_URL || BASE_URL || "").replace(/\/$/, "");
+
+if (!BASE_URL) {
+  console.warn("[WARN] PUBLIC_BASE_URL が未設定です（URL生成が必要な箇所ではhostから自動推定します）。");
+}
+
+// ============== Disk paths ==============
+const PRODUCTS_FILE = path.join(DATA_DIR, "products.json");
+const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
+const LOG_DIR = path.join(DATA_DIR, "logs");
+const APP_LOG_FILE = path.join(LOG_DIR, "app.log");
+
+// ============== Shipping tables (fallback) ==============
+const SHIPPING_REGION_BY_PREF = {
+  "北海道": "hokkaido",
+  "青森県": "tohoku", "岩手県": "tohoku", "宮城県": "tohoku", "秋田県": "tohoku", "山形県": "tohoku", "福島県": "tohoku",
+  "東京都": "kanto", "神奈川県": "kanto", "埼玉県": "kanto", "千葉県": "kanto", "茨城県": "kanto", "栃木県": "kanto", "群馬県": "kanto",
+  "新潟県": "shinetsu", "長野県": "shinetsu",
+  "山梨県": "chubu", "静岡県": "chubu", "愛知県": "chubu", "岐阜県": "chubu", "三重県": "chubu",
+  "富山県": "hokuriku", "石川県": "hokuriku", "福井県": "hokuriku",
+  "滋賀県": "kinki", "京都府": "kinki", "大阪府": "kinki", "兵庫県": "kinki", "奈良県": "kinki", "和歌山県": "kinki",
+  "鳥取県": "chugoku", "島根県": "chugoku", "岡山県": "chugoku", "広島県": "chugoku", "山口県": "chugoku",
+  "徳島県": "shikoku", "香川県": "shikoku", "愛媛県": "shikoku", "高知県": "shikoku",
+  "福岡県": "kyushu", "佐賀県": "kyushu", "長崎県": "kyushu", "熊本県": "kyushu", "大分県": "kyushu", "宮崎県": "kyushu", "鹿児島県": "kyushu",
+  "沖縄県": "okinawa",
+};
+
+// サイズ別 送料（税込の例）※フォールバック（DBが無い/空の時だけ使う）
+const SHIPPING_YAMATO = {
+  hokkaido: { 60: 1300, 80: 1550, 100: 1800, 120: 2050, 140: 2300 },
+  tohoku:   { 60:  900, 80: 1100, 100: 1300, 120: 1500, 140: 1700 },
+  kanto:    { 60:  800, 80: 1000, 100: 1200, 120: 1400, 140: 1600 },
+  shinetsu: { 60:  800, 80: 1000, 100: 1200, 120: 1400, 140: 1600 },
+  chubu:    { 60:  750, 80:  950, 100: 1150, 120: 1350, 140: 1550 },
+  hokuriku: { 60:  800, 80: 1000, 100: 1200, 120: 1400, 140: 1600 },
+  kinki:    { 60:  800, 80: 1000, 100: 1200, 120: 1400, 140: 1600 },
+  chugoku:  { 60:  850, 80: 1050, 100: 1250, 120: 1450, 140: 1650 },
+  shikoku:  { 60:  850, 80: 1050, 100: 1250, 120: 1450, 140: 1650 },
+  kyushu:   { 60:  900, 80: 1100, 100: 1300, 120: 1500, 140: 1700 },
+  okinawa:  { 60: 1350, 80: 1700, 100: 2100, 120: 2600, 140: 3100 },
+};
+
+// ============== Helpers ==============
+function nowISO() { return new Date().toISOString(); }
+
+async function ensureDir(dir) {
+  await fsp.mkdir(dir, { recursive: true });
+}
+
+async function logToFile(line) {
+  try {
+    await ensureDir(LOG_DIR);
+    await fsp.appendFile(APP_LOG_FILE, line + "\n", "utf8");
+  } catch (e) {
+    console.error("[LOG_WRITE_FAIL]", e?.message || e);
   }
-  .tabbtn.active{ background:var(--pri); color:#fff; border-color:var(--pri); }
-  .tabpanel{ display:none; }
-  .tabpanel.active{ display:block; }
+}
+function logInfo(...args) {
+  const msg = `[${nowISO()}][INFO] ${args.map(String).join(" ")}`;
+  console.log(msg);
+  logToFile(msg);
+}
+function logErr(...args) {
+  const msg = `[${nowISO()}][ERR] ${args.map(String).join(" ")}`;
+  console.error(msg);
+  logToFile(msg);
+}
 
-  /* Print panel */
-  .printWrap{ max-width:860px; margin:0 auto; }
-  .printHeader{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
-  .printHeader h2{ margin:0; font-size:16px; }
-  .box{ border:1px solid var(--line); border-radius:12px; padding:12px; margin:10px 0; background:#fff; }
-  .grid2{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
-  @media (max-width: 780px){ .grid2{ grid-template-columns:1fr; } }
-
-  /* 印刷時は「印刷タブの中身だけ」出す */
-  @media print{
-    body{ background:#fff; }
-    .noprint{ display:none !important; }
-    .wrap{ padding:0; }
-    /* tabのうち印刷タブだけ表示 */
-    #tabShipPanel{ display:none !important; }
-    #tabPrintPanel{ display:block !important; }
-    .card, .box{ border:0; }
+async function readJsonSafe(file, fallback) {
+  try {
+    const s = await fsp.readFile(file, "utf8");
+    return JSON.parse(s);
+  } catch {
+    return fallback;
   }
-</style>
-</head>
+}
+async function writeJsonAtomic(file, data) {
+  await ensureDir(path.dirname(file));
+  const tmp = file + ".tmp";
+  await fsp.writeFile(tmp, JSON.stringify(data, null, 2), "utf8");
+  await fsp.rename(tmp, file);
+}
 
-<body>
-  <div class="wrap">
-    <div class="row noprint" style="justify-content:space-between;">
-      <h1>管理：発送通知・注文明細（タブ切替）</h1>
-      <div class="tabs">
-        <button class="tabbtn active" id="tabShipBtn"  type="button">発送</button>
-        <button class="tabbtn"        id="tabPrintBtn" type="button">注文明細（印刷）</button>
-      </div>
-    </div>
+// ============== products.json ==============
+async function ensureProductsFile() {
+  await ensureDir(DATA_DIR);
+  if (fs.existsSync(PRODUCTS_FILE)) return;
 
-    <!-- 共通：上部設定 -->
-    <div class="card noprint">
-      <div class="row">
-        <label class="muted">Admin Token</label>
-        <input id="token" placeholder="ADMIN_API_TOKEN" style="min-width:320px" />
-        <label class="muted">日付</label>
-        <input id="date" placeholder="YYYYMMDD（空=最新500件）" />
-        <button id="loadBtn" type="button">注文を読み込み</button>
-        <span id="status" class="muted"></span>
-      </div>
-      <div class="muted" style="margin-top:8px; font-size:12px;">
-        ※URLに <span class="mono">?token=xxxxx</span> を付けてもOK（例：/admin-ship.html?token=...）
-      </div>
-    </div>
-
-    <!-- タブ①：発送 -->
-    <div class="tabpanel active" id="tabShipPanel">
-      <div class="card">
-        <table>
-          <thead>
-            <tr>
-              <th style="width:140px;">注文</th>
-              <th>お届け先</th>
-              <th>内容</th>
-              <th style="width:270px;">発送（追跡番号など）</th>
-              <th style="width:240px;">操作</th>
-            </tr>
-          </thead>
-          <tbody id="tbody"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- タブ②：印刷 -->
-    <div class="tabpanel" id="tabPrintPanel">
-      <div class="card noprint">
-        <div class="row">
-          <label class="muted">印刷する注文ID</label>
-          <input id="printOrderId" placeholder="例：123" style="min-width:180px" />
-          <button id="loadOneBtn" type="button">この注文を表示</button>
-          <button class="sub" id="printBtn" type="button">印刷</button>
-          <span class="muted" id="printStatus"></span>
-        </div>
-        <div class="muted" style="margin-top:8px; font-size:12px;">
-          ※発送タブの「印刷」ボタンでも自動でここに切り替わります
-        </div>
-      </div>
-
-      <div class="printWrap" id="printArea">
-        <div class="printHeader">
-          <div>
-            <h2>磯屋 注文明細（納品書/ピッキング）</h2>
-            <div class="muted" id="printSub"></div>
-          </div>
-          <div class="noprint row" style="justify-content:flex-end;">
-            <button class="ghost" type="button" id="backToShipBtn">発送へ戻る</button>
-          </div>
-        </div>
-
-        <div class="box" id="addrBox">（注文を選択してください）</div>
-
-        <div class="box">
-          <table>
-            <thead>
-              <tr>
-                <th>商品</th>
-                <th class="right">単価</th>
-                <th class="right">数量</th>
-                <th class="right">小計</th>
-              </tr>
-            </thead>
-            <tbody id="printItems"></tbody>
-            <tfoot id="printSum"></tfoot>
-          </table>
-        </div>
-
-        <div class="box">
-          <div><b>発送メモ</b></div>
-          <div class="muted" id="shipMemo">（未設定）</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-<script>
-  const $ = (id)=>document.getElementById(id);
-
-  const tokenEl = $("token");
-  const dateEl  = $("date");
-  const tbody   = $("tbody");
-  const status  = $("status");
-
-  const tabShipBtn = $("tabShipBtn");
-  const tabPrintBtn = $("tabPrintBtn");
-  const tabShipPanel = $("tabShipPanel");
-  const tabPrintPanel = $("tabPrintPanel");
-
-  const printOrderIdEl = $("printOrderId");
-  const loadOneBtn = $("loadOneBtn");
-  const printBtn = $("printBtn");
-  const printStatus = $("printStatus");
-  const printSub = $("printSub");
-  const addrBox = $("addrBox");
-  const printItems = $("printItems");
-  const printSum = $("printSum");
-  const shipMemo = $("shipMemo");
-  const backToShipBtn = $("backToShipBtn");
-
-  // ---- helpers ----
-  function yen(n){
-    const x = Number(n||0);
-    return x.toLocaleString("ja-JP") + "円";
-  }
-  function escapeHtml(s){
-    return String(s||"").replace(/[&<>"']/g, c => ({
-      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
-    })[c]);
-  }
-  function getToken(){
-    const u = new URL(location.href);
-    return (u.searchParams.get("token") || tokenEl.value || "").trim();
-  }
-  async function apiGet(path){
-    const t = getToken();
-    const url = new URL(path, location.origin);
-    if (t) url.searchParams.set("token", t);
-    const r = await fetch(url);
-    if(!r.ok) throw new Error(await r.text());
-    return await r.json();
-  }
-  async function apiPost(path, body){
-    const t = getToken();
-    const r = await fetch(path, {
-      method:"POST",
-      headers:{
-        "Content-Type":"application/json",
-        "x-admin-token": t
-      },
-      body: JSON.stringify(body||{})
-    });
-    if(!r.ok) throw new Error(await r.text());
-    return await r.json();
-  }
-
-  function switchTab(tab){
-    if(tab === "ship"){
-      tabShipBtn.classList.add("active");
-      tabPrintBtn.classList.remove("active");
-      tabShipPanel.classList.add("active");
-      tabPrintPanel.classList.remove("active");
-    }else{
-      tabShipBtn.classList.remove("active");
-      tabPrintBtn.classList.add("active");
-      tabShipPanel.classList.remove("active");
-      tabPrintPanel.classList.add("active");
+  const seed = [
+    {
+      id: "kusuke-250",
+      name: "久助（われせん）",
+      price: 250,
+      stock: 30,
+      volume: "100g",
+      desc: "お得な割れせん。価格は管理画面で自由に変更できます。",
+      image: ""
+    },
+    {
+      id: "nori-akasha-340",
+      name: "のりあかしゃ",
+      price: 340,
+      stock: 20,
+      volume: "80g",
+      desc: "海苔の風味。",
+      image: ""
+    },
+    {
+      id: ORIGINAL_SET_PRODUCT_ID,
+      name: "磯屋オリジナルセット",
+      price: 2100,
+      stock: 50,
+      volume: "セット",
+      desc: "人気の詰め合わせ。",
+      image: ""
     }
+  ];
+
+  await writeJsonAtomic(PRODUCTS_FILE, seed);
+  logInfo("products.json created:", PRODUCTS_FILE);
+}
+
+async function loadProducts() {
+  await ensureProductsFile();
+  const arr = await readJsonSafe(PRODUCTS_FILE, []);
+  return Array.isArray(arr) ? arr : [];
+}
+async function saveProducts(products) {
+  await writeJsonAtomic(PRODUCTS_FILE, products);
+}
+
+// ============== sessions (Map + Disk) ==============
+const sessions = new Map(); // userId -> session
+
+async function loadSessions() {
+  const data = await readJsonSafe(SESSIONS_FILE, {});
+  if (data && typeof data === "object") {
+    for (const [k, v] of Object.entries(data)) sessions.set(k, v);
+  }
+}
+async function persistSessions() {
+  const obj = {};
+  for (const [k, v] of sessions.entries()) obj[k] = v;
+  await writeJsonAtomic(SESSIONS_FILE, obj);
+}
+function setSession(userId, sess) {
+  sessions.set(userId, { ...sess, updatedAt: Date.now() });
+  persistSessions().catch(()=>{});
+}
+function getSession(userId) {
+  const s = sessions.get(userId);
+  if (!s) return null;
+  const ttl = 24 * 60 * 60 * 1000; // 24h
+  if (Date.now() - (s.updatedAt || 0) > ttl) {
+    sessions.delete(userId);
+    persistSessions().catch(()=>{});
+    return null;
+  }
+  return s;
+}
+function clearSession(userId) {
+  sessions.delete(userId);
+  persistSessions().catch(()=>{});
+}
+
+// ============== Akasha-like (久助含む) ==============
+function isAkashaLikeProduct(product) {
+  const name = (product?.name || "").toLowerCase();
+  const id = (product?.id || "").toLowerCase();
+  if (id.includes("akasha") || name.includes("あかしゃ") || name.includes("akasha")) return true;
+  if (id.includes("kusuke") || name.includes("久助")) return true;
+  return false;
+}
+
+// ============== Original set sizing rule ==============
+function sizeForOriginalSet(qty) {
+  if (qty <= 1) return 80;
+  if (qty === 2) return 100;
+  if (qty === 3 || qty === 4) return 120;
+  return 140; // 5-6想定
+}
+
+// ============== Shipping calc unified ==============
+function detectRegionFromPref(prefecture) {
+  const pref = (prefecture || "").trim();
+  return SHIPPING_REGION_BY_PREF[pref] || "chubu";
+}
+
+/**
+ * ✅ 送料DBキャッシュ（5分）
+ */
+const shippingCache = {
+  loadedAt: 0,
+  map: new Map(), // key: `${region}:${size}` -> fee
+};
+const SHIPPING_CACHE_TTL_MS = 5 * 60 * 1000;
+function cacheKey(region, size) { return `${region}:${String(size)}`; }
+
+async function reloadShippingCacheIfNeeded(pool) {
+  const now = Date.now();
+  if (shippingCache.loadedAt && (now - shippingCache.loadedAt) < SHIPPING_CACHE_TTL_MS) return;
+
+  try {
+    const r = await pool.query(`SELECT region, size, fee FROM shipping_yamato_taxed`);
+    const m = new Map();
+    for (const row of (r.rows || [])) {
+      const region = String(row.region || "").trim();
+      const size = Number(row.size);
+      const fee = Number(row.fee);
+      if (!region || !Number.isInteger(size)) continue;
+      m.set(cacheKey(region, size), Number.isFinite(fee) ? fee : 0);
+    }
+    shippingCache.map = m;
+    shippingCache.loadedAt = now;
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * ✅ DBから送料取得（優先順位）
+ * 1) キャッシュ（shipping_yamato_taxed）
+ * 2) shipping_yamato_taxed 直接SELECT
+ * 3) legacy per-region table（あれば）
+ * 4) フォールバック：サーバ内 SHIPPING_YAMATO
+ */
+async function calcShippingFee(pool, prefecture, size) {
+  const region = detectRegionFromPref(prefecture);
+  const s = Number(size || 0) || 80;
+
+  await reloadShippingCacheIfNeeded(pool);
+  const ck = cacheKey(region, s);
+  if (shippingCache.map.has(ck)) return Number(shippingCache.map.get(ck));
+
+  try {
+    const r = await pool.query(
+      `SELECT fee FROM shipping_yamato_taxed WHERE region=$1 AND size=$2 LIMIT 1`,
+      [region, s]
+    );
+    if (r.rowCount > 0) {
+      const fee = Number(r.rows[0]?.fee || 0);
+      shippingCache.map.set(ck, fee);
+      return fee;
+    }
+  } catch {}
+
+  try {
+    const safeRegion = region.replace(/[^a-z0-9_]/gi, "");
+    const table = `shipping_yamato_${safeRegion}_taxed`;
+    const r2 = await pool.query(`SELECT fee FROM ${table} WHERE size=$1 LIMIT 1`, [s]);
+    if (r2.rowCount > 0) return Number(r2.rows[0]?.fee || 0);
+  } catch {}
+
+  const table = SHIPPING_YAMATO[region] || SHIPPING_YAMATO["chubu"];
+  return Number(table[s] || table[80] || 0);
+}
+
+function calcPackageSizeFromItems(items, productsById) {
+  let hasOriginalSet = false;
+  let originalQty = 0;
+
+  let smallCount = 0; // akasha-like（久助含む）
+  let otherCount = 0;
+
+  for (const it of items || []) {
+    const id = String(it.id || "").trim();
+    const qty = Number(it.qty || 0);
+    if (!id || qty <= 0) continue;
+
+    const p = productsById[id];
+    if (!p) continue;
+
+    if (p.id === ORIGINAL_SET_PRODUCT_ID) {
+      hasOriginalSet = true;
+      originalQty += qty;
+      continue;
+    }
+    if (isAkashaLikeProduct(p)) smallCount += qty;
+    else otherCount += qty;
   }
 
-  tabShipBtn.addEventListener("click", ()=>switchTab("ship"));
-  tabPrintBtn.addEventListener("click", ()=>switchTab("print"));
-  backToShipBtn.addEventListener("click", ()=>switchTab("ship"));
-
-  function itemText(items){
-    return (items||[]).map(it=>{
-      const v = it.volume ? `（${it.volume}）` : "";
-      return `・${it.name}${v} × ${it.qty} / ${yen(it.price)}`;
-    }).join("\n");
+  if (hasOriginalSet) {
+    const base = sizeForOriginalSet(originalQty);
+    const mix = smallCount + otherCount;
+    if (mix <= 0) return base;
+    if (base === 80) return 100;
+    if (base === 100) return 120;
+    if (base === 120) return 140;
+    return 140;
   }
 
-  function renderRow(o){
-    const id = o.orderNumber;
-    const addr = o.address || {};
-    const addrLine = [
-      (addr.name||""),
-      ("〒"+(addr.postal||"")+" "+(addr.prefecture||"")+ (addr.city||"") + (addr.address1||"") + " " + (addr.address2||"")).trim(),
-      addr.phone ? "TEL:"+addr.phone : ""
-    ].filter(Boolean).join("<br>");
+  const total = smallCount + otherCount;
+  if (total <= 2) return 60;
+  if (total <= 4) return 80;
+  if (total <= 6) return 100;
+  if (total <= 10) return 120;
+  return 140;
+}
 
-    const items = (o.items||[]);
-    const itemsHtml = `<div style="white-space:pre-wrap; line-height:1.45;">${escapeHtml(itemText(items))}</div>
-      <div class="muted" style="margin-top:6px;">
-        小計目安：${yen(o.subtotal)} / 送料：${yen(o.shipping)} ${o.codFee?` / 代引：${yen(o.codFee)}`:""}<br>
-        <b>合計：${yen(o.finalTotal)}</b> <span class="pill">${o.payment==="card"?"カード":"代引"}</span>
-      </div>`;
+// ============== DB (Postgres) ==============
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
 
-    return `
-      <tr>
-        <td>
-          <div><b>#${id}</b></div>
-          <div class="muted" style="margin-top:4px;">${new Date(o.ts).toLocaleString("ja-JP")}</div>
-          <div class="muted mono" style="margin-top:4px; font-size:12px;">${escapeHtml(o.userId||"")}</div>
-        </td>
-        <td>${addrLine}</td>
-        <td>${itemsHtml}</td>
-        <td>
-          <div class="row" style="gap:6px;">
-            <select id="carrier_${id}">
-              <option value="ヤマト運輸">ヤマト運輸</option>
-              <option value="日本郵便">日本郵便</option>
-              <option value="佐川急便">佐川急便</option>
-              <option value="その他">その他</option>
-            </select>
-            <input id="tn_${id}" placeholder="追跡番号" style="min-width:160px;">
-            <input id="note_${id}" placeholder="メモ（任意）" style="min-width:160px;">
-          </div>
-          <div class="muted" style="margin-top:6px; font-size:12px;">
-            ※追跡番号を入れて「保存→発送通知」でOK
-          </div>
-        </td>
-        <td class="right">
-          <div class="row" style="justify-content:flex-end;">
-            <button class="ghost" type="button" onclick="openPrintInTab(${id})">印刷</button>
-            <button class="sub"   type="button" onclick="saveShip(${id})">保存</button>
-            <button type="button" onclick="sendShip(${id})">発送通知</button>
-          </div>
-        </td>
-      </tr>
+async function ensureDb() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      user_id TEXT PRIMARY KEY,
+      display_name TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_seen_at TIMESTAMPTZ,
+      last_liff_at TIMESTAMPTZ
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS addresses (
+      id BIGSERIAL PRIMARY KEY,
+      member_code TEXT,
+      user_id TEXT,
+      name TEXT,
+      phone TEXT,
+      postal TEXT,
+      prefecture TEXT,
+      city TEXT,
+      address1 TEXT,
+      address2 TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      address_key TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `);
+
+  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_user_id_uidx ON addresses(user_id) WHERE user_id IS NOT NULL;`); }
+  catch(e){ logErr("CREATE UNIQUE INDEX addresses_user_id_uidx failed", e?.message||e); }
+
+  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_member_code_uidx ON addresses(member_code) WHERE member_code IS NOT NULL;`); }
+  catch(e){ logErr("CREATE UNIQUE INDEX addresses_member_code_uidx failed", e?.message||e); }
+
+  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_address_key_uidx ON addresses(address_key) WHERE address_key IS NOT NULL;`); }
+  catch(e){ logErr("CREATE UNIQUE INDEX addresses_address_key_uidx failed", e?.message||e); }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS orders (
+      id BIGSERIAL PRIMARY KEY,
+      user_id TEXT,
+      source TEXT,
+      items JSONB NOT NULL,
+      total INTEGER NOT NULL,
+      shipping_fee INTEGER NOT NULL,
+      payment_method TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'new',
+      name TEXT,
+      zip TEXT,
+      pref TEXT,
+      address TEXT,
+      raw_event JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `);
+
+  try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;`); }
+  catch (e) { logErr("ALTER TABLE orders ADD COLUMN notified_at failed", e?.message || e); }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS segment_users (
+      user_id TEXT PRIMARY KEY,
+      last_seen_at TIMESTAMPTZ,
+      last_liff_at TIMESTAMPTZ
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS segment_blast (
+      segment_key TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY(segment_key, user_id)
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS friend_logs (
+      id BIGSERIAL PRIMARY KEY,
+      day DATE NOT NULL,
+      added_count INTEGER NOT NULL DEFAULT 0,
+      blocked_count INTEGER NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE(day)
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS shipping_yamato_taxed (
+      region TEXT NOT NULL,
+      size   INTEGER NOT NULL,
+      fee    INTEGER NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY(region, size)
+    );
+  `);
+
+  try {
+    const cnt = await pool.query(`SELECT COUNT(*)::int AS n FROM shipping_yamato_taxed`);
+    const n = cnt.rows?.[0]?.n || 0;
+    if (n === 0) {
+      const rows = [];
+      for (const [region, table] of Object.entries(SHIPPING_YAMATO)) {
+        for (const [size, fee] of Object.entries(table)) {
+          rows.push([region, Number(size), Number(fee)]);
+        }
+      }
+      if (rows.length) {
+        const values = [];
+        const params = [];
+        let i = 1;
+        for (const [region, size, fee] of rows) {
+          values.push(`($${i++},$${i++},$${i++})`);
+          params.push(region, size, fee);
+        }
+        await pool.query(
+          `
+          INSERT INTO shipping_yamato_taxed (region, size, fee)
+          VALUES ${values.join(",")}
+          ON CONFLICT (region, size) DO UPDATE SET
+            fee = EXCLUDED.fee,
+            updated_at = now()
+          `,
+          params
+        );
+        shippingCache.loadedAt = 0;
+        await reloadShippingCacheIfNeeded(pool);
+        logInfo("shipping_yamato_taxed seeded:", rows.length);
+      }
+    }
+  } catch (e) {
+    logErr("shipping_yamato_taxed seed failed", e?.message || e);
+  }
+
+  logInfo("DB ensured");
+}
+
+async function touchUser(userId, kind, displayName = null) {
+  await pool.query(
+    `
+    INSERT INTO users (user_id, display_name, last_seen_at, last_liff_at)
+    VALUES ($1, $2,
+      CASE WHEN $3='seen' THEN now() ELSE NULL END,
+      CASE WHEN $3='liff' THEN now() ELSE NULL END
+    )
+    ON CONFLICT (user_id) DO UPDATE SET
+      display_name = COALESCE(EXCLUDED.display_name, users.display_name),
+      last_seen_at = CASE WHEN $3='seen' THEN now() ELSE users.last_seen_at END,
+      last_liff_at = CASE WHEN $3='liff' THEN now() ELSE users.last_liff_at END,
+      updated_at = now()
+    `,
+    [userId, displayName, kind]
+  );
+
+  await pool.query(
+    `
+    INSERT INTO segment_users (user_id, last_seen_at, last_liff_at)
+    VALUES ($1,
+      CASE WHEN $2='seen' THEN now() ELSE NULL END,
+      CASE WHEN $2='liff' THEN now() ELSE NULL END
+    )
+    ON CONFLICT (user_id) DO UPDATE SET
+      last_seen_at = CASE WHEN $2='seen' THEN now() ELSE segment_users.last_seen_at END,
+      last_liff_at = CASE WHEN $2='liff' THEN now() ELSE segment_users.last_liff_at END
+    `,
+    [userId, kind]
+  );
+}
+
+async function getAddressByUserId(userId) {
+  const r = await pool.query(
+    `SELECT member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at
+     FROM addresses WHERE user_id=$1`,
+    [userId]
+  );
+  return r.rows[0] || null;
+}
+
+async function issueUniqueMemberCode() {
+  for (let i = 0; i < 80; i++) {
+    const code = String(Math.floor(1000 + Math.random() * 9000));
+    const r = await pool.query(`SELECT 1 FROM addresses WHERE member_code=$1`, [code]);
+    if (r.rowCount === 0) return code;
+  }
+  return String(Math.floor(10000 + Math.random() * 90000));
+}
+
+function makeAddressKey(a) {
+  const s = [
+    a?.postal || "",
+    a?.prefecture || "",
+    a?.city || "",
+    a?.address1 || "",
+    a?.address2 || "",
+    a?.name || "",
+    a?.phone || ""
+  ].join("|").replace(/\s+/g, " ").trim();
+  return crypto.createHash("sha1").update(s).digest("hex").slice(0, 20);
+}
+
+async function upsertAddress(userId, addr) {
+  let memberCode = (addr.member_code || "").trim();
+  if (!memberCode) memberCode = await issueUniqueMemberCode();
+
+  const addressKey = addr.address_key ? String(addr.address_key).trim() : makeAddressKey(addr);
+
+  let saved;
+  try {
+    const q = `
+      INSERT INTO addresses (user_id, member_code, name, phone, postal, prefecture, city, address1, address2, address_key)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      ON CONFLICT (user_id) DO UPDATE SET
+        member_code = EXCLUDED.member_code,
+        name = EXCLUDED.name,
+        phone = EXCLUDED.phone,
+        postal = EXCLUDED.postal,
+        prefecture = EXCLUDED.prefecture,
+        city = EXCLUDED.city,
+        address1 = EXCLUDED.address1,
+        address2 = EXCLUDED.address2,
+        address_key = EXCLUDED.address_key,
+        updated_at = now()
+      RETURNING member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at
     `;
-  }
-
-  async function loadOrders(){
-    status.textContent = "読み込み中...";
-    tbody.innerHTML = "";
-    try{
-      const date = (dateEl.value||"").trim();
-      const data = await apiGet("/api/admin/orders" + (date?("?date="+encodeURIComponent(date)):""));
-      const items = (data.items||[]);
-      tbody.innerHTML = items.map(renderRow).join("");
-      status.textContent = `表示：${items.length}件`;
-    }catch(e){
-      status.textContent = "エラー: " + (e.message||e);
-      console.error(e);
+    const r = await pool.query(q, [
+      userId,
+      memberCode,
+      addr.name || "",
+      addr.phone || "",
+      addr.postal || "",
+      addr.prefecture || "",
+      addr.city || "",
+      addr.address1 || "",
+      addr.address2 || "",
+      addressKey
+    ]);
+    saved = r.rows[0];
+  } catch (e) {
+    const msg = String(e?.message || "");
+    if (msg.includes("member_code") || msg.includes("duplicate key")) {
+      const newCode = await issueUniqueMemberCode();
+      const q2 = `
+        INSERT INTO addresses (user_id, member_code, name, phone, postal, prefecture, city, address1, address2, address_key)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        ON CONFLICT (user_id) DO UPDATE SET
+          member_code = EXCLUDED.member_code,
+          name = EXCLUDED.name,
+          phone = EXCLUDED.phone,
+          postal = EXCLUDED.postal,
+          prefecture = EXCLUDED.prefecture,
+          city = EXCLUDED.city,
+          address1 = EXCLUDED.address1,
+          address2 = EXCLUDED.address2,
+          address_key = EXCLUDED.address_key,
+          updated_at = now()
+        RETURNING member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at
+      `;
+      const r2 = await pool.query(q2, [
+        userId,
+        newCode,
+        addr.name || "",
+        addr.phone || "",
+        addr.postal || "",
+        addr.prefecture || "",
+        addr.city || "",
+        addr.address1 || "",
+        addr.address2 || "",
+        addressKey
+      ]);
+      saved = r2.rows[0];
+    } else {
+      throw e;
     }
   }
 
-  // ----- ship actions -----
-  window.saveShip = async (orderId)=>{
-    try{
-      const carrier = ($("carrier_"+orderId).value||"").trim();
-      const trackingNumber = ($("tn_"+orderId).value||"").trim();
-      const shippedNote = ($("note_"+orderId).value||"").trim();
-      await apiPost("/api/admin/orders/update-shipping", {
-        orderId, carrier, trackingNumber, shippedNote, markShipped: true
+  return saved;
+}
+
+// ============== Build order from checkout (anti-tamper) ==============
+async function buildOrderFromCheckout(uid, checkout) {
+  const userId = String(uid || "").trim();
+  if (!userId) {
+    const err = new Error("uid required");
+    err.code = "NO_UID";
+    throw err;
+  }
+
+  const addr = await getAddressByUserId(userId);
+  if (!addr) {
+    const err = new Error("address not found");
+    err.code = "NO_ADDRESS";
+    throw err;
+  }
+
+  const products = await loadProducts();
+  const productsById = Object.fromEntries(products.map(p => [p.id, p]));
+
+  const inItems = Array.isArray(checkout?.items) ? checkout.items : [];
+  const items = [];
+  let subtotal = 0;
+
+  for (const it of inItems) {
+    const id = String(it?.id || "").trim();
+    const qty = Math.max(0, Math.floor(Number(it?.qty || 0)));
+    if (!id || qty <= 0) continue;
+
+    const p = productsById[id];
+    if (!p) continue;
+
+    if (Number.isFinite(p.stock) && Number(p.stock) < qty) {
+      const err = new Error(`在庫不足: ${p.name} (stock=${p.stock}, qty=${qty})`);
+      err.code = "OUT_OF_STOCK";
+      err.productId = id;
+      throw err;
+    }
+
+    const price = Number(p.price || 0);
+    const lineTotal = price * qty;
+    subtotal += lineTotal;
+
+    items.push({
+      id: p.id,
+      name: p.name,
+      qty,
+      price,
+      volume: p.volume || "",
+      image: p.image || "",
+      desc: p.desc || "",
+      lineTotal,
+    });
+  }
+
+  if (items.length === 0) {
+    const err = new Error("items empty");
+    err.code = "EMPTY_ITEMS";
+    throw err;
+  }
+
+  const size = calcPackageSizeFromItems(items, productsById);
+  const shippingFee = await calcShippingFee(pool, addr.prefecture, size);
+
+  return { userId, addr, items, subtotal, shippingFee, size, productsById };
+}
+
+async function insertOrderToDb({ userId, items, total, shippingFee, paymentMethod, status, rawEvent }) {
+  const addr = await getAddressByUserId(userId);
+  const fullAddr = addr ? `${addr.prefecture || ""}${addr.city || ""}${addr.address1 || ""} ${addr.address2 || ""}`.trim() : "";
+
+  const r = await pool.query(
+    `
+    INSERT INTO orders (user_id, source, items, total, shipping_fee, payment_method, status, name, zip, pref, address, raw_event)
+    VALUES ($1,'liff',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    RETURNING id
+    `,
+    [
+      userId,
+      JSON.stringify(items),
+      Number(total || 0),
+      Number(shippingFee || 0),
+      paymentMethod,
+      status,
+      addr?.name || "",
+      addr?.postal || "",
+      addr?.prefecture || "",
+      fullAddr,
+      rawEvent ? JSON.stringify(rawEvent) : null,
+    ]
+  );
+  return r.rows[0]?.id;
+}
+
+// ============== LINE client ==============
+const lineConfig = {
+  channelAccessToken: LINE_CHANNEL_ACCESS_TOKEN,
+  channelSecret: LINE_CHANNEL_SECRET,
+};
+const lineClient = new line.Client(lineConfig);
+
+// ============== Express ==============
+const app = express();
+
+// ============== Stripe (webhook must be before json parser) ==============
+const stripe = (STRIPE_SECRET_KEY && Stripe) ? new Stripe(STRIPE_SECRET_KEY) : null;
+
+function originFromReq(req) {
+  return `${req.protocol}://${req.get("host")}`;
+}
+function stripeSuccessUrl(req) {
+  if (STRIPE_SUCCESS_URL) return STRIPE_SUCCESS_URL;
+  const base = BASE_URL || originFromReq(req);
+  return `${base}/stripe-success.html`;
+}
+function stripeCancelUrl(req) {
+  if (STRIPE_CANCEL_URL) return STRIPE_CANCEL_URL;
+  const base = BASE_URL || originFromReq(req);
+  return `${base}/stripe-cancel.html`;
+}
+function liffUrl(pathname, reqForFallback = null) {
+  const base = LIFF_BASE || (reqForFallback ? originFromReq(reqForFallback) : "");
+  if (!base) return pathname;
+  if (!pathname.startsWith("/")) pathname = "/" + pathname;
+  return base + pathname;
+}
+
+// =========================
+// ★★ 注文完了通知（統一実装）
+// =========================
+function yen(n) {
+  const x = Number(n || 0);
+  return `${x.toLocaleString("ja-JP")}円`;
+}
+function joinAddrText(a) {
+  if (!a) return "";
+  const line1 = `〒${a.postal || ""} ${a.prefecture || ""}${a.city || ""}${a.address1 || ""} ${a.address2 || ""}`.trim();
+  const line2 = `${a.name || ""}`.trim();
+  const line3 = a.phone ? `TEL:${a.phone}` : "";
+  return [line2, line1, line3].filter(Boolean).join("\n");
+}
+function buildItemLines(items) {
+  return (items || []).map(x => {
+    const v = x.volume ? `（${x.volume}）` : "";
+    return `・${x.name}${v} × ${x.qty}（${yen(x.price)}）`;
+  }).join("\n");
+}
+async function pushTextSafe(to, text) {
+  if (!to) return;
+  try {
+    await lineClient.pushMessage(to, { type: "text", text: String(text || "") });
+  } catch (e) {
+    logErr("pushTextSafe failed", to, e?.message || e);
+  }
+}
+async function getOrderRow(orderId) {
+  const r = await pool.query(
+    `SELECT id, user_id, items, total, shipping_fee, payment_method, status, notified_at, created_at
+     FROM orders WHERE id=$1`,
+    [orderId]
+  );
+  return r.rows[0] || null;
+}
+async function markOrderNotified(orderId) {
+  try {
+    await pool.query(`UPDATE orders SET notified_at=now() WHERE id=$1 AND notified_at IS NULL`, [orderId]);
+  } catch (e) {
+    logErr("markOrderNotified failed", orderId, e?.message || e);
+  }
+}
+
+async function notifyOrderCompleted({
+  orderId,
+  userId,
+  items,
+  shippingFee,
+  total,
+  paymentMethod,
+  codFee = 0,
+  size = null,
+  addr = null,
+  title = "新規注文",
+  isPaid = false,
+}) {
+  const row = await getOrderRow(orderId);
+  if (row?.notified_at) {
+    logInfo("notify skipped (already notified):", orderId);
+    return { ok: true, skipped: true };
+  }
+
+  const a = addr || (await getAddressByUserId(userId).catch(()=>null));
+  const addrText = joinAddrText(a);
+
+  let computedSize = size;
+  if (!computedSize) {
+    try {
+      const products = await loadProducts();
+      const productsById = Object.fromEntries(products.map(p => [p.id, p]));
+      computedSize = calcPackageSizeFromItems(items || [], productsById);
+    } catch {}
+  }
+
+  const itemLines = buildItemLines(items || []);
+  const shipLine = (computedSize ? `ヤマト ${computedSize}サイズ` : "ヤマト") + `：${yen(shippingFee)}`;
+
+  const payLabel = paymentMethod === "card" ? "クレジット" : "代引";
+  const paidLine = paymentMethod === "card"
+    ? (isPaid ? "決済：完了" : "決済：未完了")
+    : "支払い：代引（到着時）";
+
+  const msgForUser =
+    `ご注文ありがとうございます。\n` +
+    `【注文ID】${orderId}\n` +
+    `【支払い】${payLabel}\n` +
+    `${paidLine}\n\n` +
+    `【内容】\n${itemLines}\n\n` +
+    `【送料】${shipLine}\n` +
+    (paymentMethod === "cod" ? `【代引手数料】${yen(codFee)}\n` : "") +
+    `【合計】${yen(total)}\n\n` +
+    (addrText ? `【お届け先】\n${addrText}\n\n` : "") +
+    `住所変更：\n${liffUrl("/cod-register.html")}`;
+
+  await pushTextSafe(userId, msgForUser);
+
+  if (ADMIN_USER_ID) {
+    const msgForAdmin =
+      `【${title}】\n` +
+      `注文ID: ${orderId}\n` +
+      `userId: ${userId}\n` +
+      `支払い: ${payLabel}${paymentMethod === "card" ? (isPaid ? "（決済完了）" : "（未決済）") : ""}\n\n` +
+      `${itemLines}\n\n` +
+      `送料: ${yen(shippingFee)}${computedSize ? `（${computedSize}）` : ""}\n` +
+      (paymentMethod === "cod" ? `代引手数料: ${yen(codFee)}\n` : "") +
+      `合計: ${yen(total)}\n\n` +
+      (addrText ? `お届け先:\n${addrText}` : "お届け先:（住所未取得）");
+    await pushTextSafe(ADMIN_USER_ID, msgForAdmin);
+  }
+
+  await markOrderNotified(orderId);
+  return { ok: true };
+}
+
+// Stripe webhook（raw 必須）
+app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  try {
+    if (!stripe || !STRIPE_WEBHOOK_SECRET) return res.status(400).send("stripe not configured");
+
+    const sig = req.headers["stripe-signature"];
+    let event;
+    try {
+      event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
+    } catch (err) {
+      logErr("Stripe webhook signature verify failed", err?.message || err);
+      return res.status(400).send("Bad signature");
+    }
+
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+      const orderId = session?.metadata?.orderId;
+      const userId  = session?.metadata?.userId;
+
+      if (orderId) {
+        await pool.query(`UPDATE orders SET status='paid' WHERE id=$1`, [orderId]);
+        logInfo("Order paid:", orderId);
+
+        const row = await getOrderRow(orderId);
+        if (row) {
+          const items = Array.isArray(row.items) ? row.items : (row.items || []);
+          await notifyOrderCompleted({
+            orderId: row.id,
+            userId: row.user_id || userId || "",
+            items,
+            shippingFee: row.shipping_fee,
+            total: row.total,
+            paymentMethod: row.payment_method || "card",
+            codFee: 0,
+            size: null,
+            addr: null,
+            title: "新規注文（カード）",
+            isPaid: true,
+          });
+        }
+      }
+    }
+
+    res.json({ received: true });
+  } catch (e) {
+    logErr("POST /stripe/webhook", e?.stack || e);
+    res.status(500).send("server_error");
+  }
+});
+
+// ここから通常JSON
+app.use(express.json({ limit: "2mb" }));
+app.use(express.urlencoded({ extended: true, limit: "2mb" }));
+
+// =========================
+// ★ liff-address 廃止 → cod-register へ転送
+// =========================
+function redirectToCodRegister(req, res) {
+  const q = req.originalUrl.includes("?") ? req.originalUrl.split("?")[1] : "";
+  const sep = q ? "?" : "";
+  res.redirect(302, `/cod-register.html${sep}${q}`);
+}
+app.get("/liff-address.html", redirectToCodRegister);
+app.get("/public/liff-address.html", redirectToCodRegister);
+app.get("/address.html", redirectToCodRegister);
+app.get("/public/address.html", redirectToCodRegister);
+app.get("/address", (req, res) => res.redirect(302, "/cod-register.html"));
+
+// confirm-cod 名称ゆれ吸収
+app.get("/confirm_cod.html", (req, res) => res.sendFile(path.join(__dirname, "public", "confirm-cod.html")));
+app.get("/confirm-cod",      (req, res) => res.sendFile(path.join(__dirname, "public", "confirm-cod.html")));
+
+// ===== 静的配信 =====
+app.use(express.static(path.join(__dirname, "public")));
+app.use("/public", express.static(path.join(__dirname, "public")));
+app.use("/uploads", express.static(UPLOAD_DIR));
+app.use("/public/uploads", express.static(UPLOAD_DIR));
+
+// health
+app.get("/health", (req, res) => res.json({ ok: true, time: nowISO() }));
+
+// =========================
+// ✅ Admin auth（※ ここは1個だけ）
+// =========================
+const ADMIN_TOKEN = (ADMIN_API_TOKEN || ADMIN_CODE || "").trim();
+
+function requireAdmin(req, res, next) {
+  if (!ADMIN_TOKEN) {
+    return res.status(403).json({ ok:false, error:"ADMIN_API_TOKEN is not set" });
+  }
+
+  const token =
+    (req.headers["x-admin-token"] ||
+     req.headers["x-admin-api-token"] ||
+     req.query.token ||
+     "").toString().trim();
+
+  if (token !== ADMIN_TOKEN) {
+    return res.status(401).json({ ok:false, error:"unauthorized" });
+  }
+  next();
+}
+
+// =========================
+// Admin utilities
+// =========================
+const REGION_LABEL = {
+  hokkaido: "北海道",
+  tohoku:   "東北",
+  kanto:    "関東",
+  chubu:    "中部",
+  kansai:   "関西",
+  chugoku:  "中国",
+  shikoku:  "四国",
+  kyushu:   "九州",
+  okinawa:  "沖縄",
+};
+function regionToLabel(key) {
+  return REGION_LABEL[key] || key || "";
+}
+
+// 管理：orders 取得（admin.html 用）
+app.get("/api/admin/orders", requireAdmin, async (req, res) => {
+  const date = String(req.query.date || "").trim(); // YYYYMMDD
+  try {
+    let sql = `
+      SELECT
+        id, user_id, items, total, shipping_fee, payment_method, status,
+        name, zip, pref, address, created_at
+      FROM orders
+      ORDER BY created_at DESC
+      LIMIT 500
+    `;
+    let params = [];
+
+    if (date && /^\d{8}$/.test(date)) {
+      sql = `
+        SELECT
+          id, user_id, items, total, shipping_fee, payment_method, status,
+          name, zip, pref, address, created_at
+        FROM orders
+        WHERE to_char((created_at AT TIME ZONE 'Asia/Tokyo'), 'YYYYMMDD') = $1
+        ORDER BY created_at DESC
+        LIMIT 500
+      `;
+      params = [date];
+    }
+
+    const r = await pool.query(sql, params);
+
+    const items = (r.rows || []).map((row) => {
+      const itemsArr = Array.isArray(row.items) ? row.items : (() => {
+        try { return JSON.parse(row.items); } catch { return []; }
+      })();
+
+      const addrObj = (() => {
+        try {
+          if (row.address && typeof row.address === "object") return row.address;
+          if (typeof row.address === "string" && row.address.trim()) return JSON.parse(row.address);
+        } catch {}
+        return {
+          name: row.name || "",
+          postal: row.zip || "",
+          prefecture: row.pref || "",
+          city: "",
+          address1: row.address || "",
+          address2: "",
+          phone: "",
+        };
+      })();
+
+      const pref = addrObj.prefecture || row.pref || "";
+      const regionKey =
+        /北海道/.test(pref) ? "hokkaido" :
+        /(青森|岩手|宮城|秋田|山形|福島)/.test(pref) ? "tohoku" :
+        /(茨城|栃木|群馬|埼玉|千葉|東京|神奈川)/.test(pref) ? "kanto" :
+        /(新潟|富山|石川|福井|山梨|長野|岐阜|静岡|愛知)/.test(pref) ? "chubu" :
+        /(三重|滋賀|京都|大阪|兵庫|奈良|和歌山)/.test(pref) ? "kansai" :
+        /(鳥取|島根|岡山|広島|山口)/.test(pref) ? "chugoku" :
+        /(徳島|香川|愛媛|高知)/.test(pref) ? "shikoku" :
+        /(福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島)/.test(pref) ? "kyushu" :
+        /(沖縄)/.test(pref) ? "okinawa" : "";
+
+      // ✅ 代引手数料
+      const codFee = (row.payment_method === "cod") ? Number(COD_FEE || 330) : 0;
+
+      // ✅ 小計（商品合計）＝ total - shipping - codFee
+      const subtotal = (Number(row.total || 0) - Number(row.shipping_fee || 0) - Number(codFee || 0));
+
+      return {
+        ts: row.created_at,
+        orderNumber: row.id,
+        userId: row.user_id,
+        lineUserId: row.user_id,
+        items: itemsArr,
+        subtotal,
+        shipping: Number(row.shipping_fee || 0),
+        codFee,
+        finalTotal: Number(row.total || 0),
+        payment: row.payment_method || "",
+        method: (row.status === "pickup" ? "pickup" : "delivery"),
+        region: regionToLabel(regionKey),
+        address: addrObj,
+      };
+    });
+
+    res.json({ items });
+  } catch (e) {
+    console.error("[api/admin/orders] failed", e?.stack || e);
+    res.status(500).send("failed");
+  }
+});
+
+// 発送通知（管理画面→ユーザーへPush）
+app.post("/api/admin/orders/notify-shipped", requireAdmin, async (req, res) => {
+  try {
+    const { userId, message } = req.body || {};
+    if (!userId || !message) return res.status(400).send("bad_request");
+    await lineClient.pushMessage(String(userId), { type: "text", text: String(message) });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[api/admin/orders/notify-shipped] failed", e?.stack || e);
+    res.status(500).send("failed");
+  }
+});
+
+// セグメント：プレビュー
+app.post("/api/admin/segment/preview", requireAdmin, async (req, res) => {
+  try {
+    const { type, date } = req.body || {};
+    const t = String(type || "");
+    const d = String(date || "").trim(); // YYYYMMDD
+    let userIds = [];
+
+    if (t === "orders") {
+      if (d && /^\d{8}$/.test(d)) {
+        const r = await pool.query(
+          `SELECT DISTINCT user_id
+           FROM orders
+           WHERE to_char((created_at AT TIME ZONE 'Asia/Tokyo'), 'YYYYMMDD') = $1
+             AND user_id IS NOT NULL AND user_id <> ''
+           LIMIT 2000`,
+          [d]
+        );
+        userIds = r.rows.map(x => x.user_id);
+      } else {
+        const r = await pool.query(
+          `SELECT DISTINCT user_id
+           FROM orders
+           WHERE user_id IS NOT NULL AND user_id <> ''
+           ORDER BY user_id
+           LIMIT 2000`
+        );
+        userIds = r.rows.map(x => x.user_id);
+      }
+    } else if (t === "activeChatters") {
+      const r = await pool.query(
+        `SELECT DISTINCT user_id
+         FROM segment_users
+         WHERE user_id IS NOT NULL AND user_id <> ''
+         ORDER BY user_id
+         LIMIT 2000`
+      );
+      userIds = r.rows.map(x => x.user_id);
+    } else if (t === "addresses") {
+      const r = await pool.query(
+        `SELECT DISTINCT user_id
+         FROM addresses
+         WHERE user_id IS NOT NULL AND user_id <> ''
+         ORDER BY user_id
+         LIMIT 2000`
+      );
+      userIds = r.rows.map(x => x.user_id);
+    } else {
+      return res.status(400).send("bad_type");
+    }
+
+    res.json({ total: userIds.length, userIds });
+  } catch (e) {
+    console.error("[api/admin/segment/preview] failed", e?.stack || e);
+    res.status(500).send("failed");
+  }
+});
+
+// セグメント：送信（multicast 500件ずつ）
+app.post("/api/admin/segment/send", requireAdmin, async (req, res) => {
+  try {
+    const { userIds, message } = req.body || {};
+    const ids = Array.isArray(userIds) ? userIds.filter(Boolean) : [];
+    const msg = String(message || "").trim();
+    if (!ids.length || !msg) return res.status(400).send("bad_request");
+
+    const chunks = [];
+    for (let i = 0; i < ids.length; i += 500) chunks.push(ids.slice(i, i + 500));
+
+    for (const c of chunks) {
+      await lineClient.multicast(c, [{ type: "text", text: msg }]);
+    }
+
+    res.json({ requested: ids.length, sent: ids.length });
+  } catch (e) {
+    console.error("[api/admin/segment/send] failed", e?.stack || e);
+    res.status(500).send("failed");
+  }
+});
+
+// =========================
+// 送料見積り（住所未登録でも使える）
+// =========================
+app.post("/api/shipping/quote", async (req, res) => {
+  try {
+    const pref = String(req.body?.pref || "").trim();
+    const inItems = Array.isArray(req.body?.items) ? req.body.items : [];
+
+    if (!pref) return res.status(400).json({ ok:false, error:"pref required" });
+    if (!inItems.length) return res.status(400).json({ ok:false, error:"items required" });
+
+    const products = await loadProducts();
+    const byId = Object.fromEntries(products.map(p => [p.id, p]));
+
+    const findKusukeId = () => {
+      const p = products.find(x => String(x.id||"").toLowerCase().includes("kusuke") || String(x.name||"").includes("久助"));
+      return p?.id || null;
+    };
+    const findAkashaId = () => {
+      const p = products.find(x =>
+        isAkashaLikeProduct(x) &&
+        !(String(x.id||"") === String(ORIGINAL_SET_PRODUCT_ID||"")) &&
+        !(String(x.id||"").toLowerCase().includes("kusuke") || String(x.name||"").includes("久助"))
+      );
+      return p?.id || null;
+    };
+
+    const mapped = [];
+    for (const it of inItems) {
+      let pid = String(it?.product_id || it?.id || "").trim();
+      const qty = Math.max(1, Math.floor(Number(it?.qty || 0)));
+      if (!pid) continue;
+
+      if (pid === "original-set") pid = String(ORIGINAL_SET_PRODUCT_ID || "original-set-2000");
+      if (pid === "kusuke") {
+        const id = findKusukeId();
+        if (id) pid = id;
+      }
+      if (pid === "akasha") {
+        const id = findAkashaId();
+        if (id) pid = id;
+      }
+      mapped.push({ id: pid, qty });
+    }
+
+    if (!mapped.length) return res.status(400).json({ ok:false, error:"items invalid" });
+
+    const sizeItems = [];
+    let subtotal = 0;
+
+    for (const it of mapped) {
+      const p = byId[it.id];
+      if (p) {
+        sizeItems.push({ id: p.id, name: p.name, qty: it.qty, price: Number(p.price || 0) });
+        subtotal += Number(p.price || 0) * it.qty;
+      } else {
+        sizeItems.push({ id: it.id, name: "（見積り用）", qty: it.qty, price: 0 });
+      }
+    }
+
+    const size = calcPackageSizeFromItems(sizeItems, byId);
+    const shipping_fee = await calcShippingFee(pool, pref, size);
+
+    const total = subtotal + Number(shipping_fee || 0);
+    res.json({ ok: true, region: detectRegionFromPref(pref), size, shipping_fee, subtotal, total });
+  } catch (e) {
+    console.error("[api/shipping/quote] failed", e?.stack || e);
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
+
+// =========================
+// LIFF config
+// =========================
+app.get("/api/liff/config", (req, res) => {
+  const kind = String(req.query.kind || "order").trim();
+
+  const orderId   = (LIFF_ID_ORDER || LIFF_ID_DEFAULT || "").trim();
+  const addressId = (LIFF_ID_ADDRESS || LIFF_ID_COD || LIFF_ID_DEFAULT || "").trim();
+
+  let liffId = "";
+  if (kind === "address" || kind === "register" || kind === "cod") liffId = addressId;
+  else liffId = orderId;
+
+  if (!liffId) return res.status(400).json({ ok:false, error:"LIFF_ID_NOT_SET", kind });
+  return res.json({ ok:true, liffId });
+});
+
+// ============== Address API ==============
+app.get("/api/address/get", async (req, res) => {
+  try {
+    const userId = String(req.query.userId || "").trim();
+    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
+
+    const addr = await getAddressByUserId(userId);
+    res.json({ ok: true, address: addr });
+  } catch (e) {
+    logErr("GET /api/address/get", e?.stack || e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+app.post("/api/address/set", async (req, res) => {
+  try {
+    const b = req.body || {};
+    const userId = String(b.userId || "").trim();
+    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
+
+    const saved = await upsertAddress(userId, {
+      member_code: b.member_code,
+      name: b.name,
+      phone: b.phone,
+      postal: b.postal,
+      prefecture: b.prefecture,
+      city: b.city,
+      address1: b.address1,
+      address2: b.address2,
+      address_key: b.address_key
+    });
+
+    res.json({ ok: true, address: saved });
+  } catch (e) {
+    logErr("POST /api/address/set", e?.stack || e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+// 互換：cod-register.html 用
+app.get("/api/liff/address/me", async (req, res) => {
+  try {
+    const userId = String(req.query.userId || "").trim();
+    if (!userId) return res.status(400).json({ ok:false, error:"userId required" });
+
+    const addr = await getAddressByUserId(userId);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok:true, address: addr });
+  } catch (e) {
+    logErr("GET /api/liff/address/me", e?.stack || e);
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
+
+app.post("/api/liff/address", async (req, res) => {
+  try {
+    const userId = String(req.body?.userId || "").trim();
+    const address = req.body?.address || null;
+    if (!userId) return res.status(400).json({ ok:false, error:"userId required" });
+    if (!address) return res.status(400).json({ ok:false, error:"address required" });
+
+    const saved = await upsertAddress(userId, {
+      member_code: address.member_code,
+      name: address.name,
+      phone: address.phone,
+      postal: address.postal,
+      prefecture: address.prefecture,
+      city: address.city,
+      address1: address.address1,
+      address2: address.address2,
+      address_key: address.address_key
+    });
+
+    res.json({ ok:true, memberCode: saved?.member_code, address: saved });
+  } catch (e) {
+    logErr("POST /api/liff/address", e?.stack || e);
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
+
+// id_token verify（任意）
+app.post("/api/liff/verify", async (req, res) => {
+  try {
+    if (!LIFF_CHANNEL_ID) return res.status(400).json({ ok: false, error: "LIFF_CHANNEL_ID not set" });
+    const idToken = String(req.body?.id_token || "");
+    if (!idToken) return res.status(400).json({ ok: false, error: "id_token required" });
+
+    const params = new URLSearchParams();
+    params.set("id_token", idToken);
+    params.set("client_id", LIFF_CHANNEL_ID);
+
+    const r = await fetch("https://api.line.me/oauth2/v2.1/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+    });
+
+    const data = await r.json().catch(()=> ({}));
+    if (!r.ok) return res.status(401).json({ ok: false, error: "verify_failed", detail: data });
+
+    res.json({ ok: true, profile: data });
+  } catch (e) {
+    logErr("POST /api/liff/verify", e?.stack || e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+// LIFF 起動ログ
+app.post("/api/liff/opened", async (req, res) => {
+  try {
+    const userId = String(req.body?.userId || "").trim();
+    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
+
+    await touchUser(userId, "liff");
+    res.json({ ok: true });
+  } catch (e) {
+    logErr("POST /api/liff/opened", e?.stack || e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+app.post("/api/liff/open", async (req, res) => {
+  try {
+    const userId = String(req.body?.userId || "").trim();
+    if (!userId) return res.status(400).json({ ok:false, error:"userId required" });
+    await touchUser(userId, "liff");
+    res.json({ ok:true });
+  } catch (e) {
+    logErr("POST /api/liff/open", e?.stack || e);
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
+
+// ============== Products API ==============
+app.get("/api/products", async (req, res) => {
+  try {
+    const products = await loadProducts();
+    const origin = originFromReq(req);
+
+    const fixed = products.map(p => {
+      let img = String(p.image || "").trim();
+      if (!img) return p;
+
+      img = img.replace(/^public\//, "");
+      img = img.replace(/^uploads\//, "uploads/");
+      img = img.replace(/^\/uploads\//, "uploads/");
+
+      if (!/^https?:\/\//i.test(img)) {
+        if (img.startsWith("uploads/")) img = "/" + img;
+        else {
+          if (img.startsWith("/")) img = img.slice(1);
+          img = "/uploads/" + img;
+        }
+        img = origin + img;
+      }
+      return { ...p, image: img };
+    });
+
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, products: fixed });
+  } catch (e) {
+    logErr("GET /api/products", e?.stack || e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+// ============== Admin products ==============
+app.get("/api/admin/products", requireAdmin, async (req, res) => {
+  try {
+    const products = await loadProducts();
+    res.json({ ok: true, products });
+  } catch (e) {
+    logErr("GET /api/admin/products", e?.stack || e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+app.post("/api/admin/products/update", requireAdmin, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const id = String(body.id || "").trim();
+    if (!id) return res.status(400).json({ ok: false, error: "id required" });
+
+    const products = await loadProducts();
+    const i = products.findIndex(p => p.id === id);
+    if (i < 0) return res.status(404).json({ ok: false, error: "not_found" });
+
+    const p = products[i];
+    const next = {
+      ...p,
+      name: body.name != null ? String(body.name) : p.name,
+      price: body.price != null ? Number(body.price) : p.price,
+      stock: body.stock != null ? Number(body.stock) : p.stock,
+      volume: body.volume != null ? String(body.volume) : (p.volume || ""),
+      desc: body.desc != null ? String(body.desc) : (p.desc || ""),
+      image: body.image != null ? String(body.image) : (p.image || ""),
+    };
+
+    products[i] = next;
+    await saveProducts(products);
+    res.json({ ok: true, product: next });
+  } catch (e) {
+    logErr("POST /api/admin/products/update", e?.stack || e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+app.post("/api/admin/products/add", requireAdmin, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const id = String(b.id || "").trim();
+    const name = String(b.name || "").trim();
+    if (!id || !name) return res.status(400).json({ ok: false, error: "id & name required" });
+
+    const products = await loadProducts();
+    if (products.some(p => p.id === id)) return res.status(409).json({ ok: false, error: "id exists" });
+
+    const p = {
+      id,
+      name,
+      price: Number(b.price || 0),
+      stock: Number(b.stock || 0),
+      volume: String(b.volume || ""),
+      desc: String(b.desc || ""),
+      image: String(b.image || ""),
+    };
+
+    products.push(p);
+    await saveProducts(products);
+    res.json({ ok: true, product: p });
+  } catch (e) {
+    logErr("POST /api/admin/products/add", e?.stack || e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+app.post("/api/admin/products/delete", requireAdmin, async (req, res) => {
+  try {
+    const id = String(req.body?.id || "").trim();
+    if (!id) return res.status(400).json({ ok: false, error: "id required" });
+
+    const products = await loadProducts();
+    const next = products.filter(p => p.id !== id);
+    await saveProducts(next);
+    res.json({ ok: true, removed: products.length - next.length });
+  } catch (e) {
+    logErr("POST /api/admin/products/delete", e?.stack || e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+// 管理：画像一覧
+app.get("/api/admin/images", requireAdmin, async (req, res) => {
+  try {
+    await ensureDir(UPLOAD_DIR);
+    const files = await fsp.readdir(UPLOAD_DIR).catch(() => []);
+    const images = files.filter(f => /\.(png|jpe?g|webp|gif)$/i.test(f)).sort((a,b)=>a.localeCompare(b,"en"));
+
+    const base = BASE_URL || originFromReq(req);
+    res.json({
+      ok: true,
+      images: images.map(name => ({
+        name,
+        url: `${base}/uploads/${encodeURIComponent(name)}`
+      }))
+    });
+  } catch (e) {
+    logErr("GET /api/admin/images", e?.stack || e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+// 管理：画像アップロード（base64）
+app.post("/api/admin/upload-image", requireAdmin, async (req, res) => {
+  try {
+    const { contentBase64, filename, mime } = req.body || {};
+    if (!contentBase64) return res.status(400).json({ ok: false, error: "contentBase64 required" });
+
+    await ensureDir(UPLOAD_DIR);
+
+    const ext =
+      (mime && mime.includes("png"))  ? "png" :
+      (mime && mime.includes("webp")) ? "webp" :
+      (mime && (mime.includes("jpeg") || mime.includes("jpg"))) ? "jpg" : "png";
+
+    const safeName = (filename ? String(filename) : "")
+      .replace(/[^\w.\-]/g, "_")
+      .replace(/\.+/g, ".")
+      .slice(0, 80);
+
+    const name = safeName || `${Date.now()}_${crypto.randomBytes(4).toString("hex")}.${ext}`;
+    const buf = Buffer.from(String(contentBase64).replace(/^data:.*;base64,/, ""), "base64");
+    const outPath = path.join(UPLOAD_DIR, name);
+    await fsp.writeFile(outPath, buf);
+
+    const base = BASE_URL || originFromReq(req);
+    const url = `${base}/uploads/${encodeURIComponent(name)}`;
+    res.json({ ok: true, name, url });
+  } catch (e) {
+    logErr("POST /api/admin/upload-image", e?.stack || e);
+    res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+
+// ============== Payment / Orders ==============
+
+// Stripe: create checkout session
+app.post("/api/pay/stripe/create", async (req, res) => {
+  try {
+    if (!stripe) return res.status(400).json({ ok:false, error:"stripe_not_configured" });
+
+    const uid = String(req.body?.uid || "").trim();
+    const checkout = req.body?.checkout || null;
+
+    await touchUser(uid, "seen");
+    const built = await buildOrderFromCheckout(uid, checkout);
+
+    const lineItems = built.items.map(it => ({
+      price_data: {
+        currency: "jpy",
+        product_data: { name: `${it.name}${it.volume ? `（${it.volume}）` : ""}` },
+        unit_amount: it.price,
+      },
+      quantity: it.qty,
+    }));
+
+    if (built.shippingFee > 0) {
+      lineItems.push({
+        price_data: {
+          currency: "jpy",
+          product_data: { name: `送料（ヤマト ${built.size}サイズ）` },
+          unit_amount: built.shippingFee,
+        },
+        quantity: 1,
       });
-      alert("保存しました（発送済み）");
-    }catch(e){
-      alert("保存失敗: " + (e.message||e));
     }
-  };
 
-  window.sendShip = async (orderId)=>{
-    try{
-      const r = await apiPost("/api/admin/orders/send-shipped", { orderId });
-      alert("発送通知を送信しました。\n\n" + (r.message||""));
-    }catch(e){
-      alert("発送通知失敗: " + (e.message||e));
-    }
-  };
+    const orderId = await insertOrderToDb({
+      userId: built.userId,
+      items: built.items,
+      total: built.subtotal + built.shippingFee,
+      shippingFee: built.shippingFee,
+      paymentMethod: "card",
+      status: "new",
+      rawEvent: { type: "checkout_create_v2" },
+    });
 
-  // ----- print tab -----
-  async function loadOrderForPrint(orderId){
-    printStatus.textContent = "読み込み中...";
-    try{
-      const data = await apiGet("/api/admin/orders/" + encodeURIComponent(String(orderId)));
-      if(!data.ok) throw new Error("not ok");
-      const o = data.order;
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      line_items: lineItems,
+      success_url: `${stripeSuccessUrl(req)}?orderId=${orderId}`,
+      cancel_url: `${stripeCancelUrl(req)}?orderId=${orderId}`,
+      metadata: { orderId: String(orderId), userId: built.userId },
+    });
 
-      printOrderIdEl.value = String(o.id);
+    res.json({
+      ok: true,
+      orderId,
+      url: session.url,
+      subtotal: built.subtotal,
+      shippingFee: built.shippingFee,
+      size: built.size,
+    });
+  } catch (e) {
+    const code = e?.code || "";
+    logErr("POST /api/pay/stripe/create", code, e?.stack || e);
 
-      const created = new Date(o.created_at).toLocaleString("ja-JP");
-      printSub.textContent =
-        `注文ID #${o.id} / ${created} / 支払い：${o.payment_method==="card"?"カード":"代引"} / status: ${o.status||""}`;
+    if (code === "NO_ADDRESS") return res.status(409).json({ ok:false, error:"NO_ADDRESS" });
+    if (code === "OUT_OF_STOCK") return res.status(409).json({ ok:false, error:"OUT_OF_STOCK", productId: e.productId });
+    if (code === "EMPTY_ITEMS") return res.status(400).json({ ok:false, error:"EMPTY_ITEMS" });
 
-      // orders.address は実装によって「文字列」なのでそのまま表示
-      const name = o.name || "";
-      const zip  = o.zip || "";
-      const pref = o.pref || "";
-      const addressStr = (typeof o.address === "string")
-        ? o.address
-        : (o.address ? JSON.stringify(o.address) : "");
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
 
-      addrBox.innerHTML = `
-        <div class="grid2">
-          <div>
-            <div class="muted">お届け先</div>
-            <div style="margin-top:6px;"><b>${escapeHtml(name)}</b></div>
-            <div style="margin-top:6px;">〒${escapeHtml(zip)} ${escapeHtml(pref)}</div>
-            <div style="margin-top:6px; white-space:pre-wrap;">${escapeHtml(addressStr)}</div>
-          </div>
-          <div>
-            <div class="muted">管理用</div>
-            <div class="mono" style="margin-top:8px;">user_id: ${escapeHtml(o.user_id||"")}</div>
-            <div class="mono" style="margin-top:6px;">order_id: ${escapeHtml(o.id||"")}</div>
-          </div>
-        </div>
-      `;
+// 見積り（confirmで送料表示用）
+app.post("/api/order/quote", async (req, res) => {
+  try {
+    const uid = String(req.body?.uid || "").trim();
+    const checkout = req.body?.checkout || null;
 
-      const items = Array.isArray(o.items) ? o.items : [];
-      printItems.innerHTML = items.map(it=>{
-        const nm = it.name + (it.volume ? `（${it.volume}）` : "");
-        const price = Number(it.price||0);
-        const qty = Number(it.qty||0);
-        const line = price * qty;
-        return `
-          <tr>
-            <td>${escapeHtml(nm)}</td>
-            <td class="right">${yen(price)}</td>
-            <td class="right">${qty}</td>
-            <td class="right">${yen(line)}</td>
-          </tr>
-        `;
-      }).join("");
+    await touchUser(uid, "seen");
+    const built = await buildOrderFromCheckout(uid, checkout);
 
-      const shipFee = Number(o.shipping_fee||0);
-      const total   = Number(o.total||0);
-      const codFee = (o.payment_method==="cod") ? 330 : 0;
-      const subTotal = total - shipFee - codFee;
+    const codFee = Number(COD_FEE || 330);
+    const totalCod = built.subtotal + built.shippingFee + codFee;
 
-      printSum.innerHTML = `
-        <tr><td colspan="3" class="right"><b>商品合計</b></td><td class="right"><b>${yen(subTotal)}</b></td></tr>
-        <tr><td colspan="3" class="right">送料</td><td class="right">${yen(shipFee)}</td></tr>
-        ${o.payment_method==="cod" ? `<tr><td colspan="3" class="right">代引手数料</td><td class="right">${yen(330)}</td></tr>` : ``}
-        <tr><td colspan="3" class="right"><b>合計</b></td><td class="right"><b>${yen(total)}</b></td></tr>
-      `;
+    res.json({
+      ok: true,
+      subtotal: built.subtotal,
+      shippingFee: built.shippingFee,
+      codFee,
+      totalCod,
+      size: built.size,
+    });
+  } catch (e) {
+    const code = e?.code || "";
+    logErr("POST /api/order/quote", code, e?.stack || e);
 
-      const ship = [];
-      if(o.carrier) ship.push("配送会社: " + o.carrier);
-      if(o.tracking_number) ship.push("追跡番号: " + o.tracking_number);
-      if(o.shipped_at) ship.push("発送日時: " + new Date(o.shipped_at).toLocaleString("ja-JP"));
-      if(o.shipped_note) ship.push("メモ: " + o.shipped_note);
-      shipMemo.textContent = ship.length ? ship.join(" / ") : "（未設定）";
+    if (code === "NO_ADDRESS") return res.status(409).json({ ok:false, error:"NO_ADDRESS" });
+    if (code === "OUT_OF_STOCK") return res.status(409).json({ ok:false, error:"OUT_OF_STOCK", productId: e.productId });
+    if (code === "EMPTY_ITEMS") return res.status(400).json({ ok:false, error:"EMPTY_ITEMS" });
 
-      printStatus.textContent = "表示OK";
-    }catch(e){
-      printStatus.textContent = "エラー: " + (e.message||e);
-      console.error(e);
-    }
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
+
+// 代引き：作成（＝注文完了通知を送る）
+app.post("/api/order/cod/create", async (req, res) => {
+  try {
+    const uid = String(req.body?.uid || "").trim();
+    const checkout = req.body?.checkout || null;
+
+    await touchUser(uid, "seen");
+    const built = await buildOrderFromCheckout(uid, checkout);
+
+    const codFee = Number(COD_FEE || 330);
+    const totalCod = built.subtotal + built.shippingFee + codFee;
+
+    const orderId = await insertOrderToDb({
+      userId: built.userId,
+      items: built.items,
+      total: totalCod,
+      shippingFee: built.shippingFee,
+      paymentMethod: "cod",
+      status: "confirmed",
+      rawEvent: { type: "cod_create_v2" },
+    });
+
+    await notifyOrderCompleted({
+      orderId,
+      userId: built.userId,
+      items: built.items,
+      shippingFee: built.shippingFee,
+      total: totalCod,
+      paymentMethod: "cod",
+      codFee,
+      size: built.size,
+      addr: built.addr,
+      title: "新規注文（代引）",
+      isPaid: false,
+    });
+
+    res.json({
+      ok: true,
+      orderId,
+      subtotal: built.subtotal,
+      shippingFee: built.shippingFee,
+      codFee,
+      totalCod,
+      size: built.size,
+      message: `代引き注文を受け付けました（注文ID: ${orderId}）`,
+    });
+  } catch (e) {
+    const code = e?.code || "";
+    logErr("POST /api/order/cod/create", code, e?.stack || e);
+
+    if (code === "NO_ADDRESS") return res.status(409).json({ ok:false, error:"NO_ADDRESS" });
+    if (code === "OUT_OF_STOCK") return res.status(409).json({ ok:false, error:"OUT_OF_STOCK", productId: e.productId });
+    if (code === "EMPTY_ITEMS") return res.status(400).json({ ok:false, error:"EMPTY_ITEMS" });
+
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
+
+// オリジナルセット専用（混載不可）代引き注文
+app.post("/api/orders/original", async (req, res) => {
+  try {
+    const uid = String(req.body?.uid || req.body?.userId || "").trim();
+    const cart = req.body?.cart || null;
+    if (!uid) return res.status(400).json({ ok:false, error:"uid required" });
+    if (!cart || !Array.isArray(cart.items)) return res.status(400).json({ ok:false, error:"cart.items required" });
+
+    await touchUser(uid, "seen");
+
+    const items = cart.items.filter(x => x && x.id && Number(x.qty) > 0);
+    if (items.length !== 1) return res.status(409).json({ ok:false, error:"MIX_NOT_ALLOWED" });
+
+    const it = items[0];
+    const id = String(it.id || "").trim();
+    const qty = Math.max(1, Math.floor(Number(it.qty || 1)));
+
+    if (id !== ORIGINAL_SET_PRODUCT_ID) return res.status(409).json({ ok:false, error:"NOT_ORIGINAL_SET" });
+    if (qty > 6) return res.status(400).json({ ok:false, error:"QTY_TOO_LARGE", max: 6 });
+
+    const built = await buildOrderFromCheckout(uid, { items: [{ id, qty }] });
+
+    const codFee = Number(COD_FEE || 330);
+    const totalCod = built.subtotal + built.shippingFee + codFee;
+
+    const orderId = await insertOrderToDb({
+      userId: built.userId,
+      items: built.items,
+      total: totalCod,
+      shippingFee: built.shippingFee,
+      paymentMethod: "cod",
+      status: "confirmed",
+      rawEvent: { type: "original_set_cod" },
+    });
+
+    await notifyOrderCompleted({
+      orderId,
+      userId: built.userId,
+      items: built.items,
+      shippingFee: built.shippingFee,
+      total: totalCod,
+      paymentMethod: "cod",
+      codFee,
+      size: built.size,
+      addr: built.addr,
+      title: "新規注文（オリジナルセット/代引）",
+      isPaid: false,
+    });
+
+    res.json({ ok: true, orderId, subtotal: built.subtotal, shippingFee: built.shippingFee, codFee, totalCod, size: built.size });
+  } catch (e) {
+    const code = e?.code || "";
+    logErr("POST /api/orders/original", code, e?.stack || e);
+
+    if (code === "NO_ADDRESS") return res.status(409).json({ ok:false, error:"NO_ADDRESS" });
+    if (code === "OUT_OF_STOCK") return res.status(409).json({ ok:false, error:"OUT_OF_STOCK", productId: e.productId });
+    if (code === "EMPTY_ITEMS") return res.status(400).json({ ok:false, error:"EMPTY_ITEMS" });
+
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
+
+// 代引き確定（互換用）
+app.post("/api/order/cod/confirm", async (req, res) => {
+  try {
+    const uid = String(req.body?.uid || "").trim();
+    const checkout = req.body?.checkout || null;
+
+    await touchUser(uid, "seen");
+    const built = await buildOrderFromCheckout(uid, checkout);
+
+    const codFee = Number(COD_FEE || 330);
+    const totalCod = built.subtotal + built.shippingFee + codFee;
+
+    const orderId = await insertOrderToDb({
+      userId: built.userId,
+      items: built.items,
+      total: totalCod,
+      shippingFee: built.shippingFee,
+      paymentMethod: "cod",
+      status: "confirmed",
+      rawEvent: { type: "cod_confirm_v1" },
+    });
+
+    await notifyOrderCompleted({
+      orderId,
+      userId: built.userId,
+      items: built.items,
+      shippingFee: built.shippingFee,
+      total: totalCod,
+      paymentMethod: "cod",
+      codFee,
+      size: built.size,
+      addr: built.addr,
+      title: "新規注文（代引）",
+      isPaid: false,
+    });
+
+    res.json({
+      ok: true,
+      orderId,
+      subtotal: built.subtotal,
+      shippingFee: built.shippingFee,
+      codFee,
+      totalCod,
+      size: built.size,
+      redirect: `/confirm-cod.html?orderId=${encodeURIComponent(orderId)}`
+    });
+  } catch (e) {
+    const code = e?.code || "";
+    logErr("POST /api/order/cod/confirm", code, e?.stack || e);
+
+    if (code === "NO_ADDRESS") return res.status(409).json({ ok:false, error:"NO_ADDRESS" });
+    if (code === "OUT_OF_STOCK") return res.status(409).json({ ok:false, error:"OUT_OF_STOCK", productId: e.productId });
+    if (code === "EMPTY_ITEMS") return res.status(400).json({ ok:false, error:"EMPTY_ITEMS" });
+
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
+
+// 注文ステータス確認
+app.get("/api/order/status", async (req, res) => {
+  try {
+    const orderId = String(req.query.orderId || "").trim();
+    if (!orderId) return res.status(400).json({ ok:false, error:"orderId required" });
+
+    const r = await pool.query(
+      `SELECT id, status, payment_method, total, shipping_fee, created_at, notified_at
+       FROM orders WHERE id=$1`,
+      [orderId]
+    );
+    const row = r.rows[0];
+    if (!row) return res.status(404).json({ ok:false, error:"not_found" });
+
+    res.json({ ok:true, order: row });
+  } catch (e) {
+    logErr("GET /api/order/status", e?.stack || e);
+    res.status(500).json({ ok:false, error:"server_error" });
+  }
+});
+
+// ============== LINE Webhook ==============
+app.post("/webhook", line.middleware(lineConfig), async (req, res) => {
+  try {
+    const events = req.body.events || [];
+    await Promise.all(events.map(handleEvent));
+    res.status(200).end();
+  } catch (e) {
+    logErr("Webhook error", e?.stack || e);
+    res.status(500).end();
+  }
+});
+
+async function handleEvent(ev) {
+  const type = ev.type;
+  const userId = ev?.source?.userId || "";
+
+  if (userId) {
+    try { await touchUser(userId, "seen"); } catch {}
   }
 
-  // 発送タブの「印刷」→ 印刷タブに切替＆表示
-  window.openPrintInTab = async (orderId)=>{
-    switchTab("print");
-    await loadOrderForPrint(orderId);
-  };
+  if (type === "follow") return onFollow(ev);
+  if (type === "unfollow") return onUnfollow(ev);
 
-  loadOneBtn.addEventListener("click", ()=>{
-    const id = (printOrderIdEl.value||"").trim();
-    if(!id) return alert("注文IDを入れてください");
-    loadOrderForPrint(id);
+  if (type === "message" && ev.message?.type === "text") return onTextMessage(ev);
+  if (type === "postback") return onPostback(ev);
+}
+
+async function onFollow(ev) {
+  const userId = ev?.source?.userId || "";
+  if (!userId) return;
+
+  const day = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+  await pool.query(
+    `
+    INSERT INTO friend_logs (day, added_count, blocked_count)
+    VALUES ($1, 1, 0)
+    ON CONFLICT (day) DO UPDATE SET
+      added_count = friend_logs.added_count + 1,
+      updated_at = now()
+    `,
+    [day]
+  );
+
+  let displayName = null;
+  try {
+    const prof = await lineClient.getProfile(userId);
+    displayName = prof?.displayName || null;
+  } catch {}
+  try { await touchUser(userId, "seen", displayName); } catch {}
+
+  const urlProducts = liffUrl("/products.html");
+  const urlAddress  = liffUrl("/cod-register.html");
+
+  await lineClient.pushMessage(userId, {
+    type: "text",
+    text:
+      "友だち追加ありがとうございます！\n\n" +
+      `・「${KEYWORD_DIRECT}」でミニアプリ注文\n` +
+      `・「${KEYWORD_KUSUKE}」で久助の注文\n\n` +
+      "住所登録がまだの場合は、ミニアプリ内の「住所登録」からお願いします。\n\n" +
+      `商品一覧：\n${urlProducts}\n\n住所登録：\n${urlAddress}`,
   });
+}
 
-  printBtn.addEventListener("click", ()=>{
-    // 印刷時に印刷タブを表示している前提（CSSで印刷時は印刷タブのみ出る）
-    switchTab("print");
-    window.print();
+async function onUnfollow() {
+  const day = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+  await pool.query(
+    `
+    INSERT INTO friend_logs (day, added_count, blocked_count)
+    VALUES ($1, 0, 1)
+    ON CONFLICT (day) DO UPDATE SET
+      blocked_count = friend_logs.blocked_count + 1,
+      updated_at = now()
+    `,
+    [day]
+  );
+}
+
+async function onPostback() {
+  // 必要なら拡張
+}
+
+async function onTextMessage(ev) {
+  const userId = ev?.source?.userId || "";
+  const text = (ev.message?.text || "").trim();
+  if (!userId || !text) return;
+
+  const sess = getSession(userId);
+
+  if (sess) {
+    await handleSessionInput(userId, text, ev);
+    return;
+  }
+
+  if (text === KEYWORD_DIRECT) {
+    setSession(userId, { kind: "direct", step: "start" });
+    await replyDirectStart(ev.replyToken);
+    return;
+  }
+
+  if (text.startsWith(KEYWORD_KUSUKE)) {
+    const m = text.match(/^久助\s*([0-9]+)?/);
+    const qty = m && m[1] ? Number(m[1]) : null;
+
+    setSession(userId, { kind: "kusuke", step: "ask_qty", presetQty: qty || null });
+    await replyKusukeStart(ev.replyToken, userId, qty);
+    return;
+  }
+
+  // それ以外は無反応
+}
+
+async function replyDirectStart(replyToken) {
+  const urlProducts = liffUrl("/products.html");
+  const urlAddress  = liffUrl("/cod-register.html");
+  await lineClient.replyMessage(replyToken, {
+    type: "text",
+    text: `ミニアプリで注文できます：\n${urlProducts}\n\n住所登録：\n${urlAddress}`
   });
+}
 
-  $("loadBtn").addEventListener("click", loadOrders);
+async function replyKusukeStart(replyToken, userId, qtyPreset) {
+  const addr = await getAddressByUserId(userId);
+  if (!addr) {
+    const url = liffUrl("/cod-register.html");
+    await lineClient.replyMessage(replyToken, {
+      type: "text",
+      text:
+        "久助の注文を始めます。\n\n" +
+        "先に住所登録が必要です。\n" +
+        `住所登録はこちら：\n${url}`,
+    });
+    clearSession(userId);
+    return;
+  }
 
-  // URL token 自動反映
-  (function init(){
-    const u = new URL(location.href);
-    const t = (u.searchParams.get("token")||"").trim();
-    if(t) tokenEl.value = t;
+  if (qtyPreset && qtyPreset > 0) {
+    await finalizeKusukeOrder(replyToken, userId, qtyPreset);
+    clearSession(userId);
+    return;
+  }
 
-    // もし ?orderId=... が付いていたら印刷タブを初期表示
-    const oid = (u.searchParams.get("orderId")||"").trim();
-    if(oid){
-      switchTab("print");
-      printOrderIdEl.value = oid;
-      loadOrderForPrint(oid);
+  await lineClient.replyMessage(replyToken, { type:"text", text:"久助の個数を数字で送ってください。\n例：3" });
+  setSession(userId, { kind: "kusuke", step: "wait_qty" });
+}
+
+async function handleSessionInput(userId, text, ev) {
+  const sess = getSession(userId);
+  if (!sess) return;
+
+  if (sess.kind === "kusuke" && sess.step === "wait_qty") {
+    const qty = Number(text);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      await lineClient.replyMessage(ev.replyToken, { type:"text", text:"数字（例：3）で送ってください。" });
+      return;
     }
-  })();
-</script>
-</body>
-</html>
+    await finalizeKusukeOrder(ev.replyToken, userId, qty);
+    clearSession(userId);
+    return;
+  }
+}
+
+async function finalizeKusukeOrder(replyToken, userId, qty) {
+  try {
+    const products = await loadProducts();
+    const kusuke = products.find(p => (p.name || "").includes("久助") || (p.id || "").includes("kusuke"));
+    if (!kusuke) {
+      await lineClient.replyMessage(replyToken, { type:"text", text:"久助の商品が products.json に見つかりませんでした。" });
+      return;
+    }
+
+    const fakeCheckout = { items: [{ id: kusuke.id, qty }] };
+    const built = await buildOrderFromCheckout(userId, fakeCheckout);
+
+    const codFee = Number(COD_FEE || 330);
+    const totalCod = built.subtotal + built.shippingFee + codFee;
+
+    const orderId = await insertOrderToDb({
+      userId,
+      items: built.items,
+      total: totalCod,
+      shippingFee: built.shippingFee,
+      paymentMethod: "cod",
+      status: "confirmed",
+      rawEvent: { type: "line_kusuke" },
+    });
+
+    await notifyOrderCompleted({
+      orderId,
+      userId,
+      items: built.items,
+      shippingFee: built.shippingFee,
+      total: totalCod,
+      paymentMethod: "cod",
+      codFee,
+      size: built.size,
+      addr: built.addr,
+      title: "新規注文（久助/代引）",
+      isPaid: false,
+    });
+
+    await lineClient.replyMessage(replyToken, {
+      type:"text",
+      text: `久助 注文を受け付けました（注文ID: ${orderId}）`
+    });
+  } catch (e) {
+    const code = e?.code || "";
+    logErr("finalizeKusukeOrder", code, e?.stack || e);
+
+    if (code === "NO_ADDRESS") {
+      await lineClient.replyMessage(replyToken, { type:"text", text:`住所が未登録です。\n${liffUrl("/cod-register.html")}` });
+      return;
+    }
+    if (code === "OUT_OF_STOCK") {
+      await lineClient.replyMessage(replyToken, { type:"text", text:"在庫が不足しています。個数を減らして試してください。" });
+      return;
+    }
+    await lineClient.replyMessage(replyToken, { type:"text", text:"エラーが発生しました。時間をおいて再度お試しください。" });
+  }
+}
+
+// ============== Boot ==============
+async function main() {
+  await ensureDir(DATA_DIR);
+  await ensureDir(UPLOAD_DIR);
+  await ensureProductsFile();
+  await loadSessions();
+  await ensureDb();
+
+  const port = Number(process.env.PORT || 3000);
+  app.listen(port, () => logInfo(`server started on :${port}`));
+}
+
+main().catch(e => {
+  logErr("BOOT FAIL", e?.stack || e);
+  process.exit(1);
+});

@@ -1026,6 +1026,15 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
 app.use("/webhook", express.raw({ type: "*/*" }));
 
 app.use(express.json({ limit: "2mb" }));
+app.use((req, res, next) => {
+  const t0 = Date.now();
+  console.log(`[REQ] ${req.method} ${req.originalUrl}`);
+  res.on("finish", () => {
+    console.log(`[RES] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now()-t0}ms)`);
+  });
+  next();
+});
+
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
 // =========================

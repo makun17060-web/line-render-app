@@ -2037,8 +2037,8 @@ async function onFollow(ev) {
     logErr("notifyAdminFriendAdded failed", e?.message || e);
   }
 
-  const urlProducts = liffUrl("/products.html");
-  const urlAddress  = liffUrl("/cod-register.html");
+  const urlProducts = liffUrl("https://liff.line.me/2008406620-8CWfgEKh");
+  const urlAddress  = liffUrl("https://liff.line.me/2008406620-4kyQVyqe");
 
   await lineClient.pushMessage(userId, {
     type: "text",

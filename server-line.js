@@ -1399,28 +1399,43 @@ const LIFF_ID_ADDRESS_V  = normalizeLiffId(process.env.LIFF_ID_ADDRESS || "");
 const LIFF_ID_ADD_V      = normalizeLiffId(process.env.LIFF_ID_ADD || "");
 const LIFF_ID_COD_V      = normalizeLiffId(process.env.LIFF_ID_COD || ""); // 使うなら
 
+// =========================
+// LIFF config（注文=ADDRESS / 登録=ADD）
+// =========================
 app.get("/api/liff/config", (req, res) => {
   const kind = String(req.query.kind || "order").trim().toLowerCase();
 
-  // ★あなたの運用：注文 = ADDRESS / 登録 = ADD
-  const orderId   = (LIFF_ID_ADDRESS || LIFF_ID_DEFAULT || "").trim(); // 注文側
-  const addressId = (LIFF_ID_ADD     || LIFF_ID_DEFAULT || "").trim(); // 住所登録側（ADD）
+  // 商品注文（products/confirm）＝従来どおり
+  const orderId = (LIFF_ID_ORDER || LIFF_ID_DEFAULT || "").trim();
 
-  let liffId = "";
+  // 注文側（あなたの運用：ORDER側は ADDRESS）
+  const addressOrderId = (LIFF_ID_ADDRESS || LIFF_ID_DEFAULT || "").trim();
 
-  if (kind === "order") {
-    liffId = orderId;
-  } else if (kind === "address" || kind === "register" || kind === "addr" || kind === "cod" || kind === "add") {
-    // 登録系は全部 ADD に寄せる（必要なら add は別扱いにもできる）
-    liffId = addressId;
-  } else {
-    // 迷ったら注文側に寄せる
-    liffId = orderId;
-  }
+  // 住所登録側（あなたの運用：登録側は ADD）
+  const addressAddId = (LIFF_ID_ADD || LIFF_ID_DEFAULT || "").trim();
+
+  // kind 判定
+  const isOrder   = (kind === "order" || kind === "products" || kind === "confirm");
+  const isAddress = (kind === "address");           // ←「注文側ADDRESS」用途に使う
+  const isAdd     = (kind === "add" || kind === "register"); // ←「登録側ADD」
+
+  const liffId =
+    isOrder   ? orderId :
+    isAdd     ? addressAddId :
+    isAddress ? addressOrderId :
+    orderId;
 
   if (!liffId) return res.status(400).json({ ok:false, error:"LIFF_ID_NOT_SET", kind });
-  return res.json({ ok:true, kind, liffId });
+
+  // ※ログを出したくないなら console.log は入れない
+  return res.json({
+    ok: true,
+    liffId,
+    // 必要なら確認用（フロントで使わなくてOK）
+    ids: { orderId, addressOrderId, addressAddId }
+  });
 });
+
 
 // ============== Address API ==============
 app.get("/api/address/get", async (req, res) => {

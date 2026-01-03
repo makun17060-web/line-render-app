@@ -460,7 +460,8 @@
           tr.appendChild(tdStatus);
 
           const tdTs = document.createElement("td");
-          tdTs.textContent = formatYmd(o.ts ||uhinunknown || o.created_at);
+          tdTs.textContent = formatYmd(o.ts || o.created_at);
+
           tr.appendChild(tdTs);
 
           const tdUser = document.createElement("td");

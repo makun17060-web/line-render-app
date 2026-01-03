@@ -1,345 +1,554 @@
 <!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>管理（発送通知 / 注文明細）</title>
-  <style>
-    :root{
-      --bg:#f5f6f8; --card:#fff; --text:#111827; --muted:#6b7280;
-      --line:#e5e7eb; --primary:#0b3a53; --danger:#b91c1c;
-      --radius:14px; --shadow:0 1px 3px rgba(0,0,0,.08);
-    }
-    *{ box-sizing:border-box; }
-    body{ margin:0; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
-    .wrap{ max-width:1100px; margin:0 auto; padding:14px 14px 30px; }
-    h1{ font-size:18px; margin:0 0 10px; }
-    .bar{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-    .card{ background:var(--card); border-radius:var(--radius); box-shadow:var(--shadow); padding:12px; border:1px solid var(--line); }
-    label{ font-size:12px; color:var(--muted); display:block; margin-bottom:4px; }
-    input, textarea{ width:100%; padding:10px; border:1px solid var(--line); border-radius:10px; font-size:14px; background:#fff; }
-    textarea{ min-height:92px; resize:vertical; }
-    .btn{ appearance:none; border:0; border-radius:12px; padding:10px 12px; font-weight:700; cursor:pointer; background:var(--primary); color:#fff; }
-    .btn.secondary{ background:#374151; }
-    .btn.ghost{ background:#fff; color:var(--text); border:1px solid var(--line); }
-    .btn.danger{ background:var(--danger); }
-    .tabs{ display:flex; gap:8px; margin:10px 0 12px; }
-    .tab{ padding:10px 12px; border-radius:999px; border:1px solid var(--line); background:#fff; cursor:pointer; font-weight:700; }
-    .tab.active{ background:var(--primary); color:#fff; border-color:var(--primary); }
-    .grid{ display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
-    @media (max-width: 900px){ .grid{ grid-template-columns:1fr; } }
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>管理：注文・発送通知</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280; --line:#e5e7eb;
+    --primary:#0b3a53; --danger:#b91c1c; --ok:#065f46;
+    --shadow:0 1px 3px rgba(0,0,0,.08);
+    --radius:14px;
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
+  a{ color:inherit; }
+  .wrap{ max-width:1100px; margin:0 auto; padding:14px 14px 28px; }
+  .topbar{ display:flex; gap:10px; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .title{ font-size:18px; font-weight:800; }
+  .hint{ font-size:12px; color:var(--muted); line-height:1.5; }
+  .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .card{ background:var(--card); border-radius:var(--radius); box-shadow:var(--shadow); padding:12px; border:1px solid var(--line); }
+  .grid{ display:grid; grid-template-columns: 1.1fr 1fr; gap:12px; }
+  @media (max-width:980px){ .grid{ grid-template-columns: 1fr; } }
 
-    .orders{ display:flex; flex-direction:column; gap:10px; margin-top:12px; }
-    .order{ border:1px solid var(--line); border-radius:14px; background:#fff; padding:12px; box-shadow:var(--shadow); }
-    .row{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; }
-    .meta{ font-size:12px; color:var(--muted); }
-    .kpi{ display:flex; gap:10px; flex-wrap:wrap; margin-top:8px; }
-    .pill{ font-size:12px; padding:6px 10px; border-radius:999px; border:1px solid var(--line); background:#f9fafb; }
-    .items{ margin-top:10px; border-top:1px dashed var(--line); padding-top:8px; white-space:pre-wrap; font-size:13px; }
-    .addr{ margin-top:8px; padding:10px; background:#f9fafb; border:1px solid var(--line); border-radius:12px; white-space:pre-wrap; font-size:13px; }
-    .printArea{ background:#fff; border:1px solid var(--line); border-radius:14px; padding:12px; }
-    .printHead{ display:flex; justify-content:space-between; gap:10px; align-items:center; }
-    .small{ font-size:12px; color:var(--muted); }
-    .hr{ height:1px; background:var(--line); margin:10px 0; }
-    .right{ text-align:right; }
-    .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-  </style>
+  .field{ display:flex; flex-direction:column; gap:6px; min-width:160px; }
+  label{ font-size:12px; color:var(--muted); font-weight:700; }
+  input, select, textarea, button{
+    font:inherit; border:1px solid var(--line); border-radius:10px; padding:10px 10px; background:#fff;
+  }
+  textarea{ min-height:92px; resize:vertical; }
+  button{ cursor:pointer; font-weight:800; }
+  button.primary{ background:var(--primary); color:#fff; border-color:transparent; }
+  button.ghost{ background:#fff; }
+  button.danger{ background:var(--danger); color:#fff; border-color:transparent; }
+  .pill{ font-size:12px; padding:4px 10px; border-radius:999px; border:1px solid var(--line); color:var(--muted); background:#fff; }
+  .ok{ color:var(--ok); font-weight:800; }
+  .bad{ color:var(--danger); font-weight:800; }
+
+  /* tabs */
+  .tabs{ display:flex; gap:8px; }
+  .tabs button{
+    padding:10px 12px; border-radius:999px; border:1px solid var(--line);
+    background:#fff; font-weight:900;
+  }
+  .tabs button.active{ background:var(--primary); color:#fff; border-color:transparent; }
+
+  .tab-body{ display:none; }
+  .tab-body.active{ display:block; }
+
+  /* orders list */
+  .list{ display:flex; flex-direction:column; gap:10px; }
+  .orderItem{ padding:10px; border-radius:12px; border:1px solid var(--line); background:#fff; cursor:pointer; }
+  .orderItem:hover{ outline:2px solid rgba(11,58,83,.12); }
+  .orderItem.active{ outline:2px solid rgba(11,58,83,.35); }
+  .orderTop{ display:flex; gap:10px; justify-content:space-between; align-items:flex-start; }
+  .orderNo{ font-weight:900; }
+  .meta{ font-size:12px; color:var(--muted); line-height:1.45; }
+  .totals{ font-size:12px; color:var(--muted); margin-top:6px; display:flex; gap:10px; flex-wrap:wrap; }
+
+  /* detail */
+  .detailHead{ display:flex; gap:10px; justify-content:space-between; align-items:center; flex-wrap:wrap; }
+  .detailTitle{ font-weight:900; font-size:16px; }
+  .detailGrid{ display:grid; grid-template-columns: 1fr; gap:10px; }
+  .box{ border:1px solid var(--line); border-radius:12px; padding:10px; background:#fff; }
+  .boxTitle{ font-size:12px; color:var(--muted); font-weight:900; margin-bottom:6px; }
+  .items{ display:flex; flex-direction:column; gap:6px; }
+  .it{ display:flex; gap:10px; justify-content:space-between; align-items:flex-start; border-top:1px dashed var(--line); padding-top:6px; }
+  .it:first-child{ border-top:none; padding-top:0; }
+  .itName{ font-weight:800; }
+  .itSub{ font-size:12px; color:var(--muted); margin-top:2px; }
+  .itRight{ text-align:right; font-size:12px; color:var(--muted); white-space:nowrap; }
+  .sumRow{ display:flex; justify-content:space-between; gap:10px; font-size:13px; padding:4px 0; }
+  .sumRow strong{ font-weight:900; }
+  .hr{ height:1px; background:var(--line); margin:8px 0; }
+
+  /* =========================
+     注文明細を全画面表示（タブ押下時）
+     ========================= */
+  body.order-fullscreen{ overflow:hidden; }
+  body.order-fullscreen #tab-order{
+    position:fixed; inset:0; z-index:9999; background:#fff; overflow-y:auto; padding:14px;
+  }
+  body.order-fullscreen .tabs,
+  body.order-fullscreen .no-print,
+  body.order-fullscreen #tab-ship{ display:none !important; }
+  body.order-fullscreen .wrap{ max-width:900px; }
+
+  /* 印刷：注文明細だけ */
+  @media print{
+    body{ background:#fff; }
+    body *{ visibility:hidden !important; }
+    #printOrder, #printOrder *{ visibility:visible !important; }
+    #printOrder{ position:absolute; left:0; top:0; width:100%; }
+    .print-hide{ display:none !important; }
+  }
+</style>
 </head>
 <body>
-  <div class="wrap">
-    <h1>管理（発送通知 / 注文明細）</h1>
-
-    <div class="card">
-      <div class="bar">
-        <div style="min-width:260px; flex:1;">
-          <label>管理トークン（ADMIN_API_TOKEN / ADMIN_CODE）</label>
-          <input id="token" placeholder="例: xxxx" />
-        </div>
-        <div style="width:180px;">
-          <label>日付（任意）</label>
-          <input id="date" placeholder="YYYYMMDD 例: 20260103" />
-        </div>
-        <div>
-          <label>&nbsp;</label>
-          <button class="btn" id="loadBtn">注文を読み込む</button>
-        </div>
-        <div>
-          <label>&nbsp;</label>
-          <button class="btn ghost" id="printBtn">明細タブを印刷</button>
-        </div>
-        <div style="flex:1; min-width:260px;">
-          <label>ステータス</label>
-          <div id="status" class="small">未読み込み</div>
-        </div>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <div class="title">管理：注文・発送通知</div>
+      <div class="hint">
+        ・上のタブで切り替え（発送通知 / 注文明細）<br>
+        ・「注文明細」タブは<strong>全画面表示</strong>になります。印刷は<strong>注文明細だけ</strong>印刷されます。
       </div>
-
-      <div class="tabs">
-        <button class="tab active" id="tabShip">発送通知</button>
-        <button class="tab" id="tabDetail">注文明細</button>
-      </div>
-
-      <!-- 発送通知タブ -->
-      <div id="paneShip">
-        <div class="small">注文を選んで、発送通知メッセージを送れます（LINE Push）。</div>
-        <div id="ordersShip" class="orders"></div>
-      </div>
-
-      <!-- 注文明細タブ -->
-      <div id="paneDetail" style="display:none;">
-        <div class="small">印刷したい注文をここから選べます（右上「明細タブを印刷」）。</div>
-        <div class="grid" style="margin-top:12px;">
-          <div class="printArea">
-            <div class="printHead">
-              <div>
-                <div style="font-weight:900;">注文明細</div>
-                <div class="small" id="detailHint">左の一覧から選択してください</div>
-              </div>
-              <div class="small mono" id="detailId"></div>
-            </div>
-            <div class="hr"></div>
-            <div id="detailBody" class="small">まだ選択されていません。</div>
-          </div>
-          <div class="printArea">
-            <div style="font-weight:900;">注文一覧（クリックで表示）</div>
-            <div class="hr"></div>
-            <div id="ordersDetail" class="orders" style="margin-top:0;"></div>
-          </div>
-        </div>
-      </div>
+    </div>
+    <div class="row no-print">
+      <span id="status" class="pill">未接続</span>
     </div>
   </div>
 
-<script>
-(function(){
-  const $ = (id)=>document.getElementById(id);
+  <div class="card no-print">
+    <div class="row">
+      <div class="field" style="min-width:260px;">
+        <label>管理トークン（ADMIN_API_TOKEN）</label>
+        <input id="token" type="password" placeholder="x-admin-token" />
+      </div>
+      <div class="field" style="min-width:180px;">
+        <label>日付（任意 / YYYYMMDD）</label>
+        <input id="date" placeholder="例：20260103" />
+      </div>
+      <div class="field">
+        <label>読み込み</label>
+        <button class="primary" id="btnLoad">注文を取得</button>
+      </div>
+      <div class="field" style="min-width:240px;">
+        <label>検索（注文ID / 名前 / userId）</label>
+        <input id="q" placeholder="例：123 / 山田 / Uxxxxxxxx" />
+      </div>
+    </div>
 
-  const state = {
-    orders: [],
-    selected: null
-  };
+    <div class="hr"></div>
 
-  function yen(n){
-    n = Number(n||0);
-    return n.toLocaleString("ja-JP") + "円";
-  }
-  function toISO(ts){
-    try { return new Date(ts).toLocaleString("ja-JP"); } catch { return String(ts||""); }
-  }
-  function itemLines(items){
-    return (items||[]).map(it=>{
-      const v = it.volume ? `（${it.volume}）` : "";
-      return `・${it.name}${v} × ${it.qty}  @${yen(it.price)}`;
-    }).join("\n");
-  }
-  function addrText(a){
-    if(!a) return "";
-    const l1 = `〒${a.postal||""} ${a.prefecture||""}${a.city||""}${a.address1||""} ${a.address2||""}`.trim();
-    const l2 = `${a.name||""}`.trim();
-    const l3 = a.phone ? `TEL:${a.phone}` : "";
-    return [l2,l1,l3].filter(Boolean).join("\n");
-  }
+    <div class="tabs">
+      <button id="tabBtnShip" class="active" onclick="showTab('ship')">発送通知</button>
+      <button id="tabBtnOrder" onclick="showTab('order')">注文明細</button>
+    </div>
+  </div>
 
-  async function apiGetOrders(){
-    const token = $("token").value.trim();
-    const date  = $("date").value.trim();
-    if(!token){ $("status").textContent="トークンを入れてください"; return; }
+  <div class="grid" style="margin-top:12px;">
+    <!-- 左：注文一覧 -->
+    <div class="card">
+      <div class="row" style="justify-content:space-between; margin-bottom:8px;">
+        <div style="font-weight:900;">注文一覧</div>
+        <div class="pill" id="countPill">0件</div>
+      </div>
+      <div id="list" class="list">
+        <div class="meta">「注文を取得」を押してください。</div>
+      </div>
+    </div>
 
-    $("status").textContent = "読み込み中…";
-    const url = "/api/admin/orders" + (date ? ("?date=" + encodeURIComponent(date)) : "");
-    const r = await fetch(url, { headers: { "x-admin-token": token } });
-    if(!r.ok){
-      $("status").textContent = "読み込み失敗: " + r.status;
-      return;
-    }
-    const data = await r.json();
-    state.orders = (data && data.items) ? data.items : [];
-    $("status").textContent = `OK: ${state.orders.length}件`;
-    renderShip();
-    renderDetailList();
-    if(state.selected){
-      const found = state.orders.find(o=>String(o.orderNumber)===String(state.selected.orderNumber));
-      if(found) selectDetail(found);
-    }
-  }
-
-  function renderShip(){
-    const root = $("ordersShip");
-    root.innerHTML = "";
-    if(!state.orders.length){
-      root.innerHTML = `<div class="small">注文がありません。</div>`;
-      return;
-    }
-    state.orders.forEach(o=>{
-      const cod = Number(o.codFee||0);
-      const pay = (o.payment==="card") ? "カード" : "代引";
-      const itemsText = itemLines(o.items);
-      const addr = addrText(o.address);
-
-      const template =
-`発送が完了しました。
-【注文ID】${o.orderNumber}
-【お届け先】
-${addr}
-
-【内容】
-${itemsText}
-
-【商品合計】${yen(o.subtotal)}
-【送料】${yen(o.shipping)}
-${cod>0?`【代引手数料】${yen(cod)}\n`:""}【合計】${yen(o.finalTotal)}
-
-追跡番号：XXXXXXXXXXXX
-（ヤマト運輸）`;
-
-      const el = document.createElement("div");
-      el.className = "order";
-      el.innerHTML = `
-        <div class="row">
-          <div>
-            <div style="font-weight:900;">注文ID: ${o.orderNumber}</div>
-            <div class="meta">${toISO(o.ts)} / ${pay} / ${o.region || ""}</div>
+    <!-- 右：タブ内容 -->
+    <div>
+      <!-- 発送通知 -->
+      <div id="tab-ship" class="tab-body active">
+        <div class="card">
+          <div class="detailHead">
+            <div class="detailTitle">発送通知（選択中の注文へ送信）</div>
+            <div class="pill">LINE Push</div>
           </div>
-          <div class="kpi">
-            <span class="pill">小計 ${yen(o.subtotal)}</span>
-            <span class="pill">送料 ${yen(o.shipping)}</span>
-            ${cod>0?`<span class="pill">代引 ${yen(cod)}</span>`:""}
-            <span class="pill">合計 ${yen(o.finalTotal)}</span>
+
+          <div class="hr"></div>
+
+          <div class="field">
+            <label>宛先 userId（自動：選択中の注文）</label>
+            <input id="shipUserId" placeholder="Uxxxxxxxx..." />
           </div>
+
+          <div class="field">
+            <label>通知文（例：発送しました／追跡番号など）</label>
+            <textarea id="shipMsg" placeholder="例：
+発送しました。
+追跡番号：1234-5678-9012
+到着予定：明日〜明後日"></textarea>
+          </div>
+
+          <div class="row" style="justify-content:flex-end;">
+            <button class="primary" id="btnShip">発送通知を送る</button>
+          </div>
+
+          <div class="meta" id="shipResult" style="margin-top:8px;"></div>
         </div>
+      </div>
 
-        <div class="addr">${addr || "（住所情報なし）"}</div>
-        <div class="items">${itemsText || "（明細なし）"}</div>
-
-        <div style="margin-top:10px;">
-          <label>発送通知メッセージ（編集可）</label>
-          <textarea class="msg"></textarea>
-          <div class="row" style="margin-top:8px;">
-            <div class="small mono">送信先 userId: ${o.userId||""}</div>
-            <div style="display:flex; gap:8px;">
-              <button class="btn secondary copy">テンプレを入れる</button>
-              <button class="btn send">この内容で送信</button>
+      <!-- 注文明細（全画面化の対象） -->
+      <div id="tab-order" class="tab-body">
+        <!-- ここだけ印刷したい -->
+        <div id="printOrder" class="card" style="border:none; box-shadow:none; background:#fff; padding:0;">
+          <div class="detailHead print-hide">
+            <div class="detailTitle">注文明細</div>
+            <div class="row">
+              <button class="ghost" onclick="showTab('ship')">← 戻る</button>
+              <button class="primary" onclick="window.print()">印刷</button>
             </div>
           </div>
-        </div>
-      `;
-      const ta = el.querySelector("textarea.msg");
-      const btnCopy = el.querySelector("button.copy");
-      const btnSend = el.querySelector("button.send");
-      btnCopy.onclick = ()=>{ ta.value = template; };
-      btnSend.onclick = async ()=>{
-        const token = $("token").value.trim();
-        const msg = ta.value.trim();
-        if(!msg){ alert("メッセージが空です"); return; }
-        if(!token){ alert("トークンが必要です"); return; }
-        const r = await fetch("/api/admin/orders/notify-shipped", {
-          method:"POST",
-          headers:{ "Content-Type":"application/json", "x-admin-token": token },
-          body: JSON.stringify({ userId: o.userId, message: msg })
-        });
-        if(r.ok) alert("送信しました");
-        else alert("送信失敗: " + r.status);
-      };
 
-      root.appendChild(el);
-    });
+          <div class="card" style="margin-top:10px;">
+            <div id="detailEmpty" class="meta">左の一覧から注文を選択してください。</div>
+
+            <div id="detail" style="display:none;">
+              <div class="detailHead">
+                <div>
+                  <div class="detailTitle">注文ID：<span id="dOrderId"></span></div>
+                  <div class="meta" id="dMeta"></div>
+                </div>
+                <div class="row">
+                  <span class="pill" id="dPay"></span>
+                  <span class="pill" id="dStatus"></span>
+                </div>
+              </div>
+
+              <div class="hr"></div>
+
+              <div class="detailGrid">
+                <div class="box">
+                  <div class="boxTitle">お届け先</div>
+                  <div id="dAddr" style="white-space:pre-wrap; line-height:1.6;"></div>
+                </div>
+
+                <div class="box">
+                  <div class="boxTitle">商品</div>
+                  <div id="dItems" class="items"></div>
+                </div>
+
+                <div class="box">
+                  <div class="boxTitle">金額</div>
+                  <div class="sumRow"><span>小計（商品合計）</span><strong id="dSubtotal"></strong></div>
+                  <div class="sumRow"><span>送料</span><strong id="dShipping"></strong></div>
+                  <div class="sumRow" id="rowCod" style="display:none;"><span>代引手数料</span><strong id="dCodFee"></strong></div>
+                  <div class="hr"></div>
+                  <div class="sumRow" style="font-size:15px;"><span>合計</span><strong id="dTotal"></strong></div>
+                </div>
+
+                <div class="box print-hide">
+                  <div class="boxTitle">この注文の userId（発送通知に使用）</div>
+                  <div class="row" style="justify-content:space-between;">
+                    <code id="dUserId" style="font-size:12px; color:#374151; word-break:break-all;"></code>
+                    <button class="ghost" id="btnCopyUserId">コピー</button>
+                  </div>
+                </div>
+
+              </div><!-- detailGrid -->
+            </div><!-- detail -->
+          </div><!-- card -->
+        </div><!-- printOrder -->
+      </div><!-- tab-order -->
+    </div>
+  </div>
+</div>
+
+<script>
+  // ===== helpers =====
+  const el = (id) => document.getElementById(id);
+  const yen = (n) => (Number(n||0)).toLocaleString("ja-JP") + "円";
+
+  function setStatus(kind, text){
+    const s = el("status");
+    s.textContent = text;
+    s.classList.remove("ok","bad");
+    if(kind==="ok") s.classList.add("ok");
+    if(kind==="bad") s.classList.add("bad");
   }
 
-  function renderDetailList(){
-    const root = $("ordersDetail");
-    root.innerHTML = "";
-    if(!state.orders.length){
-      root.innerHTML = `<div class="small">注文がありません。</div>`;
+  function adminHeaders(){
+    const token = (el("token").value || "").trim();
+    const h = { "Content-Type":"application/json" };
+    if(token) h["x-admin-token"] = token;
+    return h;
+  }
+
+  function showTab(tab){
+    // tabs button active
+    el("tabBtnShip").classList.toggle("active", tab==="ship");
+    el("tabBtnOrder").classList.toggle("active", tab==="order");
+
+    // bodies
+    document.querySelectorAll(".tab-body").forEach(x => x.classList.remove("active"));
+    document.body.classList.remove("order-fullscreen");
+
+    if(tab==="order"){
+      el("tab-order").classList.add("active");
+      document.body.classList.add("order-fullscreen");
+    }else{
+      el("tab-ship").classList.add("active");
+    }
+  }
+
+  // ===== state =====
+  let ORDERS = [];
+  let SELECTED = null;
+
+  // ===== list render =====
+  function normalizeItems(items){
+    if(Array.isArray(items)) return items;
+    try { return JSON.parse(items); } catch { return []; }
+  }
+
+  // ★小計が「代引込み」になる問題をここで確実に補正
+  // server側の row.total は「合計（送料+代引含む）」なので、
+  // 小計（商品合計） = total - shipping - (codFee if cod)
+  function calcSubtotalFromRow(row){
+    const total = Number(row.finalTotal ?? row.total ?? 0);
+    const shipping = Number(row.shipping ?? row.shipping_fee ?? row.shippingFee ?? 0);
+    const isCod = (row.payment === "cod" || row.payment_method === "cod" || row.paymentMethod === "cod");
+    const codFee = isCod ? 330 : 0;
+    return Math.max(0, total - shipping - codFee);
+  }
+
+  function formatAddr(a){
+    if(!a) return "（住所データなし）";
+    const name = a.name || "";
+    const postal = a.postal || a.zip || "";
+    const pref = a.prefecture || a.pref || "";
+    const city = a.city || "";
+    const ad1 = a.address1 || "";
+    const ad2 = a.address2 || "";
+    const phone = a.phone || "";
+    const line1 = `〒${postal} ${pref}${city}${ad1} ${ad2}`.trim();
+    return [name, line1, phone ? `TEL:${phone}` : ""].filter(Boolean).join("\n");
+  }
+
+  function paymentLabel(p){
+    if(p==="card") return "クレジット";
+    if(p==="cod") return "代引";
+    return p || "-";
+  }
+
+  function statusLabel(s){
+    if(!s) return "-";
+    if(s==="paid") return "決済完了";
+    if(s==="new") return "新規";
+    if(s==="confirmed") return "確定";
+    return s;
+  }
+
+  function renderList(){
+    const q = (el("q").value || "").trim().toLowerCase();
+    const list = el("list");
+
+    const filtered = ORDERS.filter(o => {
+      if(!q) return true;
+      const id = String(o.orderNumber ?? o.id ?? "");
+      const uid = String(o.userId ?? o.user_id ?? "");
+      const name = String((o.address && o.address.name) ? o.address.name : (o.name||""));
+      return id.toLowerCase().includes(q) || uid.toLowerCase().includes(q) || name.toLowerCase().includes(q);
+    });
+
+    el("countPill").textContent = filtered.length + "件";
+
+    if(filtered.length===0){
+      list.innerHTML = `<div class="meta">該当なし</div>`;
       return;
     }
-    state.orders.forEach(o=>{
-      const cod = Number(o.codFee||0);
-      const pay = (o.payment==="card") ? "カード" : "代引";
-      const el = document.createElement("div");
-      el.className = "order";
-      el.style.cursor = "pointer";
-      el.innerHTML = `
-        <div class="row">
+
+    list.innerHTML = "";
+    for(const o of filtered){
+      const id = o.orderNumber ?? o.id;
+      const pay = o.payment ?? o.payment_method ?? o.paymentMethod;
+      const st = o.status ?? "";
+      const total = Number(o.finalTotal ?? o.total ?? 0);
+      const shipping = Number(o.shipping ?? o.shipping_fee ?? o.shippingFee ?? 0);
+      const codFee = (pay==="cod") ? 330 : 0;
+      const subtotal = calcSubtotalFromRow(o);
+
+      const dt = o.ts || o.created_at || "";
+      const name = (o.address && o.address.name) ? o.address.name : (o.name || "");
+      const uid = o.userId ?? o.user_id ?? "";
+
+      const div = document.createElement("div");
+      div.className = "orderItem" + (SELECTED && String(SELECTED.orderNumber??SELECTED.id)===String(id) ? " active" : "");
+      div.onclick = () => selectOrder(o);
+
+      div.innerHTML = `
+        <div class="orderTop">
           <div>
-            <div style="font-weight:900;">注文ID: ${o.orderNumber}</div>
-            <div class="meta">${toISO(o.ts)} / ${pay} / ${o.region || ""}</div>
+            <div class="orderNo">注文ID：${id}</div>
+            <div class="meta">${name ? ("宛名：" + escapeHtml(name) + "<br>") : ""}userId：${escapeHtml(uid)}</div>
           </div>
-          <div class="kpi">
-            <span class="pill">小計 ${yen(o.subtotal)}</span>
-            <span class="pill">送料 ${yen(o.shipping)}</span>
-            ${cod>0?`<span class="pill">代引 ${yen(cod)}</span>`:""}
-            <span class="pill">合計 ${yen(o.finalTotal)}</span>
+          <div class="meta" style="text-align:right;">
+            ${escapeHtml(dt)}
           </div>
         </div>
+        <div class="totals">
+          <span class="pill">${paymentLabel(pay)} / ${statusLabel(st)}</span>
+          <span class="pill">小計 ${yen(subtotal)}</span>
+          <span class="pill">送料 ${yen(shipping)}</span>
+          ${pay==="cod" ? `<span class="pill">代引 ${yen(codFee)}</span>` : ``}
+          <span class="pill"><strong>合計 ${yen(total)}</strong></span>
+        </div>
       `;
-      el.onclick = ()=>selectDetail(o);
-      root.appendChild(el);
-    });
-  }
-
-  function selectDetail(o){
-    state.selected = o;
-    $("detailHint").textContent = `${toISO(o.ts)} / ${o.payment==="card"?"カード":"代引"}`;
-    $("detailId").textContent = "ORDER#" + o.orderNumber;
-
-    const cod = Number(o.codFee||0);
-    const addr = addrText(o.address);
-    const itemsText = itemLines(o.items);
-
-    $("detailBody").innerHTML = `
-      <div style="font-weight:900; font-size:14px;">お届け先</div>
-      <div class="addr" style="margin-top:6px;">${(addr||"（住所なし）").replaceAll("\n","<br>")}</div>
-
-      <div class="hr"></div>
-
-      <div style="font-weight:900; font-size:14px;">商品明細</div>
-      <div class="items" style="margin-top:6px;">${(itemsText||"（明細なし）").replaceAll("\n","<br>")}</div>
-
-      <div class="hr"></div>
-
-      <div class="row">
-        <div style="font-weight:900;">商品合計</div>
-        <div class="right" style="font-weight:900;">${yen(o.subtotal)}</div>
-      </div>
-      <div class="row">
-        <div style="font-weight:900;">送料</div>
-        <div class="right" style="font-weight:900;">${yen(o.shipping)}</div>
-      </div>
-      ${cod>0?`
-      <div class="row">
-        <div style="font-weight:900;">代引手数料</div>
-        <div class="right" style="font-weight:900;">${yen(cod)}</div>
-      </div>`:""}
-      <div class="hr"></div>
-      <div class="row">
-        <div style="font-weight:900; font-size:16px;">合計</div>
-        <div class="right" style="font-weight:900; font-size:16px;">${yen(o.finalTotal)}</div>
-      </div>
-    `;
-  }
-
-  function showTab(which){
-    const ship = $("tabShip"), det = $("tabDetail");
-    const paneShip = $("paneShip"), paneDetail = $("paneDetail");
-    if(which==="ship"){
-      ship.classList.add("active"); det.classList.remove("active");
-      paneShip.style.display="block"; paneDetail.style.display="none";
-    }else{
-      det.classList.add("active"); ship.classList.remove("active");
-      paneDetail.style.display="block"; paneShip.style.display="none";
+      list.appendChild(div);
     }
   }
 
-  $("tabShip").onclick = ()=>showTab("ship");
-  $("tabDetail").onclick = ()=>showTab("detail");
-  $("loadBtn").onclick = apiGetOrders;
+  function escapeHtml(s){
+    return String(s ?? "").replace(/[&<>"']/g, (m)=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
+  }
 
-  $("printBtn").onclick = ()=>{
-    // 明細タブを表示して印刷
-    showTab("detail");
-    setTimeout(()=>window.print(), 50);
-  };
+  // ===== detail render =====
+  function selectOrder(o){
+    SELECTED = o;
 
-})();
+    // highlight
+    document.querySelectorAll(".orderItem").forEach(x => x.classList.remove("active"));
+    // re-render to apply active quickly (simple)
+    renderList();
+
+    // set ship userId
+    const uid = o.userId ?? o.user_id ?? "";
+    el("shipUserId").value = uid;
+
+    // fill detail
+    el("detailEmpty").style.display = "none";
+    el("detail").style.display = "block";
+
+    const id = o.orderNumber ?? o.id;
+    el("dOrderId").textContent = id;
+
+    const dt = o.ts || o.created_at || "";
+    el("dMeta").textContent = dt ? `作成：${dt}` : "";
+
+    const pay = o.payment ?? o.payment_method ?? o.paymentMethod;
+    const st  = o.status ?? "";
+    el("dPay").textContent = "支払い：" + paymentLabel(pay);
+    el("dStatus").textContent = "状態：" + statusLabel(st);
+
+    const addr = o.address || {
+      name: o.name || "",
+      postal: o.zip || "",
+      prefecture: o.pref || "",
+      city: "",
+      address1: o.address || "",
+      address2: "",
+      phone: ""
+    };
+    el("dAddr").textContent = formatAddr(addr);
+
+    const items = normalizeItems(o.items);
+    const itemsBox = el("dItems");
+    itemsBox.innerHTML = "";
+    for(const it of items){
+      const name = it.name || it.id || "商品";
+      const vol = it.volume ? `（${it.volume}）` : "";
+      const qty = Number(it.qty||0);
+      const price = Number(it.price||0);
+      const lineTotal = Number(it.lineTotal || (price*qty) || 0);
+
+      const row = document.createElement("div");
+      row.className = "it";
+      row.innerHTML = `
+        <div>
+          <div class="itName">${escapeHtml(name)}${escapeHtml(vol)}</div>
+          <div class="itSub">単価：${yen(price)}　数量：${qty}</div>
+        </div>
+        <div class="itRight">小計<br><strong>${yen(lineTotal)}</strong></div>
+      `;
+      itemsBox.appendChild(row);
+    }
+
+    const total = Number(o.finalTotal ?? o.total ?? 0);
+    const shipping = Number(o.shipping ?? o.shipping_fee ?? o.shippingFee ?? 0);
+    const subtotal = calcSubtotalFromRow(o);
+    const isCod = (pay==="cod");
+    const codFee = isCod ? 330 : 0;
+
+    el("dSubtotal").textContent = yen(subtotal);
+    el("dShipping").textContent = yen(shipping);
+    el("rowCod").style.display = isCod ? "flex" : "none";
+    el("dCodFee").textContent = yen(codFee);
+    el("dTotal").textContent = yen(total);
+
+    el("dUserId").textContent = uid || "-";
+  }
+
+  // ===== API calls =====
+  async function loadOrders(){
+    try{
+      setStatus("","読み込み中…");
+      const date = (el("date").value || "").trim();
+      const qs = date ? ("?date=" + encodeURIComponent(date)) : "";
+      const r = await fetch("/api/admin/orders" + qs, { headers: adminHeaders() });
+
+      if(!r.ok){
+        const t = await r.text().catch(()=> "");
+        setStatus("bad", "取得失敗");
+        alert("注文取得に失敗しました。\n" + r.status + " " + t);
+        return;
+      }
+      const data = await r.json();
+      ORDERS = Array.isArray(data.items) ? data.items : [];
+      setStatus("ok", "接続OK / " + ORDERS.length + "件");
+
+      // 初回は先頭を選択しない（誤送信防止）
+      SELECTED = null;
+      el("detailEmpty").style.display = "block";
+      el("detail").style.display = "none";
+      el("shipUserId").value = "";
+      el("shipResult").textContent = "";
+
+      renderList();
+    }catch(e){
+      console.error(e);
+      setStatus("bad", "取得エラー");
+      alert("エラー：" + (e?.message || e));
+    }
+  }
+
+  async function sendShip(){
+    try{
+      const userId = (el("shipUserId").value || "").trim();
+      const message = (el("shipMsg").value || "").trim();
+      if(!userId){ alert("userId が空です（左の注文を選択してください）"); return; }
+      if(!message){ alert("通知文が空です"); return; }
+
+      el("shipResult").textContent = "送信中…";
+
+      const r = await fetch("/api/admin/orders/notify-shipped", {
+        method:"POST",
+        headers: adminHeaders(),
+        body: JSON.stringify({ userId, message })
+      });
+      if(!r.ok){
+        const t = await r.text().catch(()=> "");
+        el("shipResult").innerHTML = `<span class="bad">送信失敗</span>：${escapeHtml(r.status + " " + t)}`;
+        return;
+      }
+      el("shipResult").innerHTML = `<span class="ok">送信しました</span>`;
+    }catch(e){
+      el("shipResult").innerHTML = `<span class="bad">送信エラー</span>：${escapeHtml(e?.message || e)}`;
+    }
+  }
+
+  // ===== events =====
+  el("btnLoad").addEventListener("click", loadOrders);
+  el("btnShip").addEventListener("click", sendShip);
+  el("q").addEventListener("input", renderList);
+
+  el("btnCopyUserId").addEventListener("click", async ()=>{
+    try{
+      const txt = el("dUserId").textContent || "";
+      await navigator.clipboard.writeText(txt);
+      alert("コピーしました");
+    }catch{
+      alert("コピーできませんでした");
+    }
+  });
+
+  // 初期
+  setStatus("", "トークン入力→注文取得");
 </script>
 </body>
 </html>

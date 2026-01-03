@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>住所登録</title>
+
+  <!-- LIFF SDK -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+  <style>
+    :root{
+      --bg:#f6f7f9;
+      --card:#ffffff;
+      --text:#111827;
+      --muted:#6b7280;
+      --primary:#0b3a53;
+      --border:#e5e7eb;
+      --radius:14px;
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      background:var(--bg);
+      color:var(--text);
+    }
+    .wrap{
+      max-width:720px;
+      margin:0 auto;
+      padding:16px 14px 40px;
+    }
+    h1{
+      font-size:20px;
+      margin:0 0 8px;
+    }
+    .lead{
+      font-size:13px;
+      color:var(--muted);
+      margin-bottom:14px;
+      line-height:1.6;
+    }
+    .card{
+      background:var(--card);
+      border-radius:var(--radius);
+      padding:14px;
+      box-shadow:0 1px 3px rgba(0,0,0,.08);
+    }
+    .field{ margin-bottom:10px; }
+    label{
+      display:block;
+      font-size:13px;
+      font-weight:700;
+      margin-bottom:4px;
+    }
+    input, select{
+      width:100%;
+      padding:10px;
+      font-size:15px;
+      border-radius:10px;
+      border:1px solid var(--border);
+    }
+    button{
+      width:100%;
+      padding:14px;
+      margin-top:14px;
+      font-size:16px;
+      font-weight:700;
+      border-radius:12px;
+      border:none;
+      background:var(--primary);
+      color:#fff;
+    }
+    .status{
+      margin-top:10px;
+      font-size:13px;
+      color:var(--muted);
+      min-height:1.4em;
+    }
+    .warn{
+      background:#fff3cd;
+      color:#856404;
+      padding:10px;
+      border-radius:10px;
+      font-size:13px;
+      margin-bottom:12px;
+    }
+  </style>
+</head>
+
+<body>
+<div class="wrap">
+  <h1>住所登録</h1>
+  <p class="lead">
+    商品発送に必要な情報をご入力ください。
+  </p>
+
+  <div id="pcWarn" class="warn" style="display:none;">
+    このページは LINEアプリ内で開いてください。
+  </div>
+
+  <div class="card">
+    <div class="field">
+      <label>お名前</label>
+      <input id="name" placeholder="例）木村 太郎" />
+    </div>
+
+    <div class="field">
+      <label>電話番号</label>
+      <input id="phone" placeholder="09012345678" inputmode="numeric" />
+    </div>
+
+    <div class="field">
+      <label>郵便番号</label>
+      <input id="zip" placeholder="1234567（ハイフン不要）" inputmode="numeric" />
+    </div>
+
+    <div class="field">
+      <label>都道府県</label>
+      <input id="pref" />
+    </div>
+
+    <div class="field">
+      <label>市区町村・番地</label>
+      <input id="address" placeholder="〇〇市〇〇町1-2-3" />
+    </div>
+
+    <button id="saveBtn">住所を保存する</button>
+
+    <div id="status" class="status"></div>
+  </div>
+</div>
+
+<script>
+(async function(){
+  const statusEl = document.getElementById("status");
+  const pcWarn = document.getElementById("pcWarn");
+  const params = new URLSearchParams(location.search);
+  const nextUrl = params.get("next") || "";
+
+  function setStatus(msg){ statusEl.textContent = msg || ""; }
+
+  // LIFF初期化
+  try{
+    await liff.init({ liffId: "{{LIFF_ID_ADDRESS}}" });
+  }catch(e){
+    pcWarn.style.display = "block";
+    console.warn("LIFF未初期化", e);
+    return;
+  }
+
+  if(!liff.isInClient()){
+    pcWarn.style.display = "block";
+    return;
+  }
+
+  // 郵便番号 → 住所補完（ZipCloud）
+  document.getElementById("zip").addEventListener("blur", async ()=>{
+    const zip = document.getElementById("zip").value.trim();
+    if(!/^\d{7}$/.test(zip)) return;
+
+    try{
+      const res = await fetch(`https://zipcloud.ibsnet.co.jp/api/search?zipcode=${zip}`);
+      const data = await res.json();
+      if(data.results && data.results[0]){
+        document.getElementById("pref").value =
+          data.results[0].address1;
+        document.getElementById("address").value =
+          data.results[0].address2 + data.results[0].address3;
+      }
+    }catch(e){
+      console.warn("郵便番号補完失敗", e);
+    }
+  });
+
+  // 保存
+  document.getElementById("saveBtn").onclick = async ()=>{
+    const payload = {
+      name: name.value.trim(),
+      phone: phone.value.trim(),
+      zip: zip.value.trim(),
+      pref: pref.value.trim(),
+      address: address.value.trim()
+    };
+
+    if(!payload.name || !payload.phone || !payload.zip || !payload.pref || !payload.address){
+      setStatus("すべて入力してください");
+      return;
+    }
+
+    setStatus("保存中…");
+
+    try{
+      const res = await fetch("/api/address/set",{
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body:JSON.stringify(payload)
+      });
+
+      if(!res.ok) throw new Error("save failed");
+
+      setStatus("保存しました");
+
+      setTimeout(()=>{
+        if(nextUrl){
+          location.href = nextUrl;
+        }else{
+          liff.closeWindow();
+        }
+      }, 600);
+
+    }catch(e){
+      console.error(e);
+      setStatus("保存に失敗しました");
+    }
+  };
+})();
+</script>
+</body>
+</html>

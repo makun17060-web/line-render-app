@@ -7,14 +7,14 @@
  *
  * ✅ 追加点（今回）
  * - 友だち追加（follow）があった時に ADMIN_USER_ID に通知（Push）
- * - ★ブロック（unfollow）も ADMIN_USER_ID に通知（Push）←今回
+ * - ブロック（unfollow）も ADMIN_USER_ID に通知（Push）
  *   表示名 / userId / 発生日時（JST）/ 今日の追加・ブロック累計（friend_logs）
  *
  * ✅ 仕様（維持）
  * - requireAdmin は1個だけ
  * - 注文完了通知（注文者＋管理者）統一
  * - 送料はDB優先
- * - LIFF_ID_ADDRESS の別名対応
+ * - ★ LIFF_ID_ADDRESS の別名対応（LIFF_ID_ADD を吸収） ←今回の重要
  * - オリジナルセット専用注文API
  * - Render Disk 永続化
  */
@@ -33,39 +33,47 @@ const { Pool } = require("pg");
 let Stripe = null;
 try { Stripe = require("stripe"); } catch {}
 
-const {
-  LINE_CHANNEL_ACCESS_TOKEN,
-  LINE_CHANNEL_SECRET,
-  DATABASE_URL,
+// =========================
+// ✅ ENV（★ destructuring をやめて別名吸収を確実に）
+// =========================
+const env = process.env;
 
-  PUBLIC_BASE_URL,
-  LIFF_BASE_URL,
-  LIFF_CHANNEL_ID,
+// ---- required
+const LINE_CHANNEL_ACCESS_TOKEN = env.LINE_CHANNEL_ACCESS_TOKEN;
+const LINE_CHANNEL_SECRET       = env.LINE_CHANNEL_SECRET;
+const DATABASE_URL              = env.DATABASE_URL;
 
-  LIFF_ID_DEFAULT = "",
-  LIFF_ID_ORDER = "",
-  LIFF_ID_ADDRESS = "",
-  LIFF_ID_COD = "",
+// ---- optional
+const PUBLIC_BASE_URL  = env.PUBLIC_BASE_URL;
+const LIFF_BASE_URL    = env.LIFF_BASE_URL;
+const LIFF_CHANNEL_ID  = env.LIFF_CHANNEL_ID;
 
-  DATA_DIR = "/var/data",
-  UPLOAD_DIR = "/var/data/uploads",
+const LIFF_ID_DEFAULT  = (env.LIFF_ID_DEFAULT || "").trim();
+const LIFF_ID_ORDER    = (env.LIFF_ID_ORDER   || "").trim();
 
-  ADMIN_API_TOKEN = "",
-  ADMIN_CODE = "",
-  ADMIN_USER_ID = "",
+// ★ここが今回の肝：住所LIFFのキー名ゆれを吸収（LIFF_ID_ADD）
+const LIFF_ID_ADDRESS  = (env.LIFF_ID_ADDRESS || env.LIFF_ID_ADD || "").trim();
 
-  STRIPE_SECRET_KEY = "",
-  STRIPE_WEBHOOK_SECRET = "",
-  STRIPE_SUCCESS_URL = "",
-  STRIPE_CANCEL_URL = "",
+const LIFF_ID_COD      = (env.LIFF_ID_COD     || "").trim();
 
-  COD_FEE = "330",
+const DATA_DIR   = env.DATA_DIR   || "/var/data";
+const UPLOAD_DIR = env.UPLOAD_DIR || "/var/data/uploads";
 
-  KEYWORD_DIRECT = "直接注文",
-  KEYWORD_KUSUKE = "久助",
+const ADMIN_API_TOKEN = env.ADMIN_API_TOKEN || "";
+const ADMIN_CODE      = env.ADMIN_CODE || "";
+const ADMIN_USER_ID   = env.ADMIN_USER_ID || "";
 
-  ORIGINAL_SET_PRODUCT_ID = "original-set-2000",
-} = process.env;
+const STRIPE_SECRET_KEY     = env.STRIPE_SECRET_KEY || "";
+const STRIPE_WEBHOOK_SECRET = env.STRIPE_WEBHOOK_SECRET || "";
+const STRIPE_SUCCESS_URL    = env.STRIPE_SUCCESS_URL || "";
+const STRIPE_CANCEL_URL     = env.STRIPE_CANCEL_URL || "";
+
+const COD_FEE = env.COD_FEE || "330";
+
+const KEYWORD_DIRECT = env.KEYWORD_DIRECT || "直接注文";
+const KEYWORD_KUSUKE = env.KEYWORD_KUSUKE || "久助";
+
+const ORIGINAL_SET_PRODUCT_ID = (env.ORIGINAL_SET_PRODUCT_ID || "original-set-2000").trim();
 
 if (!LINE_CHANNEL_ACCESS_TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
 if (!LINE_CHANNEL_SECRET) throw new Error("LINE_CHANNEL_SECRET is required");
@@ -826,8 +834,6 @@ async function pushTextSafe(to, text) {
 }
 
 // ============== Friend notify (follow/unfollow) ==============
-
-// ★★ 追加：友だち追加を管理者に通知
 async function notifyAdminFriendAdded({ userId, displayName, day }) {
   if (!ADMIN_USER_ID) return;
 
@@ -856,7 +862,6 @@ async function notifyAdminFriendAdded({ userId, displayName, day }) {
   await pushTextSafe(ADMIN_USER_ID, msg);
 }
 
-// ★★ 追加：ブロック（unfollow）を管理者に通知（今回）
 async function notifyAdminFriendBlocked({ userId, displayName, day }) {
   if (!ADMIN_USER_ID) return;
 
@@ -1034,7 +1039,6 @@ app.use((req, res, next) => {
   });
   next();
 });
-
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
 // =========================
@@ -1062,16 +1066,13 @@ app.get("/address", (req, res) => {
   res.redirect(302, `/address.html${q ? "?" + q : ""}`);
 });
 
-// 旧URL（liff-address.html）は、もう cod-register ではなく address.html に寄せる
+// 旧URL（liff-address.html）は address.html に寄せる
 function redirectToAddress(req, res) {
   const q = req.originalUrl.includes("?") ? req.originalUrl.split("?")[1] : "";
   res.redirect(302, `/address.html${q ? "?" + q : ""}`);
 }
 app.get("/liff-address.html", redirectToAddress);
 app.get("/public/liff-address.html", redirectToAddress);
-
-// ★ cod-register.html は “互換ページ” として残す（今まで通り使える）
-
 
 // confirm-cod 名称ゆれ吸収
 app.get("/confirm_cod.html", (req, res) => res.sendFile(path.join(__dirname, "public", "confirm-cod.html")));
@@ -1383,17 +1384,22 @@ app.post("/api/shipping/quote", async (req, res) => {
 });
 
 // =========================
-// LIFF config
+// LIFF config（★ LIFF_ID_ADD 対応済み）
 // =========================
 app.get("/api/liff/config", (req, res) => {
-  const kind = String(req.query.kind || "order").trim();
+  const kind = String(req.query.kind || "order").trim().toLowerCase();
 
+  // order系
   const orderId   = (LIFF_ID_ORDER || LIFF_ID_DEFAULT || "").trim();
+
+  // address系（LIFF_ID_ADDRESS には LIFF_ID_ADD を吸収済み）
   const addressId = (LIFF_ID_ADDRESS || LIFF_ID_COD || LIFF_ID_DEFAULT || "").trim();
 
-  let liffId = "";
-  if (kind === "address" || kind === "register" || kind === "cod") liffId = addressId;
-  else liffId = orderId;
+  const isAddress =
+    kind === "address" || kind === "register" || kind === "cod" ||
+    kind === "addr" || kind === "add";
+
+  const liffId = isAddress ? addressId : orderId;
 
   if (!liffId) return res.status(400).json({ ok:false, error:"LIFF_ID_NOT_SET", kind });
   return res.json({ ok:true, liffId });
@@ -2021,7 +2027,6 @@ app.post("/webhook", line.middleware(lineConfig), async (req, res) => {
   }
 });
 
-
 async function handleEvent(ev) {
   const type = ev.type;
   const userId = ev?.source?.userId || "";
@@ -2068,7 +2073,7 @@ async function onFollow(ev) {
     logErr("notifyAdminFriendAdded failed", e?.message || e);
   }
 
-  // ✅ LIFF URLは liffUrl() に通さない（そのまま使う）
+  // ✅ LIFF URL（あなたの固定運用があるならここは固定でもOK）
   const urlProducts = "https://liff.line.me/2008406620-8CWfgEKh";
   const urlAddress  = "https://liff.line.me/2008406620-4kyQVyqe";
 
@@ -2098,7 +2103,7 @@ async function onUnfollow(ev) {
     [day]
   );
 
-  // ✅ 追加：管理者へ「ブロック」通知（今回）
+  // ✅ 管理者へ「ブロック」通知
   if (userId) {
     let displayName = null;
 
@@ -2267,7 +2272,7 @@ async function main() {
   await loadSessions();
   await ensureDb();
 
-  const port = Number(process.env.PORT || 3000);
+  const port = Number(env.PORT || 3000);
   app.listen(port, () => logInfo(`server started on :${port}`));
 }
 

@@ -211,7 +211,7 @@
       if(!r.ok || !d?.ok) throw new Error(d?.error || "save failed");
 
       alert("住所を保存しました");
-      liff.closeWindow();
+      location.href = returnTo;
     }catch(e){
       debugEl.classList.add("err");
       log("ERR: 保存失敗 " + e.message);

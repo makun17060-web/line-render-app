@@ -1023,6 +1023,8 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
 });
 
 // ここから通常JSON
+app.use("/webhook", express.raw({ type: "*/*" }));
+
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 

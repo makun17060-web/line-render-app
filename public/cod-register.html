@@ -3,144 +3,120 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>住所入力</title>
+  <title>住所登録</title>
 
+  <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
   <style>
     :root{
       --bg:#f7f7f7; --card:#fff; --text:#111827; --muted:#6b7280;
       --pri:#0b3a53; --border:#e5e7eb; --radius:14px;
-      --danger:#b91c1c; --ok:#0a7b19;
+      --danger:#b91c1c;
     }
     *{ box-sizing:border-box; }
-    body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
+    body{
+      margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+      background:var(--bg); color:var(--text);
+    }
     .wrap{ max-width:720px; margin:0 auto; padding:14px 14px 28px; }
     h1{ font-size:18px; margin:0 0 6px; }
-    .muted{ color:var(--muted); font-size:13px; line-height:1.5; }
+    .lead{ font-size:13px; color:var(--muted); line-height:1.6; }
     .card{
-      background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
-      padding:14px; margin-top:12px;
+      background:var(--card); border:1px solid var(--border);
+      border-radius:var(--radius); padding:14px; margin-top:12px;
     }
-    label{ font-size:13px; font-weight:800; display:block; margin-top:10px; }
+    label{ font-size:13px; font-weight:700; display:block; margin-top:10px; }
     input{
-      width:100%; padding:10px; border-radius:10px; border:1px solid var(--border);
-      font-size:15px;
+      width:100%; padding:10px; font-size:15px;
+      border-radius:10px; border:1px solid var(--border);
     }
-    .btn{
+    button{
       margin-top:14px; width:100%; padding:14px;
-      border-radius:14px; border:none;
-      background:var(--pri); color:#fff;
-      font-weight:900; font-size:16px; cursor:pointer;
+      border-radius:14px; border:none; cursor:pointer;
+      font-size:16px; font-weight:800;
     }
-    .btnSub{ background:#fff; color:var(--text); border:1px solid var(--border); }
+    .btnMain{ background:var(--pri); color:#fff; }
+    .btnSub{ background:#fff; border:1px solid var(--border); }
     .debug{
       margin-top:12px; font-size:12px; white-space:pre-line;
-      color:#374151; background:#fff; border:1px dashed var(--border);
+      background:#fff; border:1px dashed var(--border);
       border-radius:12px; padding:10px;
     }
     .err{ color:var(--danger); font-weight:800; }
-    .ok{ color:var(--ok); font-weight:800; }
   </style>
 </head>
 
 <body>
 <div class="wrap">
-  <h1>住所入力</h1>
-  <div class="muted" id="lead">
-    注文のために住所を入力してください（登録済みの場合は自動で表示されます）
-  </div>
+  <h1>住所登録</h1>
+  <div class="lead" id="lead"></div>
 
   <div class="card">
     <label>お名前</label>
-    <input id="name" autocomplete="name">
+    <input id="name">
 
     <label>電話番号</label>
-    <input id="phone" inputmode="tel" autocomplete="tel">
+    <input id="phone">
 
     <label>郵便番号</label>
-    <input id="postal" inputmode="numeric" autocomplete="postal-code">
+    <input id="postal">
 
     <label>都道府県</label>
-    <input id="prefecture" autocomplete="address-level1">
+    <input id="prefecture">
 
     <label>市区町村</label>
-    <input id="city" autocomplete="address-level2">
+    <input id="city">
 
     <label>番地</label>
-    <input id="address1" autocomplete="street-address">
+    <input id="address1">
 
     <label>建物名など（任意）</label>
-    <input id="address2" autocomplete="address-line2">
+    <input id="address2">
 
-    <button class="btn" id="saveBtn" type="button">保存</button>
-    <button class="btn btnSub" id="backBtn" type="button">戻る</button>
+    <button id="saveBtn" class="btnMain">保存</button>
+    <button id="backBtn" class="btnSub">戻る</button>
 
-    <div class="debug" id="debug">debug: 起動中…</div>
+    <div id="debug" class="debug">debug: init…</div>
   </div>
 </div>
 
 <script>
-(async function(){
+(async()=>{
   "use strict";
 
   /* =============================
-     設定（あなたのLIFF）
+     設定
   ============================= */
-  const LIFF_ID_ADDRESS = "2008406620-4kyQVyqe"; // 住所登録用LIFF
-  const ORDER_LIFF_URL  = "https://liff.line.me/2008406620-8CWfgEKh"; // 注文用LIFF（商品一覧側）
+  const LIFF_ID_ADDRESS = "2008406620-4kyQVyqe";
   const KEY_UID = "isoya_userId";
 
   /* =============================
-     クエリ解析
-     mode:
-       - howto : 住所登録だけ（保存したら閉じて終わり）
-       - order : 注文フロー中（保存したら注文に戻る）
+     URLパラメータ
   ============================= */
   const qs = new URLSearchParams(location.search);
-  const mode = (qs.get("mode") || "howto").trim(); // デフォルト howto
-
-  function safeReturnTo(p){
-    p = String(p||"").trim();
-    if(!p) return "";
-    if(p.startsWith("http://") || p.startsWith("https://")) return "";
-    if(!p.startsWith("/")) return "";
-    return p;
-  }
-
-  // 注文フローで戻す先（/confirm.html など）
-  const returnTo = safeReturnTo(qs.get("returnTo")) || "/confirm.html";
-
-  // カートキー（必要なら拡張）
-  const KEY_CART = "isoya_cart";
-  function hasCart(){
-    try{
-      const c = JSON.parse(localStorage.getItem(KEY_CART) || "");
-      return Array.isArray(c?.items) && c.items.length > 0;
-    }catch{ return false; }
-  }
+  const mode = (qs.get("mode") || "").trim(); // "howto" | "order" | ""
+  const returnTo =
+    (qs.get("returnTo") && qs.get("returnTo").startsWith("/"))
+      ? qs.get("returnTo")
+      : "/confirm.html";
 
   /* =============================
      DOM
   ============================= */
   const $ = id => document.getElementById(id);
-  const debugEl = $("debug");
-  const leadEl  = $("lead");
-  const log = (m) => { debugEl.textContent += "\n" + m; };
+  const log = m => $("debug").textContent += "\n" + m;
 
-  function setLead(){
-    if(mode === "howto"){
-      leadEl.textContent = "住所を登録します（登録後はこの画面は閉じて完了です）";
-      $("saveBtn").textContent = "保存して完了";
-    }else{
-      leadEl.textContent = "注文のために住所を入力してください（登録済みの場合は自動で表示されます）";
-      $("saveBtn").textContent = "保存して注文へ戻る";
-    }
-  }
-  setLead();
+  $("lead").textContent =
+    (mode === "howto")
+      ? "住所を登録します（登録後はこの画面を閉じて完了します）"
+      : "注文のために住所を入力してください";
+
+  $("saveBtn").textContent =
+    (mode === "howto") ? "保存して完了" : "保存して注文へ戻る";
 
   /* =============================
-     LIFF 初期化
+     LIFF初期化
   ============================= */
   try{
     await liff.init({ liffId: LIFF_ID_ADDRESS });
@@ -151,79 +127,50 @@
     const prof = await liff.getProfile();
     if(prof?.userId){
       localStorage.setItem(KEY_UID, prof.userId);
-      log("OK: LIFF userId取得");
-    }else{
-      log("WARN: userId取得できず");
+      log("OK userId");
     }
   }catch(e){
-    debugEl.classList.add("err");
-    log("ERR: LIFF初期化失敗 " + (e?.message || e));
-    alert("住所登録画面の初期化に失敗しました");
+    $("debug").classList.add("err");
+    log("LIFF init error");
+    alert("初期化に失敗しました");
     return;
   }
 
-  log(`mode=${mode}`);
-  log(`returnTo=${returnTo}`);
-
   /* =============================
-     既存住所ロード
+     既存住所取得
   ============================= */
   try{
-    const uid = localStorage.getItem(KEY_UID) || "";
+    const uid = localStorage.getItem(KEY_UID);
     if(uid){
       const r = await fetch(`/api/address/get?userId=${encodeURIComponent(uid)}`, { cache:"no-store" });
-      const d = await r.json().catch(()=> ({}));
+      const d = await r.json();
       if(r.ok && d?.ok && d.address){
-        Object.entries(d.address).forEach(([k,v])=>{
+        for(const [k,v] of Object.entries(d.address)){
           if($(k)) $(k).value = v || "";
-        });
-        log("OK: 住所を自動入力");
-      }else{
-        log("INFO: 既存住所なし");
+        }
+        log("address loaded");
       }
     }
-  }catch(e){
-    log("INFO: 既存住所なし（例外）");
-  }
+  }catch{}
 
   /* =============================
      戻る
   ============================= */
-  $("backBtn").onclick = async ()=>{
-    // howto：閉じて終わり
+  $("backBtn").onclick = ()=>{
+    // howto は閉じるだけ
     if(mode === "howto"){
-      try{
-        if(liff.isInClient()) liff.closeWindow();
-        else history.back();
-      }catch{
-        history.back();
-      }
+      if(liff.isInClient()) liff.closeWindow();
+      else history.back();
       return;
     }
-
-    // order：注文側へ戻す（基本は注文LIFFへ）
-    try{
-      await liff.openWindow({ url: ORDER_LIFF_URL, external: false });
-    }catch{
-      location.href = "/products.html";
-    }
+    // 注文フローは confirm へ
+    location.href = returnTo;
   };
 
   /* =============================
      保存
   ============================= */
   $("saveBtn").onclick = async ()=>{
-    // order の時だけ「カート空」を止める（howto はカート不要）
-    if(mode === "order" && !hasCart()){
-      alert("カートが空です。商品選択からやり直してください。");
-      try{
-        await liff.openWindow({ url: ORDER_LIFF_URL, external:false });
-      }catch{
-        location.href = "/products.html";
-      }
-      return;
-    }
-
     const payload = {
       userId: localStorage.getItem(KEY_UID) || "",
       name: $("name").value.trim(),
@@ -235,14 +182,10 @@
       address2: $("address2").value.trim(),
     };
 
-    if(!payload.userId){
-      alert("ユーザー情報の取得に失敗しました。LINE内で開き直してください。");
-      return;
-    }
-
-    if(!payload.name || !payload.phone || !payload.postal ||
+    if(!payload.userId ||
+       !payload.name || !payload.phone || !payload.postal ||
        !payload.prefecture || !payload.city || !payload.address1){
-      alert("必須項目をすべて入力してください");
+      alert("必須項目を入力してください");
       return;
     }
 
@@ -252,47 +195,31 @@
         headers:{ "Content-Type":"application/json" },
         body: JSON.stringify(payload)
       });
-      const d = await r.json().catch(()=> ({}));
-      if(!r.ok || !d?.ok) throw new Error(d?.error || "save failed");
+      const d = await r.json();
+      if(!r.ok || !d?.ok) throw new Error();
 
-      // ===============================
-      // howto：保存したら終了（閉じる）
-      // ===============================
+      alert("住所を保存しました");
+
+      /* ===== 分岐ここが核心 ===== */
+
+      // howto → 閉じて終わり
       if(mode === "howto"){
-        alert("住所を保存しました（完了）");
-        try{
-          if(liff.isInClient()) liff.closeWindow();
-          else alert("この画面を閉じてください");
-        }catch{
-          alert("この画面を閉じてください");
-        }
+        if(liff.isInClient()) liff.closeWindow();
+        else alert("この画面を閉じてください");
         return;
       }
 
-      // ===============================
-      // order：保存したら注文側へ戻す
-      // ===============================
-      alert("住所を保存しました。注文に戻ります。");
+      // 注文フロー → confirmへ
+      location.href = returnTo;
 
-      // 注文LIFFへ戻す（returnTo を渡しておく）
-      try{
-        await liff.openWindow({
-          url: ORDER_LIFF_URL + "?returnTo=" + encodeURIComponent(returnTo),
-          external: false
-        });
-      }catch{
-        location.href = returnTo;
-      }
-
-    }catch(e){
-      debugEl.classList.add("err");
-      log("ERR: 保存失敗 " + (e?.message || e));
-      alert("住所の保存に失敗しました");
+    }catch{
+      $("debug").classList.add("err");
+      log("save error");
+      alert("保存に失敗しました");
     }
   };
 
-  debugEl.classList.add("ok");
-  log("READY");
+  log("READY mode=" + (mode || "order"));
 })();
 </script>
 </body>

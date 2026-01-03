@@ -1383,26 +1383,43 @@ app.post("/api/shipping/quote", async (req, res) => {
   }
 });
 
-// =========================
-// LIFF config（★ LIFF_ID_ADD 対応済み）
-// =========================
+function normalizeLiffId(v) {
+  const s = String(v || "").trim();
+  if (!s) return "";
+  const m = s.match(/liff\.line\.me\/(\d+-[a-zA-Z0-9]+)/);
+  return m ? m[1] : s;
+}
+function isValidLiffId(id) {
+  return /^\d+-[a-zA-Z0-9]+$/.test(String(id || ""));
+}
+
+// ここは “吸収” じゃなくて “それぞれ確定”
+const LIFF_ID_ORDER_V    = normalizeLiffId(process.env.LIFF_ID_ORDER || process.env.LIFF_ID_DEFAULT || "");
+const LIFF_ID_ADDRESS_V  = normalizeLiffId(process.env.LIFF_ID_ADDRESS || "");
+const LIFF_ID_ADD_V      = normalizeLiffId(process.env.LIFF_ID_ADD || "");
+const LIFF_ID_COD_V      = normalizeLiffId(process.env.LIFF_ID_COD || ""); // 使うなら
+
 app.get("/api/liff/config", (req, res) => {
   const kind = String(req.query.kind || "order").trim().toLowerCase();
 
-  // order系
-  const orderId   = (LIFF_ID_ORDER || LIFF_ID_DEFAULT || "").trim();
+  let liffId = "";
+  if (kind === "order") liffId = LIFF_ID_ORDER_V;
 
-  // address系（LIFF_ID_ADDRESS には LIFF_ID_ADD を吸収済み）
-  const addressId = (LIFF_ID_ADDRESS || LIFF_ID_COD || LIFF_ID_DEFAULT || "").trim();
+  // 住所系を分岐
+  else if (kind === "address") liffId = LIFF_ID_ADDRESS_V || LIFF_ID_ADD_V || LIFF_ID_COD_V || LIFF_ID_ORDER_V;
+  else if (kind === "add")     liffId = LIFF_ID_ADD_V     || LIFF_ID_ADDRESS_V || LIFF_ID_COD_V || LIFF_ID_ORDER_V;
+  else if (kind === "cod")     liffId = LIFF_ID_COD_V     || LIFF_ID_ADDRESS_V || LIFF_ID_ADD_V || LIFF_ID_ORDER_V;
 
-  const isAddress =
-    kind === "address" || kind === "register" || kind === "cod" ||
-    kind === "addr" || kind === "add";
+  // 互換（register/addr など）
+  else if (kind === "register" || kind === "addr") liffId = LIFF_ID_ADDRESS_V || LIFF_ID_ADD_V || LIFF_ID_COD_V || LIFF_ID_ORDER_V;
 
-  const liffId = isAddress ? addressId : orderId;
+  else liffId = LIFF_ID_ORDER_V;
 
   if (!liffId) return res.status(400).json({ ok:false, error:"LIFF_ID_NOT_SET", kind });
-  return res.json({ ok:true, liffId });
+  if (!isValidLiffId(liffId)) return res.status(400).json({ ok:false, error:"INVALID_LIFF_ID", kind, liffId });
+
+  res.setHeader("Cache-Control", "no-store");
+  return res.json({ ok:true, kind, liffId });
 });
 
 // ============== Address API ==============

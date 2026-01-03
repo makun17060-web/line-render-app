@@ -1979,6 +1979,10 @@ app.post("/webhook", line.middleware(lineConfig), async (req, res) => {
   res.status(200).end();
 
   // 裏で処理（失敗しても webhook を 500 にしない）
+  async function handleEvent(ev) {
+  logInfo("[WEBHOOK_EVENT]", ev?.type, ev?.source?.userId || "");
+  // 既存処理...
+
   for (const ev of events) {
     try {
       await handleEvent(ev);

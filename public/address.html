@@ -137,9 +137,8 @@
 
   function setStatus(msg){ statusEl.textContent = msg || ""; }
 
-  // 住所登録は「ADD」LIFFを使う
   async function getLiffIdForAdd(){
-    const res = await fetch("/api/liff/config?kind=add", { cache:"no-store" }); // ★ここが重要
+    const res = await fetch("/api/liff/config?kind=add", { cache:"no-store" });
     const cfg = await res.json().catch(()=> ({}));
     if(!res.ok || !cfg.ok || !cfg.liffId) throw new Error("LIFF設定取得失敗");
     return cfg.liffId;
@@ -147,11 +146,22 @@
 
   try{
     const liffId = await getLiffIdForAdd();
+    const tail = String(liffId).slice(-4);
 
     await liff.init({ liffId });
 
-    if(!liff.isLoggedIn()){
-      // LIFF内で必須
+    const inClient = liff.isInClient();
+    const loggedIn = liff.isLoggedIn();
+
+    // 状況表示（ログは出さない）
+    setStatus(
+      `LIFF: ****${tail}\n` +
+      `LINE内: ${inClient ? "はい" : "いいえ"}\n` +
+      `ログイン: ${loggedIn ? "済" : "未"}`
+    );
+
+    if(!loggedIn){
+      // LIFF外や未ログイン時はここで止まる
       liff.login({ redirectUri: location.href });
       return;
     }
@@ -161,19 +171,24 @@
     if(!userId) throw new Error("userId取得失敗");
 
     saveBtn.disabled = false;
-    setStatus("");
+    setStatus(
+      `LIFF: ****${tail}\n` +
+      `LINE内: ${inClient ? "はい" : "いいえ"}\n` +
+      `ログイン: 済\n` +
+      `準備OK`
+    );
 
   }catch(e){
-    // ログ出したくないので画面メッセージのみ
     setStatus(
       "初期化に失敗しました。\n" +
-      "LINEアプリ内で開き直してください。\n" +
-      "（LIFF ID/ログイン状態を確認）"
+      "・LINEアプリ内（LIFF）で開いているか\n" +
+      "・LIFF_ID_ADD が正しいか\n" +
+      "を確認してください。"
     );
     return;
   }
 
-  // 郵便番号 → 住所補完（ZipCloud）
+  // 郵便番号 → 住所補完
   $("postal").addEventListener("blur", async ()=>{
     const zip = $("postal").value.trim();
     if(!/^\d{7}$/.test(zip)) return;
@@ -187,7 +202,6 @@
     }catch{}
   });
 
-  // 保存
   saveBtn.addEventListener("click", async ()=>{
     const payload = {
       userId,
@@ -195,7 +209,6 @@
       phone: $("phone").value.trim(),
       postal: $("postal").value.trim(),
       prefecture: $("prefecture").value.trim(),
-      city: "", // server側があってもOK（空で送る）
       address1: $("address1").value.trim(),
       address2: $("address2").value.trim(),
     };
@@ -214,14 +227,11 @@
         headers:{ "Content-Type":"application/json" },
         body:JSON.stringify(payload)
       });
-
       const d = await r.json().catch(()=> ({}));
       if(!r.ok || !d.ok) throw new Error("save failed");
 
       setStatus("保存しました。画面を閉じます…");
-      setTimeout(()=>{
-        try{ liff.closeWindow(); }catch{}
-      }, 800);
+      setTimeout(()=>{ try{ liff.closeWindow(); }catch{} }, 800);
 
     }catch{
       setStatus("保存に失敗しました。もう一度お試しください。");
@@ -230,5 +240,6 @@
   });
 })();
 </script>
+
 </body>
 </html>

@@ -5,6 +5,10 @@
  * - /api/admin/orders の subtotal（小計）が代引手数料込みになっていたのを修正
  *   subtotal = total - shipping - (codなら330)
  *
+ * ✅ 追加点（今回）
+ * - 友だち追加（follow）があった時に ADMIN_USER_ID に通知（Push）
+ *   表示名 / userId / 追加日時（JST）/ 今日の追加・ブロック累計（friend_logs）
+ *
  * ✅ 仕様（維持）
  * - requireAdmin は1個だけ
  * - 注文完了通知（注文者＋管理者）統一
@@ -111,6 +115,19 @@ const SHIPPING_YAMATO = {
 
 // ============== Helpers ==============
 function nowISO() { return new Date().toISOString(); }
+
+function nowJstString() {
+  // 例: 2026-01-03 14:22:10
+  const d = new Date();
+  const parts = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const get = (t) => parts.find(p => p.type === t)?.value || "";
+  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
+}
 
 async function ensureDir(dir) {
   await fsp.mkdir(dir, { recursive: true });
@@ -806,6 +823,36 @@ async function pushTextSafe(to, text) {
     logErr("pushTextSafe failed", to, e?.message || e);
   }
 }
+
+// ★★ 追加：友だち追加を管理者に通知
+async function notifyAdminFriendAdded({ userId, displayName, day }) {
+  if (!ADMIN_USER_ID) return;
+
+  let todayCounts = null;
+  try {
+    const r = await pool.query(
+      `SELECT added_count, blocked_count FROM friend_logs WHERE day=$1`,
+      [day]
+    );
+    if (r.rowCount > 0) todayCounts = r.rows[0];
+  } catch {}
+
+  const name = displayName ? `「${displayName}」` : "（表示名取得不可）";
+  const counts =
+    todayCounts
+      ? `\n今日の累計：追加 ${Number(todayCounts.added_count || 0)} / ブロック ${Number(todayCounts.blocked_count || 0)}`
+      : "";
+
+  const msg =
+    `【友だち追加】\n` +
+    `日時：${nowJstString()}\n` +
+    `表示名：${name}\n` +
+    `userId：${userId}` +
+    counts;
+
+  await pushTextSafe(ADMIN_USER_ID, msg);
+}
+
 async function getOrderRow(orderId) {
   const r = await pool.query(
     `SELECT id, user_id, items, total, shipping_fee, payment_method, status, notified_at, created_at
@@ -1924,6 +1971,7 @@ async function onFollow(ev) {
   if (!userId) return;
 
   const day = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+
   await pool.query(
     `
     INSERT INTO friend_logs (day, added_count, blocked_count)
@@ -1941,6 +1989,13 @@ async function onFollow(ev) {
     displayName = prof?.displayName || null;
   } catch {}
   try { await touchUser(userId, "seen", displayName); } catch {}
+
+  // ✅ 追加：管理者へ「友だち追加」通知
+  try {
+    await notifyAdminFriendAdded({ userId, displayName, day });
+  } catch (e) {
+    logErr("notifyAdminFriendAdded failed", e?.message || e);
+  }
 
   const urlProducts = liffUrl("/products.html");
   const urlAddress  = liffUrl("/cod-register.html");

@@ -1402,23 +1402,23 @@ const LIFF_ID_COD_V      = normalizeLiffId(process.env.LIFF_ID_COD || ""); // �
 app.get("/api/liff/config", (req, res) => {
   const kind = String(req.query.kind || "order").trim().toLowerCase();
 
+  // ★あなたの運用：注文 = ADDRESS / 登録 = ADD
+  const orderId   = (LIFF_ID_ADDRESS || LIFF_ID_DEFAULT || "").trim(); // 注文側
+  const addressId = (LIFF_ID_ADD     || LIFF_ID_DEFAULT || "").trim(); // 住所登録側（ADD）
+
   let liffId = "";
-  if (kind === "order") liffId = LIFF_ID_ORDER_V;
 
-  // 住所系を分岐
-  else if (kind === "address") liffId = LIFF_ID_ADDRESS_V || LIFF_ID_ADD_V || LIFF_ID_COD_V || LIFF_ID_ORDER_V;
-  else if (kind === "add")     liffId = LIFF_ID_ADD_V     || LIFF_ID_ADDRESS_V || LIFF_ID_COD_V || LIFF_ID_ORDER_V;
-  else if (kind === "cod")     liffId = LIFF_ID_COD_V     || LIFF_ID_ADDRESS_V || LIFF_ID_ADD_V || LIFF_ID_ORDER_V;
-
-  // 互換（register/addr など）
-  else if (kind === "register" || kind === "addr") liffId = LIFF_ID_ADDRESS_V || LIFF_ID_ADD_V || LIFF_ID_COD_V || LIFF_ID_ORDER_V;
-
-  else liffId = LIFF_ID_ORDER_V;
+  if (kind === "order") {
+    liffId = orderId;
+  } else if (kind === "address" || kind === "register" || kind === "addr" || kind === "cod" || kind === "add") {
+    // 登録系は全部 ADD に寄せる（必要なら add は別扱いにもできる）
+    liffId = addressId;
+  } else {
+    // 迷ったら注文側に寄せる
+    liffId = orderId;
+  }
 
   if (!liffId) return res.status(400).json({ ok:false, error:"LIFF_ID_NOT_SET", kind });
-  if (!isValidLiffId(liffId)) return res.status(400).json({ ok:false, error:"INVALID_LIFF_ID", kind, liffId });
-
-  res.setHeader("Cache-Control", "no-store");
   return res.json({ ok:true, kind, liffId });
 });
 

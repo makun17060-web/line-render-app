@@ -12,11 +12,14 @@
       --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280;
       --line:#e5e7eb; --pri:#0b3a53; --danger:#b91c1c;
       --shadow:0 1px 3px rgba(0,0,0,.06); --radius:14px;
+
+      /* ✅ 固定バー高さ（JSで実測して自動更新） */
       --barH: 120px;
     }
     *{ box-sizing:border-box; }
     body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
 
+    /* ✅ 下の固定バーに隠れないように、padding-bottom をバー高さに追従させる */
     .wrap{
       max-width:1040px; margin:0 auto;
       padding:14px 14px calc(var(--barH) + env(safe-area-inset-bottom) + 18px);
@@ -27,13 +30,23 @@
     .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; margin-top:12px; }
     .card{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow); }
 
+    /* =========================
+       ✅ 商品画像：絶対に切らない
+       ========================= */
     .imgbox{
-      height:200px; background:#fff;
-      display:flex; align-items:center; justify-content:center;
+      height:200px;
+      background:#fff;
+      display:flex;
+      align-items:center;
+      justify-content:center;
     }
     .imgbox img{
-      max-width:100%; max-height:100%;
-      width:auto; height:auto; object-fit:contain; display:block;
+      max-width:100%;
+      max-height:100%;
+      width:auto;
+      height:auto;
+      object-fit:contain;
+      display:block;
     }
 
     .body{ padding:12px; }
@@ -56,6 +69,7 @@
     .btnAdd{ background:var(--pri); color:#fff; }
     .btnAdd:disabled{ opacity:.55; cursor:not-allowed; }
 
+    /* bottom bar */
     .bar{
       position:fixed; left:0; right:0; bottom:0;
       border-top:1px solid var(--line);
@@ -111,11 +125,10 @@
   const KEY_UID  = "isoya_userId";
   const KEY_CART = "isoya_cart";
 
+  // ✅ オリジナルセットをこの画面から非表示
   const ORIGINAL_SET_ID = "original-set-2000";
-  const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
 
-  // ====== 住所登録URL（注文フロー用） ======
-  const ADDRESS_URL = "/cod-register.html?mode=order&returnTo=/confirm.html";
+  const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
 
   function loadCart(){
     try{
@@ -149,13 +162,6 @@
     return uid;
   }
 
-  function openInLiff(url){
-    if(window.liff && liff.isInClient()){
-      try{ liff.openWindow({ url, external:false }); return; }catch{}
-    }
-    location.href = url;
-  }
-
   const statusEl  = document.getElementById("status");
   const gridEl    = document.getElementById("grid");
   const sumEl     = document.getElementById("sum");
@@ -163,6 +169,7 @@
   const addrBtn   = document.getElementById("addrBtn");
   const nextBtn   = document.getElementById("nextBtn");
 
+  // ✅ 固定バーの高さを実測して、.wrap の下余白を自動調整
   function syncBarHeight(){
     const bar = document.querySelector(".bar");
     if(!bar) return;
@@ -172,6 +179,7 @@
 
   let cart = loadCart();
   cart.items = normItems(cart.items);
+
   let products = [];
 
   function renderSum(){
@@ -185,6 +193,8 @@
     }
     sumEl.textContent = `カート：${count}点 / 小計 ${yen(subtotal)}`;
     nextBtn.classList.toggle("btnDisabled", count===0);
+
+    // 合計表示が変わるとバーの折返しが変わることがあるので再計測
     syncBarHeight();
   }
 
@@ -254,21 +264,10 @@
     return el;
   }
 
-  // ====== 住所登録へ ======
   function goAddress(){
-    openInLiff(ADDRESS_URL);
+    const ret = encodeURIComponent("/confirm.html");
+    location.href = `/cod-register.html?returnTo=${ret}`;
   }
-
-  // ====== 住所登録から戻ってきた場合の自動遷移 ======
-  (function handleBackFromAddress(){
-    const qs = new URLSearchParams(location.search);
-    if(qs.get("from") === "address"){
-      const next = qs.get("next");
-      if(next && next.startsWith("/")){
-        location.replace(next);
-      }
-    }
-  })();
 
   try{
     const uid = await ensureLiffUser();
@@ -282,6 +281,7 @@
     return;
   }
 
+  // 初回計測（描画前でもOK）
   syncBarHeight();
   window.addEventListener("resize", syncBarHeight);
 
@@ -306,6 +306,7 @@
     const d = await r.json().catch(()=>({}));
     if(!r.ok || !d.ok) throw new Error(d?.error || ("HTTP "+r.status));
 
+    // ✅ オリジナルセット除外（ID + 名前）
     const raw = Array.isArray(d.products) ? d.products : [];
     products = raw.filter(p => {
       const id = String(p?.id || "").trim();
@@ -320,7 +321,7 @@
     products.forEach(p => gridEl.appendChild(card(p)));
 
     renderSum();
-    syncBarHeight();
+    syncBarHeight(); // 商品描画後に再計測（重要）
   }catch(e){
     console.error(e);
     statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">商品読み込み失敗：/api/products を確認してください</span>';

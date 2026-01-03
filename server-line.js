@@ -2037,8 +2037,9 @@ async function onFollow(ev) {
     logErr("notifyAdminFriendAdded failed", e?.message || e);
   }
 
-  const urlProducts = liffUrl("https://liff.line.me/2008406620-8CWfgEKh");
-  const urlAddress  = liffUrl("https://liff.line.me/2008406620-4kyQVyqe");
+  // ✅ LIFF URLは liffUrl() に通さない（そのまま使う）
+  const urlProducts = "https://liff.line.me/2008406620-8CWfgEKh";
+  const urlAddress  = "https://liff.line.me/2008406620-4kyQVyqe";
 
   await lineClient.pushMessage(userId, {
     type: "text",
@@ -2047,7 +2048,7 @@ async function onFollow(ev) {
       `・「${KEYWORD_DIRECT}」でミニアプリ注文\n` +
       `・「${KEYWORD_KUSUKE}」で久助の注文\n\n` +
       "住所登録がまだの場合は、ミニアプリ内の「住所登録」からお願いします。\n\n" +
-      `商品一覧：\n${urlProducts}\n\n住所登録：\n${urlAddress}`,
+      `商品一覧：\n${urlProducts}\n\n住所登録：\n${urlAddress}`
   });
 }
 

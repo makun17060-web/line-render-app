@@ -5,99 +5,35 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>住所登録</title>
 
-  <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
   <style>
     :root{
-      --bg:#f6f7f9;
-      --card:#ffffff;
-      --text:#111827;
-      --muted:#6b7280;
-      --primary:#0b3a53;
-      --border:#e5e7eb;
-      --radius:14px;
+      --bg:#f6f7f9; --card:#ffffff; --text:#111827; --muted:#6b7280;
+      --primary:#0b3a53; --border:#e5e7eb; --radius:14px;
     }
     *{ box-sizing:border-box; }
-    body{
-      margin:0;
-      font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-      background:var(--bg);
-      color:var(--text);
-    }
-    .wrap{
-      max-width:720px;
-      margin:0 auto;
-      padding:16px 14px 40px;
-    }
-    h1{
-      font-size:20px;
-      margin:0 0 8px;
-    }
-    .lead{
-      font-size:13px;
-      color:var(--muted);
-      margin-bottom:14px;
-      line-height:1.6;
-    }
-    .card{
-      background:var(--card);
-      border-radius:var(--radius);
-      padding:14px;
-      box-shadow:0 1px 3px rgba(0,0,0,.08);
-    }
+    body{ margin:0; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
+    .wrap{ max-width:720px; margin:0 auto; padding:16px 14px 40px; }
+    h1{ font-size:20px; margin:0 0 8px; }
+    .lead{ font-size:13px; color:var(--muted); margin-bottom:14px; line-height:1.6; }
+    .card{ background:var(--card); border-radius:var(--radius); padding:14px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
     .field{ margin-bottom:10px; }
-    label{
-      display:block;
-      font-size:13px;
-      font-weight:700;
-      margin-bottom:4px;
-    }
-    input, select{
-      width:100%;
-      padding:10px;
-      font-size:15px;
-      border-radius:10px;
-      border:1px solid var(--border);
-    }
-    button{
-      width:100%;
-      padding:14px;
-      margin-top:14px;
-      font-size:16px;
-      font-weight:700;
-      border-radius:12px;
-      border:none;
-      background:var(--primary);
-      color:#fff;
-    }
-    .status{
-      margin-top:10px;
-      font-size:13px;
-      color:var(--muted);
-      min-height:1.4em;
-    }
-    .warn{
-      background:#fff3cd;
-      color:#856404;
-      padding:10px;
-      border-radius:10px;
-      font-size:13px;
-      margin-bottom:12px;
-    }
+    label{ display:block; font-size:13px; font-weight:700; margin-bottom:4px; }
+    input{ width:100%; padding:10px; font-size:15px; border-radius:10px; border:1px solid var(--border); }
+    button{ width:100%; padding:14px; margin-top:14px; font-size:16px; font-weight:700; border-radius:12px; border:none; background:var(--primary); color:#fff; }
+    button:disabled{ opacity:.6; }
+    .status{ margin-top:10px; font-size:13px; color:var(--muted); min-height:1.4em; white-space:pre-wrap; }
+    .warn{ background:#fff3cd; color:#856404; padding:10px; border-radius:10px; font-size:13px; margin-bottom:12px; }
   </style>
 </head>
 
 <body>
 <div class="wrap">
   <h1>住所登録</h1>
-  <p class="lead">
-    商品発送に必要な情報をご入力ください。
-  </p>
+  <p class="lead">商品発送に必要な情報をご入力ください。</p>
 
-  <div id="pcWarn" class="warn" style="display:none;">
-    このページは LINEアプリ内で開いてください。
-  </div>
+  <div id="pcWarn" class="warn" style="display:none;"></div>
 
   <div class="card">
     <div class="field">
@@ -126,7 +62,6 @@
     </div>
 
     <button id="saveBtn">住所を保存する</button>
-
     <div id="status" class="status"></div>
   </div>
 </div>
@@ -134,73 +69,108 @@
 <script>
 (async function(){
   const statusEl = document.getElementById("status");
-  const pcWarn = document.getElementById("pcWarn");
+  const pcWarnEl = document.getElementById("pcWarn");
   const params = new URLSearchParams(location.search);
   const nextUrl = params.get("next") || "";
 
-  function setStatus(msg){ statusEl.textContent = msg || ""; }
+  const elName = document.getElementById("name");
+  const elPhone = document.getElementById("phone");
+  const elZip = document.getElementById("zip");
+  const elPref = document.getElementById("pref");
+  const elAddr = document.getElementById("address");
+  const saveBtn = document.getElementById("saveBtn");
 
-  // LIFF初期化
+  function setStatus(msg){ statusEl.textContent = msg || ""; }
+  function warn(msg){
+    pcWarnEl.style.display = "block";
+    pcWarnEl.textContent = msg || "このページは LINEアプリ内で開いてください。";
+  }
+
+  // ★ まずJSが生きてるか確認（デバッグ用）
+  setStatus("");
+
+  // LIFF初期化（※ クォートは半角 " で！）
   try{
     await liff.init({ liffId: "2008406620-4QJ06JLv" });
   }catch(e){
-    pcWarn.style.display = "block";
-    console.warn("LIFF未初期化", e);
+    console.warn("LIFF init failed", e);
+    warn("初期化に失敗しました。LIFF ID / Endpoint URL を確認してください。");
+    setStatus(String(e?.message || e));
     return;
   }
 
   if(!liff.isInClient()){
-    pcWarn.style.display = "block";
+    warn("このページは LINEアプリ内で開いてください。");
+    return;
+  }
+
+  // userId 取得（server.js が userId 必須のため）
+  let userId = "";
+  try{
+    const prof = await liff.getProfile();
+    userId = prof?.userId || "";
+  }catch(e){
+    console.warn("getProfile failed", e);
+  }
+  if(!userId){
+    warn("ユーザー情報を取得できませんでした。LINE内で開いているか確認してください。");
     return;
   }
 
   // 郵便番号 → 住所補完（ZipCloud）
-  document.getElementById("zip").addEventListener("blur", async ()=>{
-    const zip = document.getElementById("zip").value.trim();
+  elZip.addEventListener("blur", async ()=>{
+    const zip = elZip.value.trim().replace(/[^0-9]/g,"");
+    elZip.value = zip;
     if(!/^\d{7}$/.test(zip)) return;
 
     try{
       const res = await fetch(`https://zipcloud.ibsnet.co.jp/api/search?zipcode=${zip}`);
       const data = await res.json();
-      if(data.results && data.results[0]){
-        document.getElementById("pref").value =
-          data.results[0].address1;
-        document.getElementById("address").value =
-          data.results[0].address2 + data.results[0].address3;
+      if(data && data.results && data.results[0]){
+        elPref.value = data.results[0].address1 || elPref.value;
+        elAddr.value = (data.results[0].address2 || "") + (data.results[0].address3 || "");
       }
     }catch(e){
-      console.warn("郵便番号補完失敗", e);
+      console.warn("zip lookup failed", e);
     }
   });
 
   // 保存
-  document.getElementById("saveBtn").onclick = async ()=>{
+  saveBtn.addEventListener("click", async ()=>{
     const payload = {
-      name: name.value.trim(),
-      phone: phone.value.trim(),
-      zip: zip.value.trim(),
-      pref: pref.value.trim(),
-      address: address.value.trim()
+      userId, // ★必須
+      name: elName.value.trim(),
+      phone: elPhone.value.trim(),
+      postal: elZip.value.trim().replace(/[^0-9]/g,""), // server.js の列名に合わせる
+      prefecture: elPref.value.trim(),
+      city: "",             // 今のUIでは分けてないので空（必要なら後で追加）
+      address1: elAddr.value.trim(),
+      address2: "",         // 同上
     };
 
-    if(!payload.name || !payload.phone || !payload.zip || !payload.pref || !payload.address){
+    if(!payload.name || !payload.phone || !payload.postal || !payload.prefecture || !payload.address1){
       setStatus("すべて入力してください");
+      return;
+    }
+    if(!/^\d{7}$/.test(payload.postal)){
+      setStatus("郵便番号は7桁で入力してください");
       return;
     }
 
     setStatus("保存中…");
+    saveBtn.disabled = true;
 
     try{
       const res = await fetch("/api/address/set",{
         method:"POST",
         headers:{ "Content-Type":"application/json" },
-        body:JSON.stringify(payload)
+        body: JSON.stringify(payload)
       });
+      const data = await res.json().catch(()=>({}));
 
-      if(!res.ok) throw new Error("save failed");
+      if(!res.ok || !data.ok) throw new Error(data?.error || ("HTTP_" + res.status));
 
       setStatus("保存しました");
-
       setTimeout(()=>{
         if(nextUrl){
           location.href = nextUrl;
@@ -211,9 +181,11 @@
 
     }catch(e){
       console.error(e);
-      setStatus("保存に失敗しました");
+      setStatus("保存に失敗しました: " + (e?.message || e));
+      saveBtn.disabled = false;
     }
-  };
+  });
+
 })();
 </script>
 </body>

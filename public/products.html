@@ -107,15 +107,27 @@
 (async function(){
   "use strict";
 
+  // ✅ 注文用 LIFF（この画面）
   const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
+
+  // ✅ 住所用 LIFF（別アプリ）
+  const LIFF_ID_ADDRESS = "2008406620-4kyQVyqe";
+
   const KEY_UID  = "isoya_userId";
   const KEY_CART = "isoya_cart";
 
   const ORIGINAL_SET_ID = "original-set-2000";
   const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
 
-  // ====== 住所登録URL（注文フロー用） ======
-  const ADDRESS_URL = "/cod-register.html?mode=order&returnTo=/confirm.html";
+  /**
+   * ✅ 超重要
+   * 住所画面は「/cod-register.html」ではなく、必ず「住所LIFF URL」で開く
+   * （注文LIFF→別LIFFへの遷移）
+   */
+  function addressLiffUrl(){
+    const ret = encodeURIComponent("/confirm.html");
+    return `https://liff.line.me/${LIFF_ID_ADDRESS}?returnTo=${ret}`;
+  }
 
   function loadCart(){
     try{
@@ -150,9 +162,12 @@
   }
 
   function openInLiff(url){
-    if(window.liff && liff.isInClient()){
-      try{ liff.openWindow({ url, external:false }); return; }catch{}
-    }
+    try{
+      if(window.liff && liff.isInClient && liff.isInClient()){
+        liff.openWindow({ url, external:false });
+        return;
+      }
+    }catch{}
     location.href = url;
   }
 
@@ -254,21 +269,10 @@
     return el;
   }
 
-  // ====== 住所登録へ ======
+  // ====== 住所登録へ（必ず住所LIFF URL） ======
   function goAddress(){
-    openInLiff(ADDRESS_URL);
+    openInLiff(addressLiffUrl());
   }
-
-  // ====== 住所登録から戻ってきた場合の自動遷移 ======
-  (function handleBackFromAddress(){
-    const qs = new URLSearchParams(location.search);
-    if(qs.get("from") === "address"){
-      const next = qs.get("next");
-      if(next && next.startsWith("/")){
-        location.replace(next);
-      }
-    }
-  })();
 
   try{
     const uid = await ensureLiffUser();

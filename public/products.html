@@ -3,58 +3,105 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<title>住所登録</title>
+<title>商品一覧</title>
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
 <style>
-body{font-family:system-ui;background:#f7f7f7;margin:0;padding:16px}
-.card{background:#fff;border-radius:14px;padding:14px}
-button{width:100%;padding:14px;border-radius:14px;font-weight:900}
+:root{
+  --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280;
+  --line:#e5e7eb; --pri:#0b3a53; --danger:#b91c1c;
+  --radius:14px; --barH:120px;
+}
+body{margin:0;font-family:system-ui;background:var(--bg);color:var(--text);}
+.wrap{max-width:1040px;margin:0 auto;padding:14px 14px calc(var(--barH) + 24px);}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;}
+.imgbox{height:200px;display:flex;align-items:center;justify-content:center}
+.imgbox img{max-width:100%;max-height:100%;object-fit:contain}
+.body{padding:12px}
+.bar{position:fixed;left:0;right:0;bottom:0;background:#f6f7f9;border-top:1px solid var(--line);padding:10px}
+.bar .inner{max-width:1040px;margin:0 auto;display:flex;gap:10px;justify-content:space-between}
+.btn{border-radius:14px;padding:12px 14px;font-weight:900;border:none}
+.btnAddr{background:#fff;border:1px solid var(--line)}
+.btnNext{background:var(--pri);color:#fff}
 </style>
 </head>
 
 <body>
-<div class="card">
-  <h2>お届け先住所</h2>
-  <input id="addr" placeholder="住所" style="width:100%;padding:12px"><br><br>
-  <button id="save">保存</button>
+<div class="wrap">
+  <h1>商品一覧</h1>
+  <div id="grid" class="grid"></div>
+</div>
+
+<div class="bar">
+  <div class="inner">
+    <div id="sum" class="muted">カート：0点</div>
+    <div>
+      <button class="btn btnAddr" id="addrBtn">住所入力</button>
+      <button class="btn btnNext" id="nextBtn">次へ</button>
+    </div>
+  </div>
 </div>
 
 <script>
 (async ()=>{
 "use strict";
 
-/* ====== 住所用 LIFF ====== */
-const LIFF_ID_ADDRESS = "2008406620-XXXXXXXX"; // ★必須
-await liff.init({ liffId: LIFF_ID_ADDRESS });
+/* ====== LIFF ID ====== */
+const LIFF_ID_ORDER   = "2008406620-G5j1gjzM";     // 注文用
+const LIFF_ID_ADDRESS = "2008406620-XXXXXXXX";    // ★住所用（必ず設定）
 
+/* ====== 住所LIFF起動URL ====== */
+const NEXT = "/confirm.html";
+const RETURN_TO = `/products.html?from=address&next=${encodeURIComponent(NEXT)}`;
+const ADDRESS_LIFF_URL =
+  `https://liff.line.me/${LIFF_ID_ADDRESS}?mode=order&returnTo=${encodeURIComponent(RETURN_TO)}`;
+
+/* ====== 戻り分岐（住所登録後） ====== */
+const qs = new URLSearchParams(location.search);
+if(qs.get("from")==="address"){
+  const next = qs.get("next");
+  if(next && next.startsWith("/")){
+    location.replace(next);
+    return;
+  }
+}
+
+/* ====== LIFF init（注文用） ====== */
+await liff.init({ liffId: LIFF_ID_ORDER });
 if(!liff.isLoggedIn()){
   liff.login({ redirectUri: location.href });
   return;
 }
 
-/* ====== URL params ====== */
-const qs = new URLSearchParams(location.search);
-const mode = qs.get("mode");
-const returnTo = qs.get("returnTo");
-
-/* ====== 保存 ====== */
-document.getElementById("save").onclick = async ()=>{
-  const addr = document.getElementById("addr").value.trim();
-  if(!addr){ alert("住所を入力してください"); return; }
-
-  await fetch("/api/address/set",{
-    method:"POST",
-    headers:{ "Content-Type":"application/json" },
-    body:JSON.stringify({ address:addr })
-  });
-
-  if(mode==="order" && returnTo){
-    location.replace(returnTo);
+/* ====== UI ====== */
+function openAddress(){
+  // ★必ず liff.line.me を開く
+  if(liff.isInClient()){
+    liff.openWindow({ url: ADDRESS_LIFF_URL, external:false });
   }else{
-    liff.closeWindow();
+    location.href = ADDRESS_LIFF_URL;
   }
-};
+}
+
+document.getElementById("addrBtn").onclick = openAddress;
+document.getElementById("nextBtn").onclick = openAddress;
+
+/* ====== 商品表示（最小） ====== */
+const res = await fetch("/api/products");
+const data = await res.json();
+const grid = document.getElementById("grid");
+(data.products||[]).forEach(p=>{
+  const d=document.createElement("div");
+  d.className="card";
+  d.innerHTML=`
+    <div class="imgbox">${p.image?`<img src="${p.image}">`:""}</div>
+    <div class="body">
+      <b>${p.name}</b><br>
+      ${p.price}円
+    </div>`;
+  grid.appendChild(d);
+});
 })();
 </script>
 </body>

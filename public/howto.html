@@ -148,14 +148,20 @@
 </div>
 
 <script>
-/* ===========================
-   リンク（/public をやめて統一）
-=========================== */
+/* =========================================================
+   ✅ ここだけあなたのリンクに差し替えればOK（そのまま貼れる）
+   - HOWTO_LIFF: この howto を開く LIFFリンク
+   - ORDER_LIFF: 注文（products/confirm がある）LIFFリンク
+   - ADDRESS_LIFF: 住所登録（cod-register）LIFFリンク
+   - SHIPPING_LIFF: 送料ページ（shipping-calc）LIFFリンク（無ければ通常URLでもOK）
+========================================================= */
 const LINKS = {
-  ORDER_URL:   "https://line-render-app-1.onrender.com/products.html",
-  ADDRESS_URL: "https://line-render-app-1.onrender.com/cod-register.html",
-  SHIPPING_URL:"https://line-render-app-1.onrender.com/shipping-calc.html",
-  CHAT_TEXT:   "お問い合わせ",
+  HOWTO_LIFF:   "https://liff.line.me/2008406620-QQFfWP1w",
+  ORDER_LIFF:   "https://liff.line.me/2008406620-8CWfgEKh",
+  ADDRESS_LIFF: "https://liff.line.me/2008406620-4kyQVyqe",
+  // shipping を LIFF化してないなら、ここだけ通常URLでもOK
+  SHIPPING_URL: "https://line-render-app-1.onrender.com/shipping-calc.html",
+  CHAT_TEXT:    "お問い合わせ",
 };
 
 /* ===========================
@@ -169,7 +175,7 @@ function isInLiff(){
 async function ensureLiff(){
   if (!window.liff || !liff.init) return false;
   try {
-    // howto自体はLIFF初期化できればOK（できなくても遷移は可能）
+    // howto は表示できればOK（失敗しても遷移はできる）
     await liff.init({ liffId: "2008406620-QQFfWP1w" });
     return true;
   } catch (e) {
@@ -178,11 +184,12 @@ async function ensureLiff(){
   }
 }
 
-function openUrl(url, external=false){
-  const inClient = isInLiff();
-  if (inClient && external){
-    try { liff.openWindow({ url, external:true }); return; } catch {}
+function openInLiff(url){
+  // LIFFの中なら openWindow が一番事故が少ない
+  if (isInLiff()){
+    try { liff.openWindow({ url, external:false }); return; } catch {}
   }
+  // ブラウザは普通に遷移
   window.location.href = url;
 }
 
@@ -198,27 +205,32 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   document.getElementById("btnClose").onclick = () => {
     if (inClient && window.liff && liff.closeWindow) liff.closeWindow();
-    else window.location.href = LINKS.ORDER_URL;
+    else window.location.href = LINKS.ORDER_LIFF; // ブラウザなら注文LIFFへ
   };
 
-  document.getElementById("btnOrder").onclick =
-    () => openUrl(LINKS.ORDER_URL, false);
+  // ✅ 注文は「注文LIFF」に飛ばす（直URLにしない）
+  document.getElementById("btnOrder").onclick = () => {
+    openInLiff(LINKS.ORDER_LIFF);
+  };
 
   /**
    * ✅ 住所登録（howtoから）
-   * - 完了したら「それで終わり」にしたいので、returnToは渡さない
-   * - 代わりに from=howto を渡す（cod-register側で保存後 closeWindow する）
+   * - mode=howto を付ける
+   * - cod-register 側は保存後 closeWindow で終了
    */
   document.getElementById("btnAddress").onclick = () => {
-    openUrl(`${LINKS.ADDRESS_URL}?from=howto`, false);
+    const url = `${LINKS.ADDRESS_LIFF}?mode=howto`;
+    openInLiff(url);
   };
 
   /**
-   * 配送・送料（howtoに戻すのはOK）
+   * 配送・送料
+   * - returnTo に howto（=今のページURL）を渡す
+   * - shipping は通常URLでもOK（LIFF化してたら LIFFリンクに変更してOK）
    */
   document.getElementById("btnShipping").onclick = () => {
     const ret = encodeURIComponent(location.href);
-    openUrl(`${LINKS.SHIPPING_URL}?returnTo=${ret}`, false);
+    window.location.href = `${LINKS.SHIPPING_URL}?returnTo=${ret}`;
   };
 
   document.getElementById("btnChat").onclick = async () => {

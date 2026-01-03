@@ -1973,15 +1973,21 @@ app.get("/api/order/status", async (req, res) => {
 
 // ============== LINE Webhook ==============
 app.post("/webhook", line.middleware(lineConfig), async (req, res) => {
-  try {
-    const events = req.body.events || [];
-    await Promise.all(events.map(handleEvent));
-    res.status(200).end();
-  } catch (e) {
-    logErr("Webhook error", e?.stack || e);
-    res.status(500).end();
+  const events = req.body?.events || [];
+
+  // 先に 200 を返す（LINE検証・実運用ともに安定）
+  res.status(200).end();
+
+  // 裏で処理（失敗しても webhook を 500 にしない）
+  for (const ev of events) {
+    try {
+      await handleEvent(ev);
+    } catch (e) {
+      logErr("handleEvent failed", e?.stack || e);
+    }
   }
 });
+
 
 async function handleEvent(ev) {
   const type = ev.type;

@@ -1038,18 +1038,40 @@ app.use((req, res, next) => {
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
 // =========================
-// ★ liff-address 廃止 → cod-register へ転送
+// ✅ 住所登録ページのルーティング（修正版）
 // =========================
-function redirectToCodRegister(req, res) {
+
+// favicon 404 を消す（任意：ログがうるさい対策）
+app.get("/favicon.ico", (req, res) => res.status(204).end());
+
+// address.html は “新住所登録ページ” として必ず 200 で返す
+// ※ express.static より前に置くのが重要
+app.get("/address.html", (req, res) => {
+  return res.sendFile(path.join(__dirname, "public", "address.html"));
+});
+
+// /public/address.html でアクセスしてきた場合だけ正規URLへ寄せる（クエリ維持）
+app.get("/public/address.html", (req, res) => {
   const q = req.originalUrl.includes("?") ? req.originalUrl.split("?")[1] : "";
-  const sep = q ? "?" : "";
-  res.redirect(302, `/cod-register.html${sep}${q}`);
+  res.redirect(302, `/address.html${q ? "?" + q : ""}`);
+});
+
+// /address は /address.html に寄せる
+app.get("/address", (req, res) => {
+  const q = req.originalUrl.includes("?") ? req.originalUrl.split("?")[1] : "";
+  res.redirect(302, `/address.html${q ? "?" + q : ""}`);
+});
+
+// 旧URL（liff-address.html）は、もう cod-register ではなく address.html に寄せる
+function redirectToAddress(req, res) {
+  const q = req.originalUrl.includes("?") ? req.originalUrl.split("?")[1] : "";
+  res.redirect(302, `/address.html${q ? "?" + q : ""}`);
 }
-app.get("/liff-address.html", redirectToCodRegister);
-app.get("/public/liff-address.html", redirectToCodRegister);
-app.get("/address.html", redirectToCodRegister);
-app.get("/public/address.html", redirectToCodRegister);
-app.get("/address", (req, res) => res.redirect(302, "/cod-register.html"));
+app.get("/liff-address.html", redirectToAddress);
+app.get("/public/liff-address.html", redirectToAddress);
+
+// ★ cod-register.html は “互換ページ” として残す（今まで通り使える）
+
 
 // confirm-cod 名称ゆれ吸収
 app.get("/confirm_cod.html", (req, res) => res.sendFile(path.join(__dirname, "public", "confirm-cod.html")));

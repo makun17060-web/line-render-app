@@ -7,7 +7,8 @@
  *
  * ✅ 追加点（今回）
  * - 友だち追加（follow）があった時に ADMIN_USER_ID に通知（Push）
- *   表示名 / userId / 追加日時（JST）/ 今日の追加・ブロック累計（friend_logs）
+ * - ★ブロック（unfollow）も ADMIN_USER_ID に通知（Push）←今回
+ *   表示名 / userId / 発生日時（JST）/ 今日の追加・ブロック累計（friend_logs）
  *
  * ✅ 仕様（維持）
  * - requireAdmin は1個だけ
@@ -824,6 +825,8 @@ async function pushTextSafe(to, text) {
   }
 }
 
+// ============== Friend notify (follow/unfollow) ==============
+
 // ★★ 追加：友だち追加を管理者に通知
 async function notifyAdminFriendAdded({ userId, displayName, day }) {
   if (!ADMIN_USER_ID) return;
@@ -845,6 +848,35 @@ async function notifyAdminFriendAdded({ userId, displayName, day }) {
 
   const msg =
     `【友だち追加】\n` +
+    `日時：${nowJstString()}\n` +
+    `表示名：${name}\n` +
+    `userId：${userId}` +
+    counts;
+
+  await pushTextSafe(ADMIN_USER_ID, msg);
+}
+
+// ★★ 追加：ブロック（unfollow）を管理者に通知（今回）
+async function notifyAdminFriendBlocked({ userId, displayName, day }) {
+  if (!ADMIN_USER_ID) return;
+
+  let todayCounts = null;
+  try {
+    const r = await pool.query(
+      `SELECT added_count, blocked_count FROM friend_logs WHERE day=$1`,
+      [day]
+    );
+    if (r.rowCount > 0) todayCounts = r.rows[0];
+  } catch {}
+
+  const name = displayName ? `「${displayName}」` : "（表示名不明：DB未保存の可能性）";
+  const counts =
+    todayCounts
+      ? `\n今日の累計：追加 ${Number(todayCounts.added_count || 0)} / ブロック ${Number(todayCounts.blocked_count || 0)}`
+      : "";
+
+  const msg =
+    `【ブロック（解除）】\n` +
     `日時：${nowJstString()}\n` +
     `表示名：${name}\n` +
     `userId：${userId}` +
@@ -1990,7 +2022,7 @@ async function onFollow(ev) {
   } catch {}
   try { await touchUser(userId, "seen", displayName); } catch {}
 
-  // ✅ 追加：管理者へ「友だち追加」通知
+  // ✅ 管理者へ「友だち追加」通知
   try {
     await notifyAdminFriendAdded({ userId, displayName, day });
   } catch (e) {
@@ -2011,8 +2043,10 @@ async function onFollow(ev) {
   });
 }
 
-async function onUnfollow() {
+async function onUnfollow(ev) {
+  const userId = ev?.source?.userId || "";
   const day = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+
   await pool.query(
     `
     INSERT INTO friend_logs (day, added_count, blocked_count)
@@ -2023,6 +2057,23 @@ async function onUnfollow() {
     `,
     [day]
   );
+
+  // ✅ 追加：管理者へ「ブロック」通知（今回）
+  if (userId) {
+    let displayName = null;
+
+    // unfollow後は getProfile が失敗しがちなので、DBの最後の display_name を使う
+    try {
+      const r = await pool.query(`SELECT display_name FROM users WHERE user_id=$1`, [userId]);
+      displayName = r.rows?.[0]?.display_name || null;
+    } catch {}
+
+    try {
+      await notifyAdminFriendBlocked({ userId, displayName, day });
+    } catch (e) {
+      logErr("notifyAdminFriendBlocked failed", e?.message || e);
+    }
+  }
 }
 
 async function onPostback() {

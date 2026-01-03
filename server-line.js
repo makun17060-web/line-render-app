@@ -52,8 +52,8 @@ const LIFF_ID_DEFAULT  = (env.LIFF_ID_DEFAULT || "").trim();
 const LIFF_ID_ORDER    = (env.LIFF_ID_ORDER   || "").trim();
 
 // ★ここが今回の肝：住所LIFFのキー名ゆれを吸収（LIFF_ID_ADD）
-const LIFF_ID_ADDRESS  = (env.LIFF_ID_ADDRESS || env.LIFF_ID_ADD || "").trim();
-
+const LIFF_ID_ADDRESS  = (env.LIFF_ID_ADDRESS || "").trim();
+const  LIFF_ID_ADD = (env.LIFF_ID_ADD || "").trim(),
 const LIFF_ID_COD      = (env.LIFF_ID_COD     || "").trim();
 
 const DATA_DIR   = env.DATA_DIR   || "/var/data";

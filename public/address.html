@@ -72,10 +72,6 @@
     .primary{ background:var(--primary); color:#fff; }
     .ghost{ background:#fff; border:1px solid var(--border); color:#111827; }
     .danger{ background:#fff; border:1px solid #fca5a5; color:var(--danger); }
-    .smallbtn{
-      font-size:12px; padding:8px 10px; border-radius:10px;
-      flex:0 0 auto;
-    }
     .status{
       font-size:13px;
       padding:10px 12px;
@@ -88,13 +84,6 @@
     }
     .ok{ color:#065f46; }
     .ng{ color:#991b1b; }
-    .muted{ color:var(--muted); }
-    .mono{
-      font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
-      font-size:12px;
-      white-space:pre-wrap;
-      word-break:break-word;
-    }
     .hint{
       font-size:12px;
       color:var(--muted);
@@ -108,29 +97,6 @@
     <div class="topbar">
       <h1>住所登録</h1>
       <div class="badge" id="envBadge">LIFF: 未初期化</div>
-    </div>
-
-    <div class="card">
-      <div style="display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;">
-        <div style="min-width:240px;">
-          <div style="font-weight:900;">初期化（デバッグ表示つき）</div>
-          <div class="lead">
-            ここに <span class="mono">/api/liff/config?kind=address</span> の結果と、<span class="mono">liff.init</span> の成否を表示します。<br/>
-            「invalid liffid」「初期化に失敗」の切り分け用です。
-          </div>
-        </div>
-        <div class="btns" style="flex:1 1 280px;">
-          <button class="ghost smallbtn" id="btnReload">再読み込み</button>
-          <button class="ghost smallbtn" id="btnClear">表示クリア</button>
-          <button class="ghost smallbtn" id="btnCopy">ログコピー</button>
-        </div>
-      </div>
-      <div style="height:10px;"></div>
-      <div class="status mono" id="debug"></div>
-      <div class="hint">
-        もし上に <span class="mono">config.liffId</span> が出ているのに <span class="mono">invalid liffid</span> なら、
-        LINE Developers 側でその LIFF ID が無効/別チャンネル/削除などの可能性が高いです。
-      </div>
     </div>
 
     <div class="card">
@@ -195,8 +161,8 @@
       <div style="height:10px;"></div>
       <div class="status" id="status">未送信</div>
       <div class="hint">
-        保存は <span class="mono">POST /api/address/set</span>（userId 必須）で行います。<br/>
-        LIFF内で開いていれば userId は自動取得します。ブラウザ直開きの場合は userId が取れないため保存できません。
+        保存は <b>POST /api/address/set</b>（userId 必須）で行います。<br/>
+        LINEアプリ内（LIFF）で開いている場合のみ userId が取得できます。
       </div>
     </div>
   </div>
@@ -206,8 +172,6 @@
     "use strict";
 
     const $ = (id) => document.getElementById(id);
-
-    const debugEl = $("debug");
     const envBadge = $("envBadge");
     const statusEl = $("status");
 
@@ -223,29 +187,7 @@
     };
 
     let currentUserId = "";
-    let lastConfig = null;
 
-    // ---- utilities
-    function nowJst(){
-      try{
-        const d = new Date();
-        const parts = new Intl.DateTimeFormat("sv-SE", {
-          timeZone: "Asia/Tokyo",
-          year:"numeric",month:"2-digit",day:"2-digit",
-          hour:"2-digit",minute:"2-digit",second:"2-digit",
-          hour12:false
-        }).formatToParts(d);
-        const get = (t) => (parts.find(p=>p.type===t)||{}).value || "";
-        return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
-      }catch{
-        return new Date().toISOString();
-      }
-    }
-    function log(m){
-      const line = `[${nowJst()}] ${m}`;
-      console.log("[ADDRESS]", line);
-      debugEl.textContent += (debugEl.textContent ? "\n" : "") + line;
-    }
     function setBadge(text, ok){
       envBadge.textContent = text;
       envBadge.style.background = ok ? "#ecfdf5" : "#fef2f2";
@@ -256,18 +198,12 @@
       statusEl.textContent = text;
       statusEl.className = "status " + (ok ? "ok" : "ng");
     }
-    function qsGet(name){
-      const u = new URL(location.href);
-      return u.searchParams.get(name) || "";
-    }
 
-    // ---- cache buster (304対策)
-    // 画面の読み込みが304になり続ける場合、URLに v=... を付けると確実に更新できます
+    // 304対策：URLに v=... を付ける（履歴は汚さない）
     function ensureCacheBuster(){
       const u = new URL(location.href);
       if (!u.searchParams.get("v")){
         u.searchParams.set("v", String(Date.now()));
-        // 履歴を汚さず置き換え
         history.replaceState(null, "", u.toString());
       }
     }
@@ -276,59 +212,35 @@
       const r = await fetch(url, Object.assign({ cache: "no-store" }, opts || {}));
       const data = await r.json().catch(()=> ({}));
       if (!r.ok) {
-        const msg = `HTTP ${r.status} ${r.statusText} / ${url} / ${JSON.stringify(data)}`;
-        const e = new Error(msg);
-        e.http = { status: r.status, data };
+        const e = new Error("HTTP " + r.status + " " + r.statusText);
+        e.http = { status: r.status, data, url };
         throw e;
       }
       return data;
     }
 
-    function validateLiffIdFormat(liffId){
-      // 典型: "2008406620-4kyQVyqe"
-      return typeof liffId === "string" && /^\d+-[A-Za-z0-9]+$/.test(liffId.trim());
-    }
-
     async function initLiff(){
       setBadge("LIFF: 初期化中…", false);
-      log("init start: " + location.href);
 
-      // kind は固定で address を使う（server側で LIFF_ID_ADDRESS / LIFF_ID_ADD どちらでも返せるようにする）
-      const kind = qsGet("kind") || "address";
+      // ✅ 住所登録ページは ADD を使う
+      const cfg = await fetchJson("/api/liff/config?kind=add");
 
-      log("fetch /api/liff/config?kind=" + kind);
-      const cfg = await fetchJson("/api/liff/config?kind=" + encodeURIComponent(kind));
-      lastConfig = cfg;
-      log("config=" + JSON.stringify(cfg));
-
-      if (!cfg || !cfg.ok) {
-        throw new Error("config not ok: " + (cfg && cfg.error ? cfg.error : "unknown"));
-      }
-      if (!validateLiffIdFormat(cfg.liffId)) {
-        throw new Error("liffId format invalid: " + cfg.liffId);
+      if (!cfg || !cfg.ok || !cfg.liffId) {
+        throw new Error("LIFF設定を取得できませんでした");
       }
 
-      // 実際の init
       await liff.init({ liffId: cfg.liffId });
 
-      setBadge("LIFF: 初期化OK", true);
-      log("liff.init OK liffId=" + cfg.liffId);
-
-      // login
       if (!liff.isLoggedIn()) {
-        log("not logged in -> liff.login()");
-        liff.login();
-        return; // login後に戻ってくる
+        liff.login({ redirectUri: location.href });
+        return;
       }
 
-      // userId取得
-      try{
-        const prof = await liff.getProfile();
-        currentUserId = prof && prof.userId ? prof.userId : "";
-        log("profile userId=" + currentUserId + " displayName=" + (prof.displayName || ""));
-      }catch(e){
-        log("getProfile failed: " + (e && e.message ? e.message : e));
-      }
+      const prof = await liff.getProfile();
+      currentUserId = prof && prof.userId ? prof.userId : "";
+      if (!currentUserId) throw new Error("userIdを取得できませんでした");
+
+      setBadge("LIFF: 初期化OK", true);
     }
 
     async function loadAddress(){
@@ -395,6 +307,13 @@
 
       const code = r && r.address && r.address.member_code ? r.address.member_code : "";
       setStatus("保存しました。会員コード：" + (code || "（不明）"), true);
+
+      // 保存後は閉じる（LIFF内のみ）
+      setTimeout(() => {
+        try{
+          if (window.liff && liff.isInClient()) liff.closeWindow();
+        }catch{}
+      }, 800);
     }
 
     function closeApp(){
@@ -404,29 +323,14 @@
           return;
         }
       }catch(e){}
-      // ブラウザ直の場合
-      alert("LINEアプリ内（LIFF）で開くと閉じられます。");
+      setStatus("LINEアプリ内（LIFF）で開くと閉じられます。", false);
     }
 
-    // ---- Buttons
-    $("btnReload").addEventListener("click", () => location.reload());
-    $("btnClear").addEventListener("click", () => { debugEl.textContent = ""; });
-    $("btnCopy").addEventListener("click", async () => {
-      try{
-        await navigator.clipboard.writeText(debugEl.textContent || "");
-        alert("ログをコピーしました");
-      }catch{
-        alert("コピーに失敗しました（ブラウザ権限）");
-      }
-    });
-
-    $("btnSave").addEventListener("click", () => saveAddress().catch(e=>{
-      log("saveAddress error: " + (e && e.message ? e.message : e));
-      setStatus("保存に失敗しました。\n" + (e && e.message ? e.message : e), false);
+    $("btnSave").addEventListener("click", () => saveAddress().catch(() => {
+      setStatus("保存に失敗しました。時間をおいて再度お試しください。", false);
     }));
-    $("btnLoad").addEventListener("click", () => loadAddress().catch(e=>{
-      log("loadAddress error: " + (e && e.message ? e.message : e));
-      setStatus("読み込みに失敗しました。\n" + (e && e.message ? e.message : e), false);
+    $("btnLoad").addEventListener("click", () => loadAddress().catch(() => {
+      setStatus("読み込みに失敗しました。", false);
     }));
     $("btnClose").addEventListener("click", closeApp);
 
@@ -436,32 +340,17 @@
 
       try{
         await initLiff();
-        // 初期化できたら自動で読込（住所があれば）
         await loadAddress().catch(()=>{});
       }catch(e){
-        const msg = (e && e.message) ? e.message : String(e);
-        log("INIT FAIL: " + msg);
-
-        // invalid liffid の時に分かりやすく
         setBadge("LIFF: 初期化失敗", false);
-
-        let extra = "";
-        if (lastConfig && lastConfig.liffId){
-          extra += "\n\n取得したliffId: " + lastConfig.liffId;
-          extra += "\n（このliffIdがLINE Developers上で有効か確認してください）";
-        } else {
-          extra += "\n\n/api/liff/config の返り値を確認してください（liffIdが空/不正の可能性）";
-        }
-
         setStatus(
           "初期化に失敗しました。\n" +
-          msg +
-          extra,
+          "LINEアプリ内で開き直してください。\n" +
+          "（LIFF IDが有効か/チャンネル一致か確認）",
           false
         );
       }
     })();
-
   })();
   </script>
 </body>

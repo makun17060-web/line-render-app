@@ -21,10 +21,26 @@
     .field{ margin-bottom:10px; }
     label{ display:block; font-size:13px; font-weight:700; margin-bottom:4px; }
     input{ width:100%; padding:10px; font-size:15px; border-radius:10px; border:1px solid var(--border); }
-    button{ width:100%; padding:14px; margin-top:14px; font-size:16px; font-weight:700; border-radius:12px; border:none; background:var(--primary); color:#fff; }
+    button{
+      width:100%;
+      padding:14px;
+      margin-top:14px;
+      font-size:16px;
+      font-weight:700;
+      border-radius:12px;
+      border:none;
+      background:var(--primary);
+      color:#fff;
+
+      /* ★被り対策 */
+      position: relative;
+      z-index: 10;
+      pointer-events: auto;
+    }
     button:disabled{ opacity:.6; }
     .status{ margin-top:10px; font-size:13px; color:var(--muted); min-height:1.4em; white-space:pre-wrap; }
-    .warn{ background:#fff3cd; color:#856404; padding:10px; border-radius:10px; font-size:13px; margin-bottom:12px; }
+    .warn{ background:#fff3cd; color:#856404; padding:10px; border-radius:10px; font-size:13px; margin-bottom:12px; white-space:pre-wrap; }
+    .dbg{ margin-top:10px; font-size:12px; color:#374151; white-space:pre-wrap; }
   </style>
 </head>
 
@@ -33,7 +49,7 @@
   <h1>住所登録</h1>
   <p class="lead">商品発送に必要な情報をご入力ください。</p>
 
-  <div id="pcWarn" class="warn" style="display:none;"></div>
+  <div id="warn" class="warn" style="display:none;"></div>
 
   <div class="card">
     <div class="field">
@@ -61,17 +77,18 @@
       <input id="address" placeholder="〇〇市〇〇町1-2-3" />
     </div>
 
-    <button id="saveBtn">住所を保存する</button>
+    <button id="saveBtn" type="button">住所を保存する</button>
+
     <div id="status" class="status"></div>
+    <div id="dbg" class="dbg"></div>
   </div>
 </div>
 
 <script>
 (async function(){
+  const warnEl = document.getElementById("warn");
   const statusEl = document.getElementById("status");
-  const pcWarnEl = document.getElementById("pcWarn");
-  const params = new URLSearchParams(location.search);
-  const nextUrl = params.get("next") || "";
+  const dbgEl = document.getElementById("dbg");
 
   const elName = document.getElementById("name");
   const elPhone = document.getElementById("phone");
@@ -80,53 +97,77 @@
   const elAddr = document.getElementById("address");
   const saveBtn = document.getElementById("saveBtn");
 
-  function setStatus(msg){ statusEl.textContent = msg || ""; }
+  const params = new URLSearchParams(location.search);
+  const nextUrl = params.get("next") || "";
+
   function warn(msg){
-    pcWarnEl.style.display = "block";
-    pcWarnEl.textContent = msg || "このページは LINEアプリ内で開いてください。";
+    warnEl.style.display = "block";
+    warnEl.textContent = msg || "";
+  }
+  function setStatus(msg){ statusEl.textContent = msg || ""; }
+  function setDbg(msg){ dbgEl.textContent = msg || ""; }
+
+  // ★ JSが生きてる証拠
+  setDbg("JS OK\nURL=" + location.href);
+
+  // ボタンクリックが取れてるかを先に確認（LIFFの前）
+  saveBtn.addEventListener("click", () => {
+    setStatus("クリック検知OK（保存処理に入ります）");
+  }, { passive:true });
+
+  // LIFF init（まずはサーバから取得が安全）
+  let liffId = "";
+  try{
+    const cfg = await fetch("/api/liff/config?kind=address", { cache:"no-store" }).then(r=>r.json());
+    if(!cfg || !cfg.ok || !cfg.liffId) throw new Error("LIFF_ID_NOT_SET");
+    liffId = cfg.liffId;
+  }catch(e){
+    console.warn(e);
+    warn("LIFF設定取得に失敗: /api/liff/config?kind=address");
+    setDbg(dbgEl.textContent + "\nerr=" + (e?.message || e));
+    return;
   }
 
-  // ★ まずJSが生きてるか確認（デバッグ用）
-  setStatus("");
-
-  // LIFF初期化（※ クォートは半角 " で！）
   try{
-    await liff.init({ liffId: "2008406620-4QJ06JLv" });
+    await liff.init({ liffId });
   }catch(e){
-    console.warn("LIFF init failed", e);
-    warn("初期化に失敗しました。LIFF ID / Endpoint URL を確認してください。");
-    setStatus(String(e?.message || e));
+    console.warn(e);
+    warn("初期化に失敗しました（LIFF ID/Endpoint確認）");
+    setDbg(dbgEl.textContent + "\nliffId=" + liffId + "\nerr=" + (e?.message || e));
     return;
   }
 
   if(!liff.isInClient()){
-    warn("このページは LINEアプリ内で開いてください。");
+    warn("このページはLINEアプリ内で開いてください。");
+    setDbg(dbgEl.textContent + "\nNOT_IN_CLIENT");
     return;
   }
 
-  // userId 取得（server.js が userId 必須のため）
+  // userId 取得（server.js が userId必須）
   let userId = "";
   try{
     const prof = await liff.getProfile();
     userId = prof?.userId || "";
   }catch(e){
-    console.warn("getProfile failed", e);
+    console.warn(e);
   }
   if(!userId){
-    warn("ユーザー情報を取得できませんでした。LINE内で開いているか確認してください。");
+    warn("ユーザー情報を取得できませんでした。");
+    setDbg(dbgEl.textContent + "\nNO_USERID");
     return;
   }
 
-  // 郵便番号 → 住所補完（ZipCloud）
+  setDbg(dbgEl.textContent + "\nliffId=" + liffId + "\nuserId=" + userId);
+
+  // ZipCloud補完
   elZip.addEventListener("blur", async ()=>{
     const zip = elZip.value.trim().replace(/[^0-9]/g,"");
     elZip.value = zip;
     if(!/^\d{7}$/.test(zip)) return;
-
     try{
-      const res = await fetch(`https://zipcloud.ibsnet.co.jp/api/search?zipcode=${zip}`);
+      const res = await fetch("https://zipcloud.ibsnet.co.jp/api/search?zipcode=" + zip);
       const data = await res.json();
-      if(data && data.results && data.results[0]){
+      if(data?.results?.[0]){
         elPref.value = data.results[0].address1 || elPref.value;
         elAddr.value = (data.results[0].address2 || "") + (data.results[0].address3 || "");
       }
@@ -135,17 +176,17 @@
     }
   });
 
-  // 保存
+  // 本命の保存
   saveBtn.addEventListener("click", async ()=>{
     const payload = {
-      userId, // ★必須
+      userId,
       name: elName.value.trim(),
       phone: elPhone.value.trim(),
-      postal: elZip.value.trim().replace(/[^0-9]/g,""), // server.js の列名に合わせる
+      postal: elZip.value.trim().replace(/[^0-9]/g,""),
       prefecture: elPref.value.trim(),
-      city: "",             // 今のUIでは分けてないので空（必要なら後で追加）
+      city: "",
       address1: elAddr.value.trim(),
-      address2: "",         // 同上
+      address2: ""
     };
 
     if(!payload.name || !payload.phone || !payload.postal || !payload.prefecture || !payload.address1){
@@ -167,21 +208,16 @@
         body: JSON.stringify(payload)
       });
       const data = await res.json().catch(()=>({}));
-
       if(!res.ok || !data.ok) throw new Error(data?.error || ("HTTP_" + res.status));
 
       setStatus("保存しました");
       setTimeout(()=>{
-        if(nextUrl){
-          location.href = nextUrl;
-        }else{
-          liff.closeWindow();
-        }
+        if(nextUrl) location.href = nextUrl;
+        else liff.closeWindow();
       }, 600);
-
     }catch(e){
       console.error(e);
-      setStatus("保存に失敗しました: " + (e?.message || e));
+      setStatus("保存に失敗: " + (e?.message || e));
       saveBtn.disabled = false;
     }
   });

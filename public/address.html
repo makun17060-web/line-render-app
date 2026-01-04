@@ -111,9 +111,15 @@
       <input id="prefecture" placeholder="例）愛知県" />
     </div>
 
+    <!-- ✅ city を追加（DBの city に入る） -->
     <div class="field">
-      <label>市区町村・番地</label>
-      <input id="address1" placeholder="例）豊橋市〇〇町1-2-3" />
+      <label>市区町村</label>
+      <input id="city" placeholder="例）豊橋市" />
+    </div>
+
+    <div class="field">
+      <label>町名・番地</label>
+      <input id="address1" placeholder="例）〇〇町1-2-3" />
     </div>
 
     <div class="field">
@@ -170,6 +176,11 @@
       $("phone").value      = a.phone || "";
       $("postal").value     = a.postal || a.zip || "";
       $("prefecture").value = a.prefecture || a.pref || "";
+
+      // ✅ city を反映（重要）
+      $("city").value       = a.city || "";
+
+      // address1 の互換（古いデータが address に入ってる場合）
       $("address1").value   = a.address1 || a.address || "";
       $("address2").value   = a.address2 || "";
 
@@ -207,7 +218,7 @@
     return;
   }
 
-  // 郵便番号 → 住所補完
+  // 郵便番号 → 住所補完（pref/city/address1 を分離して入れる）
   $("postal").addEventListener("blur", async ()=>{
     const zip = $("postal").value.trim();
     if(!/^\d{7}$/.test(zip)) return;
@@ -215,8 +226,10 @@
       const r = await fetch(`https://zipcloud.ibsnet.co.jp/api/search?zipcode=${zip}`);
       const d = await r.json();
       if(d.results && d.results[0]){
-        $("prefecture").value = d.results[0].address1;
-        $("address1").value = d.results[0].address2 + d.results[0].address3;
+        const z = d.results[0];
+        $("prefecture").value = z.address1 || ""; // 都道府県
+        $("city").value       = z.address2 || ""; // 市区町村
+        $("address1").value   = z.address3 || ""; // 町名（番地はユーザーが追記）
       }
     }catch{}
   });
@@ -228,11 +241,16 @@
       phone: $("phone").value.trim(),
       postal: $("postal").value.trim(),
       prefecture: $("prefecture").value.trim(),
+
+      // ✅ DBの city に送る（重要）
+      city: $("city").value.trim(),
+
       address1: $("address1").value.trim(),
       address2: $("address2").value.trim(),
     };
 
-    if(!payload.name || !payload.phone || !payload.postal || !payload.prefecture || !payload.address1){
+    // ✅ city も必須にする（DBに必須ならここ必須）
+    if(!payload.name || !payload.phone || !payload.postal || !payload.prefecture || !payload.city || !payload.address1){
       setStatus("すべて入力してください");
       return;
     }
@@ -249,7 +267,7 @@
       const d = await r.json().catch(()=> ({}));
       if(!r.ok || !d.ok) throw new Error("save failed");
 
-      // ✅ 保存後に即反映（次回だけじゃなくこの場でも整合を取る）
+      // ✅ 保存後に即反映
       await loadExistingAddress();
 
       setStatus("保存しました。画面を閉じます…");

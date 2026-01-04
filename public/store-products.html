@@ -96,7 +96,6 @@
     <div class="muted" id="sum">カート：0点 / 小計 0円</div>
     <div class="right">
       <button class="btn btnClear" id="clearBtn">空にする</button>
-      <!-- ★文言変更 -->
       <button class="btn btnNext btnDisabled" id="nextBtn">注文内容確認へ</button>
     </div>
   </div>
@@ -108,28 +107,53 @@
 
   const LIFF_ID_STORE = "2008406620-7tSkOcqd";
   const API_PRODUCTS = "/api/products";
-
-  // ★確認ページ
   const CONFIRM_URL = "/public/store-confirm.html";
 
   const KEY_CART = "isoya_store_cart";
   const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
 
+  // ✅ 画像URLを「products 側と同じように」幅広く許可しつつ、Disk側に寄せる
   function diskImageUrl(image){
     const v = String(image||"").trim();
     if(!v) return "";
+
+    // /public/uploads/xxx
     if(v.startsWith("/public/uploads/")) return v;
+
+    // /uploads/xxx -> /public/uploads/xxx
     if(v.startsWith("/uploads/")) return "/public" + v;
+
+    // public/uploads/xxx
     if(v.startsWith("public/uploads/")) return "/" + v;
+
+    // uploads/xxx
     if(v.startsWith("uploads/")) return "/public/" + v;
+
+    // ファイル名だけ
     if(!v.includes("/")) return "/public/uploads/" + v;
+
+    // 絶対URLも許可（pathnameを正規化）
     if(/^https?:\/\//i.test(v)){
       try{
         const u = new URL(v);
+
         if(u.pathname.startsWith("/public/uploads/")) return u.pathname;
+        if(u.pathname.startsWith("/uploads/")) return "/public" + u.pathname;
+
+        const m1 = u.pathname.match(/\/public\/uploads\/.+$/);
+        if(m1) return m1[0];
+
+        const m2 = u.pathname.match(/\/uploads\/.+$/);
+        if(m2) return "/public" + m2[0];
+
+        // 最後の手段：同一オリジンならそのまま使う（products側がこれで出てる場合がある）
+        if(u.origin === location.origin) return u.href;
+
       }catch{}
     }
-    return "";
+
+    // それ以外は、そのまま使う（productsで出てるなら出る可能性がある）
+    return v;
   }
 
   function loadCart(){
@@ -181,7 +205,7 @@
     const stock = Number(p.stock||0);
 
     el.innerHTML = `
-      <div class="imgbox">${img?`<img src="${img}">`:""}</div>
+      <div class="imgbox">${img?`<img src="${img}" alt="">`:""}</div>
       <div class="body">
         <div class="name">${p.name}</div>
         <div class="desc">${p.desc||""}</div>
@@ -192,7 +216,7 @@
         <div class="controls">
           <div class="qty">
             <button class="dec">−</button>
-            <input class="q" type="number" value="1" min="1">
+            <input class="q" type="number" value="1" min="1" inputmode="numeric">
             <button class="inc">＋</button>
           </div>
           <button class="btn btnAdd add">カートに追加</button>
@@ -200,13 +224,23 @@
       </div>
     `;
 
+    // ✅ 画像が404等なら、その画像だけ消して空白にする（レイアウト崩れ防止）
+    const im = el.querySelector("img");
+    if(im){
+      im.addEventListener("error", ()=> im.remove());
+    }
+
     const q = el.querySelector(".q");
-    el.querySelector(".dec").onclick = ()=> q.value=Math.max(1,Number(q.value)-1);
-    el.querySelector(".inc").onclick = ()=> q.value=Math.max(1,Number(q.value)+1);
+    el.querySelector(".dec").onclick = ()=> q.value = String(Math.max(1, Math.floor(Number(q.value||1))-1));
+    el.querySelector(".inc").onclick = ()=> q.value = String(Math.max(1, Math.floor(Number(q.value||1))+1));
+    q.onchange = ()=> q.value = String(Math.max(1, Math.floor(Number(q.value||1))));
 
     const add = el.querySelector(".add");
     if(stock<=0){ add.disabled=true; add.textContent="在庫なし"; }
-    add.onclick = ()=> addToCart(p, Number(q.value));
+    add.onclick = ()=>{
+      const addQty = Math.max(1, Math.floor(Number(q.value||1)));
+      addToCart(p, addQty);
+    };
 
     return el;
   }
@@ -218,7 +252,6 @@
     renderSum();
   };
 
-  // ★ここが追加：確認ページへ
   nextBtn.onclick = ()=>{
     if(nextBtn.classList.contains("btnDisabled")) return;
     location.href = CONFIRM_URL;
@@ -235,6 +268,10 @@
     return;
   }
 
+  // 初回計測
+  syncBarHeight();
+  window.addEventListener("resize", syncBarHeight);
+
   try{
     const r = await fetch(API_PRODUCTS,{ cache:"no-store" });
     const j = await r.json();
@@ -248,8 +285,10 @@
       desc:p.desc||"",
       image:p.image||""
     }));
+
     grid.innerHTML="";
     products.forEach(p=>grid.appendChild(card(p)));
+
     statusEl.textContent="";
     renderSum();
     syncBarHeight();

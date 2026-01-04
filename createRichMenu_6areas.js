@@ -103,7 +103,7 @@ const shippingUrl = (SHIPPING_URL || `${baseUrl}/public/shipping.html`).trim();
         {
           // 左下：店頭受取（★ここを LIFF で開く）
           bounds: { x: 0, y: 843, width: 833, height: 843 },
-          action: { type: "uri", label: "店頭受取", uri: "https://liff.line.me/2008406620-7tSkOcqd" },
+          action: { type: "uri", label: "店頭受取", uri: STORE_LIFF_URL },
         },
         {
           // 中央下：配送・送料

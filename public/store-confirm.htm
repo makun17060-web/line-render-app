@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>店舗受取（現金）｜注文内容確認</title>
+
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+  <style>
+    :root{
+      --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280;
+      --line:#e5e7eb; --pri:#0a7b19; --danger:#b91c1c;
+      --shadow:0 1px 3px rgba(0,0,0,.06); --radius:14px;
+      --barH: 120px;
+    }
+    *{ box-sizing:border-box; }
+    body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
+
+    .wrap{
+      max-width:980px; margin:0 auto;
+      padding:14px 14px calc(var(--barH) + env(safe-area-inset-bottom) + 18px);
+    }
+
+    h1{ margin:0 0 6px; font-size:18px; }
+    .muted{ color:var(--muted); font-size:13px; line-height:1.5; }
+    .danger{ color:var(--danger); font-weight:900; }
+
+    .badge{
+      display:inline-block;
+      font-size:12px;
+      border:1px solid #bbf7d0;
+      background:#f0fdf4;
+      color:#166534;
+      border-radius:999px;
+      padding:2px 10px;
+      font-weight:900;
+      margin-left:8px;
+      vertical-align:middle;
+      white-space:nowrap;
+    }
+
+    .card{
+      background:var(--card);
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      padding:12px;
+      margin-top:12px;
+    }
+
+    .rows{ display:flex; flex-direction:column; gap:10px; margin-top:8px; }
+    .item{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:10px;
+      padding:10px;
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:#fff;
+    }
+    .left{ min-width:0; }
+    .name{ font-weight:900; }
+    .sub{ color:var(--muted); font-size:12px; margin-top:4px; }
+    .right{ text-align:right; white-space:nowrap; }
+    .price{ font-weight:900; color:var(--pri); }
+    .qty{ color:var(--muted); font-size:12px; margin-top:4px; }
+
+    .hr{ height:1px; background:var(--line); margin:12px 0; }
+
+    .field{
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+    }
+    label{ font-size:13px; font-weight:900; }
+    input[type="text"]{
+      width:100%;
+      padding:12px 12px;
+      border:1px solid var(--line);
+      border-radius:12px;
+      font-size:16px;
+      outline:none;
+      background:#fff;
+    }
+    .hint{ font-size:12px; color:var(--muted); }
+
+    /* bottom bar */
+    .bar{
+      position:fixed; left:0; right:0; bottom:0;
+      border-top:1px solid var(--line);
+      background:rgba(246,247,249,.92);
+      backdrop-filter:blur(10px);
+      padding:10px 12px;
+      padding-bottom: calc(10px + env(safe-area-inset-bottom));
+    }
+    .bar .inner{
+      max-width:980px; margin:0 auto;
+      display:flex; justify-content:space-between; align-items:center; gap:10px;
+      flex-wrap:wrap;
+    }
+    .bar .right{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+
+    .btn{
+      border:none; border-radius:14px;
+      padding:12px 14px;
+      font-weight:900; cursor:pointer;
+    }
+    .btnBack{
+      background:#fff; border:1px solid var(--line); color:var(--text);
+    }
+    .btnClear{
+      background:#fff; border:1px solid #fecaca; color:var(--danger);
+    }
+    .btnSubmit{
+      background:var(--pri); color:#fff;
+      min-width:240px;
+    }
+    .btnDisabled{ opacity:.55; pointer-events:none; }
+
+    .sumBox{
+      display:flex;
+      flex-direction:column;
+      gap:2px;
+      min-width:240px;
+    }
+    .sumTitle{ font-weight:900; }
+    .sumSub{ font-size:12px; color:var(--muted); }
+    .sumTotal{ font-weight:900; font-size:18px; color:#111827; }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <h1>注文内容確認 <span class="badge">店舗受取（現金）</span></h1>
+    <div class="muted" id="status">読み込み中…</div>
+
+    <div class="card" id="orderCard" style="display:none;">
+      <div class="muted">
+        送料・住所入力なし。店頭で現金払いです。
+      </div>
+
+      <div class="hr"></div>
+
+      <div style="font-weight:900; margin-bottom:6px;">ご注文明細</div>
+      <div class="rows" id="rows"></div>
+
+      <div class="hr"></div>
+
+      <div class="field">
+        <label for="customerName">お名前（注文者）</label>
+        <input id="customerName" type="text" placeholder="例：山田 太郎" autocomplete="name" />
+        <div class="hint">※ 店舗でお声がけする際に使用します（必須）</div>
+      </div>
+
+      <div class="hr"></div>
+
+      <div class="muted">
+        ※ 注文確定後、LINEに受付完了メッセージが届きます。
+      </div>
+    </div>
+  </div>
+
+  <div class="bar">
+    <div class="inner">
+      <div class="sumBox">
+        <div class="sumTitle">合計</div>
+        <div class="sumTotal" id="sumTotal">0円</div>
+        <div class="sumSub">※ 送料・代引手数料なし</div>
+      </div>
+      <div class="right">
+        <button class="btn btnBack" id="backBtn" type="button">戻る（商品一覧）</button>
+        <button class="btn btnClear" id="clearBtn" type="button">カートを空にする</button>
+        <button class="btn btnSubmit btnDisabled" id="submitBtn" type="button">注文確定（現金）</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(async function(){
+  "use strict";
+
+  // ===== 設定 =====
+  const LIFF_ID_STORE = "2008406620-7tSkOcqd";
+  const API_PRODUCTS = "/api/products";
+  const API_STORE_ORDER = "/api/store-order";
+
+  // store-products.html と揃える（店舗受取専用）
+  const KEY_CART = "isoya_store_cart";
+
+  // 戻る先（店舗受取専用の商品一覧）
+  const BACK_URL = "/public/store-products.html";
+
+  const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
+
+  // DOM
+  const statusEl = document.getElementById("status");
+  const orderCard = document.getElementById("orderCard");
+  const rowsEl = document.getElementById("rows");
+  const sumTotalEl = document.getElementById("sumTotal");
+  const nameEl = document.getElementById("customerName");
+
+  const backBtn = document.getElementById("backBtn");
+  const clearBtn = document.getElementById("clearBtn");
+  const submitBtn = document.getElementById("submitBtn");
+
+  // bar height sync
+  function syncBarHeight(){
+    const bar = document.querySelector(".bar");
+    if(!bar) return;
+    const h = Math.ceil(bar.getBoundingClientRect().height || 0);
+    if(h > 0) document.documentElement.style.setProperty("--barH", h + "px");
+  }
+  syncBarHeight();
+  window.addEventListener("resize", syncBarHeight);
+
+  function loadCart(){
+    try{
+      const v = JSON.parse(localStorage.getItem(KEY_CART) || "");
+      if(v && typeof v === "object") return v;
+    }catch{}
+    return { items: [] };
+  }
+  function saveCart(c){ localStorage.setItem(KEY_CART, JSON.stringify(c)); }
+
+  function normItems(items){
+    const map = new Map();
+    for(const it of (items||[])){
+      const id = String(it?.id||"").trim();
+      const qty = Math.max(0, Math.floor(Number(it?.qty||0)));
+      if(!id || qty<=0) continue;
+      map.set(id, (map.get(id)||0) + qty);
+    }
+    return Array.from(map.entries()).map(([id,qty])=>({id,qty}));
+  }
+
+  function setStatus(msg, isError=false){
+    statusEl.innerHTML = isError ? `<span class="danger">${msg}</span>` : msg;
+  }
+
+  // enable submit when name & cart ok
+  function updateSubmitEnabled(total, items){
+    const nameOk = String(nameEl.value||"").trim().length > 0;
+    const cartOk = (items||[]).length > 0 && total > 0;
+    submitBtn.classList.toggle("btnDisabled", !(nameOk && cartOk));
+    syncBarHeight();
+  }
+
+  // LIFF login
+  let profile = null;
+  async function ensureLiff(){
+    await liff.init({ liffId: LIFF_ID_STORE });
+    if(!liff.isLoggedIn()){
+      liff.login({ redirectUri: location.href });
+      return false;
+    }
+    profile = await liff.getProfile();
+    return true;
+  }
+
+  // main
+  let cart = loadCart();
+  cart.items = normItems(cart.items);
+
+  backBtn.onclick = ()=> location.href = BACK_URL;
+  clearBtn.onclick = ()=>{
+    if(!confirm("カートを空にしますか？")) return;
+    cart = { items: [] };
+    saveCart(cart);
+    location.href = BACK_URL; // 商品一覧へ戻す
+  };
+
+  try{
+    const ok = await ensureLiff();
+    if(!ok) return;
+  }catch(e){
+    setStatus("LIFF初期化に失敗しました（店舗受取LIFF）", true);
+    return;
+  }
+
+  // cart empty?
+  if(!cart.items.length){
+    setStatus("カートが空です。商品一覧から追加してください。", true);
+    sumTotalEl.textContent = "0円";
+    submitBtn.classList.add("btnDisabled");
+    backBtn.textContent = "商品一覧へ";
+    backBtn.onclick = ()=> location.href = BACK_URL;
+    return;
+  }
+
+  // products load
+  let products = [];
+  try{
+    const r = await fetch(API_PRODUCTS, { cache:"no-store" });
+    const j = await r.json().catch(()=>null);
+    if(!r.ok) throw new Error("HTTP " + r.status);
+
+    const raw = Array.isArray(j) ? j : (j && Array.isArray(j.products) ? j.products : []);
+    products = raw.map(p=>({
+      id: String(p.id||""),
+      name: String(p.name||""),
+      price: Number(p.price||0),
+      volume: p.volume ?? "",
+      stock: p.stock ?? undefined
+    }));
+  }catch(e){
+    setStatus("商品データの取得に失敗しました（/api/products）", true);
+    return;
+  }
+
+  const byId = Object.fromEntries(products.map(p=>[p.id,p]));
+
+  // build lines
+  const lines = [];
+  let total = 0;
+  for(const it of cart.items){
+    const p = byId[it.id];
+    if(!p) continue;
+    const lineTotal = Number(p.price||0) * Number(it.qty||0);
+    total += lineTotal;
+    lines.push({
+      id: it.id,
+      name: p.name,
+      volume: p.volume,
+      qty: it.qty,
+      unit: p.price,
+      lineTotal
+    });
+  }
+
+  if(!lines.length){
+    setStatus("カート内容が商品一覧と一致しません。商品一覧から入れ直してください。", true);
+    return;
+  }
+
+  // render
+  setStatus("");
+  orderCard.style.display = "";
+  rowsEl.innerHTML = lines.map(x=>`
+    <div class="item">
+      <div class="left">
+        <div class="name">${escapeHtml(x.name)}</div>
+        <div class="sub">${x.volume ? `内容量 ${escapeHtml(x.volume)}` : ""}</div>
+      </div>
+      <div class="right">
+        <div class="price">${yen(x.lineTotal)}</div>
+        <div class="qty">${yen(x.unit)} × ${x.qty}点</div>
+      </div>
+    </div>
+  `).join("");
+
+  sumTotalEl.textContent = yen(total);
+
+  function escapeHtml(s){
+    return String(s ?? "")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#39;");
+  }
+
+  // input listeners
+  nameEl.addEventListener("input", ()=> updateSubmitEnabled(total, lines));
+  updateSubmitEnabled(total, lines);
+
+  // submit
+  submitBtn.onclick = async ()=>{
+    if(submitBtn.classList.contains("btnDisabled")) return;
+
+    const customerName = String(nameEl.value||"").trim();
+    if(!customerName){
+      alert("お名前（注文者）を入力してください");
+      return;
+    }
+
+    submitBtn.textContent = "送信中…";
+    submitBtn.classList.add("btnDisabled");
+
+    try{
+      const payload = {
+        userId: (profile?.userId || "").trim(),
+        name: customerName,                 // ★注文者の氏名（入力値）
+        line_display_name: profile?.displayName || "", // 参考用（任意）
+        items: cart.items,
+        total: total,
+        pickup: true,
+        payment_method: "cash",
+        source: "store_liff"
+      };
+
+      const res = await fetch(API_STORE_ORDER, {
+        method: "POST",
+        headers: { "Content-Type":"application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if(!res.ok){
+        const t = await res.text().catch(()=> "");
+        throw new Error("HTTP " + res.status + (t ? " / " + t : ""));
+      }
+
+      // 成功：カートを空にして閉じる
+      saveCart({ items: [] });
+      alert("ご注文を受け付けました。店舗で現金払いをお願いします。");
+      try{ liff.closeWindow(); }catch(_){}
+    }catch(e){
+      alert("注文送信に失敗しました。\n" + (e?.message || e));
+      submitBtn.textContent = "注文確定（現金）";
+      updateSubmitEnabled(total, lines);
+    }
+  };
+
+})();
+</script>
+</body>
+</html>

@@ -146,22 +146,10 @@
 
   try{
     const liffId = await getLiffIdForAdd();
-    const tail = String(liffId).slice(-4);
-
     await liff.init({ liffId });
 
-    const inClient = liff.isInClient();
-    const loggedIn = liff.isLoggedIn();
-
-    // 状況表示（ログは出さない）
-    setStatus(
-      `LIFF: ****${tail}\n` +
-      `LINE内: ${inClient ? "はい" : "いいえ"}\n` +
-      `ログイン: ${loggedIn ? "済" : "未"}`
-    );
-
-    if(!loggedIn){
-      // LIFF外や未ログイン時はここで止まる
+    if(!liff.isLoggedIn()){
+      // 未ログインの場合はログインへ（画面表示ログなし）
       liff.login({ redirectUri: location.href });
       return;
     }
@@ -170,15 +158,11 @@
     userId = profile.userId || "";
     if(!userId) throw new Error("userId取得失敗");
 
+    // ✅ 初期化が終わったらボタン有効化（ログ表示はしない）
     saveBtn.disabled = false;
-    setStatus(
-      `LIFF: ****${tail}\n` +
-      `LINE内: ${inClient ? "はい" : "いいえ"}\n` +
-      `ログイン: 済\n` +
-      `準備OK`
-    );
 
   }catch(e){
+    // エラー時だけ表示（=運用上必要なメッセージのみ）
     setStatus(
       "初期化に失敗しました。\n" +
       "・LINEアプリ内（LIFF）で開いているか\n" +

@@ -86,7 +86,7 @@ const shippingUrl = (SHIPPING_URL || `${baseUrl}/public/shipping.html`).trim();
         {
           // 左上：ご注文はこちら（注文LIFF）
           bounds: { x: 0, y: 0, width: 833, height: 843 },
-          action: { type: "uri", label: "ご注文はこちら", uri: ORDER_LIFF_URL },
+          action: { type: "uri", label: "ご注文はこちら", uri: "https://liff.line.me/2008406620-8CWfgEKh" },
         },
         {
           // 中央上：ECショップ

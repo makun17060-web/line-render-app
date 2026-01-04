@@ -12,11 +12,14 @@
       --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280;
       --line:#e5e7eb; --pri:#0b3a53; --danger:#b91c1c;
       --shadow:0 1px 3px rgba(0,0,0,.06); --radius:14px;
+
+      /* ✅ 固定バー高さ（JSで実測して自動更新） */
       --barH: 120px;
     }
     *{ box-sizing:border-box; }
     body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
 
+    /* ✅ 下の固定バーに隠れないように、padding-bottom をバー高さに追従させる */
     .wrap{
       max-width:1040px; margin:0 auto;
       padding:14px 14px calc(var(--barH) + env(safe-area-inset-bottom) + 18px);
@@ -27,41 +30,94 @@
     .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; margin-top:12px; }
     .card{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow); }
 
+    /* =========================
+       ✅ 商品画像：絶対に切らない
+       ========================= */
     .imgbox{
-      height:200px; background:#fff;
-      display:flex; align-items:center; justify-content:center;
+      height:200px;
+      background:#fff;
+      display:flex;
+      align-items:center;
+      justify-content:center;
     }
-    .imgbox img{ max-width:100%; max-height:100%; object-fit:contain; display:block; }
+    .imgbox img{
+      max-width:100%;
+      max-height:100%;
+      width:auto;
+      height:auto;
+      object-fit:contain;
+      display:block;
+    }
 
     .body{ padding:12px; }
     .name{ font-weight:900; font-size:15px; }
     .desc{ margin-top:6px; color:var(--muted); font-size:12px; min-height:34px; }
     .row{ display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:8px; }
     .price{ font-weight:900; color:var(--pri); }
-    .badge{ font-size:12px; border:1px solid var(--line); background:#fafafa; border-radius:999px; padding:2px 8px; }
+    .badge{ font-size:12px; border:1px solid var(--line); background:#fafafa; border-radius:999px; padding:2px 8px; white-space:nowrap; }
 
-    /* ===== 操作部（見やすさ改善） ===== */
-    .controls{ display:flex; flex-direction:column; gap:10px; margin-top:12px; }
-    .controlsTop{ display:flex; justify-content:space-between; align-items:center; gap:10px; }
+    /* ===== ここから見やすさ改善（追加） ===== */
+    .controls{
+      display:flex;
+      flex-direction:column; /* 2段にする */
+      gap:10px;
+      margin-top:12px;
+    }
+    .controlsTop{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+    }
     .qty{ display:flex; align-items:center; gap:8px; }
     .qty button{
-      width:40px; height:40px; border-radius:12px; border:1px solid var(--line);
-      background:#fff; font-size:20px;
+      width:40px; height:40px;
+      border-radius:12px; border:1px solid var(--line);
+      background:#fff; font-size:20px; cursor:pointer;
     }
     .qty input{
-      width:72px; height:40px; border-radius:12px; border:1px solid var(--line);
+      width:72px; height:40px;
+      border-radius:12px; border:1px solid var(--line);
       text-align:center; font-size:16px; font-weight:800;
     }
 
-    .btn{ border:none; border-radius:12px; padding:10px 12px; font-weight:900; }
+    .btn{ border:none; border-radius:12px; padding:10px 12px; font-weight:900; cursor:pointer; }
     .btnAdd{
-      width:100%; background:var(--pri); color:#fff;
-      padding:14px; font-size:16px; border-radius:14px;
+      width:100%;
+      background:var(--pri); color:#fff;
+      padding:14px 14px;
+      border-radius:14px;
+      font-size:16px;
+      letter-spacing:.02em;
       box-shadow:0 6px 16px rgba(11,58,83,.18);
+      border:1px solid rgba(255,255,255,.2);
     }
-    .btnAdd:disabled{ opacity:.55; }
+    .btnAdd:active{
+      transform:translateY(1px);
+      box-shadow:0 3px 10px rgba(11,58,83,.18);
+    }
+    .btnAdd:disabled{ opacity:.55; cursor:not-allowed; }
 
-    /* ===== 固定バー ===== */
+    .toast{
+      position:fixed;
+      left:50%;
+      bottom: calc(var(--barH) + env(safe-area-inset-bottom) + 14px);
+      transform:translateX(-50%);
+      background:rgba(17,24,39,.92);
+      color:#fff;
+      padding:10px 14px;
+      border-radius:999px;
+      font-size:13px;
+      font-weight:800;
+      z-index:9999;
+      opacity:0;
+      pointer-events:none;
+      transition:opacity .18s ease;
+    }
+    .toast.show{ opacity:1; }
+    /* ===== 見やすさ改善ここまで ===== */
+
+    /* bottom bar */
     .bar{
       position:fixed; left:0; right:0; bottom:0;
       border-top:1px solid var(--line);
@@ -70,163 +126,272 @@
       padding:10px 12px;
       padding-bottom: calc(10px + env(safe-area-inset-bottom));
     }
-
     .bar .inner{
       max-width:1040px; margin:0 auto;
-      display:flex; gap:10px;
-      justify-content:space-between;
-      align-items:flex-start;
-      flex-wrap:wrap;           /* ★切れ防止 */
+      display:flex; justify-content:space-between; align-items:center; gap:10px;
     }
-
-    .sumBox{
-      flex:1 1 auto;
-      min-width:160px;
+    .bar .right{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+    .btnClear{
+      background:#fff; border:1px solid #fecaca; color:var(--danger);
+      padding:12px 14px; border-radius:14px;
     }
-    .sumLabel{ font-size:11px; color:var(--muted); }
-    .sumAmount{ font-size:20px; font-weight:900; color:var(--pri); }
-    .sumCount{ font-size:12px; color:var(--muted); }
-
-    .bar .right{
-      display:flex; gap:8px; flex-wrap:wrap;
-      justify-content:flex-end;
-      width:100%;               /* ★右端切れ防止 */
+    .btnAddr{
+      background:#fff; border:1px solid var(--line); color:var(--text);
+      padding:12px 14px; border-radius:14px;
     }
-
-    .btnAddr,.btnClear,.btnNext{
-      max-width:100%;
-      border-radius:14px;
-      padding:12px 14px;
-      font-weight:900;
+    .btnNext{
+      background:var(--pri); color:#fff;
+      padding:12px 14px; border-radius:14px; min-width:210px;
     }
-    .btnAddr{ background:#fff; border:1px solid var(--line); }
-    .btnClear{ background:#fff; border:1px solid #fecaca; color:var(--danger); }
-    .btnNext{ background:var(--pri); color:#fff; min-width:210px; }
-    .btnDisabled{ opacity:.55; pointer-events:none; }
-
-    @media (max-width:520px){
-      .btnAddr,.btnClear{ flex:1 1 calc(50% - 4px); }
-      .btnNext{ flex:1 1 100%; min-width:0; }
-    }
-
-    /* トースト */
-    .toast{
-      position:fixed; left:50%;
-      bottom: calc(var(--barH) + env(safe-area-inset-bottom) + 14px);
-      transform:translateX(-50%);
-      background:rgba(17,24,39,.92); color:#fff;
-      padding:10px 14px; border-radius:999px;
-      font-size:13px; font-weight:800;
-      opacity:0; transition:.2s;
-    }
-    .toast.show{ opacity:1; }
+    .btnDisabled{ opacity:.55; cursor:not-allowed; pointer-events:none; }
   </style>
 </head>
 
 <body>
-<div class="wrap">
-  <h1>商品一覧</h1>
-  <div class="muted" id="status">読み込み中…</div>
-  <div class="grid" id="grid"></div>
-</div>
+  <div class="wrap">
+    <h1>商品一覧</h1>
+    <div class="muted" id="status">読み込み中…</div>
+    <div class="grid" id="grid"></div>
+  </div>
 
-<div class="bar">
-  <div class="inner">
-    <div class="sumBox" id="sum">
-      <div class="sumLabel">小計</div>
-      <div class="sumAmount">0円</div>
-      <div class="sumCount">（0点）</div>
-    </div>
-    <div class="right">
-      <button class="btn btnAddr" id="addrBtn">住所入力</button>
-      <button class="btn btnClear" id="clearBtn">空にする</button>
-      <button class="btn btnNext btnDisabled" id="nextBtn">次へ</button>
+  <div class="bar">
+    <div class="inner">
+      <div class="muted" id="sum">カート：0点 / 小計 0円</div>
+      <div class="right">
+        <button class="btn btnAddr" id="addrBtn" type="button">住所入力（登録／変更）</button>
+        <button class="btn btnClear" id="clearBtn" type="button">空にする</button>
+        <button class="btn btnNext" id="nextBtn" type="button">次へ（住所入力）</button>
+      </div>
     </div>
   </div>
-</div>
 
-<div id="toast" class="toast">追加しました</div>
+  <!-- ✅ トースト（追加しました表示） -->
+  <div id="toast" class="toast">カートに追加しました</div>
 
 <script>
 (async function(){
-  const LIFF_ID_ORDER="2008406620-G5j1gjzM";
-  const KEY_CART="isoya_cart";
-  const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
+  "use strict";
 
-  let cart=JSON.parse(localStorage.getItem(KEY_CART)||'{"items":[]}');
-  let products=[];
+  const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
+  const KEY_UID  = "isoya_userId";
+  const KEY_CART = "isoya_cart";
 
-  function syncBarHeight(){
-    const h=document.querySelector(".bar")?.getBoundingClientRect().height||0;
-    if(h) document.documentElement.style.setProperty("--barH",Math.ceil(h)+"px");
+  // ✅ オリジナルセットをこの画面から非表示
+  const ORIGINAL_SET_ID = "original-set-2000";
+
+  const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
+
+  function loadCart(){
+    try{
+      const v = JSON.parse(localStorage.getItem(KEY_CART) || "");
+      if(v && typeof v==="object") return v;
+    }catch{}
+    return { items: [] };
+  }
+  function saveCart(cart){ localStorage.setItem(KEY_CART, JSON.stringify(cart)); }
+
+  function normItems(items){
+    const map = new Map();
+    for(const it of (items||[])){
+      const id = String(it?.id||"").trim();
+      const qty = Math.max(0, Math.floor(Number(it?.qty||0)));
+      if(!id || qty<=0) continue;
+      map.set(id, (map.get(id)||0) + qty);
+    }
+    return Array.from(map.entries()).map(([id,qty])=>({id,qty}));
   }
 
-  function renderSum(){
-    let total=0,count=0;
-    const map=Object.fromEntries(products.map(p=>[p.id,p]));
-    for(const it of cart.items){
-      const p=map[it.id]; if(!p) continue;
-      total+=p.price*it.qty; count+=it.qty;
+  async function ensureLiffUser(){
+    await liff.init({ liffId: LIFF_ID_ORDER });
+    if(!liff.isLoggedIn()){
+      liff.login({ redirectUri: location.href });
+      return null;
     }
-    document.getElementById("sum").innerHTML=`
-      <div class="sumLabel">小計</div>
-      <div class="sumAmount">${yen(total)}</div>
-      <div class="sumCount">（${count}点）</div>`;
-    document.getElementById("nextBtn").classList.toggle("btnDisabled",count===0);
+    const prof = await liff.getProfile();
+    const uid = (prof?.userId || "").trim();
+    if(uid) localStorage.setItem(KEY_UID, uid);
+    return uid;
+  }
+
+  const statusEl  = document.getElementById("status");
+  const gridEl    = document.getElementById("grid");
+  const sumEl     = document.getElementById("sum");
+  const clearBtn  = document.getElementById("clearBtn");
+  const addrBtn   = document.getElementById("addrBtn");
+  const nextBtn   = document.getElementById("nextBtn");
+  const toastEl   = document.getElementById("toast");
+
+  // ✅ 固定バーの高さを実測して、.wrap の下余白を自動調整
+  function syncBarHeight(){
+    const bar = document.querySelector(".bar");
+    if(!bar) return;
+    const h = Math.ceil(bar.getBoundingClientRect().height || 0);
+    if(h > 0) document.documentElement.style.setProperty("--barH", h + "px");
+  }
+
+  function showToast(msg){
+    if(!toastEl) return;
+    toastEl.textContent = msg || "カートに追加しました";
+    toastEl.classList.add("show");
+    clearTimeout(toastEl._t);
+    toastEl._t = setTimeout(()=> toastEl.classList.remove("show"), 700);
+  }
+
+  let cart = loadCart();
+  cart.items = normItems(cart.items);
+
+  let products = [];
+
+  function renderSum(){
+    const byId = Object.fromEntries(products.map(p=>[p.id,p]));
+    let subtotal = 0, count = 0;
+    for(const it of cart.items){
+      const p = byId[it.id];
+      if(!p) continue;
+      subtotal += Number(p.price||0) * Number(it.qty||0);
+      count += Number(it.qty||0);
+    }
+    sumEl.textContent = `カート：${count}点 / 小計 ${yen(subtotal)}`;
+    nextBtn.classList.toggle("btnDisabled", count===0);
+
     syncBarHeight();
   }
 
-  try{
-    await liff.init({liffId:LIFF_ID_ORDER});
-    if(!liff.isLoggedIn()){ liff.login({redirectUri:location.href}); return; }
-  }catch{
-    document.getElementById("status").textContent="LIFF初期化失敗";
-    return;
+  function addToCart(product, qtyToAdd){
+    const id = String(product.id||"").trim();
+    const qty = Math.max(1, Math.floor(Number(qtyToAdd||1)));
+    const ex = cart.items.find(x => x.id === id);
+    if(ex) ex.qty += qty;
+    else cart.items.push({ id, qty });
+    cart.items = normItems(cart.items);
+    saveCart(cart);
+    renderSum();
   }
 
-  const r=await fetch("/api/products",{cache:"no-store"});
-  const d=await r.json();
-  products=(d.products||[]);
+  function card(p){
+    const el = document.createElement("div");
+    el.className = "card";
 
-  const grid=document.getElementById("grid");
-  products.forEach(p=>{
-    const el=document.createElement("div");
-    el.className="card";
-    el.innerHTML=`
-      <div class="imgbox">${p.image?`<img src="${p.image}">`:""}</div>
+    const img = String(p.image||"").trim();
+    const stock = Number(p.stock||0);
+
+    el.innerHTML = `
+      <div class="imgbox">${img ? `<img src="${img}" alt="">` : ""}</div>
       <div class="body">
-        <div class="name">${p.name}</div>
-        <div class="desc">${p.desc||""}</div>
+        <div class="name">${p.name || ""}</div>
+        <div class="desc">${p.desc || ""}</div>
         <div class="row">
           <div class="price">${yen(p.price)}</div>
-          <span class="badge">${p.volume||""}</span>
+          <span class="badge">${p.volume ? `内容量 ${p.volume}` : `在庫 ${stock}`}</span>
         </div>
+
+        <!-- ✅ 操作を2段にして見やすく -->
         <div class="controls">
           <div class="controlsTop">
             <div class="qty">
-              <button class="dec">−</button>
-              <input class="q" type="number" value="1" min="1">
-              <button class="inc">＋</button>
+              <button type="button" class="dec">−</button>
+              <input class="q" type="number" min="1" step="1" value="1" inputmode="numeric">
+              <button type="button" class="inc">＋</button>
             </div>
             <span class="badge">個数</span>
           </div>
-          <button class="btnAdd">カートに追加</button>
+          <button type="button" class="btn btnAdd add">カートに追加</button>
         </div>
-      </div>`;
-    el.querySelector(".btnAdd").onclick=()=>{
-      const q=Number(el.querySelector(".q").value||1);
-      const ex=cart.items.find(x=>x.id===p.id);
-      if(ex) ex.qty+=q; else cart.items.push({id:p.id,qty:q});
-      localStorage.setItem(KEY_CART,JSON.stringify(cart));
-      renderSum();
-      const t=document.getElementById("toast");
-      t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),700);
-    };
-    grid.appendChild(el);
-  });
+      </div>
+    `;
 
-  renderSum();
+    const im = el.querySelector("img");
+    if(im) im.addEventListener("error", ()=> im.remove());
+
+    const q = el.querySelector(".q");
+    el.querySelector(".dec").onclick = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1))-1)); };
+    el.querySelector(".inc").onclick = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1))+1)); };
+    q.onchange = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1)))); };
+
+    const addBtn = el.querySelector(".add");
+    if(Number.isFinite(stock) && stock <= 0){
+      addBtn.disabled = true;
+      addBtn.textContent = "在庫なし";
+    }
+
+    addBtn.onclick = ()=>{
+      const add = Math.max(1, Math.floor(Number(q.value||1)));
+      const inCart = cart.items.find(x => x.id === p.id)?.qty || 0;
+      const next = inCart + add;
+      if(Number.isFinite(stock) && stock >= 0 && next > stock){
+        alert(`在庫不足です（在庫 ${stock}）。個数を減らしてください。`);
+        return;
+      }
+      addToCart(p, add);
+      showToast("カートに追加しました");
+    };
+
+    return el;
+  }
+
+  function goAddress(){
+    const ret = encodeURIComponent("/confirm.html");
+    location.href = `/cod-register.html?returnTo=${ret}`;
+  }
+
+  try{
+    const uid = await ensureLiffUser();
+    if(!uid){
+      statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">LIFFログイン中…</span>';
+      return;
+    }
+  }catch(e){
+    statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">LIFF初期化に失敗しました（注文用LIFF）</span>';
+    return;
+  }
+
+  // 初回計測
   syncBarHeight();
+  window.addEventListener("resize", syncBarHeight);
+
+  addrBtn.onclick = goAddress;
+  nextBtn.onclick = ()=>{
+    if(nextBtn.classList.contains("btnDisabled")){
+      alert("カートが空です");
+      return;
+    }
+    goAddress();
+  };
+
+  clearBtn.onclick = ()=>{
+    if(!confirm("カートを空にしますか？")) return;
+    cart = { items: [] };
+    saveCart(cart);
+    renderSum();
+    showToast("カートを空にしました");
+  };
+
+  try{
+    const r = await fetch("/api/products", { cache:"no-store" });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok || !d.ok) throw new Error(d?.error || ("HTTP "+r.status));
+
+    // ✅ オリジナルセット除外（ID + 名前）
+    const raw = Array.isArray(d.products) ? d.products : [];
+    products = raw.filter(p => {
+      const id = String(p?.id || "").trim();
+      const name = String(p?.name || "");
+      if (id === ORIGINAL_SET_ID) return false;
+      if (/オリジナルセット/.test(name)) return false;
+      return true;
+    });
+
+    statusEl.textContent = products.length ? "" : "商品がありません（products.json を確認）";
+    gridEl.innerHTML = "";
+    products.forEach(p => gridEl.appendChild(card(p)));
+
+    renderSum();
+    syncBarHeight();
+  }catch(e){
+    statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">商品読み込み失敗：/api/products を確認してください</span>';
+    renderSum();
+    syncBarHeight();
+  }
 })();
 </script>
 </body>

@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>店舗受取（現金）｜商品選択</title>
+
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+<style>
+:root{
+  --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280; --line:#e5e7eb;
+  --pri:#0a7b19; --danger:#b91c1c;
+  --shadow:0 1px 4px rgba(0,0,0,.08); --radius:16px;
+}
+*{ box-sizing:border-box; }
+body{
+  margin:0;
+  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+  background:var(--bg);
+  color:var(--text);
+}
+.wrap{ max-width:920px; margin:0 auto; padding:14px 14px 30px; }
+h1{ margin:0 0 6px; font-size:18px; }
+
+.grid{
+  display:grid;
+  grid-template-columns: repeat(2, minmax(0,1fr));
+  gap:12px;
+}
+@media (max-width:720px){ .grid{ grid-template-columns:1fr; } }
+
+.card{
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+}
+.row{ display:flex; gap:12px; padding:12px; }
+
+.img{
+  width:110px; height:110px;
+  border-radius:12px;
+  border:1px solid var(--line);
+  background:#fff;
+  display:flex; align-items:center; justify-content:center;
+  overflow:hidden;
+}
+.img img{
+  width:100%;
+  height:100%;
+  object-fit:contain; /* ★絶対切らない */
+}
+.noimg{ font-size:12px; color:var(--muted); }
+
+.info{ flex:1; display:flex; flex-direction:column; gap:6px; }
+.name{ font-weight:900; }
+.price{ font-weight:900; }
+.qty{ margin-top:auto; display:flex; align-items:center; gap:6px; }
+.qty input{
+  width:70px; padding:6px;
+  border-radius:8px; border:1px solid var(--line);
+}
+
+.footer{
+  position:sticky; bottom:0;
+  background:#f6f7f9;
+  padding:10px 0 0;
+}
+.summary{
+  background:#fff;
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:12px;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+}
+.btn{
+  background:var(--pri);
+  color:#fff;
+  border:0;
+  padding:12px 16px;
+  border-radius:12px;
+  font-weight:900;
+}
+</style>
+</head>
+
+<body>
+<div class="wrap">
+  <h1>🏠 店舗受取（現金）</h1>
+  <div class="grid" id="grid"></div>
+
+  <div class="footer">
+    <div class="summary">
+      <div>合計：<span id="sum">¥0</span></div>
+      <button class="btn" id="submitBtn">この内容で注文する</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+/* ===== 設定 ===== */
+const LIFF_ID_STORE   = "2008406620-STORE_LIFF_ID_HERE";
+const API_PRODUCTS    = "/api/products";
+const API_STORE_ORDER = "/api/store-order";
+
+/* ===== 状態 ===== */
+let products = [];
+let qtyMap = new Map();
+let profile = null;
+
+/* ===== Disk画像URL生成（★ここが重要） ===== */
+function diskImageUrl(image){
+  if(!image) return null;
+
+  // ファイル名だけ → /public/uploads/xxx.jpg
+  if(!image.includes("/")){
+    return "/public/uploads/" + image;
+  }
+
+  // public/uploads/xxx.jpg → /public/uploads/xxx.jpg
+  if(image.startsWith("public/uploads/")){
+    return "/" + image;
+  }
+
+  // uploads/xxx.jpg → /public/uploads/xxx.jpg
+  if(image.startsWith("uploads/")){
+    return "/public/" + image;
+  }
+
+  // /public/uploads/xxx.jpg → そのまま
+  if(image.startsWith("/public/uploads/")){
+    return image;
+  }
+
+  // それ以外は拒否（Disk以外は見ない）
+  return null;
+}
+
+function yen(n){ return "¥" + Number(n||0).toLocaleString(); }
+
+/* ===== 描画 ===== */
+function render(){
+  const grid = document.getElementById("grid");
+  grid.innerHTML = products.map(p=>{
+    const imgUrl = diskImageUrl(p.image);
+    const qty = qtyMap.get(p.id) || 0;
+
+    return `
+      <div class="card">
+        <div class="row">
+          <div class="img">
+            ${imgUrl
+              ? `<img src="${imgUrl}" alt="${p.name}">`
+              : `<div class="noimg">画像なし</div>`}
+          </div>
+          <div class="info">
+            <div class="name">${p.name}</div>
+            <div class="price">${yen(p.price)}</div>
+            <div class="qty">
+              数量
+              <input type="number" min="0" value="${qty}"
+                data-id="${p.id}">
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  grid.querySelectorAll("input[data-id]").forEach(inp=>{
+    inp.addEventListener("input", ()=>{
+      const id = inp.dataset.id;
+      const v = Math.max(0, Math.floor(Number(inp.value)||0));
+      qtyMap.set(id, v);
+      updateSum();
+    });
+  });
+
+  updateSum();
+}
+
+function updateSum(){
+  let total = 0;
+  products.forEach(p=>{
+    total += (qtyMap.get(p.id)||0) * p.price;
+  });
+  document.getElementById("sum").textContent = yen(total);
+}
+
+/* ===== LIFF ===== */
+async function initLiff(){
+  await liff.init({ liffId: LIFF_ID_STORE });
+  if(!liff.isLoggedIn()){
+    liff.login({ redirectUri: location.href });
+    return;
+  }
+  profile = await liff.getProfile();
+}
+
+/* ===== 起動 ===== */
+(async()=>{
+  await initLiff();
+
+  const res = await fetch(API_PRODUCTS, { cache:"no-store" });
+  products = await res.json();
+  render();
+
+  document.getElementById("submitBtn").onclick = async ()=>{
+    const items = products
+      .map(p=>({ id:p.id, qty: qtyMap.get(p.id)||0 }))
+      .filter(i=>i.qty>0);
+
+    if(items.length===0){
+      alert("商品を選択してください");
+      return;
+    }
+
+    await fetch(API_STORE_ORDER,{
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body:JSON.stringify({
+        userId: profile.userId,
+        name: profile.displayName,
+        items,
+        payment_method:"cash",
+        pickup:true
+      })
+    });
+
+    alert("ご注文を受け付けました。店舗で現金払いをお願いします。");
+    liff.closeWindow();
+  };
+})();
+})();
+</script>
+</body>
+</html>

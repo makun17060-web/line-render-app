@@ -1,242 +1,568 @@
 <!doctype html>
 <html lang="ja">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<title>店舗受取（現金）｜商品選択</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>店舗受取（現金）</title>
 
-<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <!-- LIFF SDK -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
-<style>
-:root{
-  --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280; --line:#e5e7eb;
-  --pri:#0a7b19; --danger:#b91c1c;
-  --shadow:0 1px 4px rgba(0,0,0,.08); --radius:16px;
-}
-*{ box-sizing:border-box; }
-body{
-  margin:0;
-  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
-  background:var(--bg);
-  color:var(--text);
-}
-.wrap{ max-width:920px; margin:0 auto; padding:14px 14px 30px; }
-h1{ margin:0 0 6px; font-size:18px; }
+  <style>
+    :root{
+      --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280; --line:#e5e7eb;
+      --store:#0a7b19; --shadow:0 1px 4px rgba(0,0,0,.08); --radius:16px;
+      --danger:#b91c1c;
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+      background:var(--bg);
+      color:var(--text);
+    }
+    .wrap{ max-width:900px; margin:0 auto; padding:16px 14px 30px; }
+    h1{ margin:0 0 6px; font-size:20px; }
+    .muted{ color:var(--muted); font-size:13px; line-height:1.6; }
 
-.grid{
-  display:grid;
-  grid-template-columns: repeat(2, minmax(0,1fr));
-  gap:12px;
-}
-@media (max-width:720px){ .grid{ grid-template-columns:1fr; } }
+    .card{
+      background:var(--card);
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      padding:16px;
+      margin-top:14px;
+    }
 
-.card{
-  background:var(--card);
-  border:1px solid var(--line);
-  border-radius:var(--radius);
-  box-shadow:var(--shadow);
-}
-.row{ display:flex; gap:12px; padding:12px; }
+    .badge{
+      display:inline-block;
+      font-size:12px;
+      padding:3px 10px;
+      border-radius:999px;
+      border:1px solid #bbf7d0;
+      background:#f0fdf4;
+      color:#166534;
+      font-weight:900;
+      margin-left:8px;
+      vertical-align:middle;
+    }
 
-.img{
-  width:110px; height:110px;
-  border-radius:12px;
-  border:1px solid var(--line);
-  background:#fff;
-  display:flex; align-items:center; justify-content:center;
-  overflow:hidden;
-}
-.img img{
-  width:100%;
-  height:100%;
-  object-fit:contain; /* ★絶対切らない */
-}
-.noimg{ font-size:12px; color:var(--muted); }
+    .pill{
+      display:inline-block;
+      font-size:12px;
+      padding:2px 10px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background:#fafafa;
+      color:#374151;
+    }
 
-.info{ flex:1; display:flex; flex-direction:column; gap:6px; }
-.name{ font-weight:900; }
-.price{ font-weight:900; }
-.qty{ margin-top:auto; display:flex; align-items:center; gap:6px; }
-.qty input{
-  width:70px; padding:6px;
-  border-radius:8px; border:1px solid var(--line);
-}
+    .warn{ color:var(--danger); font-weight:900; }
+    .hr{ height:1px; background:var(--line); margin:14px 0; }
 
-.footer{
-  position:sticky; bottom:0;
-  background:#f6f7f9;
-  padding:10px 0 0;
-}
-.summary{
-  background:#fff;
-  border:1px solid var(--line);
-  border-radius:14px;
-  padding:12px;
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-}
-.btn{
-  background:var(--pri);
-  color:#fff;
-  border:0;
-  padding:12px 16px;
-  border-radius:12px;
-  font-weight:900;
-}
-</style>
+    .grid{
+      display:grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap:12px;
+      margin-top:12px;
+    }
+    @media (max-width:760px){
+      .grid{ grid-template-columns: 1fr; }
+    }
+
+    .item{
+      background:#fff;
+      border:1px solid var(--line);
+      border-radius:16px;
+      box-shadow:var(--shadow);
+      overflow:hidden;
+    }
+    .row{
+      display:flex;
+      gap:12px;
+      padding:12px;
+      align-items:stretch;
+    }
+    .img{
+      width:110px; height:110px;
+      border-radius:12px;
+      border:1px solid var(--line);
+      background:#fff;
+      overflow:hidden;
+      flex:0 0 auto;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+    }
+    .img img{
+      width:100%;
+      height:100%;
+      object-fit:contain; /* ✅ 絶対切らない */
+      display:block;
+      background:#fff;
+    }
+    .noimg{
+      font-size:12px;
+      color:var(--muted);
+      text-align:center;
+      padding:8px;
+      line-height:1.4;
+    }
+    .info{
+      flex:1;
+      min-width:0;
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+    }
+    .name{
+      font-weight:900;
+      font-size:16px;
+      line-height:1.3;
+      margin:0;
+    }
+    .desc{
+      margin:0;
+      font-size:12px;
+      color:var(--muted);
+      line-height:1.5;
+      white-space:pre-wrap;
+    }
+    .meta{
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      align-items:center;
+      margin-top:auto;
+    }
+    .price{
+      font-weight:900;
+      color:#111827;
+    }
+
+    .qty{
+      margin-left:auto;
+      display:flex;
+      align-items:center;
+      gap:8px;
+    }
+    .qty input{
+      width:84px;
+      padding:8px 10px;
+      border:1px solid var(--line);
+      border-radius:10px;
+      font-size:15px;
+      outline:none;
+      background:#fff;
+    }
+    .qty small{ color:var(--muted); font-size:12px; }
+
+    .btn{
+      display:block; width:100%;
+      padding:16px 14px;
+      border-radius:14px;
+      font-weight:900; font-size:16px;
+      text-align:center; text-decoration:none;
+      border:none; cursor:pointer;
+      user-select:none;
+    }
+    .btnStore{ background:var(--store); color:#fff; }
+
+    .dangerBox{
+      border:1px solid #fecaca;
+      background:#fef2f2;
+      color:#991b1b;
+      border-radius:14px;
+      padding:10px 12px;
+      font-size:13px;
+      line-height:1.5;
+      margin-top:12px;
+      font-weight:800;
+    }
+    .hidden{ display:none !important; }
+
+    .footer{
+      position:sticky;
+      bottom:0;
+      background:rgba(246,247,249,.92);
+      backdrop-filter: blur(8px);
+      padding-top:12px;
+      margin-top:16px;
+    }
+    .summary{
+      background:#fff;
+      border:1px solid var(--line);
+      border-radius:16px;
+      box-shadow:var(--shadow);
+      padding:12px;
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content:space-between;
+      flex-wrap:wrap;
+    }
+    .sumLeft{
+      display:flex;
+      flex-direction:column;
+      gap:2px;
+      min-width:220px;
+    }
+    .sumTitle{ font-weight:900; }
+    .sumSub{ font-size:12px; color:var(--muted); }
+    .sumRight{
+      display:flex;
+      gap:10px;
+      align-items:center;
+    }
+    .sumTotal{
+      font-weight:900;
+      font-size:18px;
+    }
+
+    .btnSmall{
+      border:1px solid var(--line);
+      background:#fff;
+      color:#111827;
+      border-radius:12px;
+      padding:11px 14px;
+      font-weight:900;
+      cursor:pointer;
+      box-shadow:var(--shadow);
+    }
+    .bar{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      margin-top:12px;
+    }
+    .search{
+      flex:1;
+      min-width:220px;
+      background:#fff;
+      border:1px solid var(--line);
+      border-radius:12px;
+      padding:10px 12px;
+      font-size:15px;
+      outline:none;
+      box-shadow:var(--shadow);
+    }
+  </style>
 </head>
 
 <body>
-<div class="wrap">
-  <h1>🏠 店舗受取（現金）</h1>
-  <div class="grid" id="grid"></div>
+  <div class="wrap">
+    <h1>店舗受取（現金） <span class="badge">店頭受取モード</span></h1>
+    <div class="muted" id="lead">
+      送料・住所入力なし。店頭で現金払いです。商品を選んで注文してください。
+    </div>
 
-  <div class="footer">
-    <div class="summary">
-      <div>合計：<span id="sum">¥0</span></div>
-      <button class="btn" id="submitBtn">この内容で注文する</button>
+    <div class="card">
+      <div class="pill">カート → 注文確定（現金）</div>
+      <div class="muted" style="margin-top:8px;">
+        店舗で「LINE注文です」とお伝えください。
+        <span class="warn">※ ブラウザ直開きでは注文できません</span>
+      </div>
+
+      <div class="bar">
+        <input class="search" id="searchBox" type="search" placeholder="商品名で検索（例：あかしゃ / 久助）" />
+        <button class="btnSmall" id="clearBtn" type="button">数量クリア</button>
+        <button class="btnSmall" id="reloadBtn" type="button">再読み込み</button>
+      </div>
+
+      <div id="danger" class="dangerBox hidden"></div>
+    </div>
+
+    <div id="grid" class="grid"></div>
+
+    <div class="footer">
+      <div class="summary">
+        <div class="sumLeft">
+          <div class="sumTitle">合計</div>
+          <div class="sumSub">※ 店頭受取のため送料・代引手数料はかかりません</div>
+        </div>
+        <div class="sumRight">
+          <div class="sumTotal" id="sumTotal">¥0</div>
+          <button class="btn btnStore" id="submitBtn" type="button">この内容で注文する</button>
+        </div>
+      </div>
+      <div class="muted" style="margin-top:8px;">
+        ※ 注文後、LINEへ受付完了メッセージが届きます。
+      </div>
     </div>
   </div>
-</div>
 
 <script>
 (function(){
-"use strict";
+  "use strict";
 
-/* ===== 設定 ===== */
-const LIFF_ID_STORE   = "2008406620-STORE_LIFF_ID_HERE";
-const API_PRODUCTS    = "/api/products";
-const API_STORE_ORDER = "/api/store-order";
+  // ===== 設定 =====
+  // 店舗受取LIFF
+  const LIFF_ID_STORE = "2008406620-7tSkOcqd";   // ←今回の店舗受取LIFF
+  const API_PRODUCTS = "/api/products";
+  const API_STORE_ORDER = "/api/store-order";
 
-/* ===== 状態 ===== */
-let products = [];
-let qtyMap = new Map();
-let profile = null;
+  // ===== 状態 =====
+  const state = {
+    products: [],
+    filtered: [],
+    qtyById: new Map(),
+    profile: null,
+    inLiff: false,
+    loading: false,
+  };
 
-/* ===== Disk画像URL生成（★ここが重要） ===== */
-function diskImageUrl(image){
-  if(!image) return null;
-
-  // ファイル名だけ → /public/uploads/xxx.jpg
-  if(!image.includes("/")){
-    return "/public/uploads/" + image;
-  }
-
-  // public/uploads/xxx.jpg → /public/uploads/xxx.jpg
-  if(image.startsWith("public/uploads/")){
-    return "/" + image;
-  }
-
-  // uploads/xxx.jpg → /public/uploads/xxx.jpg
-  if(image.startsWith("uploads/")){
-    return "/public/" + image;
-  }
-
-  // /public/uploads/xxx.jpg → そのまま
-  if(image.startsWith("/public/uploads/")){
-    return image;
-  }
-
-  // それ以外は拒否（Disk以外は見ない）
-  return null;
-}
-
-function yen(n){ return "¥" + Number(n||0).toLocaleString(); }
-
-/* ===== 描画 ===== */
-function render(){
+  // DOM
   const grid = document.getElementById("grid");
-  grid.innerHTML = products.map(p=>{
-    const imgUrl = diskImageUrl(p.image);
-    const qty = qtyMap.get(p.id) || 0;
+  const danger = document.getElementById("danger");
+  const searchBox = document.getElementById("searchBox");
+  const clearBtn = document.getElementById("clearBtn");
+  const reloadBtn = document.getElementById("reloadBtn");
+  const submitBtn = document.getElementById("submitBtn");
+  const sumTotalEl = document.getElementById("sumTotal");
 
-    return `
-      <div class="card">
-        <div class="row">
-          <div class="img">
-            ${imgUrl
-              ? `<img src="${imgUrl}" alt="${p.name}">`
-              : `<div class="noimg">画像なし</div>`}
-          </div>
-          <div class="info">
-            <div class="name">${p.name}</div>
-            <div class="price">${yen(p.price)}</div>
-            <div class="qty">
-              数量
-              <input type="number" min="0" value="${qty}"
-                data-id="${p.id}">
+  function yen(n){
+    const x = Number(n || 0);
+    return "¥" + x.toLocaleString("ja-JP");
+  }
+  function safeStr(v){ return String(v ?? "").trim(); }
+  function showDanger(msg){
+    danger.textContent = msg || "";
+    danger.classList.toggle("hidden", !msg);
+  }
+  function escapeHtml(s){
+    return String(s ?? "")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#39;");
+  }
+
+  // ✅ Disk画像だけを見る（/public/uploads/ 固定）
+  function diskImageUrl(image){
+    const v = safeStr(image);
+    if(!v) return null;
+
+    // ファイル名だけ → /public/uploads/xxx.jpg
+    if(!v.includes("/")) return "/public/uploads/" + v;
+
+    // public/uploads/xxx.jpg → /public/uploads/xxx.jpg
+    if(v.startsWith("public/uploads/")) return "/" + v;
+
+    // uploads/xxx.jpg → /public/uploads/xxx.jpg
+    if(v.startsWith("uploads/")) return "/public/" + v;
+
+    // /public/uploads/xxx.jpg → そのまま
+    if(v.startsWith("/public/uploads/")) return v;
+
+    // それ以外は参照しない（外部や別パス遮断）
+    return null;
+  }
+
+  function calcTotal(){
+    let total = 0;
+    for(const p of state.products){
+      const qty = Number(state.qtyById.get(p.id) || 0);
+      if(qty > 0) total += Number(p.price || 0) * qty;
+    }
+    return total;
+  }
+  function updateSummary(){
+    sumTotalEl.textContent = yen(calcTotal());
+  }
+
+  function render(){
+    grid.innerHTML = state.filtered.map(p=>{
+      const img = diskImageUrl(p.image);
+      const qty = Number(state.qtyById.get(p.id) || 0);
+      const stock = Number(p.stock ?? 999999);
+      const soldOut = stock <= 0;
+      const volume = safeStr(p.volume);
+      const desc = safeStr(p.desc);
+
+      return `
+        <div class="item">
+          <div class="row">
+            <div class="img">
+              ${
+                img
+                  ? `<img src="${img}" alt="${escapeHtml(p.name)}" loading="lazy">`
+                  : `<div class="noimg">画像なし</div>`
+              }
+            </div>
+            <div class="info">
+              <p class="name">${escapeHtml(p.name)}</p>
+              ${desc ? `<p class="desc">${escapeHtml(desc)}</p>` : ``}
+              <div class="meta">
+                <span class="pill price">${yen(p.price)}</span>
+                ${volume ? `<span class="pill">${escapeHtml(volume)}</span>` : ``}
+                ${soldOut ? `<span class="pill" style="color:#b91c1c;font-weight:900;border-color:#fecaca;background:#fef2f2;">在庫切れ</span>` : ``}
+                <div class="qty">
+                  <small>数量</small>
+                  <input
+                    type="number"
+                    min="0"
+                    ${soldOut ? `disabled` : ``}
+                    value="${qty}"
+                    inputmode="numeric"
+                    data-qty-id="${p.id}"
+                  />
+                </div>
+              </div>
             </div>
           </div>
         </div>
-      </div>
-    `;
-  }).join("");
+      `;
+    }).join("");
 
-  grid.querySelectorAll("input[data-id]").forEach(inp=>{
-    inp.addEventListener("input", ()=>{
-      const id = inp.dataset.id;
-      const v = Math.max(0, Math.floor(Number(inp.value)||0));
-      qtyMap.set(id, v);
-      updateSum();
+    grid.querySelectorAll("input[data-qty-id]").forEach(inp=>{
+      inp.addEventListener("input", ()=>{
+        const id = inp.getAttribute("data-qty-id");
+        let v = Number(inp.value || 0);
+        if(!Number.isFinite(v) || v < 0) v = 0;
+        v = Math.floor(v);
+        state.qtyById.set(id, v);
+        updateSummary();
+      });
     });
-  });
 
-  updateSum();
-}
-
-function updateSum(){
-  let total = 0;
-  products.forEach(p=>{
-    total += (qtyMap.get(p.id)||0) * p.price;
-  });
-  document.getElementById("sum").textContent = yen(total);
-}
-
-/* ===== LIFF ===== */
-async function initLiff(){
-  await liff.init({ liffId: LIFF_ID_STORE });
-  if(!liff.isLoggedIn()){
-    liff.login({ redirectUri: location.href });
-    return;
+    updateSummary();
   }
-  profile = await liff.getProfile();
-}
 
-/* ===== 起動 ===== */
-(async()=>{
-  await initLiff();
+  function applyFilter(){
+    const q = safeStr(searchBox.value).toLowerCase();
+    if(!q) state.filtered = [...state.products];
+    else{
+      state.filtered = state.products.filter(p=>{
+        const name = safeStr(p.name).toLowerCase();
+        const desc = safeStr(p.desc).toLowerCase();
+        return name.includes(q) || desc.includes(q);
+      });
+    }
+    render();
+  }
 
-  const res = await fetch(API_PRODUCTS, { cache:"no-store" });
-  products = await res.json();
-  render();
+  async function initLiffStrict(){
+    try{
+      await liff.init({ liffId: LIFF_ID_STORE });
+      state.inLiff = true;
 
-  document.getElementById("submitBtn").onclick = async ()=>{
-    const items = products
-      .map(p=>({ id:p.id, qty: qtyMap.get(p.id)||0 }))
-      .filter(i=>i.qty>0);
+      if(!liff.isLoggedIn()){
+        liff.login({ redirectUri: location.href });
+        return false;
+      }
+      state.profile = await liff.getProfile();
+      return true;
+    }catch(e){
+      state.inLiff = false;
+      state.profile = null;
+      return false;
+    }
+  }
 
-    if(items.length===0){
-      alert("商品を選択してください");
+  async function loadProducts(){
+    showDanger("");
+    state.loading = true;
+    submitBtn.disabled = true;
+
+    try{
+      const res = await fetch(API_PRODUCTS, { cache:"no-store" });
+      if(!res.ok) throw new Error("商品取得に失敗しました (" + res.status + ")");
+      const data = await res.json();
+      if(!Array.isArray(data)) throw new Error("商品データ形式が不正です");
+
+      state.products = data
+        .filter(p => p && p.id && p.name && (p.price !== undefined))
+        .map(p => ({
+          id: String(p.id),
+          name: String(p.name),
+          price: Number(p.price || 0),
+          stock: (p.stock === undefined ? 999999 : Number(p.stock)),
+          volume: p.volume ?? "",
+          desc: p.desc ?? "",
+          image: p.image ?? ""
+        }));
+
+      state.filtered = [...state.products];
+      render();
+    }catch(e){
+      showDanger(e.message || String(e));
+    }finally{
+      state.loading = false;
+      submitBtn.disabled = false;
+    }
+  }
+
+  function buildOrderItems(){
+    const items = [];
+    for(const p of state.products){
+      const qty = Number(state.qtyById.get(p.id) || 0);
+      if(qty > 0) items.push({ id: p.id, qty });
+    }
+    return items;
+  }
+
+  async function submitOrder(){
+    showDanger("");
+
+    if(!state.inLiff || !state.profile?.userId){
+      showDanger("LINE内（LIFF）で開いてください。ブラウザ直開きでは注文できません。");
       return;
     }
 
-    await fetch(API_STORE_ORDER,{
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body:JSON.stringify({
-        userId: profile.userId,
-        name: profile.displayName,
-        items,
-        payment_method:"cash",
-        pickup:true
-      })
-    });
+    const items = buildOrderItems();
+    if(items.length === 0){
+      showDanger("商品を選択してください（数量を入力）");
+      return;
+    }
 
-    alert("ご注文を受け付けました。店舗で現金払いをお願いします。");
-    liff.closeWindow();
-  };
-})();
+    submitBtn.disabled = true;
+
+    try{
+      const payload = {
+        userId: state.profile.userId,
+        name: state.profile.displayName || "",
+        items,
+        pickup: true,
+        payment_method: "cash"
+      };
+
+      const res = await fetch(API_STORE_ORDER, {
+        method: "POST",
+        headers: { "Content-Type":"application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if(!res.ok){
+        const t = await res.text().catch(()=> "");
+        throw new Error("注文送信に失敗しました (" + res.status + ") " + (t ? " / " + t : ""));
+      }
+
+      alert("ご注文を受け付けました。店舗で現金払いをお願いします。");
+      try{ liff.closeWindow(); }catch(_){}
+    }catch(e){
+      showDanger(e.message || String(e));
+      submitBtn.disabled = false;
+    }
+  }
+
+  // UI events
+  searchBox.addEventListener("input", applyFilter);
+  clearBtn.addEventListener("click", ()=>{ state.qtyById.clear(); render(); });
+  reloadBtn.addEventListener("click", loadProducts);
+  submitBtn.addEventListener("click", submitOrder);
+
+  // 起動
+  (async()=>{
+    const ok = await initLiffStrict();
+    if(!ok){
+      showDanger("このページは「店頭受取（現金）」のLIFFから開いてください。");
+      submitBtn.disabled = true;
+      return;
+    }
+    await loadProducts();
+  })();
+
 })();
 </script>
 </body>

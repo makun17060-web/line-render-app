@@ -11,7 +11,7 @@
     :root{
       --bg:#f7f7f7; --card:#fff; --text:#111827; --muted:#6b7280;
       --pri:#0b3a53; --border:#e5e7eb; --radius:14px;
-      --danger:#b91c1c; --ok:#0a7b19;
+      --danger:#b91c1c;
     }
     body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
     .wrap{ max-width:720px; margin:0 auto; padding:14px 14px 28px; }
@@ -33,13 +33,6 @@
       font-weight:900; font-size:16px; cursor:pointer;
     }
     .btnSub{ background:#fff; color:var(--text); border:1px solid var(--border); }
-    .debug{
-      margin-top:12px; font-size:12px; white-space:pre-line;
-      color:#374151; background:#fff; border:1px dashed var(--border);
-      border-radius:12px; padding:10px;
-    }
-    .err{ color:var(--danger); font-weight:800; }
-    .ok{ color:var(--ok); font-weight:800; }
   </style>
 </head>
 
@@ -74,8 +67,6 @@
 
     <button class="btn" id="saveBtn" type="button">保存して次へ</button>
     <button class="btn btnSub" id="backBtn" type="button">戻る</button>
-
-    <div class="debug" id="debug">debug: 起動中…</div>
   </div>
 </div>
 
@@ -83,39 +74,15 @@
 (async function(){
   "use strict";
 
-  /* =============================
-     設定
-  ============================= */
-  const LIFF_ID_ADDRESS = "2008406620-4kyQVyqe"; // 住所登録用LIFF
+  const LIFF_ID_ADDRESS = "2008406620-4kyQVyqe";
   const KEY_UID = "isoya_userId";
 
-  /* =============================
-     クエリ解析 & 安全化
-  ============================= */
   const qs = new URLSearchParams(location.search);
+  const mode = (qs.get("mode") || "").trim();
+  const returnTo = (mode === "original") ? "/confirm-original.html" : "/confirm.html";
+  const KEY_CART = (mode === "original") ? "isoya_cart_original" : "isoya_cart";
 
-  function safeReturnTo(p){
-    p = String(p||"").trim();
-    if(!p) return "";
-    if(p.startsWith("http://") || p.startsWith("https://")) return "";
-    if(!p.startsWith("/")) return "";
-    return p;
-  }
-
-  const mode = (qs.get("mode") || "").trim(); // "original" or ""
-  const returnTo = safeReturnTo(qs.get("returnTo")) ||
-    (mode === "original" ? "/confirm-original.html" : "/confirm.html");
-
-  const KEY_CART = (mode === "original")
-    ? "isoya_cart_original"
-    : "isoya_cart";
-
-  /* =============================
-     DOM
-  ============================= */
   const $ = id => document.getElementById(id);
-  const debugEl = $("debug");
-  const log = m => debugEl.textContent += "\n" + m;
 
   function hasCart(){
     try{
@@ -124,9 +91,7 @@
     }catch{ return false; }
   }
 
-  /* =============================
-     LIFF 初期化
-  ============================= */
+  /* LIFF 初期化 */
   try{
     await liff.init({ liffId: LIFF_ID_ADDRESS });
     if(!liff.isLoggedIn()){
@@ -136,22 +101,13 @@
     const prof = await liff.getProfile();
     if(prof?.userId){
       localStorage.setItem(KEY_UID, prof.userId);
-      log("OK: LIFF userId取得");
     }
-  }catch(e){
-    debugEl.classList.add("err");
-    log("ERR: LIFF初期化失敗");
+  }catch{
     alert("住所登録画面の初期化に失敗しました");
     return;
   }
 
-  log(`mode=${mode || "normal"}`);
-  log(`KEY_CART=${KEY_CART}`);
-  log(`returnTo=${returnTo}`);
-
-  /* =============================
-     既存住所ロード
-  ============================= */
+  /* 既存住所ロード */
   try{
     const uid = localStorage.getItem(KEY_UID) || "";
     const r = await fetch(`/api/address/get?userId=${encodeURIComponent(uid)}`, { cache:"no-store" });
@@ -160,22 +116,15 @@
       Object.entries(d.address).forEach(([k,v])=>{
         if($(k)) $(k).value = v || "";
       });
-      log("OK: 住所を自動入力");
     }
-  }catch{
-    log("INFO: 既存住所なし");
-  }
+  }catch{}
 
-  /* =============================
-     戻る
-  ============================= */
+  /* 戻る */
   $("backBtn").onclick = ()=>{
     location.href = (mode === "original") ? "/original-set.html" : "/products.html";
   };
 
-  /* =============================
-     保存
-  ============================= */
+  /* 保存 */
   $("saveBtn").onclick = async ()=>{
     if(!hasCart()){
       alert("カートが空です。商品選択からやり直してください。");
@@ -207,13 +156,11 @@
         body: JSON.stringify(payload)
       });
       const d = await r.json();
-      if(!r.ok || !d?.ok) throw new Error(d?.error || "save failed");
+      if(!r.ok || !d?.ok) throw new Error();
 
       alert("住所を保存しました");
       location.href = returnTo;
-    }catch(e){
-      debugEl.classList.add("err");
-      log("ERR: 保存失敗 " + e.message);
+    }catch{
       alert("住所の保存に失敗しました");
     }
   };

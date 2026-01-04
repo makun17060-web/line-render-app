@@ -3,167 +3,395 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>住所入力</title>
+  <title>商品一覧</title>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
   <style>
     :root{
-      --bg:#f7f7f7; --card:#fff; --text:#111827; --muted:#6b7280;
-      --pri:#0b3a53; --border:#e5e7eb; --radius:14px;
-      --danger:#b91c1c;
+      --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280;
+      --line:#e5e7eb; --pri:#0b3a53; --danger:#b91c1c;
+      --shadow:0 1px 3px rgba(0,0,0,.06); --radius:14px;
+
+      /* ✅ 固定バー高さ（JSで実測して自動更新） */
+      --barH: 120px;
     }
+    *{ box-sizing:border-box; }
     body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
-    .wrap{ max-width:720px; margin:0 auto; padding:14px 14px 28px; }
-    h1{ font-size:18px; margin:0 0 6px; }
+
+    /* ✅ 下の固定バーに隠れないように、padding-bottom をバー高さに追従させる */
+    .wrap{
+      max-width:1040px; margin:0 auto;
+      padding:14px 14px calc(var(--barH) + env(safe-area-inset-bottom) + 18px);
+    }
+
+    h1{ margin:0 0 6px; font-size:18px; }
     .muted{ color:var(--muted); font-size:13px; line-height:1.5; }
-    .card{
-      background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
-      padding:14px; margin-top:12px;
+    .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; margin-top:12px; }
+    .card{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow); }
+
+    /* =========================
+       ✅ 商品画像：絶対に切らない
+       ========================= */
+    .imgbox{
+      height:200px;
+      background:#fff;
+      display:flex;
+      align-items:center;
+      justify-content:center;
     }
-    label{ font-size:13px; font-weight:800; display:block; margin-top:10px; }
-    input{
-      width:100%; padding:10px; border-radius:10px; border:1px solid var(--border);
-      font-size:15px; box-sizing:border-box;
+    .imgbox img{
+      max-width:100%;
+      max-height:100%;
+      width:auto;
+      height:auto;
+      object-fit:contain;
+      display:block;
     }
-    .btn{
-      margin-top:14px; width:100%; padding:14px;
-      border-radius:14px; border:none;
+
+    .body{ padding:12px; }
+    .name{ font-weight:900; font-size:15px; }
+    .desc{ margin-top:6px; color:var(--muted); font-size:12px; min-height:34px; }
+    .row{ display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:8px; }
+    .price{ font-weight:900; color:var(--pri); }
+    .badge{ font-size:12px; border:1px solid var(--line); background:#fafafa; border-radius:999px; padding:2px 8px; white-space:nowrap; }
+
+    /* ===== ここから見やすさ改善（追加） ===== */
+    .controls{
+      display:flex;
+      flex-direction:column; /* 2段にする */
+      gap:10px;
+      margin-top:12px;
+    }
+    .controlsTop{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+    }
+    .qty{ display:flex; align-items:center; gap:8px; }
+    .qty button{
+      width:40px; height:40px;
+      border-radius:12px; border:1px solid var(--line);
+      background:#fff; font-size:20px; cursor:pointer;
+    }
+    .qty input{
+      width:72px; height:40px;
+      border-radius:12px; border:1px solid var(--line);
+      text-align:center; font-size:16px; font-weight:800;
+    }
+
+    .btn{ border:none; border-radius:12px; padding:10px 12px; font-weight:900; cursor:pointer; }
+    .btnAdd{
+      width:100%;
       background:var(--pri); color:#fff;
-      font-weight:900; font-size:16px; cursor:pointer;
+      padding:14px 14px;
+      border-radius:14px;
+      font-size:16px;
+      letter-spacing:.02em;
+      box-shadow:0 6px 16px rgba(11,58,83,.18);
+      border:1px solid rgba(255,255,255,.2);
     }
-    .btnSub{ background:#fff; color:var(--text); border:1px solid var(--border); }
+    .btnAdd:active{
+      transform:translateY(1px);
+      box-shadow:0 3px 10px rgba(11,58,83,.18);
+    }
+    .btnAdd:disabled{ opacity:.55; cursor:not-allowed; }
+
+    .toast{
+      position:fixed;
+      left:50%;
+      bottom: calc(var(--barH) + env(safe-area-inset-bottom) + 14px);
+      transform:translateX(-50%);
+      background:rgba(17,24,39,.92);
+      color:#fff;
+      padding:10px 14px;
+      border-radius:999px;
+      font-size:13px;
+      font-weight:800;
+      z-index:9999;
+      opacity:0;
+      pointer-events:none;
+      transition:opacity .18s ease;
+    }
+    .toast.show{ opacity:1; }
+    /* ===== 見やすさ改善ここまで ===== */
+
+    /* bottom bar */
+    .bar{
+      position:fixed; left:0; right:0; bottom:0;
+      border-top:1px solid var(--line);
+      background:rgba(246,247,249,.92);
+      backdrop-filter:blur(10px);
+      padding:10px 12px;
+      padding-bottom: calc(10px + env(safe-area-inset-bottom));
+    }
+    .bar .inner{
+      max-width:1040px; margin:0 auto;
+      display:flex; justify-content:space-between; align-items:center; gap:10px;
+    }
+    .bar .right{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+    .btnClear{
+      background:#fff; border:1px solid #fecaca; color:var(--danger);
+      padding:12px 14px; border-radius:14px;
+    }
+    .btnAddr{
+      background:#fff; border:1px solid var(--line); color:var(--text);
+      padding:12px 14px; border-radius:14px;
+    }
+    .btnNext{
+      background:var(--pri); color:#fff;
+      padding:12px 14px; border-radius:14px; min-width:210px;
+    }
+    .btnDisabled{ opacity:.55; cursor:not-allowed; pointer-events:none; }
   </style>
 </head>
 
 <body>
-<div class="wrap">
-  <h1>住所入力</h1>
-  <div class="muted">
-    注文のために住所を入力してください（登録済みの場合は自動で表示されます）
+  <div class="wrap">
+    <h1>商品一覧</h1>
+    <div class="muted" id="status">読み込み中…</div>
+    <div class="grid" id="grid"></div>
   </div>
 
-  <div class="card">
-    <label>お名前</label>
-    <input id="name">
-
-    <label>電話番号</label>
-    <input id="phone">
-
-    <label>郵便番号</label>
-    <input id="postal">
-
-    <label>都道府県</label>
-    <input id="prefecture">
-
-    <label>市区町村</label>
-    <input id="city">
-
-    <label>番地</label>
-    <input id="address1">
-
-    <label>建物名など（任意）</label>
-    <input id="address2">
-
-    <button class="btn" id="saveBtn" type="button">保存して次へ</button>
-    <button class="btn btnSub" id="backBtn" type="button">戻る</button>
+  <div class="bar">
+    <div class="inner">
+      <div class="muted" id="sum">カート：0点 / 小計 0円</div>
+      <div class="right">
+        <button class="btn btnAddr" id="addrBtn" type="button">住所入力（登録／変更）</button>
+        <button class="btn btnClear" id="clearBtn" type="button">空にする</button>
+        <button class="btn btnNext" id="nextBtn" type="button">次へ（住所入力）</button>
+      </div>
+    </div>
   </div>
-</div>
+
+  <!-- ✅ トースト（追加しました表示） -->
+  <div id="toast" class="toast">カートに追加しました</div>
 
 <script>
 (async function(){
   "use strict";
 
-  const LIFF_ID_ADDRESS = "2008406620-4kyQVyqe";
-  const KEY_UID = "isoya_userId";
+  const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
+  const KEY_UID  = "isoya_userId";
+  const KEY_CART = "isoya_cart";
 
-  const qs = new URLSearchParams(location.search);
-  const mode = (qs.get("mode") || "").trim();
-  const returnTo = (mode === "original") ? "/confirm-original.html" : "/confirm.html";
-  const KEY_CART = (mode === "original") ? "isoya_cart_original" : "isoya_cart";
+  // ✅ オリジナルセットをこの画面から非表示
+  const ORIGINAL_SET_ID = "original-set-2000";
 
-  const $ = id => document.getElementById(id);
+  const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
 
-  function hasCart(){
+  function loadCart(){
     try{
-      const c = JSON.parse(localStorage.getItem(KEY_CART) || "");
-      return Array.isArray(c?.items) && c.items.length > 0;
-    }catch{ return false; }
+      const v = JSON.parse(localStorage.getItem(KEY_CART) || "");
+      if(v && typeof v==="object") return v;
+    }catch{}
+    return { items: [] };
+  }
+  function saveCart(cart){ localStorage.setItem(KEY_CART, JSON.stringify(cart)); }
+
+  function normItems(items){
+    const map = new Map();
+    for(const it of (items||[])){
+      const id = String(it?.id||"").trim();
+      const qty = Math.max(0, Math.floor(Number(it?.qty||0)));
+      if(!id || qty<=0) continue;
+      map.set(id, (map.get(id)||0) + qty);
+    }
+    return Array.from(map.entries()).map(([id,qty])=>({id,qty}));
   }
 
-  /* LIFF 初期化 */
-  try{
-    await liff.init({ liffId: LIFF_ID_ADDRESS });
+  async function ensureLiffUser(){
+    await liff.init({ liffId: LIFF_ID_ORDER });
     if(!liff.isLoggedIn()){
       liff.login({ redirectUri: location.href });
-      return;
+      return null;
     }
     const prof = await liff.getProfile();
-    if(prof?.userId){
-      localStorage.setItem(KEY_UID, prof.userId);
+    const uid = (prof?.userId || "").trim();
+    if(uid) localStorage.setItem(KEY_UID, uid);
+    return uid;
+  }
+
+  const statusEl  = document.getElementById("status");
+  const gridEl    = document.getElementById("grid");
+  const sumEl     = document.getElementById("sum");
+  const clearBtn  = document.getElementById("clearBtn");
+  const addrBtn   = document.getElementById("addrBtn");
+  const nextBtn   = document.getElementById("nextBtn");
+  const toastEl   = document.getElementById("toast");
+
+  // ✅ 固定バーの高さを実測して、.wrap の下余白を自動調整
+  function syncBarHeight(){
+    const bar = document.querySelector(".bar");
+    if(!bar) return;
+    const h = Math.ceil(bar.getBoundingClientRect().height || 0);
+    if(h > 0) document.documentElement.style.setProperty("--barH", h + "px");
+  }
+
+  function showToast(msg){
+    if(!toastEl) return;
+    toastEl.textContent = msg || "カートに追加しました";
+    toastEl.classList.add("show");
+    clearTimeout(toastEl._t);
+    toastEl._t = setTimeout(()=> toastEl.classList.remove("show"), 700);
+  }
+
+  let cart = loadCart();
+  cart.items = normItems(cart.items);
+
+  let products = [];
+
+  function renderSum(){
+    const byId = Object.fromEntries(products.map(p=>[p.id,p]));
+    let subtotal = 0, count = 0;
+    for(const it of cart.items){
+      const p = byId[it.id];
+      if(!p) continue;
+      subtotal += Number(p.price||0) * Number(it.qty||0);
+      count += Number(it.qty||0);
     }
-  }catch{
-    alert("住所登録画面の初期化に失敗しました");
+    sumEl.textContent = `カート：${count}点 / 小計 ${yen(subtotal)}`;
+    nextBtn.classList.toggle("btnDisabled", count===0);
+
+    syncBarHeight();
+  }
+
+  function addToCart(product, qtyToAdd){
+    const id = String(product.id||"").trim();
+    const qty = Math.max(1, Math.floor(Number(qtyToAdd||1)));
+    const ex = cart.items.find(x => x.id === id);
+    if(ex) ex.qty += qty;
+    else cart.items.push({ id, qty });
+    cart.items = normItems(cart.items);
+    saveCart(cart);
+    renderSum();
+  }
+
+  function card(p){
+    const el = document.createElement("div");
+    el.className = "card";
+
+    const img = String(p.image||"").trim();
+    const stock = Number(p.stock||0);
+
+    el.innerHTML = `
+      <div class="imgbox">${img ? `<img src="${img}" alt="">` : ""}</div>
+      <div class="body">
+        <div class="name">${p.name || ""}</div>
+        <div class="desc">${p.desc || ""}</div>
+        <div class="row">
+          <div class="price">${yen(p.price)}</div>
+          <span class="badge">${p.volume ? `内容量 ${p.volume}` : `在庫 ${stock}`}</span>
+        </div>
+
+        <!-- ✅ 操作を2段にして見やすく -->
+        <div class="controls">
+          <div class="controlsTop">
+            <div class="qty">
+              <button type="button" class="dec">−</button>
+              <input class="q" type="number" min="1" step="1" value="1" inputmode="numeric">
+              <button type="button" class="inc">＋</button>
+            </div>
+            <span class="badge">個数</span>
+          </div>
+          <button type="button" class="btn btnAdd add">カートに追加</button>
+        </div>
+      </div>
+    `;
+
+    const im = el.querySelector("img");
+    if(im) im.addEventListener("error", ()=> im.remove());
+
+    const q = el.querySelector(".q");
+    el.querySelector(".dec").onclick = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1))-1)); };
+    el.querySelector(".inc").onclick = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1))+1)); };
+    q.onchange = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1)))); };
+
+    const addBtn = el.querySelector(".add");
+    if(Number.isFinite(stock) && stock <= 0){
+      addBtn.disabled = true;
+      addBtn.textContent = "在庫なし";
+    }
+
+    addBtn.onclick = ()=>{
+      const add = Math.max(1, Math.floor(Number(q.value||1)));
+      const inCart = cart.items.find(x => x.id === p.id)?.qty || 0;
+      const next = inCart + add;
+      if(Number.isFinite(stock) && stock >= 0 && next > stock){
+        alert(`在庫不足です（在庫 ${stock}）。個数を減らしてください。`);
+        return;
+      }
+      addToCart(p, add);
+      showToast("カートに追加しました");
+    };
+
+    return el;
+  }
+
+  function goAddress(){
+    const ret = encodeURIComponent("/confirm.html");
+    location.href = `/cod-register.html?returnTo=${ret}`;
+  }
+
+  try{
+    const uid = await ensureLiffUser();
+    if(!uid){
+      statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">LIFFログイン中…</span>';
+      return;
+    }
+  }catch(e){
+    statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">LIFF初期化に失敗しました（注文用LIFF）</span>';
     return;
   }
 
-  /* 既存住所ロード */
+  // 初回計測
+  syncBarHeight();
+  window.addEventListener("resize", syncBarHeight);
+
+  addrBtn.onclick = goAddress;
+  nextBtn.onclick = ()=>{
+    if(nextBtn.classList.contains("btnDisabled")){
+      alert("カートが空です");
+      return;
+    }
+    goAddress();
+  };
+
+  clearBtn.onclick = ()=>{
+    if(!confirm("カートを空にしますか？")) return;
+    cart = { items: [] };
+    saveCart(cart);
+    renderSum();
+    showToast("カートを空にしました");
+  };
+
   try{
-    const uid = localStorage.getItem(KEY_UID) || "";
-    const r = await fetch(`/api/address/get?userId=${encodeURIComponent(uid)}`, { cache:"no-store" });
-    const d = await r.json();
-    if(r.ok && d?.ok && d.address){
-      Object.entries(d.address).forEach(([k,v])=>{
-        if($(k)) $(k).value = v || "";
-      });
-    }
-  }catch{}
+    const r = await fetch("/api/products", { cache:"no-store" });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok || !d.ok) throw new Error(d?.error || ("HTTP "+r.status));
 
-  /* 戻る */
-  $("backBtn").onclick = ()=>{
-    location.href = (mode === "original") ? "/original-set.html" : "/products.html";
-  };
+    // ✅ オリジナルセット除外（ID + 名前）
+    const raw = Array.isArray(d.products) ? d.products : [];
+    products = raw.filter(p => {
+      const id = String(p?.id || "").trim();
+      const name = String(p?.name || "");
+      if (id === ORIGINAL_SET_ID) return false;
+      if (/オリジナルセット/.test(name)) return false;
+      return true;
+    });
 
-  /* 保存 */
-  $("saveBtn").onclick = async ()=>{
-    if(!hasCart()){
-      alert("カートが空です。商品選択からやり直してください。");
-      location.href = (mode === "original") ? "/original-set.html" : "/products.html";
-      return;
-    }
+    statusEl.textContent = products.length ? "" : "商品がありません（products.json を確認）";
+    gridEl.innerHTML = "";
+    products.forEach(p => gridEl.appendChild(card(p)));
 
-    const payload = {
-      userId: localStorage.getItem(KEY_UID) || "",
-      name: $("name").value.trim(),
-      phone: $("phone").value.trim(),
-      postal: $("postal").value.trim(),
-      prefecture: $("prefecture").value.trim(),
-      city: $("city").value.trim(),
-      address1: $("address1").value.trim(),
-      address2: $("address2").value.trim(),
-    };
-
-    if(!payload.name || !payload.phone || !payload.postal ||
-       !payload.prefecture || !payload.city || !payload.address1){
-      alert("必須項目をすべて入力してください");
-      return;
-    }
-
-    try{
-      const r = await fetch("/api/address/set", {
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify(payload)
-      });
-      const d = await r.json();
-      if(!r.ok || !d?.ok) throw new Error();
-
-      alert("住所を保存しました");
-      location.href = returnTo;
-    }catch{
-      alert("住所の保存に失敗しました");
-    }
-  };
+    renderSum();
+    syncBarHeight();
+  }catch(e){
+    statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">商品読み込み失敗：/api/products を確認してください</span>';
+    renderSum();
+    syncBarHeight();
+  }
 })();
 </script>
 </body>

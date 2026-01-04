@@ -2097,7 +2097,7 @@ async function onFollow(ev) {
 
   // ✅ LIFF URL（あなたの固定運用があるならここは固定でもOK）
   const urlProducts = "https://liff.line.me/2008406620-8CWfgEKh";
-  const urlAddress  = "https://liff.line.me/2008406620-4kyQVyqe";
+  const urlAddress  = "https://liff.line.me/2008406620-4QJ06JLv";
 
   await lineClient.pushMessage(userId, {
     type: "text",

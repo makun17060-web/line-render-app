@@ -144,12 +144,45 @@
     return cfg.liffId;
   }
 
+  // ✅ 保存済み住所の自動読み込み（GET→ダメならPOST）
+  async function loadExistingAddress(){
+    try{
+      // 1) GET /api/address/get?userId=...
+      let r = await fetch(`/api/address/get?userId=${encodeURIComponent(userId)}`, { cache:"no-store" });
+      let d = await r.json().catch(()=> ({}));
+
+      // 2) サーバー実装が POST の場合もあるのでフォールバック
+      if(!r.ok || !d.ok){
+        r = await fetch("/api/address/get",{
+          method:"POST",
+          headers:{ "Content-Type":"application/json" },
+          body: JSON.stringify({ userId })
+        });
+        d = await r.json().catch(()=> ({}));
+      }
+
+      if(!r.ok || !d.ok || !d.address) return;
+
+      const a = d.address;
+
+      // 互換（pref / prefecture、zip / postal、address / address1 等）
+      $("name").value       = a.name || "";
+      $("phone").value      = a.phone || "";
+      $("postal").value     = a.postal || a.zip || "";
+      $("prefecture").value = a.prefecture || a.pref || "";
+      $("address1").value   = a.address1 || a.address || "";
+      $("address2").value   = a.address2 || "";
+
+    }catch{
+      // 読み出し失敗は無視（保存はできるようにする）
+    }
+  }
+
   try{
     const liffId = await getLiffIdForAdd();
     await liff.init({ liffId });
 
     if(!liff.isLoggedIn()){
-      // 未ログインの場合はログインへ（画面表示ログなし）
       liff.login({ redirectUri: location.href });
       return;
     }
@@ -158,11 +191,13 @@
     userId = profile.userId || "";
     if(!userId) throw new Error("userId取得失敗");
 
-    // ✅ 初期化が終わったらボタン有効化（ログ表示はしない）
+    // ✅ 初期化が終わったらボタン有効化（ログ表示なし）
     saveBtn.disabled = false;
 
+    // ✅ ここで保存済み住所を自動表示
+    await loadExistingAddress();
+
   }catch(e){
-    // エラー時だけ表示（=運用上必要なメッセージのみ）
     setStatus(
       "初期化に失敗しました。\n" +
       "・LINEアプリ内（LIFF）で開いているか\n" +
@@ -213,6 +248,9 @@
       });
       const d = await r.json().catch(()=> ({}));
       if(!r.ok || !d.ok) throw new Error("save failed");
+
+      // ✅ 保存後に即反映（次回だけじゃなくこの場でも整合を取る）
+      await loadExistingAddress();
 
       setStatus("保存しました。画面を閉じます…");
       setTimeout(()=>{ try{ liff.closeWindow(); }catch{} }, 800);

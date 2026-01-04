@@ -1,10 +1,7 @@
-<!-- public/shipping-calc.html  修正版“丸ごと版”
+<!-- public/shipping-calc.html  修正版“丸ごと版”（ログ表示なし）
   ✅ 送料はDB（shipping_yamato_taxed）を必ず使う：strict:true を送る
   ✅ DBに該当送料が無い場合はエラー表示（SHIPPING_NOT_FOUND_IN_DB）
-  ✅ API仕様（あなたの server.js）:
-      POST /api/shipping/quote
-      body: { pref, items:[{product_id, qty}], strict:true }
-      res : { ok:true, region, size, shipping_fee, subtotal, total } など
+  ✅ console.log / console.error 等は一切使わない（ログ表示なし）
 -->
 <!doctype html>
 <html lang="ja">
@@ -149,6 +146,12 @@
 
   const yen = (n)=> (Number(n)||0).toLocaleString("ja-JP") + "円";
 
+  function escapeHtml(s){
+    return String(s||"")
+      .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;").replaceAll("'","&#039;");
+  }
+
   function setBusy(b){
     btn.disabled = b;
     btn.textContent = b ? "計算中…" : "送料を計算する（DB）";
@@ -158,17 +161,15 @@
     result.innerHTML = `<span class="err">${escapeHtml(msg || "送料を取得できませんでした。")}</span>`;
   }
 
-  function escapeHtml(s){
-    return String(s||"")
-      .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
-      .replaceAll('"',"&quot;").replaceAll("'","&#039;");
+  // ※ログ表示なし：エラーも画面表示のみ
+  async function safeJson(res){
+    try { return await res.json(); } catch { return {}; }
   }
 
   async function calc(){
     const pref = String(prefEl.value || "").trim();
     const productId = String(productEl.value || "").trim();
     const qty = Math.max(1, Math.floor(Number(qtyEl.value || 1)));
-
     qtyEl.value = String(qty);
 
     if(!pref || !productId){
@@ -176,10 +177,7 @@
       return;
     }
 
-    // APIに渡す product_id（server側で最終IDへ変換される想定）
-    const apiProductId = (productId === "kusuke") ? "kusuke" : productId;
-
-    const items = [{ product_id: apiProductId, qty }];
+    const items = [{ product_id: productId, qty }];
 
     setBusy(true);
     result.textContent = "計算中…";
@@ -188,17 +186,12 @@
       const res = await fetch("/api/shipping/quote", {
         method:"POST",
         headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify({
-          pref,
-          items,
-          strict: true   // ✅ DB必須（フォールバック禁止）
-        })
+        body: JSON.stringify({ pref, items, strict: true })
       });
 
-      const d = await res.json().catch(()=> ({}));
+      const d = await safeJson(res);
 
       if(!res.ok || !d.ok){
-        // DBに該当が無い場合など
         const msg =
           d?.error === "SHIPPING_NOT_FOUND_IN_DB"
             ? `DBに送料が見つかりません（region=${d.region || "?"}, size=${d.size || "?"}）`
@@ -207,7 +200,6 @@
         return;
       }
 
-      // 期待：{ ok:true, region, size, shipping_fee, subtotal, total }
       const region = d.region ?? "";
       const size = d.size ?? "";
       const shippingFee = Number(d.shipping_fee ?? d.shippingFee ?? 0);
@@ -222,7 +214,7 @@
         `送料（DB）：<b>${yen(shippingFee)}</b><br>` +
         `<div class="big">総額の目安：${yen(total)}</div>` +
         `<div class="muted">※DB（shipping_yamato_taxed）から取得</div>`;
-    }catch(e){
+    }catch(_e){
       showErr("送料を取得できませんでした。サーバ/APIを確認してください。");
     }finally{
       setBusy(false);

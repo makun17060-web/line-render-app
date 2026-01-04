@@ -33,7 +33,6 @@
     .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; margin-top:12px; }
     .card{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow); }
 
-    /* 画像は絶対に切らない */
     .imgbox{ height:200px; background:#fff; display:flex; align-items:center; justify-content:center; }
     .imgbox img{ max-width:100%; max-height:100%; object-fit:contain; display:block; }
 
@@ -78,7 +77,7 @@
     }
     .btnNext{
       background:var(--pri); color:#fff;
-      padding:12px 14px; border-radius:14px; min-width:240px;
+      padding:12px 14px; border-radius:14px; min-width:260px;
     }
     .btnDisabled{ opacity:.55; pointer-events:none; }
     .danger{ color:var(--danger); font-weight:900; }
@@ -97,7 +96,8 @@
     <div class="muted" id="sum">カート：0点 / 小計 0円</div>
     <div class="right">
       <button class="btn btnClear" id="clearBtn">空にする</button>
-      <button class="btn btnNext btnDisabled" id="orderBtn">注文確定（現金）</button>
+      <!-- ★文言変更 -->
+      <button class="btn btnNext btnDisabled" id="nextBtn">注文内容確認へ</button>
     </div>
   </div>
 </div>
@@ -108,32 +108,26 @@
 
   const LIFF_ID_STORE = "2008406620-7tSkOcqd";
   const API_PRODUCTS = "/api/products";
-  const API_STORE_ORDER = "/api/store-order";
+
+  // ★確認ページ
+  const CONFIRM_URL = "/public/store-confirm.html";
 
   const KEY_CART = "isoya_store_cart";
-
   const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
 
-  /* ===============================
-     ★ ここが重要：完全対応版
-     =============================== */
   function diskImageUrl(image){
     const v = String(image||"").trim();
     if(!v) return "";
-
     if(v.startsWith("/public/uploads/")) return v;
     if(v.startsWith("/uploads/")) return "/public" + v;
     if(v.startsWith("public/uploads/")) return "/" + v;
     if(v.startsWith("uploads/")) return "/public/" + v;
     if(!v.includes("/")) return "/public/uploads/" + v;
-
-    // 絶対URLでも /public/uploads を含めばOK
     if(/^https?:\/\//i.test(v)){
       try{
         const u = new URL(v);
         if(u.pathname.startsWith("/public/uploads/")) return u.pathname;
-        if(u.pathname.startsWith("/uploads/")) return "/public" + u.pathname;
-      }catch(e){}
+      }catch{}
     }
     return "";
   }
@@ -156,7 +150,7 @@
   const statusEl = document.getElementById("status");
   const sumEl = document.getElementById("sum");
   const clearBtn = document.getElementById("clearBtn");
-  const orderBtn = document.getElementById("orderBtn");
+  const nextBtn = document.getElementById("nextBtn");
 
   function renderSum(){
     let count=0, total=0;
@@ -168,7 +162,7 @@
       total += p.price * it.qty;
     }
     sumEl.textContent = `カート：${count}点 / 小計 ${yen(total)}`;
-    orderBtn.classList.toggle("btnDisabled", count===0);
+    nextBtn.classList.toggle("btnDisabled", count===0);
     syncBarHeight();
   }
 
@@ -224,25 +218,12 @@
     renderSum();
   };
 
-  orderBtn.onclick = async ()=>{
-    if(orderBtn.classList.contains("btnDisabled")) return;
-    orderBtn.textContent="送信中…";
-    orderBtn.classList.add("btnDisabled");
-
-    await fetch(API_STORE_ORDER,{
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body:JSON.stringify({ items:cart.items, pickup:true, payment_method:"cash" })
-    });
-
-    cart={ items:[] };
-    saveCart(cart);
-    renderSum();
-    alert("ご注文を受け付けました。店舗で現金払いをお願いします。");
-    try{ liff.closeWindow(); }catch(e){}
+  // ★ここが追加：確認ページへ
+  nextBtn.onclick = ()=>{
+    if(nextBtn.classList.contains("btnDisabled")) return;
+    location.href = CONFIRM_URL;
   };
 
-  // LIFF
   try{
     await liff.init({ liffId: LIFF_ID_STORE });
     if(!liff.isLoggedIn()){
@@ -254,7 +235,6 @@
     return;
   }
 
-  // products 取得
   try{
     const r = await fetch(API_PRODUCTS,{ cache:"no-store" });
     const j = await r.json();

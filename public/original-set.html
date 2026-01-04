@@ -69,6 +69,17 @@
 
     <div class="card">
       <div class="body">
+        <!-- ✅ Disk配信した画像を表示 -->
+        <img id="pimg" alt="商品画像" style="
+          width:100%;
+          height:auto;
+          display:none;
+          border-radius:12px;
+          border:1px solid var(--line);
+          background:#fff;
+          margin-bottom:12px;
+        " />
+
         <div class="name" id="pname">オリジナルセット</div>
         <div class="desc" id="pdesc">
           贈答向けの詰め合わせセットです。<span class="warn">単品（あかしゃ等）との混載はできません。</span>
@@ -118,14 +129,11 @@
 (async function(){
   "use strict";
 
-  // 注文用LIFF（あなたの products.html と同じでOK）
   const LIFF_ID_ORDER = "2008406620-Bd9Zo9od";
 
-  // 既存と混ざらないよう「オリジナル専用キー」にする
   const KEY_UID  = "isoya_userId";
-  const KEY_CART = "isoya_cart_original"; // ★別キー
+  const KEY_CART = "isoya_cart_original";
 
-  // オリジナルセットの商品ID（products.json にある想定）
   const ORIGINAL_ID = (window.ORIGINAL_SET_PRODUCT_ID || "original-set-2000").trim();
 
   const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
@@ -172,6 +180,7 @@
   const pdescEl  = document.getElementById("pdesc");
   const ppriceEl = document.getElementById("pprice");
   const pvolEl   = document.getElementById("pvolume");
+  const pimgEl   = document.getElementById("pimg"); // ✅追加
 
   const decBtn   = document.getElementById("dec");
   const incBtn   = document.getElementById("inc");
@@ -190,7 +199,7 @@
     if(q===1) return 80;
     if(q===2) return 100;
     if(q<=4) return 120;
-    return 140; // 5-6想定。7以上は運用で制限してOK
+    return 140;
   }
 
   function renderSizeTable(){
@@ -210,12 +219,11 @@
 
   function setQtyInCart(qty){
     qty = Math.max(1, Math.floor(Number(qty||1)));
-    // 7以上を禁止したいならここで止める（運用次第）
     if(qty > 6){
       alert("オリジナルセットは1回の注文で最大6個までにしてください。");
       qty = 6;
     }
-    cart.items = [{ id: ORIGINAL_ID, qty }]; // ★オリジナルは単一固定
+    cart.items = [{ id: ORIGINAL_ID, qty }];
     cart.items = normItems(cart.items);
     saveCart(cart);
   }
@@ -230,7 +238,6 @@
   }
 
   function goAddress(){
-    // 住所入力後、オリジナル専用の確認画面へ戻したい（後で作成OK）
     const ret = encodeURIComponent("/confirm-original.html");
     location.href = `/cod-register.html?returnTo=${ret}&mode=original`;
   }
@@ -293,20 +300,36 @@
     product = products.find(p => String(p.id||"").trim() === ORIGINAL_ID) || null;
 
     if(!product){
-      // products.jsonに無い場合でも最低限動かす
       statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">オリジナルセットの商品IDが見つかりません（products.json を確認）</span>';
       pnameEl.textContent = "オリジナルセット";
       ppriceEl.textContent = yen(0);
       pvolEl.textContent = "内容量";
+      pimgEl.style.display = "none";
     }else{
       statusEl.textContent = "";
       pnameEl.textContent = product.name || "オリジナルセット";
       pdescEl.innerHTML = `${product.desc || "贈答向けの詰め合わせセットです。"} <span class="warn">単品との混載はできません。</span>`;
       ppriceEl.textContent = yen(product.price);
       pvolEl.textContent = product.volume ? `内容量 ${product.volume}` : "内容量";
+
+      // ✅ Disk配信の画像URLへ変換して表示
+      const rawImg = String(product.image || "").trim();
+      let imgUrl = "";
+      if(rawImg){
+        if(/^https?:\/\//i.test(rawImg)) imgUrl = rawImg;
+        else if(rawImg.startsWith("/")) imgUrl = rawImg;
+        else imgUrl = "/public/uploads/" + rawImg; // ファイル名だけならこれ
+      }
+
+      if(imgUrl){
+        pimgEl.src = imgUrl;
+        pimgEl.style.display = "block";
+      }else{
+        pimgEl.removeAttribute("src");
+        pimgEl.style.display = "none";
+      }
     }
 
-    // 初期数量：カートにあればそれ、なければ1
     const initQty = Math.max(1, Math.floor(getQtyInCart() || 1));
     qtyEl.value = String(initQty);
     setQtyInCart(initQty);
@@ -315,11 +338,11 @@
   }catch(e){
     console.error(e);
     statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">商品読み込み失敗：/api/products を確認してください</span>';
-    // 最低限動かす
     const initQty = 1;
     qtyEl.value = String(initQty);
     setQtyInCart(initQty);
     renderSum();
+    pimgEl.style.display = "none";
   }
 })();
 </script>

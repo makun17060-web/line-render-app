@@ -117,6 +117,30 @@
     .toast.show{ opacity:1; }
     /* ===== 見やすさ改善ここまで ===== */
 
+    /* ===== 小計表示 強調（追加） ===== */
+    .sumBox{
+      display:flex;
+      flex-direction:column;
+      gap:2px;
+      min-width: 140px;
+    }
+    .sumLabel{
+      font-size:11px;
+      color:var(--muted);
+      letter-spacing:.08em;
+    }
+    .sumAmount{
+      font-size:20px;
+      font-weight:900;
+      color:var(--pri);
+      line-height:1.1;
+    }
+    .sumCount{
+      font-size:12px;
+      color:var(--muted);
+    }
+    /* ===== 小計表示ここまで ===== */
+
     /* bottom bar */
     .bar{
       position:fixed; left:0; right:0; bottom:0;
@@ -156,7 +180,13 @@
 
   <div class="bar">
     <div class="inner">
-      <div class="muted" id="sum">カート：0点 / 小計 0円</div>
+      <!-- ✅ 小計の見やすい表示に変更 -->
+      <div class="sumBox" id="sum">
+        <div class="sumLabel">小計</div>
+        <div class="sumAmount">0円</div>
+        <div class="sumCount">（0点）</div>
+      </div>
+
       <div class="right">
         <button class="btn btnAddr" id="addrBtn" type="button">住所入力（登録／変更）</button>
         <button class="btn btnClear" id="clearBtn" type="button">空にする</button>
@@ -251,9 +281,15 @@
       subtotal += Number(p.price||0) * Number(it.qty||0);
       count += Number(it.qty||0);
     }
-    sumEl.textContent = `カート：${count}点 / 小計 ${yen(subtotal)}`;
-    nextBtn.classList.toggle("btnDisabled", count===0);
 
+    // ✅ 小計表示を強調UIで更新
+    sumEl.innerHTML = `
+      <div class="sumLabel">小計</div>
+      <div class="sumAmount">${yen(subtotal)}</div>
+      <div class="sumCount">（${count}点）</div>
+    `;
+
+    nextBtn.classList.toggle("btnDisabled", count===0);
     syncBarHeight();
   }
 

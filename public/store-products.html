@@ -3,566 +3,446 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>店舗受取（現金）</title>
+  <title>店舗受取（現金）｜商品一覧</title>
 
-  <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
   <style>
     :root{
-      --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280; --line:#e5e7eb;
-      --store:#0a7b19; --shadow:0 1px 4px rgba(0,0,0,.08); --radius:16px;
-      --danger:#b91c1c;
+      --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280;
+      --line:#e5e7eb; --pri:#0a7b19; --danger:#b91c1c;
+      --shadow:0 1px 3px rgba(0,0,0,.06); --radius:14px;
+
+      /* ✅ 固定バー高さ（JSで実測して自動更新） */
+      --barH: 120px;
     }
     *{ box-sizing:border-box; }
-    body{
-      margin:0;
-      font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
-      background:var(--bg);
-      color:var(--text);
-    }
-    .wrap{ max-width:900px; margin:0 auto; padding:16px 14px 30px; }
-    h1{ margin:0 0 6px; font-size:20px; }
-    .muted{ color:var(--muted); font-size:13px; line-height:1.6; }
+    body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
 
-    .card{
-      background:var(--card);
-      border:1px solid var(--line);
-      border-radius:var(--radius);
-      box-shadow:var(--shadow);
-      padding:16px;
-      margin-top:14px;
+    /* ✅ 下の固定バーに隠れないように、padding-bottom をバー高さに追従させる */
+    .wrap{
+      max-width:1040px; margin:0 auto;
+      padding:14px 14px calc(var(--barH) + env(safe-area-inset-bottom) + 18px);
     }
 
+    h1{ margin:0 0 6px; font-size:18px; }
+    .muted{ color:var(--muted); font-size:13px; line-height:1.5; }
     .badge{
       display:inline-block;
       font-size:12px;
-      padding:3px 10px;
-      border-radius:999px;
       border:1px solid #bbf7d0;
       background:#f0fdf4;
       color:#166534;
+      border-radius:999px;
+      padding:2px 10px;
       font-weight:900;
       margin-left:8px;
       vertical-align:middle;
+      white-space:nowrap;
     }
 
-    .pill{
-      display:inline-block;
-      font-size:12px;
-      padding:2px 10px;
-      border-radius:999px;
-      border:1px solid var(--line);
-      background:#fafafa;
-      color:#374151;
-    }
+    .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; margin-top:12px; }
+    .card{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow); }
 
-    .warn{ color:var(--danger); font-weight:900; }
-    .hr{ height:1px; background:var(--line); margin:14px 0; }
-
-    .grid{
-      display:grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap:12px;
-      margin-top:12px;
-    }
-    @media (max-width:760px){
-      .grid{ grid-template-columns: 1fr; }
-    }
-
-    .item{
+    /* =========================
+       ✅ 商品画像：絶対に切らない
+       ========================= */
+    .imgbox{
+      height:200px;
       background:#fff;
-      border:1px solid var(--line);
-      border-radius:16px;
-      box-shadow:var(--shadow);
-      overflow:hidden;
-    }
-    .row{
-      display:flex;
-      gap:12px;
-      padding:12px;
-      align-items:stretch;
-    }
-    .img{
-      width:110px; height:110px;
-      border-radius:12px;
-      border:1px solid var(--line);
-      background:#fff;
-      overflow:hidden;
-      flex:0 0 auto;
       display:flex;
       align-items:center;
       justify-content:center;
     }
-    .img img{
-      width:100%;
-      height:100%;
-      object-fit:contain; /* ✅ 絶対切らない */
+    .imgbox img{
+      max-width:100%;
+      max-height:100%;
+      width:auto;
+      height:auto;
+      object-fit:contain;
       display:block;
-      background:#fff;
-    }
-    .noimg{
-      font-size:12px;
-      color:var(--muted);
-      text-align:center;
-      padding:8px;
-      line-height:1.4;
-    }
-    .info{
-      flex:1;
-      min-width:0;
-      display:flex;
-      flex-direction:column;
-      gap:6px;
-    }
-    .name{
-      font-weight:900;
-      font-size:16px;
-      line-height:1.3;
-      margin:0;
-    }
-    .desc{
-      margin:0;
-      font-size:12px;
-      color:var(--muted);
-      line-height:1.5;
-      white-space:pre-wrap;
-    }
-    .meta{
-      display:flex;
-      flex-wrap:wrap;
-      gap:8px;
-      align-items:center;
-      margin-top:auto;
-    }
-    .price{
-      font-weight:900;
-      color:#111827;
     }
 
-    .qty{
-      margin-left:auto;
-      display:flex;
-      align-items:center;
-      gap:8px;
+    .body{ padding:12px; }
+    .name{ font-weight:900; font-size:15px; }
+    .desc{ margin-top:6px; color:var(--muted); font-size:12px; min-height:34px; }
+    .row{ display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:8px; }
+    .price{ font-weight:900; color:var(--pri); }
+    .badge2{ font-size:12px; border:1px solid var(--line); background:#fafafa; border-radius:999px; padding:2px 8px; white-space:nowrap; }
+    .controls{ display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:10px; }
+    .qty{ display:flex; align-items:center; gap:6px; }
+    .qty button{
+      width:34px; height:34px; border-radius:10px; border:1px solid var(--line);
+      background:#fff; font-size:18px; cursor:pointer;
     }
     .qty input{
-      width:84px;
-      padding:8px 10px;
-      border:1px solid var(--line);
-      border-radius:10px;
-      font-size:15px;
-      outline:none;
-      background:#fff;
+      width:56px; height:34px; border-radius:10px; border:1px solid var(--line);
+      text-align:center; font-size:15px;
     }
-    .qty small{ color:var(--muted); font-size:12px; }
+    .btn{ border:none; border-radius:12px; padding:10px 12px; font-weight:900; cursor:pointer; }
+    .btnAdd{ background:var(--pri); color:#fff; }
+    .btnAdd:disabled{ opacity:.55; cursor:not-allowed; }
 
-    .btn{
-      display:block; width:100%;
-      padding:16px 14px;
-      border-radius:14px;
-      font-weight:900; font-size:16px;
-      text-align:center; text-decoration:none;
-      border:none; cursor:pointer;
-      user-select:none;
-    }
-    .btnStore{ background:var(--store); color:#fff; }
-
-    .dangerBox{
-      border:1px solid #fecaca;
-      background:#fef2f2;
-      color:#991b1b;
-      border-radius:14px;
-      padding:10px 12px;
-      font-size:13px;
-      line-height:1.5;
-      margin-top:12px;
-      font-weight:800;
-    }
-    .hidden{ display:none !important; }
-
-    .footer{
-      position:sticky;
-      bottom:0;
-      background:rgba(246,247,249,.92);
-      backdrop-filter: blur(8px);
-      padding-top:12px;
-      margin-top:16px;
-    }
-    .summary{
-      background:#fff;
-      border:1px solid var(--line);
-      border-radius:16px;
-      box-shadow:var(--shadow);
-      padding:12px;
-      display:flex;
-      gap:10px;
-      align-items:center;
-      justify-content:space-between;
-      flex-wrap:wrap;
-    }
-    .sumLeft{
-      display:flex;
-      flex-direction:column;
-      gap:2px;
-      min-width:220px;
-    }
-    .sumTitle{ font-weight:900; }
-    .sumSub{ font-size:12px; color:var(--muted); }
-    .sumRight{
-      display:flex;
-      gap:10px;
-      align-items:center;
-    }
-    .sumTotal{
-      font-weight:900;
-      font-size:18px;
-    }
-
-    .btnSmall{
-      border:1px solid var(--line);
-      background:#fff;
-      color:#111827;
-      border-radius:12px;
-      padding:11px 14px;
-      font-weight:900;
-      cursor:pointer;
-      box-shadow:var(--shadow);
-    }
+    /* bottom bar */
     .bar{
-      display:flex;
-      gap:10px;
-      flex-wrap:wrap;
-      margin-top:12px;
-    }
-    .search{
-      flex:1;
-      min-width:220px;
-      background:#fff;
-      border:1px solid var(--line);
-      border-radius:12px;
+      position:fixed; left:0; right:0; bottom:0;
+      border-top:1px solid var(--line);
+      background:rgba(246,247,249,.92);
+      backdrop-filter:blur(10px);
       padding:10px 12px;
-      font-size:15px;
-      outline:none;
-      box-shadow:var(--shadow);
+      padding-bottom: calc(10px + env(safe-area-inset-bottom));
     }
+    .bar .inner{
+      max-width:1040px; margin:0 auto;
+      display:flex; justify-content:space-between; align-items:center; gap:10px;
+    }
+    .bar .right{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+    .btnClear{
+      background:#fff; border:1px solid #fecaca; color:var(--danger);
+      padding:12px 14px; border-radius:14px;
+    }
+    .btnNext{
+      background:var(--pri); color:#fff;
+      padding:12px 14px; border-radius:14px; min-width:240px;
+    }
+    .btnDisabled{ opacity:.55; cursor:not-allowed; pointer-events:none; }
+
+    .dangerText{ color:var(--danger); font-weight:900; }
   </style>
 </head>
 
 <body>
   <div class="wrap">
-    <h1>店舗受取（現金） <span class="badge">店頭受取モード</span></h1>
-    <div class="muted" id="lead">
-      送料・住所入力なし。店頭で現金払いです。商品を選んで注文してください。
-    </div>
+    <h1>商品一覧 <span class="badge">店舗受取（現金）</span></h1>
+    <div class="muted" id="status">読み込み中…</div>
+    <div class="grid" id="grid"></div>
+  </div>
 
-    <div class="card">
-      <div class="pill">カート → 注文確定（現金）</div>
-      <div class="muted" style="margin-top:8px;">
-        店舗で「LINE注文です」とお伝えください。
-        <span class="warn">※ ブラウザ直開きでは注文できません</span>
-      </div>
-
-      <div class="bar">
-        <input class="search" id="searchBox" type="search" placeholder="商品名で検索（例：あかしゃ / 久助）" />
-        <button class="btnSmall" id="clearBtn" type="button">数量クリア</button>
-        <button class="btnSmall" id="reloadBtn" type="button">再読み込み</button>
-      </div>
-
-      <div id="danger" class="dangerBox hidden"></div>
-    </div>
-
-    <div id="grid" class="grid"></div>
-
-    <div class="footer">
-      <div class="summary">
-        <div class="sumLeft">
-          <div class="sumTitle">合計</div>
-          <div class="sumSub">※ 店頭受取のため送料・代引手数料はかかりません</div>
-        </div>
-        <div class="sumRight">
-          <div class="sumTotal" id="sumTotal">¥0</div>
-          <button class="btn btnStore" id="submitBtn" type="button">この内容で注文する</button>
-        </div>
-      </div>
-      <div class="muted" style="margin-top:8px;">
-        ※ 注文後、LINEへ受付完了メッセージが届きます。
+  <div class="bar">
+    <div class="inner">
+      <div class="muted" id="sum">カート：0点 / 小計 0円</div>
+      <div class="right">
+        <button class="btn btnClear" id="clearBtn" type="button">空にする</button>
+        <button class="btn btnNext btnDisabled" id="orderBtn" type="button">注文確定（現金）</button>
       </div>
     </div>
   </div>
 
 <script>
-(function(){
+(async function(){
   "use strict";
 
-  // ===== 設定 =====
-  // 店舗受取LIFF
-  const LIFF_ID_STORE = "2008406620-7tSkOcqd";   // ←今回の店舗受取LIFF
+  // =========================
+  // ✅ 店舗受取用 LIFF
+  // =========================
+  const LIFF_ID_STORE = "2008406620-7tSkOcqd";
+
+  // =========================
+  // Storage keys（店頭受取専用で分ける）
+  // =========================
+  const KEY_UID  = "isoya_store_userId";
+  const KEY_CART = "isoya_store_cart";
+
+  // ✅（任意）オリジナルセットを除外したいなら true
+  const HIDE_ORIGINAL_SET = true;
+  const ORIGINAL_SET_ID = "original-set-2000";
+
+  // API
   const API_PRODUCTS = "/api/products";
   const API_STORE_ORDER = "/api/store-order";
 
-  // ===== 状態 =====
-  const state = {
-    products: [],
-    filtered: [],
-    qtyById: new Map(),
-    profile: null,
-    inLiff: false,
-    loading: false,
-  };
+  const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
 
-  // DOM
-  const grid = document.getElementById("grid");
-  const danger = document.getElementById("danger");
-  const searchBox = document.getElementById("searchBox");
-  const clearBtn = document.getElementById("clearBtn");
-  const reloadBtn = document.getElementById("reloadBtn");
-  const submitBtn = document.getElementById("submitBtn");
-  const sumTotalEl = document.getElementById("sumTotal");
+  function loadCart(){
+    try{
+      const v = JSON.parse(localStorage.getItem(KEY_CART) || "");
+      if(v && typeof v==="object") return v;
+    }catch{}
+    return { items: [] };
+  }
+  function saveCart(cart){ localStorage.setItem(KEY_CART, JSON.stringify(cart)); }
 
-  function yen(n){
-    const x = Number(n || 0);
-    return "¥" + x.toLocaleString("ja-JP");
-  }
-  function safeStr(v){ return String(v ?? "").trim(); }
-  function showDanger(msg){
-    danger.textContent = msg || "";
-    danger.classList.toggle("hidden", !msg);
-  }
-  function escapeHtml(s){
-    return String(s ?? "")
-      .replaceAll("&","&amp;")
-      .replaceAll("<","&lt;")
-      .replaceAll(">","&gt;")
-      .replaceAll('"',"&quot;")
-      .replaceAll("'","&#39;");
+  function normItems(items){
+    const map = new Map();
+    for(const it of (items||[])){
+      const id = String(it?.id||"").trim();
+      const qty = Math.max(0, Math.floor(Number(it?.qty||0)));
+      if(!id || qty<=0) continue;
+      map.set(id, (map.get(id)||0) + qty);
+    }
+    return Array.from(map.entries()).map(([id,qty])=>({id,qty}));
   }
 
-  // ✅ Disk画像だけを見る（/public/uploads/ 固定）
+  // ✅ Disk画像のみ：/public/uploads に固定
   function diskImageUrl(image){
-    const v = safeStr(image);
-    if(!v) return null;
+    const v = String(image||"").trim();
+    if(!v) return "";
 
-    // ファイル名だけ → /public/uploads/xxx.jpg
+    // file.jpg → /public/uploads/file.jpg
     if(!v.includes("/")) return "/public/uploads/" + v;
 
-    // public/uploads/xxx.jpg → /public/uploads/xxx.jpg
+    // public/uploads/x.jpg → /public/uploads/x.jpg
     if(v.startsWith("public/uploads/")) return "/" + v;
 
-    // uploads/xxx.jpg → /public/uploads/xxx.jpg
+    // uploads/x.jpg → /public/uploads/x.jpg
     if(v.startsWith("uploads/")) return "/public/" + v;
 
-    // /public/uploads/xxx.jpg → そのまま
+    // /public/uploads/x.jpg → そのまま
     if(v.startsWith("/public/uploads/")) return v;
 
-    // それ以外は参照しない（外部や別パス遮断）
-    return null;
+    // それ以外は見ない（外部や別パス遮断）
+    return "";
   }
 
-  function calcTotal(){
-    let total = 0;
-    for(const p of state.products){
-      const qty = Number(state.qtyById.get(p.id) || 0);
-      if(qty > 0) total += Number(p.price || 0) * qty;
+  async function ensureLiffUser(){
+    await liff.init({ liffId: LIFF_ID_STORE });
+
+    if(!liff.isLoggedIn()){
+      liff.login({ redirectUri: location.href });
+      return null;
     }
-    return total;
-  }
-  function updateSummary(){
-    sumTotalEl.textContent = yen(calcTotal());
+
+    const prof = await liff.getProfile();
+    const uid = (prof?.userId || "").trim();
+    if(uid) localStorage.setItem(KEY_UID, uid);
+    return { uid, prof };
   }
 
-  function render(){
-    grid.innerHTML = state.filtered.map(p=>{
-      const img = diskImageUrl(p.image);
-      const qty = Number(state.qtyById.get(p.id) || 0);
-      const stock = Number(p.stock ?? 999999);
-      const soldOut = stock <= 0;
-      const volume = safeStr(p.volume);
-      const desc = safeStr(p.desc);
+  const statusEl  = document.getElementById("status");
+  const gridEl    = document.getElementById("grid");
+  const sumEl     = document.getElementById("sum");
+  const clearBtn  = document.getElementById("clearBtn");
+  const orderBtn  = document.getElementById("orderBtn");
 
-      return `
-        <div class="item">
-          <div class="row">
-            <div class="img">
-              ${
-                img
-                  ? `<img src="${img}" alt="${escapeHtml(p.name)}" loading="lazy">`
-                  : `<div class="noimg">画像なし</div>`
-              }
-            </div>
-            <div class="info">
-              <p class="name">${escapeHtml(p.name)}</p>
-              ${desc ? `<p class="desc">${escapeHtml(desc)}</p>` : ``}
-              <div class="meta">
-                <span class="pill price">${yen(p.price)}</span>
-                ${volume ? `<span class="pill">${escapeHtml(volume)}</span>` : ``}
-                ${soldOut ? `<span class="pill" style="color:#b91c1c;font-weight:900;border-color:#fecaca;background:#fef2f2;">在庫切れ</span>` : ``}
-                <div class="qty">
-                  <small>数量</small>
-                  <input
-                    type="number"
-                    min="0"
-                    ${soldOut ? `disabled` : ``}
-                    value="${qty}"
-                    inputmode="numeric"
-                    data-qty-id="${p.id}"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
+  // ✅ 固定バーの高さを実測して、.wrap の下余白を自動調整
+  function syncBarHeight(){
+    const bar = document.querySelector(".bar");
+    if(!bar) return;
+    const h = Math.ceil(bar.getBoundingClientRect().height || 0);
+    if(h > 0) document.documentElement.style.setProperty("--barH", h + "px");
+  }
+
+  let cart = loadCart();
+  cart.items = normItems(cart.items);
+
+  let products = [];
+  let user = null; // { uid, prof }
+
+  function renderSum(){
+    const byId = Object.fromEntries(products.map(p=>[p.id,p]));
+    let subtotal = 0, count = 0;
+
+    for(const it of cart.items){
+      const p = byId[it.id];
+      if(!p) continue;
+      subtotal += Number(p.price||0) * Number(it.qty||0);
+      count += Number(it.qty||0);
+    }
+
+    sumEl.textContent = `カート：${count}点 / 小計 ${yen(subtotal)}`;
+    orderBtn.classList.toggle("btnDisabled", count===0);
+
+    syncBarHeight();
+  }
+
+  function addToCart(product, qtyToAdd){
+    const id = String(product.id||"").trim();
+    const qty = Math.max(1, Math.floor(Number(qtyToAdd||1)));
+    const ex = cart.items.find(x => x.id === id);
+    if(ex) ex.qty += qty;
+    else cart.items.push({ id, qty });
+    cart.items = normItems(cart.items);
+    saveCart(cart);
+    renderSum();
+  }
+
+  function card(p){
+    const el = document.createElement("div");
+    el.className = "card";
+
+    const img = diskImageUrl(p.image);
+    const stock = Number(p.stock||0);
+
+    el.innerHTML = `
+      <div class="imgbox">${img ? `<img src="${img}" alt="">` : ""}</div>
+      <div class="body">
+        <div class="name">${p.name || ""}</div>
+        <div class="desc">${p.desc || ""}</div>
+        <div class="row">
+          <div class="price">${yen(p.price)}</div>
+          <span class="badge2">${p.volume ? `内容量 ${p.volume}` : `在庫 ${stock}`}</span>
         </div>
-      `;
-    }).join("");
+        <div class="controls">
+          <div class="qty">
+            <button type="button" class="dec">−</button>
+            <input class="q" type="number" min="1" step="1" value="1" inputmode="numeric">
+            <button type="button" class="inc">＋</button>
+          </div>
+          <button type="button" class="btn btnAdd add">カートに追加</button>
+        </div>
+      </div>
+    `;
 
-    grid.querySelectorAll("input[data-qty-id]").forEach(inp=>{
-      inp.addEventListener("input", ()=>{
-        const id = inp.getAttribute("data-qty-id");
-        let v = Number(inp.value || 0);
-        if(!Number.isFinite(v) || v < 0) v = 0;
-        v = Math.floor(v);
-        state.qtyById.set(id, v);
-        updateSummary();
-      });
-    });
+    const im = el.querySelector("img");
+    if(im) im.addEventListener("error", ()=> im.remove());
 
-    updateSummary();
-  }
+    const q = el.querySelector(".q");
+    el.querySelector(".dec").onclick = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1))-1)); };
+    el.querySelector(".inc").onclick = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1))+1)); };
+    q.onchange = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1)))); };
 
-  function applyFilter(){
-    const q = safeStr(searchBox.value).toLowerCase();
-    if(!q) state.filtered = [...state.products];
-    else{
-      state.filtered = state.products.filter(p=>{
-        const name = safeStr(p.name).toLowerCase();
-        const desc = safeStr(p.desc).toLowerCase();
-        return name.includes(q) || desc.includes(q);
-      });
+    const addBtn = el.querySelector(".add");
+    if(Number.isFinite(stock) && stock <= 0){
+      addBtn.disabled = true;
+      addBtn.textContent = "在庫なし";
     }
-    render();
-  }
 
-  async function initLiffStrict(){
-    try{
-      await liff.init({ liffId: LIFF_ID_STORE });
-      state.inLiff = true;
-
-      if(!liff.isLoggedIn()){
-        liff.login({ redirectUri: location.href });
-        return false;
+    addBtn.onclick = ()=>{
+      const add = Math.max(1, Math.floor(Number(q.value||1)));
+      const inCart = cart.items.find(x => x.id === p.id)?.qty || 0;
+      const next = inCart + add;
+      if(Number.isFinite(stock) && stock >= 0 && next > stock){
+        alert(`在庫不足です（在庫 ${stock}）。個数を減らしてください。`);
+        return;
       }
-      state.profile = await liff.getProfile();
-      return true;
-    }catch(e){
-      state.inLiff = false;
-      state.profile = null;
-      return false;
-    }
+      addToCart(p, add);
+    };
+
+    return el;
   }
 
-  async function loadProducts(){
-    showDanger("");
-    state.loading = true;
-    submitBtn.disabled = true;
-
-    try{
-      const res = await fetch(API_PRODUCTS, { cache:"no-store" });
-      if(!res.ok) throw new Error("商品取得に失敗しました (" + res.status + ")");
-      const data = await res.json();
-      if(!Array.isArray(data)) throw new Error("商品データ形式が不正です");
-
-      state.products = data
-        .filter(p => p && p.id && p.name && (p.price !== undefined))
-        .map(p => ({
-          id: String(p.id),
-          name: String(p.name),
-          price: Number(p.price || 0),
-          stock: (p.stock === undefined ? 999999 : Number(p.stock)),
-          volume: p.volume ?? "",
-          desc: p.desc ?? "",
-          image: p.image ?? ""
-        }));
-
-      state.filtered = [...state.products];
-      render();
-    }catch(e){
-      showDanger(e.message || String(e));
-    }finally{
-      state.loading = false;
-      submitBtn.disabled = false;
+  async function submitStoreOrder(){
+    if(orderBtn.classList.contains("btnDisabled")){
+      alert("カートが空です");
+      return;
     }
-  }
-
-  function buildOrderItems(){
-    const items = [];
-    for(const p of state.products){
-      const qty = Number(state.qtyById.get(p.id) || 0);
-      if(qty > 0) items.push({ id: p.id, qty });
-    }
-    return items;
-  }
-
-  async function submitOrder(){
-    showDanger("");
-
-    if(!state.inLiff || !state.profile?.userId){
-      showDanger("LINE内（LIFF）で開いてください。ブラウザ直開きでは注文できません。");
+    if(!user?.uid){
+      alert("LINE内（店舗受取LIFF）で開いてください");
       return;
     }
 
-    const items = buildOrderItems();
-    if(items.length === 0){
-      showDanger("商品を選択してください（数量を入力）");
+    // items（qty>0）
+    const items = cart.items.filter(it => (it.qty||0) > 0).map(it => ({ id: it.id, qty: it.qty }));
+    if(!items.length){
+      alert("カートが空です");
       return;
     }
 
-    submitBtn.disabled = true;
+    orderBtn.classList.add("btnDisabled");
+    orderBtn.textContent = "送信中…";
 
     try{
-      const payload = {
-        userId: state.profile.userId,
-        name: state.profile.displayName || "",
-        items,
-        pickup: true,
-        payment_method: "cash"
-      };
-
       const res = await fetch(API_STORE_ORDER, {
         method: "POST",
         headers: { "Content-Type":"application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          userId: user.uid,
+          name: user.prof?.displayName || "",
+          items,
+          pickup: true,
+          payment_method: "cash"
+        })
       });
 
       if(!res.ok){
         const t = await res.text().catch(()=> "");
-        throw new Error("注文送信に失敗しました (" + res.status + ") " + (t ? " / " + t : ""));
+        throw new Error("HTTP " + res.status + (t ? " / " + t : ""));
       }
+
+      // 成功：カート空にして閉じる
+      cart = { items: [] };
+      saveCart(cart);
+      renderSum();
 
       alert("ご注文を受け付けました。店舗で現金払いをお願いします。");
       try{ liff.closeWindow(); }catch(_){}
     }catch(e){
-      showDanger(e.message || String(e));
-      submitBtn.disabled = false;
+      alert("注文送信に失敗しました。\n" + (e?.message || e));
+      orderBtn.textContent = "注文確定（現金）";
+      orderBtn.classList.remove("btnDisabled");
+      renderSum();
     }
   }
 
-  // UI events
-  searchBox.addEventListener("input", applyFilter);
-  clearBtn.addEventListener("click", ()=>{ state.qtyById.clear(); render(); });
-  reloadBtn.addEventListener("click", loadProducts);
-  submitBtn.addEventListener("click", submitOrder);
+  // 初回計測
+  syncBarHeight();
+  window.addEventListener("resize", syncBarHeight);
 
-  // 起動
-  (async()=>{
-    const ok = await initLiffStrict();
-    if(!ok){
-      showDanger("このページは「店頭受取（現金）」のLIFFから開いてください。");
-      submitBtn.disabled = true;
+  clearBtn.onclick = ()=>{
+    if(!confirm("カートを空にしますか？")) return;
+    cart = { items: [] };
+    saveCart(cart);
+    renderSum();
+  };
+
+  orderBtn.onclick = submitStoreOrder;
+
+  // LIFF 初期化（店舗受取専用）
+  try{
+    user = await ensureLiffUser();
+    if(!user){
+      statusEl.innerHTML = '<span class="dangerText">LIFFログイン中…</span>';
       return;
     }
-    await loadProducts();
-  })();
+  }catch(e){
+    statusEl.innerHTML = '<span class="dangerText">LIFF初期化に失敗しました（店舗受取LIFF）</span>';
+    return;
+  }
 
+  // 商品取得
+  try{
+    const r = await fetch(API_PRODUCTS, { cache:"no-store" });
+
+    // ✅ あなたの環境は {ok, products} 形式 or 配列直返しが混在しているので両対応
+    const rawJson = await r.json().catch(()=>null);
+
+    let raw = [];
+    if(Array.isArray(rawJson)){
+      raw = rawJson;
+    }else if(rawJson && Array.isArray(rawJson.products)){
+      raw = rawJson.products;
+    }else{
+      raw = [];
+    }
+
+    // 失敗扱いチェック
+    if(!r.ok) throw new Error("HTTP " + r.status);
+
+    // ✅ オリジナルセット除外（必要なら）
+    if(HIDE_ORIGINAL_SET){
+      raw = raw.filter(p=>{
+        const id = String(p?.id || "").trim();
+        const name = String(p?.name || "");
+        if(id === ORIGINAL_SET_ID) return false;
+        if(/オリジナルセット/.test(name)) return false;
+        return true;
+      });
+    }
+
+    // 整形
+    products = raw
+      .filter(p => p && p.id && p.name && (p.price !== undefined))
+      .map(p => ({
+        id: String(p.id),
+        name: String(p.name),
+        price: Number(p.price || 0),
+        stock: (p.stock === undefined ? 999999 : Number(p.stock)),
+        volume: p.volume ?? "",
+        desc: p.desc ?? "",
+        image: p.image ?? ""
+      }));
+
+    statusEl.textContent = products.length ? "" : "商品がありません（products.json を確認）";
+    gridEl.innerHTML = "";
+    products.forEach(p => gridEl.appendChild(card(p)));
+
+    renderSum();
+    syncBarHeight();
+  }catch(e){
+    statusEl.innerHTML = '<span class="dangerText">商品読み込み失敗：/api/products を確認してください</span>';
+    renderSum();
+    syncBarHeight();
+  }
 })();
 </script>
 </body>

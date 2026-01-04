@@ -7,7 +7,13 @@ const path = require("path");
 
 const {
   LINE_CHANNEL_ACCESS_TOKEN,
+
+  // 既存：注文（左上）に使うLIFF
   LIFF_ID_MINIAPP,
+
+  // 追加：店頭受取（左下）に使うLIFF（★ここを新設推奨）
+  LIFF_ID_STORE,
+
   RICHMENU_IMAGE,
   PUBLIC_BASE_URL,
 
@@ -28,6 +34,13 @@ if (!LIFF_ID_MINIAPP) {
   process.exit(1);
 }
 
+// ★店頭受取LIFF（なければ後で直書きでもOKだが env 推奨）
+if (!LIFF_ID_STORE) {
+  console.error("❌ LIFF_ID_STORE（店頭受取LIFF ID）がありません");
+  console.error("   例: LIFF_ID_STORE=2008406620-xxxxxxxx");
+  process.exit(1);
+}
+
 const client = new line.Client({
   channelAccessToken: LINE_CHANNEL_ACCESS_TOKEN,
 });
@@ -40,12 +53,15 @@ const sanitizeBase = (u) =>
 const baseUrl = sanitizeBase(PUBLIC_BASE_URL || "https://line-render-app-1.onrender.com");
 
 // 画像 左上：ご注文はこちら（注文LIFF）
-const ORDER_LIFF_URL = `https://liff.line.me/${LIFF_ID_INDEX}`;
+const ORDER_LIFF_URL = `https://liff.line.me/${LIFF_ID_MINIAPP}`;
 
-// 画像 左下：住所登録（住所登録LIFF）
+// 画像 左下：店頭受取（店頭受取LIFF）
+const STORE_LIFF_URL = `https://liff.line.me/${LIFF_ID_STORE}`;
+
+// 画像 左下：住所登録（住所登録LIFF）※あなたの既存ロジックを整理
 let addressLiffUrl = (ADDRESS_LIFF_URL || "").trim();
 if (!addressLiffUrl) {
-  if (ADDRESS_LIFF_ID) addressLiffUrl = `https://liff.line.me/${LIFF_ID}`;
+  if (ADDRESS_LIFF_ID) addressLiffUrl = `https://liff.line.me/${ADDRESS_LIFF_ID}`;
   else addressLiffUrl = `${baseUrl}/public/cod-register.html`; // 最終手段
 }
 
@@ -66,40 +82,46 @@ const shippingUrl = (SHIPPING_URL || `${baseUrl}/public/shipping.html`).trim();
       name: "磯屋_3x2_6areas",
       chatBarText: "メニュー",
       areas: [
-  // 1行目
-  { // 左上：ご注文はこちら（URIでOK：最短で注文LIFFが開く）
-    bounds: { x: 0, y: 0, width: 833, height: 843 },
-    action: { type: "uri", label: "ご注文はこちら", uri: "https://liff.line.me/2008406620-8CWfgEKh" },
-  },
-  { // 中央上：ECショップ
-    bounds: { x: 833, y: 0, width: 834, height: 843 },
-    action: { type: "uri", label: "ECショップ", uri: "https://isoya-shop.com" },
-  },
-  { // 右上：ご利用方法
-    bounds: { x: 1667, y: 0, width: 833, height: 843 },
-    action: { type: "uri", label: "ご利用方法", uri: "https://liff.line.me/2008406620-QQFfWP1w" },
-  },
+        // 1行目
+        {
+          // 左上：ご注文はこちら（注文LIFF）
+          bounds: { x: 0, y: 0, width: 833, height: 843 },
+          action: { type: "uri", label: "ご注文はこちら", uri: ORDER_LIFF_URL },
+        },
+        {
+          // 中央上：ECショップ
+          bounds: { x: 833, y: 0, width: 834, height: 843 },
+          action: { type: "uri", label: "ECショップ", uri: "https://isoya-shop.com" },
+        },
+        {
+          // 右上：ご利用方法
+          bounds: { x: 1667, y: 0, width: 833, height: 843 },
+          action: { type: "uri", label: "ご利用方法", uri: "https://liff.line.me/2008406620-QQFfWP1w" },
+        },
 
-  // 2行目
-  { // 左下：店頭受取（★postback：トークに文字が出ない）
-    bounds: { x: 0, y: 843, width: 833, height: 843 },
-    action: { type: "postback", data: "action=pickup_start", displayText: "店頭受取を開きます" },
-  },
-  { // 中央下：配送・送料
-    bounds: { x: 833, y: 843, width: 834, height: 843 },
-    action: { type: "uri", label: "配送・送料", uri: "https://line-render-app-1.onrender.com/public/shipping-calc.html" },
-  },
-  { // 右下：お問い合わせ
-    bounds: { x: 1667, y: 843, width: 833, height: 843 },
-    action: { type: "uri", label: "お問い合わせ", uri: "https://liff.line.me/2008406620-LUJ3dURd" },
-  },
-]
+        // 2行目
+        {
+          // 左下：店頭受取（★ここを LIFF で開く）
+          bounds: { x: 0, y: 843, width: 833, height: 843 },
+          action: { type: "uri", label: "店頭受取", uri: "https://liff.line.me/2008406620-7tSkOcqd" },
+        },
+        {
+          // 中央下：配送・送料
+          bounds: { x: 833, y: 843, width: 834, height: 843 },
+          action: { type: "uri", label: "配送・送料", uri: "https://line-render-app-1.onrender.com/public/shipping-calc.html" },
+        },
+        {
+          // 右下：お問い合わせ
+          bounds: { x: 1667, y: 843, width: 833, height: 843 },
+          action: { type: "uri", label: "お問い合わせ", uri: "https://liff.line.me/2008406620-LUJ3dURd" },
+        },
+      ],
     };
-
 
     console.log("=== createRichMenu start ===");
     console.log("BASE:", baseUrl);
     console.log("ORDER(LIFF):", ORDER_LIFF_URL);
+    console.log("STORE(LIFF):", STORE_LIFF_URL);
     console.log("PRODUCTS:", productsUrl);
     console.log("HOWTO:", howtoUrl);
     console.log("ADDRESS:", addressLiffUrl);

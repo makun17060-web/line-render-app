@@ -1,10 +1,12 @@
 /**
  * server.js — “完全・全部入り” 丸ごと版（統合・最終修正版）
  *
- * ✅ 今回の最重要（あなたの要望を反映）
+ * ✅ 最重要（あなたの要望を反映）
  * - 送料：DB優先（shipping_yamato_taxed）  region+size -> fee
- * - サイズ：DB優先（shipping_size_rules） rule_key+qty -> size
- *   - akasha6 / original_set / default をDBで自由に変更できる
+ * - サイズ：DB優先（shipping_size_rules） shipping_group + qty_range -> size
+ *   - shipping_group: akasha6 / original_set / default をDBで自由に変更できる
+ *   - shipping_size_rules の列はあなたの現DBに合わせて：
+ *       shipping_group(text), qty_min(int), qty_max(int), size(text)
  * - /api/admin/orders の subtotal（小計）が代引手数料込みになっていたのを修正
  *   subtotal = total - shipping - (codなら330)
  * - 友だち追加（follow）/ ブロック（unfollow）を ADMIN_USER_ID にPush通知
@@ -126,28 +128,29 @@ const SHIPPING_YAMATO = {
 };
 
 // フォールバック：サイズルール（DBが空の時だけ）
+// ★ あなたの現DBに合わせて：shipping_group / qty_min / qty_max / size(text)
 const FALLBACK_SIZE_RULES = [
   // akasha6
-  { rule_key: "akasha6", min_qty: 1,  max_qty: 4,    size: 60  },
-  { rule_key: "akasha6", min_qty: 5,  max_qty: 8,    size: 80  },
-  { rule_key: "akasha6", min_qty: 9,  max_qty: 13,   size: 100 },
-  { rule_key: "akasha6", min_qty: 14, max_qty: 18,   size: 120 },
-  { rule_key: "akasha6", min_qty: 19, max_qty: 9999, size: 140 },
+  { shipping_group: "akasha6", qty_min: 1,  qty_max: 4,    size: "60"  },
+  { shipping_group: "akasha6", qty_min: 5,  qty_max: 8,    size: "80"  },
+  { shipping_group: "akasha6", qty_min: 9,  qty_max: 13,   size: "100" },
+  { shipping_group: "akasha6", qty_min: 14, qty_max: 18,   size: "120" },
+  { shipping_group: "akasha6", qty_min: 19, qty_max: 9999, size: "140" },
 
   // original_set
-  { rule_key: "original_set", min_qty: 1, max_qty: 1,    size: 80  },
-  { rule_key: "original_set", min_qty: 2, max_qty: 2,    size: 100 },
-  { rule_key: "original_set", min_qty: 3, max_qty: 4,    size: 120 },
-  { rule_key: "original_set", min_qty: 5, max_qty: 6,    size: 140 },
-  { rule_key: "original_set", min_qty: 7, max_qty: 9999, size: 160 },
+  { shipping_group: "original_set", qty_min: 1, qty_max: 1,    size: "80"  },
+  { shipping_group: "original_set", qty_min: 2, qty_max: 2,    size: "100" },
+  { shipping_group: "original_set", qty_min: 3, qty_max: 4,    size: "120" },
+  { shipping_group: "original_set", qty_min: 5, qty_max: 6,    size: "140" },
+  { shipping_group: "original_set", qty_min: 7, qty_max: 9999, size: "160" },
 
   // default
-  { rule_key: "default", min_qty: 1, max_qty: 1,    size: 60  },
-  { rule_key: "default", min_qty: 2, max_qty: 2,    size: 80  },
-  { rule_key: "default", min_qty: 3, max_qty: 3,    size: 100 },
-  { rule_key: "default", min_qty: 4, max_qty: 4,    size: 120 },
-  { rule_key: "default", min_qty: 5, max_qty: 6,    size: 140 },
-  { rule_key: "default", min_qty: 7, max_qty: 9999, size: 160 },
+  { shipping_group: "default", qty_min: 1, qty_max: 1,    size: "60"  },
+  { shipping_group: "default", qty_min: 2, qty_max: 2,    size: "80"  },
+  { shipping_group: "default", qty_min: 3, qty_max: 3,    size: "100" },
+  { shipping_group: "default", qty_min: 4, qty_max: 4,    size: "120" },
+  { shipping_group: "default", qty_min: 5, qty_max: 6,    size: "140" },
+  { shipping_group: "default", qty_min: 7, qty_max: 9999, size: "160" },
 ];
 
 /* =========================
@@ -214,7 +217,7 @@ async function ensureProductsFile() {
     {
       id: "kusuke-250",
       name: "久助（われせん）",
-      price: 250,
+      price: 250, // ←あなたの管理単価
       stock: 30,
       volume: "100g",
       desc: "お得な割れせん。価格は管理画面で自由に変更できます。",
@@ -296,7 +299,7 @@ function isAkashaLikeProduct(product) {
   const name = (product?.name || "").toLowerCase();
   const id = (product?.id || "").toLowerCase();
   if (id.includes("akasha") || name.includes("あかしゃ") || name.includes("akasha")) return true;
-  if (id.includes("kusuke") || name.includes("久助")) return true; // 久助はあかしゃ扱い（あなたの運用）
+  if (id.includes("kusuke") || name.includes("久助")) return true; // 久助はあかしゃ扱い
   return false;
 }
 
@@ -316,13 +319,12 @@ function detectRegionFromPref(prefecture) {
   return SHIPPING_REGION_BY_PREF[pref] || "chubu";
 }
 function cacheKey(region, size) { return `${region}:${String(size)}`; }
-function sizeRuleKey(ruleKey, qty) { return `${ruleKey}:${qty}`; }
 
 const SHIPPING_CACHE_TTL_MS = 5 * 60 * 1000;
 const SIZE_RULE_CACHE_TTL_MS = 5 * 60 * 1000;
 
 const shippingCache = { loadedAt: 0, map: new Map() }; // region:size -> fee
-const sizeRuleCache = { loadedAt: 0, rules: [] }; // rows of shipping_size_rules
+const sizeRuleCache = { loadedAt: 0, rules: [] };      // rows of shipping_size_rules
 
 async function reloadShippingCacheIfNeeded() {
   const now = Date.now();
@@ -345,22 +347,30 @@ async function reloadShippingCacheIfNeeded() {
   }
 }
 
+// ★ あなたの現DB列に合わせて読む：shipping_group / qty_min / qty_max / size(text)
 async function reloadSizeRulesIfNeeded() {
   const now = Date.now();
   if (sizeRuleCache.loadedAt && (now - sizeRuleCache.loadedAt) < SIZE_RULE_CACHE_TTL_MS) return;
 
   try {
     const r = await pool.query(`
-      SELECT rule_key, min_qty, max_qty, size
+      SELECT shipping_group, qty_min, qty_max, size
       FROM public.shipping_size_rules
-      ORDER BY rule_key, min_qty
+      ORDER BY shipping_group, qty_min
     `);
+
     sizeRuleCache.rules = (r.rows || []).map(x => ({
-      rule_key: String(x.rule_key || "").trim(),
-      min_qty: Number(x.min_qty),
-      max_qty: Number(x.max_qty),
-      size: Number(x.size), // DBがtextでも Number() でOK
-    })).filter(x => x.rule_key && Number.isFinite(x.min_qty) && Number.isFinite(x.max_qty) && Number.isFinite(x.size));
+      shipping_group: String(x.shipping_group || "").trim(),
+      qty_min: Number(x.qty_min),
+      qty_max: Number(x.qty_max),
+      size: String(x.size || "").trim(), // text
+    })).filter(x =>
+      x.shipping_group &&
+      Number.isFinite(x.qty_min) &&
+      Number.isFinite(x.qty_max) &&
+      x.size
+    );
+
     sizeRuleCache.loadedAt = now;
   } catch (e) {
     sizeRuleCache.rules = [];
@@ -376,28 +386,35 @@ function bumpSizeOnce(size) {
   return order[Math.min(i + 1, order.length - 1)];
 }
 
-function pickSizeFromRules(ruleKey, qty) {
+// ★ shipping_group版（DBのsizeがtextでもOK）
+function pickSizeFromRules(shippingGroup, qty) {
   const q = Math.max(1, Math.floor(Number(qty || 0)));
-  const rk = String(ruleKey || "").trim();
-  // cache rules
-  const rows = sizeRuleCache.rules || [];
-  for (const r of rows) {
-    if (r.rule_key !== rk) continue;
-    if (q >= r.min_qty && q <= r.max_qty) return r.size;
+  const g = String(shippingGroup || "").trim();
+
+  // DB rules
+  for (const r of (sizeRuleCache.rules || [])) {
+    if (r.shipping_group !== g) continue;
+    if (q >= r.qty_min && q <= r.qty_max) {
+      const s = Number(r.size);
+      if (Number.isFinite(s)) return s;
+    }
   }
+
   // fallback rules
-  const fb = FALLBACK_SIZE_RULES;
-  for (const r of fb) {
-    if (r.rule_key !== rk) continue;
-    if (q >= r.min_qty && q <= r.max_qty) return r.size;
+  for (const r of (FALLBACK_SIZE_RULES || [])) {
+    if (r.shipping_group !== g) continue;
+    if (q >= r.qty_min && q <= r.qty_max) {
+      const s = Number(r.size);
+      if (Number.isFinite(s)) return s;
+    }
   }
-  // 最後の保険
+
   return 80;
 }
 
-async function dbGetSize(ruleKey, qty) {
+async function dbGetSize(shippingGroup, qty) {
   await reloadSizeRulesIfNeeded();
-  return pickSizeFromRules(ruleKey, qty);
+  return pickSizeFromRules(shippingGroup, qty);
 }
 
 async function calcShippingFee(prefecture, size) {
@@ -462,8 +479,7 @@ async function calcPackageSizeFromItems_DB(items, productsById) {
   // ② オリジナルセット + 他
   if (originalQty > 0 && (akashaQty + otherQty) > 0) {
     const base = await dbGetSize("original_set", originalQty);
-    // 混載は1段階大きく（あなたの従来ロジックを踏襲）
-    return bumpSizeOnce(base);
+    return bumpSizeOnce(base); // 混載は1段階大きく
   }
 
   // ③ あかしゃ系のみ
@@ -580,15 +596,15 @@ async function ensureDb() {
     );
   `);
 
-  // ✅ サイズルール（rule_key+qty_range->size）
+  // ✅ サイズルール（あなたの現DB定義に合わせる）
   await pool.query(`
     CREATE TABLE IF NOT EXISTS shipping_size_rules (
-      rule_key TEXT NOT NULL,
-      min_qty  INTEGER NOT NULL,
-      max_qty  INTEGER NOT NULL,
-      size     INTEGER NOT NULL,
+      shipping_group TEXT NOT NULL,
+      qty_min  INTEGER NOT NULL,
+      qty_max  INTEGER NOT NULL,
+      size     TEXT NOT NULL,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      PRIMARY KEY(rule_key, min_qty, max_qty)
+      PRIMARY KEY(shipping_group, qty_min, qty_max)
     );
   `);
 
@@ -630,7 +646,7 @@ async function ensureDb() {
     logErr("shipping_yamato_taxed seed failed", e?.message || e);
   }
 
-  // seed: shipping_size_rules が空なら FALLBACK_SIZE_RULES を投入
+  // seed: shipping_size_rules が空なら FALLBACK_SIZE_RULES を投入（あなたの列名で）
   try {
     const cnt2 = await pool.query(`SELECT COUNT(*)::int AS n FROM public.shipping_size_rules`);
     const n2 = cnt2.rows?.[0]?.n || 0;
@@ -641,13 +657,13 @@ async function ensureDb() {
       let i = 1;
       for (const r of rows) {
         values.push(`($${i++},$${i++},$${i++},$${i++})`);
-        params.push(r.rule_key, r.min_qty, r.max_qty, r.size);
+        params.push(r.shipping_group, r.qty_min, r.qty_max, String(r.size));
       }
       await pool.query(
         `
-        INSERT INTO public.shipping_size_rules (rule_key, min_qty, max_qty, size)
+        INSERT INTO public.shipping_size_rules (shipping_group, qty_min, qty_max, size)
         VALUES ${values.join(",")}
-        ON CONFLICT (rule_key, min_qty, max_qty) DO UPDATE SET
+        ON CONFLICT (shipping_group, qty_min, qty_max) DO UPDATE SET
           size = EXCLUDED.size,
           updated_at = now()
         `,
@@ -664,6 +680,9 @@ async function ensureDb() {
   logInfo("DB ensured");
 }
 
+/* =========================
+ * User / Address helpers
+ * ========================= */
 async function touchUser(userId, kind, displayName = null) {
   await pool.query(
     `
@@ -1065,18 +1084,14 @@ async function notifyAdminFriendAdded({ userId, displayName, day }) {
 
   let todayCounts = null;
   try {
-    const r = await pool.query(
-      `SELECT added_count, blocked_count FROM friend_logs WHERE day=$1`,
-      [day]
-    );
+    const r = await pool.query(`SELECT added_count, blocked_count FROM friend_logs WHERE day=$1`, [day]);
     if (r.rowCount > 0) todayCounts = r.rows[0];
   } catch {}
 
   const name = displayName ? `「${displayName}」` : "（表示名取得不可）";
-  const counts =
-    todayCounts
-      ? `\n今日の累計：追加 ${Number(todayCounts.added_count || 0)} / ブロック ${Number(todayCounts.blocked_count || 0)}`
-      : "";
+  const counts = todayCounts
+    ? `\n今日の累計：追加 ${Number(todayCounts.added_count || 0)} / ブロック ${Number(todayCounts.blocked_count || 0)}`
+    : "";
 
   const msg =
     `【友だち追加】\n` +
@@ -1093,18 +1108,14 @@ async function notifyAdminFriendBlocked({ userId, displayName, day }) {
 
   let todayCounts = null;
   try {
-    const r = await pool.query(
-      `SELECT added_count, blocked_count FROM friend_logs WHERE day=$1`,
-      [day]
-    );
+    const r = await pool.query(`SELECT added_count, blocked_count FROM friend_logs WHERE day=$1`, [day]);
     if (r.rowCount > 0) todayCounts = r.rows[0];
   } catch {}
 
   const name = displayName ? `「${displayName}」` : "（表示名不明：DB未保存の可能性）";
-  const counts =
-    todayCounts
-      ? `\n今日の累計：追加 ${Number(todayCounts.added_count || 0)} / ブロック ${Number(todayCounts.blocked_count || 0)}`
-      : "";
+  const counts = todayCounts
+    ? `\n今日の累計：追加 ${Number(todayCounts.added_count || 0)} / ブロック ${Number(todayCounts.blocked_count || 0)}`
+    : "";
 
   const msg =
     `【ブロック（解除）】\n` +
@@ -1286,21 +1297,15 @@ app.get("/api/admin/orders", requireAdmin, async (req, res) => {
         try { return JSON.parse(row.items); } catch { return []; }
       })();
 
-      const addrObj = (() => {
-        try {
-          if (row.address && typeof row.address === "object") return row.address;
-          if (typeof row.address === "string" && row.address.trim()) return JSON.parse(row.address);
-        } catch {}
-        return {
-          name: row.name || "",
-          postal: row.zip || "",
-          prefecture: row.pref || "",
-          city: "",
-          address1: row.address || "",
-          address2: "",
-          phone: "",
-        };
-      })();
+      const addrObj = {
+        name: row.name || "",
+        postal: row.zip || "",
+        prefecture: row.pref || "",
+        city: "",
+        address1: row.address || "",
+        address2: "",
+        phone: "",
+      };
 
       const pref = addrObj.prefecture || row.pref || "";
       const regionKey = detectRegionFromPref(pref);
@@ -1429,6 +1434,7 @@ app.post("/api/admin/segment/send", requireAdmin, async (req, res) => {
 
 /* =========================
  * 送料見積り（住所未登録でもOK）
+ * ★ shipping-calc.html の "akasha / kusuke / original-set" を確実にサイズ計算に反映
  * ========================= */
 app.post("/api/shipping/quote", async (req, res) => {
   try {
@@ -1441,6 +1447,30 @@ app.post("/api/shipping/quote", async (req, res) => {
     const products = await loadProducts();
     const byId = Object.fromEntries(products.map(p => [p.id, p]));
 
+    // ★ 疑似商品（カテゴリ指定）を追加して、サイズ計算で必ず数えられるようにする
+    // - original-set: p.id を ORIGINAL_SET_PRODUCT_ID にして original_set ルールへ
+    // - akasha: id に "akasha" を含めて akasha6 ルールへ
+    // - kusuke: nameに久助を入れて akasha6 ルールへ（単価は products から引ければそれを使用）
+    const kusukeReal = products.find(p => (p.id || "").includes("kusuke") || (p.name || "").includes("久助"));
+    const akashaReal = products.find(p => (p.id || "").includes("akasha") || (p.name || "").includes("あかしゃ"));
+
+    byId["original-set"] = {
+      id: ORIGINAL_SET_PRODUCT_ID,
+      name: "磯屋オリジナルセット（見積り）",
+      price: Number(products.find(p => p.id === ORIGINAL_SET_PRODUCT_ID)?.price || 2100),
+    };
+    byId["akasha"] = {
+      id: "akasha-series",
+      name: "あかしゃシリーズ（見積り）",
+      price: Number(akashaReal?.price || 0), // 代表単価（不要なら0でOK）
+    };
+    byId["kusuke"] = {
+      id: "kusuke-series",
+      name: "久助（見積り）",
+      price: Number(kusukeReal?.price || 250),
+    };
+
+    // items 正規化
     const mapped = [];
     for (const it of inItems) {
       const pid = String(it?.product_id || it?.id || "").trim();
@@ -1456,8 +1486,9 @@ app.post("/api/shipping/quote", async (req, res) => {
     for (const it of mapped) {
       const p = byId[it.id];
       if (p) {
-        sizeItems.push({ id: p.id, name: p.name, qty: it.qty, price: Number(p.price || 0) });
-        subtotal += Number(p.price || 0) * it.qty;
+        const price = Number(p.price || 0);
+        sizeItems.push({ id: it.id, name: p.name, qty: it.qty, price });
+        subtotal += price * it.qty;
       } else {
         sizeItems.push({ id: it.id, name: "（見積り用）", qty: it.qty, price: 0 });
       }
@@ -1480,20 +1511,12 @@ app.post("/api/shipping/quote", async (req, res) => {
 app.get("/api/liff/config", (req, res) => {
   const kind = String(req.query.kind || "order").trim().toLowerCase();
 
-  // order
   const orderId = (LIFF_ID_ORDER || LIFF_ID_DEFAULT || "").trim();
-
-  // address（注文フロー側が使うID：LIFF_ID_ADDRESS が無い時は LIFF_ID_ADD を吸収）
   const addressId = (LIFF_ID_ADDRESS || LIFF_ID_ADD || LIFF_ID_DEFAULT || "").trim();
-
-  // add（住所登録専用）
   const addId = (LIFF_ID_ADD || LIFF_ID_ADDRESS || LIFF_ID_DEFAULT || "").trim();
-
-  // cod（必要なら）
   const codId = (LIFF_ID_COD || addressId || "").trim();
 
   let liffId = "";
-
   if (kind === "add") liffId = addId;
   else if (kind === "address" || kind === "register" || kind === "addr") liffId = addressId;
   else if (kind === "cod") liffId = codId;
@@ -2168,7 +2191,6 @@ async function onFollow(ev) {
 
   try { await notifyAdminFriendAdded({ userId, displayName, day }); } catch {}
 
-  // Welcome（必要なら固定URLでもOK）
   const urlProducts = liffUrl("/products.html");
   const urlAddress  = liffUrl("/cod-register.html");
 

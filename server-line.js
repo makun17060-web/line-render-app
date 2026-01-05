@@ -2499,8 +2499,6 @@ async function onFollow(ev) {
   text:
     "友だち追加ありがとうございます！\n\n" +
     "このLINEからご注文いただけます。\n\n" +
-    `・「${KEYWORD_DIRECT}」と送る → 通常注文\n` +
-    `・「${KEYWORD_KUSUKE}」と送る → 久助の注文\n\n` +
     "はじめての方は、トーク画面下のメニューから住所登録をお願いします。"
 });
 

@@ -2494,18 +2494,16 @@ async function onFollow(ev) {
 
   try { await notifyAdminFriendAdded({ userId, displayName, day }); } catch {}
 
-  const urlProducts = liffUrl("/products.html");
-  const urlAddress  = liffUrl("/cod-register.html");
+ await lineClient.pushMessage(userId, {
+  type: "text",
+  text:
+    "友だち追加ありがとうございます！\n\n" +
+    "このLINEからご注文いただけます。\n\n" +
+    `・「${KEYWORD_DIRECT}」と送る → 通常注文\n` +
+    `・「${KEYWORD_KUSUKE}」と送る → 久助の注文\n\n` +
+    "はじめての方は、トーク画面下のメニューから住所登録をお願いします。"
+});
 
-  await lineClient.pushMessage(userId, {
-    type: "text",
-    text:
-      "友だち追加ありがとうございます！\n\n" +
-      `・「${KEYWORD_DIRECT}」でミニアプリ注文\n` +
-      `・「${KEYWORD_KUSUKE}」で久助の注文\n\n` +
-      "住所登録がまだの場合は、ミニアプリ内の「住所入力」からお願いします。\n\n" +
-      `商品一覧：\n${urlProducts}\n\n住所登録：\n${urlAddress}`
-  });
 }
 
 async function onUnfollow(ev) {

@@ -25,7 +25,7 @@
     h1{ margin:0 0 6px; font-size:18px; }
     .muted{ color:var(--muted); font-size:13px; line-height:1.5; }
     .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; margin-top:12px; }
-    .card{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow); }
+    .card{ confirmed:0; background:var(--card); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow); }
 
     .imgbox{
       height:200px; background:#fff;
@@ -44,15 +44,15 @@
     .price{ font-weight:900; color:var(--pri); }
     .badge{ font-size:12px; border:1px solid var(--line); background:#fafafa; border-radius:999px; padding:2px 8px; white-space:nowrap; }
 
-    /* ✅ 原材料（折りたたみ）・賞味期限 */
-    .ingBox{ margin-top:8px; }
-    .ingDetails{
+    /* ✅ 折りたたみ（原材料・賞味期限） */
+    .metaBox{ margin-top:8px; }
+    .metaDetails{
       border:1px solid var(--line);
       border-radius:12px;
       background:#fafafa;
       padding:8px 10px;
     }
-    .ingDetails > summary{
+    .metaDetails > summary{
       list-style:none;
       cursor:pointer;
       font-weight:900;
@@ -62,27 +62,21 @@
       align-items:center;
       justify-content:space-between;
       gap:8px;
+      user-select:none;
     }
-    .ingDetails > summary::-webkit-details-marker{ display:none; }
-    .ingDetails > summary::after{
-      content:"＋";
-      font-size:14px;
-      line-height:1;
-    }
-    .ingDetails[open] > summary::after{ content:"−"; }
+    .metaDetails > summary::-webkit-details-marker{ display:none; }
+    .metaDetails > summary::after{ content:"＋"; font-size:14px; line-height:1; }
+    .metaDetails[open] > summary::after{ content:"−"; }
 
-    .ingText{
+    .metaText{
       margin-top:8px;
       font-size:12px;
       color:var(--muted);
       line-height:1.6;
       word-break:break-word;
     }
-    .ingLabel{ color:var(--text); font-weight:900; }
-
-    .expBox{ margin-top:6px; }
-    .expText{ font-size:12px; color:var(--muted); line-height:1.5; }
-    .expLabel{ color:var(--text); font-weight:900; }
+    .metaLine{ margin-top:6px; }
+    .metaLabel{ color:var(--text); font-weight:900; }
 
     /* 操作部（見やすく） */
     .controls{ display:flex; flex-direction:column; gap:10px; margin-top:12px; }
@@ -285,6 +279,58 @@
     toastEl._t = setTimeout(()=> toastEl.classList.remove("show"), 700);
   }
 
+  // ✅ 安全なHTMLエスケープ（原材料などを直接埋め込むため）
+  function escapeHtml(s){
+    return String(s ?? "")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#039;");
+  }
+
+  // ✅ 画像：ファイル名だけなら /uploads/ を補完
+  function normalizeImageSrc(image){
+    const v = String(image || "").trim();
+    if(!v) return "";
+    if(v.startsWith("http://") || v.startsWith("https://") || v.startsWith("/")) return v;
+    return "/uploads/" + v;
+  }
+
+  // ✅ 折りたたみ：原材料(ingredients)・賞味期限(best_before / bestBefore / expiry) などに対応
+  function getBestBefore(p){
+    return p.best_before ?? p.bestBefore ?? p.expiry ?? p.expiration ?? p.shelf_life ?? "";
+  }
+
+  function metaDetailsHtml(p){
+    const ing = (p.ingredients ?? p.ingredient ?? "").toString().trim();
+    const bb  = (getBestBefore(p) ?? "").toString().trim();
+
+    // 全商品 “折りたたみ方式”：
+    // ・中身が無い場合も「情報を見る」だけ出し、中は「準備中」でOK（要望に合わせる）
+    // ・もし「空なら表示しない」にしたい場合は、この関数で早期return ""にしてください。
+    const hasAny = !!(ing || bb);
+
+    const lines = [];
+    if(ing) lines.push(`<div class="metaLine"><span class="metaLabel">原材料：</span>${escapeHtml(ing)}</div>`);
+    if(bb)  lines.push(`<div class="metaLine"><span class="metaLabel">賞味期限：</span>${escapeHtml(bb)}</div>`);
+
+    if(!hasAny){
+      lines.push(`<div class="metaLine">${escapeHtml("（準備中）")}</div>`);
+    }
+
+    return `
+      <div class="metaBox">
+        <details class="metaDetails">
+          <summary>${hasAny ? "原材料・賞味期限を見る" : "商品情報を見る"}</summary>
+          <div class="metaText">
+            ${lines.join("")}
+          </div>
+        </details>
+      </div>
+    `;
+  }
+
   let cart = purgeOriginalSetFromCart(loadCart());
   let products = [];
 
@@ -331,29 +377,12 @@
     renderSum();
   }
 
-  // ✅ HTMLエスケープ（安全）
-  function escapeHtml(s){
-    return String(s ?? "")
-      .replaceAll("&","&amp;")
-      .replaceAll("<","&lt;")
-      .replaceAll(">","&gt;")
-      .replaceAll('"',"&quot;")
-      .replaceAll("'","&#039;");
-  }
-
   function card(p){
     const el = document.createElement("div");
     el.className = "card";
 
-    // ✅ 画像：ファイル名だけなら /uploads/ を補完
-    const imgRaw = String(p.image||"").trim();
-    const img = imgRaw
-      ? (imgRaw.startsWith("http") || imgRaw.startsWith("/") ? imgRaw : ("/uploads/" + imgRaw))
-      : "";
-
+    const img = normalizeImageSrc(p.image);
     const stock = Number(p.stock||0);
-    const ing = String(p.ingredients || "").trim();
-    const exp = String(p.best_before || p.expiry || p.expiration || "").trim(); // 念のため別キーも吸収
 
     el.innerHTML = `
       <div class="imgbox">${img ? `<img src="${escapeHtml(img)}" alt="">` : ""}</div>
@@ -361,20 +390,7 @@
         <div class="name">${escapeHtml(p.name || "")}</div>
         <div class="desc">${escapeHtml(p.desc || "")}</div>
 
-        ${ing ? `
-          <div class="ingBox">
-            <details class="ingDetails">
-              <summary>原材料を見る</summary>
-              <div class="ingText"><span class="ingLabel">原材料：</span>${escapeHtml(ing)}</div>
-            </details>
-          </div>
-        ` : ""}
-
-        ${exp ? `
-          <div class="expBox">
-            <div class="expText"><span class="expLabel">賞味期限：</span>${escapeHtml(exp)}</div>
-          </div>
-        ` : ""}
+        ${metaDetailsHtml(p)}
 
         <div class="row">
           <div class="price">${yen(p.price)}</div>

@@ -182,8 +182,8 @@
   "use strict";
 
   // ===== 設定 =====
-  const LIFF_ID_STORE   = "2008406620-7tSkOcqd";
-  const API_PRODUCTS    = "/api/products";
+  const LIFF_ID_STORE = "2008406620-7tSkOcqd";
+  const API_PRODUCTS = "/api/products";
   const API_STORE_ORDER = "/api/store-order";
 
   // store-products.html と揃える（店舗受取専用）
@@ -191,9 +191,6 @@
 
   // 戻る先（店舗受取専用の商品一覧）
   const BACK_URL = "/public/store-products.html";
-
-  // ✅ 受付完了ページ（前回作ったやつ）
-  const COMPLETE_URL = "/public/store-complete.html";
 
   const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
 
@@ -238,6 +235,18 @@
     return Array.from(map.entries()).map(([id,qty])=>({id,qty}));
   }
 
+  function setStatus(msg, isError=false){
+    statusEl.innerHTML = isError ? `<span class="danger">${msg}</span>` : msg;
+  }
+
+  // enable submit when name & cart ok
+  function updateSubmitEnabled(total, items){
+    const nameOk = String(nameEl.value||"").trim().length > 0;
+    const cartOk = (items||[]).length > 0 && total > 0;
+    submitBtn.classList.toggle("btnDisabled", !(nameOk && cartOk));
+    syncBarHeight();
+  }
+
   function escapeHtml(s){
     return String(s ?? "")
       .replaceAll("&","&amp;")
@@ -247,16 +256,14 @@
       .replaceAll("'","&#39;");
   }
 
-  function setStatus(msg, isError=false){
-    statusEl.innerHTML = isError ? `<span class="danger">${escapeHtml(msg)}</span>` : escapeHtml(msg);
-  }
-
-  // enable submit when name & cart ok
-  function updateSubmitEnabled(total, items){
-    const nameOk = String(nameEl.value||"").trim().length > 0;
-    const cartOk = (items||[]).length > 0 && total > 0;
-    submitBtn.classList.toggle("btnDisabled", !(nameOk && cartOk));
-    syncBarHeight();
+  async function readBodySmart(res){
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    if(ct.includes("application/json")){
+      const j = await res.json().catch(()=>null);
+      return { kind:"json", data:j };
+    }
+    const t = await res.text().catch(()=> "");
+    return { kind:"text", data:t };
   }
 
   // LIFF login
@@ -276,19 +283,22 @@
   cart.items = normItems(cart.items);
 
   backBtn.onclick = ()=> location.href = BACK_URL;
-
   clearBtn.onclick = ()=>{
     if(!confirm("カートを空にしますか？")) return;
     cart = { items: [] };
     saveCart(cart);
-    location.href = BACK_URL;
+    location.href = BACK_URL; // 商品一覧へ戻す
   };
 
   try{
     const ok = await ensureLiff();
     if(!ok) return;
-  }catch(_){
-    setStatus("画面の初期化に失敗しました。お手数ですが、もう一度お試しください。", true);
+    if(!profile || !profile.userId){
+      setStatus("LINEユーザーIDが取得できませんでした（LIFF設定/権限をご確認ください）", true);
+      return;
+    }
+  }catch(e){
+    setStatus("LIFF初期化に失敗しました（店舗受取LIFF）", true);
     return;
   }
 
@@ -317,8 +327,8 @@
       volume: p.volume ?? "",
       stock: p.stock ?? undefined
     }));
-  }catch(_){
-    setStatus("商品データの取得に失敗しました。時間をおいて再度お試しください。", true);
+  }catch(e){
+    setStatus("商品データの取得に失敗しました（/api/products）", true);
     return;
   }
 
@@ -369,11 +379,8 @@
   nameEl.addEventListener("input", ()=> updateSubmitEnabled(total, lines));
   updateSubmitEnabled(total, lines);
 
-  // ===== 送信（修正版：完了ページへ遷移）=====
-  let isSubmitting = false;
-
+  // submit
   submitBtn.onclick = async ()=>{
-    if(isSubmitting) return;
     if(submitBtn.classList.contains("btnDisabled")) return;
 
     const customerName = String(nameEl.value||"").trim();
@@ -382,11 +389,8 @@
       return;
     }
 
-    isSubmitting = true;
     submitBtn.textContent = "送信中…";
     submitBtn.classList.add("btnDisabled");
-    backBtn.classList.add("btnDisabled");
-    clearBtn.classList.add("btnDisabled");
 
     try{
       const payload = {
@@ -403,38 +407,35 @@
       const res = await fetch(API_STORE_ORDER, {
         method: "POST",
         headers: { "Content-Type":"application/json" },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        cache: "no-store"
       });
 
+      const body = await readBodySmart(res);
+
       if(!res.ok){
-        const t = await res.text().catch(()=> "");
-        throw new Error("HTTP " + res.status + (t ? " / " + t : ""));
+        const detail = (body.kind === "json")
+          ? JSON.stringify(body.data, null, 2)
+          : String(body.data || "");
+        throw new Error(`HTTP ${res.status}\n${detail}`.trim());
       }
 
-      // ✅ ここが修正点：orderId を受け取って完了ページへ
-      let orderId = "";
-      const ct = String(res.headers.get("content-type") || "");
-      if(ct.includes("application/json")){
-        const d = await res.json().catch(()=> ({}));
-        orderId = String(d?.orderId || d?.order_id || "").trim();
-      }else{
-        // 文字だけ返す実装でも一応拾う（例: "ORDER123"）
-        const t = await res.text().catch(()=> "");
-        orderId = String(t || "").trim();
+      // 成功：orderId拾えるなら拾う（サーバが返す想定）
+      let orderId = null;
+      if(body.kind === "json" && body.data){
+        orderId = body.data.orderId || body.data.order_id || null;
       }
 
-      // 成功：カートを空にして完了ページへ
+      // 成功：カートを空にして閉じる
       saveCart({ items: [] });
-
-      const to = COMPLETE_URL + (orderId ? ("?orderId=" + encodeURIComponent(orderId)) : "");
-      location.href = to;
-
+      alert(orderId
+        ? `ご注文を受け付けました。\n注文ID: ${orderId}\n店舗で現金払いをお願いします。`
+        : "ご注文を受け付けました。店舗で現金払いをお願いします。"
+      );
+      try{ liff.closeWindow(); }catch(_){}
     }catch(e){
-      alert("注文送信に失敗しました。\n" + (e?.message || e));
+      alert("注文送信に失敗しました。\n\n" + (e?.message || e));
       submitBtn.textContent = "注文確定（現金）";
-      isSubmitting = false;
-      backBtn.classList.remove("btnDisabled");
-      clearBtn.classList.remove("btnDisabled");
       updateSubmitEnabled(total, lines);
     }
   };

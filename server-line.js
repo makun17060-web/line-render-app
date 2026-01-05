@@ -4,11 +4,7 @@
  * ✅ 最重要（あなたの要望を反映）
  * - 送料：DB優先（shipping_yamato_taxed）  region+size -> fee
  * - サイズ：DB優先（shipping_size_rules） shipping_group + qty_range -> size
- *   - shipping_group: akasha6 / original_set / default をDBで自由に変更できる
- *   - shipping_size_rules の列はあなたの現DBに合わせて：
- *       shipping_group(text), qty_min(int), qty_max(int), size(text)
  * - /api/admin/orders の subtotal（小計）が代引手数料込みになっていたのを修正
- *   subtotal = total - shipping - (codなら330)
  * - 友だち追加（follow）/ ブロック（unfollow）を ADMIN_USER_ID にPush通知
  * - ★ LIFF_ID_ADDRESS の別名対応（LIFF_ID_ADD を吸収）
  * - オリジナルセット専用注文API（混載不可）
@@ -19,10 +15,8 @@
  *    - orderId返却
  *    - 管理者/購入者へ通知（代引・店頭受取は即通知、カードは任意で「仮受付通知」も可能）
  *
- * ✅ 互換維持
- * - 起動キーワード：「直接注文」「久助」
- * - 注文完了通知（注文者＋管理者）統一
- * - 画像URLの /uploads 配信
+ * ✅ 今回の修正（重要）
+ * - /api/store-order が「旧クライアント形式」(userId/items/payment_method:"cash") でも通るように互換対応
  */
 
 "use strict";
@@ -347,7 +341,7 @@ async function reloadShippingCacheIfNeeded() {
     }
     shippingCache.map = m;
     shippingCache.loadedAt = now;
-  } catch (e) {
+  } catch {
     // ignore（フォールバックへ）
   }
 }
@@ -377,7 +371,7 @@ async function reloadSizeRulesIfNeeded() {
     );
 
     sizeRuleCache.loadedAt = now;
-  } catch (e) {
+  } catch {
     sizeRuleCache.rules = [];
     sizeRuleCache.loadedAt = now;
   }
@@ -1043,8 +1037,6 @@ async function markOrderNotified(orderId) {
 
 /**
  * 通知（配送/店頭受取 両対応）
- * - deliveryMethod: "delivery" | "pickup"
- * - pickupInfo: { shopName?, shopNote? }（任意）
  */
 async function notifyOrderCompleted({
   orderId,
@@ -1060,7 +1052,7 @@ async function notifyOrderCompleted({
   isPaid = false,
   deliveryMethod = "delivery",
   pickupInfo = null,
-  skipMarkNotified = false, // ★カード仮通知などで notified_at を立てたくない時に true
+  skipMarkNotified = false,
 }) {
   const row = await getOrderRow(orderId);
   if (!skipMarkNotified && row?.notified_at) {
@@ -1153,7 +1145,6 @@ async function notifyOrderCompleted({
 
 /**
  * ★カードの「仮受付」通知（notified_atは立てない）
- * - 決済完了（webhook）時に本通知を送れるようにする
  */
 async function notifyCardPending({
   orderId,
@@ -1548,7 +1539,6 @@ app.post("/api/admin/segment/send", requireAdmin, async (req, res) => {
 
 /* =========================
  * 送料見積り（住所未登録でもOK）
- * ★ shipping-calc.html の "akasha / kusuke / original-set" を確実にサイズ計算に反映
  * ========================= */
 app.post("/api/shipping/quote", async (req, res) => {
   try {
@@ -1570,16 +1560,8 @@ app.post("/api/shipping/quote", async (req, res) => {
       name: "磯屋オリジナルセット（見積り）",
       price: Number(products.find(p => p.id === ORIGINAL_SET_PRODUCT_ID)?.price || 2100),
     };
-    byId["akasha"] = {
-      id: "akasha-series",
-      name: "あかしゃシリーズ（見積り）",
-      price: Number(akashaReal?.price || 0),
-    };
-    byId["kusuke"] = {
-      id: "kusuke-series",
-      name: "久助（見積り）",
-      price: Number(kusukeReal?.price || 250),
-    };
+    byId["akasha"] = { id: "akasha-series", name: "あかしゃシリーズ（見積り）", price: Number(akashaReal?.price || 0) };
+    byId["kusuke"] = { id: "kusuke-series", name: "久助（見積り）", price: Number(kusukeReal?.price || 250) };
 
     const mapped = [];
     for (const it of inItems) {
@@ -1948,60 +1930,84 @@ app.post("/api/admin/upload-image", requireAdmin, async (req, res) => {
  * ========================= */
 
 /**
- * ★ /api/store-order（今回の追加）
- * - 目的：LIFF側の「確定」ボタンから、注文保存→orderId返却→通知 まで一気通貫
+ * ★ /api/store-order（互換対応版）
  *
- * 想定body例：
+ * ✅ 新方式（推奨）:
  * {
- *   "uid": "LINE_USER_ID",
- *   "checkout": { "items":[{"id":"xxx","qty":2}, ...] },
+ *   "uid": "...",
+ *   "checkout": { "items":[{"id":"xxx","qty":2}] },
  *   "paymentMethod": "cod" | "pickup_cash" | "card",
  *   "deliveryMethod": "delivery" | "pickup",
- *   "pickup": { "name": "...", "phone": "...", "shopName":"磯屋", "shopNote":"..." },
- *   "notifyCardPending": false  // card時に「仮受付通知」を送るなら true
+ *   "pickup": { "name": "...", "phone": "...", "shopName":"磯屋", "shopNote":"..." }
+ * }
+ *
+ * ✅ 旧方式（あなたの店舗受取HTMLが送ってる形式）:
+ * {
+ *   "userId": "...",
+ *   "name": "山田 太郎",
+ *   "items": [{"id":"xxx","qty":2}],
+ *   "payment_method": "cash",
+ *   "pickup": true,
+ *   "source": "store_liff"
  * }
  */
 app.post("/api/store-order", async (req, res) => {
   try {
-    const uid = String(req.body?.uid || req.body?.userId || "").trim();
-    const checkout = req.body?.checkout || null;
+    const b = req.body || {};
 
-    const paymentMethodRaw = String(req.body?.paymentMethod || req.body?.payment_method || "cod").trim().toLowerCase();
-    const deliveryMethodRaw = String(req.body?.deliveryMethod || req.body?.delivery_method || (paymentMethodRaw === "pickup_cash" ? "pickup" : "delivery")).trim().toLowerCase();
-
-    const paymentMethod =
-      (paymentMethodRaw === "pickup" || paymentMethodRaw === "pickup_cash") ? "pickup_cash" :
-      (paymentMethodRaw === "card") ? "card" :
-      "cod";
-
-    const deliveryMethod = (deliveryMethodRaw === "pickup") ? "pickup" : "delivery";
-
-    const notifyCardPendingFlag = !!req.body?.notifyCardPending;
-
+    // uid / userId 両対応
+    const uid = String(b.uid || b.userId || "").trim();
     if (!uid) return res.status(400).json({ ok:false, error:"uid required" });
-    if (!checkout || !Array.isArray(checkout.items)) return res.status(400).json({ ok:false, error:"checkout.items required" });
+
+    // items 取り出し（checkout優先、なければ直下items）
+    const itemsRaw = (b.checkout && Array.isArray(b.checkout.items)) ? b.checkout.items :
+                     (Array.isArray(b.items) ? b.items : null);
+    if (!itemsRaw) return res.status(400).json({ ok:false, error:"items required" });
+
+    // payment / delivery の推定（旧形式にも合わせる）
+    const paymentRaw = String(b.paymentMethod || b.payment_method || "").trim().toLowerCase();
+    const pickupFlag = !!b.pickup;
+
+    // 旧：payment_method:"cash" は店頭受取（現金）
+    const paymentMethod =
+      (paymentRaw === "cash" || paymentRaw === "pickup" || paymentRaw === "pickup_cash") ? "pickup_cash" :
+      (paymentRaw === "card") ? "card" :
+      (paymentRaw === "cod") ? "cod" :
+      (pickupFlag ? "pickup_cash" : "cod");
+
+    const deliveryRaw = String(b.deliveryMethod || b.delivery_method || "").trim().toLowerCase();
+    const deliveryMethod =
+      (deliveryRaw === "pickup" || paymentMethod === "pickup_cash" || pickupFlag) ? "pickup" : "delivery";
+
+    // 店頭受取：名前は body.name を優先（あなたのHTMLが送ってる）
+    const pickup = b.pickup && typeof b.pickup === "object" ? b.pickup : (b.pickup ? {} : (b.pickupInfo || {}));
+    const customerName = String(b.name || pickup?.name || "").trim();
+    const customerPhone = String(pickup?.phone || b.phone || "").trim();
 
     await touchUser(uid, "seen");
 
-    // 店頭受取は住所必須にしない（配送は住所必須）
-    const built = await buildOrderFromCheckout(uid, checkout, { requireAddress: (deliveryMethod !== "pickup") });
+    // 配送＝住所必須 / 店頭受取＝住所不要
+    const built = await buildOrderFromCheckout(uid, { items: itemsRaw }, { requireAddress: (deliveryMethod !== "pickup") });
 
     const codFee = (paymentMethod === "cod") ? Number(COD_FEE || 330) : 0;
-
-    // 店頭受取は送料0固定
     const shippingFee = (deliveryMethod === "pickup") ? 0 : Number(built.shippingFee || 0);
     const size = (deliveryMethod === "pickup") ? null : built.size;
 
+    // total は必ずサーバ側で再計算（クライアントtotalは信用しない）
     const total = Number(built.subtotal || 0) + shippingFee + codFee;
 
-    // 店頭受取：名前を body.pickup.name から保存（任意）
-    const pickup = req.body?.pickup || {};
-    const nameOverride = (deliveryMethod === "pickup" && pickup?.name) ? String(pickup.name) : "";
+    // 店頭受取の時は orders.name に入力名を保存（必須運用なら空チェックしてもOK）
+    const nameOverride = (deliveryMethod === "pickup" ? customerName : "");
+
     const rawEvent = {
       type: "store_order",
+      source: String(b.source || "liff"),
       paymentMethod,
       deliveryMethod,
-      pickup: deliveryMethod === "pickup" ? { name: pickup?.name || "", phone: pickup?.phone || "", shopName: pickup?.shopName || "", shopNote: pickup?.shopNote || "" } : null,
+      line_display_name: String(b.line_display_name || ""),
+      pickup: (deliveryMethod === "pickup")
+        ? { name: customerName, phone: customerPhone, shopName: String(pickup?.shopName || "磯屋"), shopNote: String(pickup?.shopNote || "") }
+        : null,
     };
 
     const status =
@@ -2017,19 +2023,41 @@ app.post("/api/store-order", async (req, res) => {
       paymentMethod,
       status,
       rawEvent,
-      source: "liff",
+      source: (deliveryMethod === "pickup") ? "store_liff" : "liff",
       nameOverride,
-      // pref/address は配送でのみ埋まる（住所未登録のpickupでもinsert可）
-      prefOverride: (deliveryMethod === "pickup") ? "" : "",
-      addressOverride: (deliveryMethod === "pickup") ? "" : "",
-      zipOverride: (deliveryMethod === "pickup") ? "" : "",
+      // 店頭受取は住所空でOK
+      zipOverride: "",
+      prefOverride: "",
+      addressOverride: "",
     });
 
-    // 通知ポリシー：
-    // - cod / pickup_cash：即「確定通知」（notified_at を立てる）
-    // - card：原則 webhook で決済完了後に確定通知
-    //   ただし notifyCardPending=true なら「仮受付通知」を送る（notified_atは立てない）
-    if (paymentMethod === "cod") {
+    // 通知：pickup_cash / cod は即確定通知
+    if (paymentMethod === "pickup_cash") {
+      const pseudoAddr = {
+        name: customerName || built.addr?.name || "",
+        phone: customerPhone || built.addr?.phone || "",
+        postal: "",
+        prefecture: "",
+        city: "",
+        address1: "",
+        address2: "",
+      };
+      await notifyOrderCompleted({
+        orderId,
+        userId: built.userId,
+        items: built.items,
+        shippingFee: 0,
+        total,
+        paymentMethod: "pickup_cash",
+        codFee: 0,
+        size: null,
+        addr: pseudoAddr,
+        title: "新規注文（店頭受取/現金）",
+        isPaid: false,
+        deliveryMethod: "pickup",
+        pickupInfo: { shopName: String(pickup?.shopName || "磯屋"), shopNote: String(pickup?.shopNote || "") },
+      });
+    } else if (paymentMethod === "cod") {
       await notifyOrderCompleted({
         orderId,
         userId: built.userId,
@@ -2043,34 +2071,9 @@ app.post("/api/store-order", async (req, res) => {
         title: "新規注文（代引）",
         isPaid: false,
         deliveryMethod,
-        pickupInfo: (deliveryMethod === "pickup") ? { shopName: pickup?.shopName || "", shopNote: pickup?.shopNote || "" } : null,
       });
-    } else if (paymentMethod === "pickup_cash") {
-      // 店頭受取（現金）
-      await notifyOrderCompleted({
-        orderId,
-        userId: built.userId,
-        items: built.items,
-        shippingFee: 0,
-        total,
-        paymentMethod: "pickup_cash",
-        codFee: 0,
-        size: null,
-        addr: built.addr, // 住所DBがあれば名前/電話を流用できる
-        title: "新規注文（店頭受取/現金）",
-        isPaid: false,
-        deliveryMethod: "pickup",
-        pickupInfo: { shopName: pickup?.shopName || "磯屋", shopNote: pickup?.shopNote || "" },
-      });
-    } else if (paymentMethod === "card" && notifyCardPendingFlag) {
-      await notifyCardPending({
-        orderId,
-        userId: built.userId,
-        items: built.items,
-        shippingFee,
-        total,
-        size,
-      });
+    } else {
+      // card: 原則 webhook で確定通知（必要なら notifyCardPending を呼ぶ設計も可能）
     }
 
     res.json({

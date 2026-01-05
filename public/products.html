@@ -44,6 +44,46 @@
     .price{ font-weight:900; color:var(--pri); }
     .badge{ font-size:12px; border:1px solid var(--line); background:#fafafa; border-radius:999px; padding:2px 8px; white-space:nowrap; }
 
+    /* ✅ 原材料（折りたたみ）・賞味期限 */
+    .ingBox{ margin-top:8px; }
+    .ingDetails{
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:#fafafa;
+      padding:8px 10px;
+    }
+    .ingDetails > summary{
+      list-style:none;
+      cursor:pointer;
+      font-weight:900;
+      color:var(--pri);
+      font-size:12px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:8px;
+    }
+    .ingDetails > summary::-webkit-details-marker{ display:none; }
+    .ingDetails > summary::after{
+      content:"＋";
+      font-size:14px;
+      line-height:1;
+    }
+    .ingDetails[open] > summary::after{ content:"−"; }
+
+    .ingText{
+      margin-top:8px;
+      font-size:12px;
+      color:var(--muted);
+      line-height:1.6;
+      word-break:break-word;
+    }
+    .ingLabel{ color:var(--text); font-weight:900; }
+
+    .expBox{ margin-top:6px; }
+    .expText{ font-size:12px; color:var(--muted); line-height:1.5; }
+    .expLabel{ color:var(--text); font-weight:900; }
+
     /* 操作部（見やすく） */
     .controls{ display:flex; flex-direction:column; gap:10px; margin-top:12px; }
     .controlsTop{ display:flex; justify-content:space-between; align-items:center; gap:10px; }
@@ -291,21 +331,54 @@
     renderSum();
   }
 
+  // ✅ HTMLエスケープ（安全）
+  function escapeHtml(s){
+    return String(s ?? "")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#039;");
+  }
+
   function card(p){
     const el = document.createElement("div");
     el.className = "card";
 
-    const img = String(p.image||"").trim();
+    // ✅ 画像：ファイル名だけなら /uploads/ を補完
+    const imgRaw = String(p.image||"").trim();
+    const img = imgRaw
+      ? (imgRaw.startsWith("http") || imgRaw.startsWith("/") ? imgRaw : ("/uploads/" + imgRaw))
+      : "";
+
     const stock = Number(p.stock||0);
+    const ing = String(p.ingredients || "").trim();
+    const exp = String(p.best_before || p.expiry || p.expiration || "").trim(); // 念のため別キーも吸収
 
     el.innerHTML = `
-      <div class="imgbox">${img ? `<img src="${img}" alt="">` : ""}</div>
+      <div class="imgbox">${img ? `<img src="${escapeHtml(img)}" alt="">` : ""}</div>
       <div class="body">
-        <div class="name">${p.name || ""}</div>
-        <div class="desc">${p.desc || ""}</div>
+        <div class="name">${escapeHtml(p.name || "")}</div>
+        <div class="desc">${escapeHtml(p.desc || "")}</div>
+
+        ${ing ? `
+          <div class="ingBox">
+            <details class="ingDetails">
+              <summary>原材料を見る</summary>
+              <div class="ingText"><span class="ingLabel">原材料：</span>${escapeHtml(ing)}</div>
+            </details>
+          </div>
+        ` : ""}
+
+        ${exp ? `
+          <div class="expBox">
+            <div class="expText"><span class="expLabel">賞味期限：</span>${escapeHtml(exp)}</div>
+          </div>
+        ` : ""}
+
         <div class="row">
           <div class="price">${yen(p.price)}</div>
-          <span class="badge">${p.volume ? `内容量 ${p.volume}` : `在庫 ${stock}`}</span>
+          <span class="badge">${p.volume ? `内容量 ${escapeHtml(p.volume)}` : `在庫 ${stock}`}</span>
         </div>
 
         <div class="controls">

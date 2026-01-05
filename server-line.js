@@ -2567,16 +2567,11 @@ async function onTextMessage(ev) {
 }
 
 async function replyDirectStart(replyToken) {
-  const orderLiffId   = (LIFF_ID_ORDER || LIFF_ID_DEFAULT || "").trim();
+const orderLiffId   = (LIFF_ID_ORDER || LIFF_ID_DEFAULT || "").trim();
 const addressLiffId = (LIFF_ID_ADDRESS || LIFF_ID_ADD || LIFF_ID_DEFAULT || "").trim();
 
-const urlProducts = orderLiffId
-  ? `https://liff.line.me/${orderLiffId}`
-  : liffUrl("/products.html");
-
-const urlAddress = addressLiffId
-  ? `https://liff.line.me/${addressLiffId}`
-  : liffUrl("/cod-register.html");
+const urlProducts = `https://liff.line.me/${orderLiffId}`;
+const urlAddress  = `https://liff.line.me/${addressLiffId}`;
 
   await lineClient.replyMessage(replyToken, {
     type: "text",

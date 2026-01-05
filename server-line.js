@@ -1283,7 +1283,18 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
     res.status(500).send("server_error");
   }
 });
+/* =========================
+ * LINE Webhook（★ここをJSONより前に！）
+ * ========================= */
+app.post("/webhook", line.middleware(lineConfig), async (req, res) => {
+  const events = req.body?.events || [];
+  res.status(200).end(); // 先に200
 
+  for (const ev of events) {
+    try { await handleEvent(ev); }
+    catch (e) { logErr("handleEvent failed", e?.stack || e); }
+  }
+});
 /* =========================
  * 通常JSON
  * ========================= */
@@ -2440,18 +2451,7 @@ app.get("/api/order/status", async (req, res) => {
   }
 });
 
-/* =========================
- * LINE Webhook
- * ========================= */
-app.post("/webhook", line.middleware(lineConfig), async (req, res) => {
-  const events = req.body?.events || [];
-  res.status(200).end(); // 先に200
 
-  for (const ev of events) {
-    try { await handleEvent(ev); }
-    catch (e) { logErr("handleEvent failed", e?.stack || e); }
-  }
-});
 
 async function handleEvent(ev) {
   const type = ev.type;

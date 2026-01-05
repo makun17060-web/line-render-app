@@ -1332,6 +1332,40 @@ app.use("/public/uploads", express.static(UPLOAD_DIR));
 
 // health
 app.get("/health", (req, res) => res.json({ ok: true, time: nowISO() }));
+// =========================
+// Health check（DB込み）
+// =========================
+app.get("/health/db", async (req, res) => {
+  const startedAt = Date.now();
+  try {
+    // ① DB接続チェック
+    await pool.query("SELECT 1");
+
+    // ② 主要テーブルの存在チェック（軽い）
+    const r = await pool.query(`
+      SELECT
+        (SELECT COUNT(*) FROM orders)  AS orders,
+        (SELECT COUNT(*) FROM users)   AS users,
+        (SELECT COUNT(*) FROM addresses) AS addresses
+    `);
+
+    res.json({
+      ok: true,
+      db: "connected",
+      counts: r.rows[0],
+      elapsed_ms: Date.now() - startedAt,
+      time: nowISO(),
+    });
+  } catch (e) {
+    logErr("health/db failed", e?.message || e);
+    res.status(500).json({
+      ok: false,
+      db: "error",
+      error: e?.message || String(e),
+      time: nowISO(),
+    });
+  }
+});
 
 /* =========================
  * Admin auth（1個だけ）

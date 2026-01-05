@@ -2567,8 +2567,17 @@ async function onTextMessage(ev) {
 }
 
 async function replyDirectStart(replyToken) {
-  const urlProducts = liffUrl("/products.html");
-  const urlAddress  = liffUrl("/cod-register.html");
+  const orderLiffId   = (LIFF_ID_ORDER || LIFF_ID_DEFAULT || "").trim();
+const addressLiffId = (LIFF_ID_ADDRESS || LIFF_ID_ADD || LIFF_ID_DEFAULT || "").trim();
+
+const urlProducts = orderLiffId
+  ? `https://liff.line.me/${orderLiffId}`
+  : liffUrl("/products.html");
+
+const urlAddress = addressLiffId
+  ? `https://liff.line.me/${addressLiffId}`
+  : liffUrl("/cod-register.html");
+
   await lineClient.replyMessage(replyToken, {
     type: "text",
     text: `ミニアプリで注文できます：\n${urlProducts}\n\n住所登録：\n${urlAddress}`

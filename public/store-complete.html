@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>店舗受取（現金）｜受付完了</title>
+
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280;
+    --line:#e5e7eb; --pri:#0a7b19; --danger:#b91c1c;
+    --shadow:0 1px 3px rgba(0,0,0,.06); --radius:14px;
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; padding:16px; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
+  .wrap{ max-width:760px; margin:0 auto; }
+  h1{ margin:0 0 8px; font-size:20px; }
+  .lead{ margin:0 0 12px; color:var(--muted); font-size:13px; line-height:1.7; }
+
+  .card{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    box-shadow:var(--shadow);
+    padding:14px;
+    margin-top:12px;
+  }
+
+  .badge{
+    display:inline-block;
+    font-size:12px;
+    border:1px solid #bbf7d0;
+    background:#f0fdf4;
+    color:#166534;
+    border-radius:999px;
+    padding:2px 10px;
+    font-weight:900;
+    margin-left:8px;
+    vertical-align:middle;
+    white-space:nowrap;
+  }
+
+  .label{ color:var(--muted); font-size:12px; margin-bottom:6px; }
+  .bigId{
+    display:flex; justify-content:space-between; align-items:center; gap:10px;
+    padding:12px 12px;
+    border:1px solid var(--line);
+    border-radius:12px;
+    background:#f9fafb;
+  }
+  .idText{
+    font-size:18px; font-weight:1000; letter-spacing:.4px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .miniBtn{
+    border:1px solid var(--line);
+    background:#fff;
+    border-radius:10px;
+    padding:8px 10px;
+    font-size:12px;
+    font-weight:900;
+    cursor:pointer;
+    white-space:nowrap;
+  }
+
+  ul{ margin:10px 0 0 18px; padding:0; }
+  li{ margin:6px 0; line-height:1.6; }
+
+  .hr{ height:1px; background:var(--line); margin:12px 0; }
+
+  .row{ display:flex; gap:10px; flex-wrap:wrap; }
+  .col{ flex:1; min-width:240px; }
+
+  .btn{
+    width:100%;
+    border:none;
+    border-radius:14px;
+    padding:13px 14px;
+    font-weight:900;
+    cursor:pointer;
+  }
+  .btnPri{ background:var(--pri); color:#fff; }
+  .btnSub{ background:#fff; border:1px solid var(--line); color:var(--text); margin-top:10px; }
+
+  .muted{ color:var(--muted); font-size:12px; line-height:1.6; }
+  .danger{ color:var(--danger); font-weight:900; }
+</style>
+</head>
+
+<body>
+<div class="wrap">
+  <h1>受付完了 <span class="badge">店舗受取（現金）</span></h1>
+  <p class="lead">
+    ご注文ありがとうございます。<br>
+    お受け取りの際は、下の「受付番号」をスタッフにお伝えください。
+  </p>
+
+  <div class="card">
+    <div class="label">受付番号（控え）</div>
+    <div class="bigId">
+      <div class="idText" id="orderId">—</div>
+      <button class="miniBtn" id="copyBtn" type="button">コピー</button>
+    </div>
+    <div class="muted" style="margin-top:8px">
+      ※スクリーンショットして保存しておくと安心です。
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="font-weight:1000; margin-bottom:6px;">お受け取りの流れ</div>
+    <ul>
+      <li>レジで「店舗受取です」とお伝えください</li>
+      <li>「受付番号」を見せる／伝える</li>
+      <li>店頭で<strong>現金払い</strong> → 商品をお渡しします</li>
+    </ul>
+
+    <div class="hr"></div>
+
+    <div class="row">
+      <div class="col">
+        <div class="label">お支払い</div>
+        <div style="font-weight:900;">店頭で現金払い</div>
+        <div class="muted">※スタッフの案内に従ってください</div>
+      </div>
+      <div class="col">
+        <div class="label">ご注意</div>
+        <div class="muted">
+          ※内容変更がある場合は、店舗でスタッフへお申し付けください。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <button class="btn btnPri" id="closeBtn" type="button">LINEに戻る</button>
+    <button class="btn btnSub" id="toListBtn" type="button">商品一覧に戻る</button>
+    <div class="muted" id="msg" style="margin-top:10px"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ===== 設定（あなたの店舗受取LIFF）=====
+  const LIFF_ID_STORE = "2008406620-7tSkOcqd";
+  const BACK_URL = "/public/store-products.html";
+
+  const $ = (id)=>document.getElementById(id);
+  const orderIdEl = $("orderId");
+  const copyBtn = $("copyBtn");
+  const closeBtn = $("closeBtn");
+  const toListBtn = $("toListBtn");
+  const msgEl = $("msg");
+
+  const sp = new URLSearchParams(location.search);
+  const orderId = String(sp.get("orderId") || "").trim();
+
+  orderIdEl.textContent = orderId ? orderId : "（受付番号が見つかりません）";
+
+  function setMsg(t){
+    msgEl.textContent = t || "";
+    if(t) setTimeout(()=>{ msgEl.textContent=""; }, 1600);
+  }
+
+  copyBtn.addEventListener("click", async ()=>{
+    try{
+      if(!orderId) return;
+      await navigator.clipboard.writeText(orderId);
+      setMsg("受付番号をコピーしました。");
+    }catch{
+      setMsg("コピーできませんでした。");
+    }
+  });
+
+  toListBtn.addEventListener("click", ()=>{
+    location.href = BACK_URL;
+  });
+
+  // LIFF 初期化（失敗しても成立）
+  async function initLiff(){
+    try{
+      await liff.init({ liffId: LIFF_ID_STORE });
+    }catch{}
+  }
+
+  closeBtn.addEventListener("click", ()=>{
+    try{
+      if(window.liff && liff.isInClient && liff.isInClient()){
+        liff.closeWindow();
+        return;
+      }
+    }catch{}
+    location.href = BACK_URL;
+  });
+
+  initLiff();
+})();
+</script>
+</body>
+</html>

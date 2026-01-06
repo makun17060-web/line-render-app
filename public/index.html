@@ -12,6 +12,7 @@
     :root{
       --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280; --line:#e5e7eb;
       --akasha:#0b3a53; --original:#7a1f1f; --store:#0a7b19;
+      --fuku:#7c3aed; /* ✅ 福箱カラー（紫系） */
       --shadow:0 1px 4px rgba(0,0,0,.08); --radius:16px;
       --danger:#b91c1c;
     }
@@ -46,6 +47,7 @@
     .btnOriginal{ background:var(--original); color:#fff; }
     .btnAkasha{ background:var(--akasha); color:#fff; }
     .btnStore{ background:var(--store); color:#fff; }
+    .btnFuku{ background:var(--fuku); color:#fff; } /* ✅ 福箱ボタン */
 
     .note{ margin-top:10px; font-size:13px; color:#374151; }
     .sub{ margin-top:6px; font-size:12px; color:var(--muted); }
@@ -106,6 +108,14 @@
       <div class="pill">カート → 住所入力 → 注文確定</div>
     </div>
 
+    <!-- 🎍 福箱（追加） -->
+    <div class="card" id="cardFuku">
+      <a class="btn btnFuku" href="#" id="goFuku">🎍 福箱（お楽しみ箱）を買う</a>
+      <div class="note">ダンボール箱でお届けする福袋企画</div>
+      <div class="sub">中身は開けてからのお楽しみ（時期・在庫で変わります）</div>
+      <div class="pill">福箱専用ページ → 注文確定</div>
+    </div>
+
     <!-- 🏠 店舗受取（現金） -->
     <div class="card hidden" id="cardStore">
       <a class="btn btnStore" href="#" id="goStore">🏠 店舗受取（現金）で注文する</a>
@@ -126,29 +136,22 @@
 (function(){
   "use strict";
 
-  /**
-   * ✅ ここが肝：LIFFで「店舗受取かどうか」を判定して分岐
-   *
-   * 方針：
-   * - index.html は通常URLで開いてもOK（liff.init 失敗 → 通常モードにフォールバック）
-   * - LIFF内で開かれた場合は、複数 liffId を順番に init して
-   *   「成功した liffId」によって mode を決定する
-   *
-   * これで URLパラメータに頼らず「どのLIFFで起動されたか」を判定できます。
-   */
-
   // ▼あなたの LIFF URL（確定）
   const LIFF_URL_ORIGINAL = "https://liff.line.me/2008406620-Bd9Zo9od";
   const LIFF_URL_AKASHA   = "https://liff.line.me/2008406620-G5j1gjzM";
 
   // ▼店舗受取用の LIFF URL（あなたの実IDに差し替え）
-  // 例: https://liff.line.me/2008406620-xxxxxxxx
   const LIFF_URL_STORE    = "https://liff.line.me/2008406620-7tSkOcqd";
+
+  // ✅ 福箱：最短は「同一ドメイン内の静的HTML」へ直行
+  //   public/fukubako.html を置いておけばOK
+  const FUKU_PAGE_URL      = "/fukubako.html";
+
+  // （もし“福箱も liff.line.me で開きたい”なら、福箱用LIFFを作ってここに入れる）
+  // const LIFF_URL_FUKU   = "https://liff.line.me/2008406620-XXXXXXXX";
 
   /**
    * ▼判定に使う LIFF_ID 群（「どれで開かれているか」を特定する）
-   * - ここは .env の値（LIFF_ID_ORDER / LIFF_ID_ADDRESS / LIFF_ID_STORE など）と一致させる
-   * - index.html に直書きしたくない場合は server 側で /api/config から返して埋めるのが理想
    */
   const LIFF_ID_ORIGINAL = "2008406620-Bd9Zo9od";
   const LIFF_ID_AKASHA   = "2008406620-G5j1gjzM";
@@ -163,6 +166,7 @@
   const btnOriginal = document.getElementById("goOriginal");
   const btnAkasha   = document.getElementById("goAkasha");
   const btnStore    = document.getElementById("goStore");
+  const btnFuku     = document.getElementById("goFuku");
 
   // クリック遷移（固定）
   btnOriginal.addEventListener("click", function(e){
@@ -178,6 +182,15 @@
     location.href = LIFF_URL_STORE;
   });
 
+  // ✅ 福箱：同一ドメインへ遷移（LIFF内ならそのまま動く）
+  btnFuku.addEventListener("click", function(e){
+    e.preventDefault();
+    location.href = FUKU_PAGE_URL;
+
+    // もし “福箱もLIFF URL” で開く場合はこれに切替：
+    // location.href = LIFF_URL_FUKU;
+  });
+
   function setModeUI(mode){
     // mode: "delivery" | "store" | "unknown"
     if(mode === "store"){
@@ -187,12 +200,10 @@
       modeBadge.textContent = "店舗受取モード";
       leadText.textContent = "店舗受取（現金）での注文です。商品を選んでください。";
     }else if(mode === "delivery"){
-      // 店舗受取カードは出さない（不要なら hidden のまま）
       modeBadge.classList.remove("hidden");
       modeBadge.textContent = "配送モード";
       leadText.textContent = "ご希望の商品カテゴリを選択してください。";
     }else{
-      // 非LIFFで開いた等
       modeBadge.classList.add("hidden");
       leadText.textContent = "ご希望の商品カテゴリを選択してください。";
     }
@@ -200,11 +211,8 @@
 
   // ✅ LIFFで起動されているか & どの LIFF か を判定
   async function detectModeByLiff(){
-    // LIFF SDK が無い/エラーなら unknown
     if(typeof liff === "undefined" || !liff.init) return { mode:"unknown", liffId:null };
 
-    // まず「LIFF外」で開いてると init 自体が失敗しがちなので try/catch
-    // 成功した liffId を覚える
     const tryIds = [
       { id: LIFF_ID_STORE,    mode: "store" },
       { id: LIFF_ID_ORIGINAL, mode: "delivery" },
@@ -214,33 +222,17 @@
     for(const x of tryIds){
       try{
         await liff.init({ liffId: x.id });
-        // ここまで来たら「この liffId で動いている」
         return { mode: x.mode, liffId: x.id };
       }catch(e){
-        // 次を試す
+        // 次へ
       }
     }
     return { mode:"unknown", liffId:null };
   }
 
   (async()=>{
-    const { mode, liffId } = await detectModeByLiff();
+    const { mode } = await detectModeByLiff();
     setModeUI(mode);
-
-    // 店舗受取モードなら「店舗受取ボタンだけ見せたい」なども可能
-    // 例：店舗受取モードでは配送商品カテゴリを出さない
-    if(mode === "store"){
-      // オリジナル・あかしゃを隠して、店舗受取だけにする場合
-      // document.getElementById("cardOriginal")?.classList.add("hidden");
-      // document.getElementById("cardAkasha")?.classList.add("hidden");
-
-      // 逆に「店舗受取でもカテゴリ選ばせる（オリジナル/あかしゃを店舗受取に流す）」なら
-      // goOriginal/goAkasha の遷移先を store用 products.html に変える…なども可能
-    }
-
-    // デバッグ表示は不要とのことなので console.log もしません
-    // どうしても確認したい時だけ下の1行を一時的に有効化してください
-    // console.log("mode", mode, "liffId", liffId);
   })();
 
 })();

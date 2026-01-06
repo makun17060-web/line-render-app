@@ -5,391 +5,210 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>福箱（お楽しみ箱）</title>
 
-  <!-- LIFF SDK（LIFF内で開く想定） -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
   <style>
     :root{
-      --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280;
-      --line:#e5e7eb; --pri:#7a1f1f; --pri2:#0b3a53; --danger:#b91c1c;
-      --shadow:0 1px 3px rgba(0,0,0,.06); --radius:14px;
+      --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280; --line:#e5e7eb;
+      --pri:#7c3aed; --danger:#b91c1c; --shadow:0 1px 3px rgba(0,0,0,.06); --radius:14px;
     }
     *{ box-sizing:border-box; }
     body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
     .wrap{ max-width:860px; margin:0 auto; padding:14px 14px 28px; }
-    .hero{
-      background:linear-gradient(135deg, rgba(122,31,31,.10), rgba(11,58,83,.08));
-      border:1px solid rgba(229,231,235,.8);
-      border-radius:18px; padding:14px 14px;
-      box-shadow:var(--shadow);
-    }
-    .title{ font-size:20px; margin:0 0 4px; font-weight:800; letter-spacing:.02em; }
-    .sub{ font-size:12px; color:var(--muted); margin:0; line-height:1.6; }
-    .badgeRow{ display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
-    .badge{
-      font-size:12px; padding:6px 10px; border-radius:999px;
-      background:#fff; border:1px solid var(--line); color:#374151;
-    }
-
-    .grid{ display:grid; grid-template-columns: 1fr; gap:12px; margin-top:12px; }
-    @media(min-width:760px){ .grid{ grid-template-columns: 1.2fr .8fr; } }
-
-    .card{
-      background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
-      box-shadow:var(--shadow); overflow:hidden;
-    }
-    .cardHead{ padding:14px; border-bottom:1px solid var(--line); }
-    .cardHead h2{ margin:0; font-size:16px; }
-    .cardBody{ padding:14px; }
-
-    .img{
-      width:100%; aspect-ratio: 16/9;
-      background:#f1f5f9; border:1px solid var(--line);
-      border-radius:12px; overflow:hidden;
-      display:flex; align-items:center; justify-content:center;
-      color:#64748b; font-size:12px;
-    }
-    .img img{ width:100%; height:100%; object-fit:contain; background:#fff; }
-
-    .row{ display:flex; gap:10px; align-items:center; justify-content:space-between; }
+    .hero{ background:#fff; border:1px solid var(--line); border-radius:18px; padding:14px; box-shadow:var(--shadow); }
+    h1{ margin:0 0 6px; font-size:20px; }
+    .muted{ color:var(--muted); font-size:13px; line-height:1.6; }
+    .card{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); padding:14px; margin-top:12px; }
+    .row{ display:flex; justify-content:space-between; gap:10px; align-items:center; }
     .price{ font-size:22px; font-weight:900; }
-    .muted{ color:var(--muted); font-size:12px; }
-    .desc{ margin:10px 0 0; font-size:13px; line-height:1.7; color:#374151; }
-    .hr{ height:1px; background:var(--line); margin:12px 0; }
-
-    .qtyBox{
-      display:flex; align-items:center; justify-content:space-between; gap:10px;
-      padding:12px; border:1px solid var(--line); border-radius:12px; background:#fafafa;
-    }
+    .img{ width:100%; aspect-ratio:16/9; border:1px solid var(--line); border-radius:12px; background:#f1f5f9; overflow:hidden; display:flex; align-items:center; justify-content:center; }
+    .img img{ width:100%; height:100%; object-fit:contain; background:#fff; }
+    .qtyBox{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px; border:1px solid var(--line); border-radius:12px; background:#fafafa; margin-top:12px; }
     .stepper{ display:flex; align-items:center; gap:8px; }
-    .btnIcon{
-      width:38px; height:38px; border-radius:10px;
-      border:1px solid var(--line); background:#fff; cursor:pointer;
-      display:flex; align-items:center; justify-content:center;
-      font-size:18px; user-select:none;
-    }
-    .qty{
-      width:54px; height:38px; border-radius:10px; border:1px solid var(--line);
-      text-align:center; font-size:14px; background:#fff;
-    }
-
-    .cta{
-      position:sticky; bottom:0; left:0; right:0;
-      padding:12px 0 0; margin-top:12px;
-    }
-    .ctaInner{
-      background:rgba(246,247,249,.85);
-      backdrop-filter: blur(8px);
-      border-top:1px solid rgba(229,231,235,.9);
-      padding:12px 0 14px;
-    }
-    .ctaRow{ display:flex; gap:10px; flex-wrap:wrap; }
-    .btn{
-      border:none; border-radius:14px; padding:12px 14px; cursor:pointer;
-      font-weight:800; font-size:14px;
-      display:inline-flex; align-items:center; justify-content:center; gap:8px;
-    }
-    .btnPri{ background:var(--pri); color:#fff; }
-    .btnSub{ background:#fff; border:1px solid var(--line); color:#111827; }
-    .btnPri:disabled{ opacity:.45; cursor:not-allowed; }
-    .err{ color:var(--danger); font-size:12px; margin-top:8px; }
-    .ok{ color:#0a7b19; font-size:12px; margin-top:8px; }
+    .btnIcon{ width:38px; height:38px; border-radius:10px; border:1px solid var(--line); background:#fff; cursor:pointer; font-size:18px; }
+    .qty{ width:54px; height:38px; border-radius:10px; border:1px solid var(--line); text-align:center; font-size:14px; background:#fff; }
+    .btnRow{ display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
+    button{ border:none; border-radius:14px; padding:12px 14px; font-weight:900; cursor:pointer; flex:1; min-width:180px; }
+    #goBtn{ background:var(--pri); color:#fff; }
+    #backBtn{ background:#fff; border:1px solid var(--line); color:#111827; }
+    button:disabled{ opacity:.55; cursor:not-allowed; }
+    .err{ color:var(--danger); font-weight:900; font-size:12px; margin-top:10px; }
   </style>
 </head>
 
 <body>
   <div class="wrap">
     <div class="hero">
-      <h1 class="title">🎍 磯屋 福箱（お楽しみ箱）</h1>
-      <p class="sub">
-        ダンボール箱でお届けする「福袋」キャンペーンです。<br>
-        中身は開けてからのお楽しみ（内容は時期・在庫で変わります）。
-      </p>
-      <div class="badgeRow">
-        <span class="badge">LINE限定</span>
-        <span class="badge">数量限定</span>
-        <span class="badge">なくなり次第終了</span>
+      <h1>🎍 磯屋 福箱（お楽しみ箱）</h1>
+      <div class="muted">
+        ダンボール箱でお届けする福袋企画です。<br>
+        中身は開けてからのお楽しみ（時期・在庫で変わります）。
       </div>
     </div>
 
-    <div class="grid">
-      <div class="card">
-        <div class="cardHead">
-          <h2 id="pName">読み込み中…</h2>
+    <div class="card">
+      <div class="muted">商品</div>
+      <div style="font-weight:900;font-size:16px;margin-top:6px" id="pName">読み込み中…</div>
+
+      <div class="img" id="imgWrap" style="margin-top:10px;">画像なし</div>
+
+      <div style="margin-top:10px" class="row">
+        <div>
+          <div class="muted">価格（税込）</div>
+          <div class="price" id="pPrice">—</div>
         </div>
-        <div class="cardBody">
-          <div class="img" id="imgWrap">画像なし</div>
-
-          <div class="hr"></div>
-
-          <div class="row">
-            <div>
-              <div class="muted">価格（税込）</div>
-              <div class="price" id="pPrice">—</div>
-            </div>
-            <div style="text-align:right">
-              <div class="muted">在庫</div>
-              <div style="font-weight:800" id="pStock">—</div>
-            </div>
-          </div>
-
-          <p class="desc" id="pDesc">
-            —
-          </p>
-
-          <div class="hr"></div>
-
-          <div class="qtyBox">
-            <div>
-              <div style="font-weight:900">個数</div>
-              <div class="muted">1回の注文でまとめて買えます</div>
-            </div>
-            <div class="stepper">
-              <button class="btnIcon" id="minusBtn" aria-label="減らす">−</button>
-              <input class="qty" id="qtyInput" inputmode="numeric" value="1" />
-              <button class="btnIcon" id="plusBtn" aria-label="増やす">＋</button>
-            </div>
-          </div>
-
-          <div id="msg" class="muted" style="margin-top:10px;"></div>
-          <div id="status" class="err" style="display:none;"></div>
+        <div style="text-align:right">
+          <div class="muted">在庫</div>
+          <div style="font-weight:900" id="pStock">—</div>
         </div>
       </div>
 
-      <div class="card">
-        <div class="cardHead">
-          <h2>ご案内</h2>
+      <div class="qtyBox">
+        <div>
+          <div style="font-weight:900">個数</div>
+          <div class="muted">確認画面で送料を見積りします</div>
         </div>
-        <div class="cardBody">
-          <ul style="margin:0; padding-left:18px; line-height:1.8; color:#374151; font-size:13px;">
-            <li>箱（ダンボール）でのお届けです（福袋ではありません）。</li>
-            <li>内容は固定ではなく、時期・在庫で変わります。</li>
-            <li>アレルギー表示などは同梱の表示をご確認ください。</li>
-          </ul>
-          <div class="hr"></div>
-          <div class="muted">
-            ※このページは「福箱だけ」を選べる専用ページです。
-          </div>
+        <div class="stepper">
+          <button class="btnIcon" id="minusBtn" aria-label="減らす">−</button>
+          <input class="qty" id="qtyInput" inputmode="numeric" value="1" />
+          <button class="btnIcon" id="plusBtn" aria-label="増やす">＋</button>
         </div>
       </div>
-    </div>
 
-    <div class="cta">
-      <div class="ctaInner">
-        <div class="ctaRow">
-          <button class="btn btnPri" id="goConfirmBtn">注文内容を確認</button>
-          <button class="btn btnSub" id="backBtn">戻る</button>
-        </div>
-        <div class="muted" id="totalLine" style="margin-top:8px;"></div>
+      <div class="btnRow">
+        <button id="goBtn" type="button">注文内容を確認へ</button>
+        <button id="backBtn" type="button">戻る</button>
       </div>
+
+      <div id="err" class="err" style="display:none"></div>
     </div>
   </div>
 
-  <script>
-    // ====== 設定 ======
-    const FUKU_ID = "fukubako-2000"; // products.json 側の id と一致させる
-    const CART_KEY = "cart";         // 既存の confirm.html が読むキーに合わせてください
-    const CONFIRM_URL = "/confirm.html"; // 既存の確認画面に合わせて変更OK
+<script>
+(function(){
+  "use strict";
 
-    // LIFF: 同一LIFF内で動く想定（ID指定が必要ならここを差し替え）
-    async function initLiffSafe(){
-      try{
-        if (!window.liff) return;
-        // すでにLIFF内なら init 不要なこともあります（環境によってOK）
-        // 必要なら ↓ を有効化して LIFF ID を入れてください
-        // await liff.init({ liffId: "2008406620-xxxxxxxx" });
-      }catch(e){
-        // ここでは黙って進める
-      }
+  // ✅ confirm.html と揃える
+  const KEY_CART = "isoya_cart";
+
+  // ✅ products.json 側の福箱ID
+  const FUKU_ID = "fukubako-2000";
+
+  const el = (id)=>document.getElementById(id);
+  const errEl = el("err");
+
+  const yen = (n)=>(Number(n)||0).toLocaleString("ja-JP")+"円";
+
+  function showErr(msg){
+    if(!msg){ errEl.style.display="none"; errEl.textContent=""; return; }
+    errEl.style.display="block";
+    errEl.textContent=msg;
+  }
+
+  function clampInt(v, min, max){
+    let n = Math.floor(Number(String(v).replace(/[^\d]/g,"")));
+    if(!Number.isFinite(n)) n = min;
+    if(n < min) n = min;
+    if(Number.isFinite(max) && n > max) n = max;
+    return n;
+  }
+
+  function saveCartOnlyFuku(id, qty){
+    // ✅ confirm.html が期待する形式 { items:[{id, qty}] }
+    const cart = { items: [ { id, qty } ] };
+    localStorage.setItem(KEY_CART, JSON.stringify(cart));
+  }
+
+  async function getProducts(){
+    const r = await fetch("/api/products", { cache:"no-store" });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok || !d.ok) throw new Error(d?.error || ("HTTP " + r.status));
+    return Array.isArray(d.products) ? d.products : [];
+  }
+
+  function render(p){
+    el("pName").textContent = p.name || "福箱";
+    el("pPrice").textContent = yen(p.price);
+    el("pStock").textContent = (typeof p.stock === "number") ? String(p.stock) : "—";
+
+    const wrap = el("imgWrap");
+    wrap.innerHTML = "";
+    if(p.image && String(p.image).trim()){
+      const img = document.createElement("img");
+      img.alt = p.name || "福箱";
+      img.src = p.image;
+      img.loading = "lazy";
+      wrap.appendChild(img);
+    }else{
+      wrap.textContent = "画像なし";
     }
+  }
 
-    function yen(n){
-      const x = Number(n || 0);
-      return x.toLocaleString("ja-JP") + "円";
-    }
+  (async ()=>{
+    try{
+      showErr("");
 
-    function setStatus(msg, isError=true){
-      const el = document.getElementById("status");
-      if(!msg){
-        el.style.display = "none";
-        el.textContent = "";
-        return;
-      }
-      el.style.display = "block";
-      el.className = isError ? "err" : "ok";
-      el.textContent = msg;
-    }
-
-    function clampQty(q, stock){
-      q = Math.floor(Number(q || 1));
-      if (!Number.isFinite(q) || q < 1) q = 1;
-      if (Number.isFinite(stock) && stock >= 0) q = Math.min(q, Math.max(stock, 1));
-      return q;
-    }
-
-    function loadCart(){
-      try{
-        const raw = localStorage.getItem(CART_KEY);
-        const arr = raw ? JSON.parse(raw) : [];
-        return Array.isArray(arr) ? arr : [];
-      }catch(e){
-        return [];
-      }
-    }
-
-    function saveCart(items){
-      try{
-        localStorage.setItem(CART_KEY, JSON.stringify(items));
-      }catch(e){
-        // 何もしない
-      }
-    }
-
-    function upsertFukubakoToCart(product, qty){
-      const cart = loadCart();
-      const next = cart.filter(it => it && it.id !== product.id);
-      next.push({
-        id: product.id,
-        name: product.name,
-        price: product.price,
-        qty: qty,
-        image: product.image || ""
-      });
-      saveCart(next);
-      return next;
-    }
-
-    async function fetchProducts(){
-      const r = await fetch("/api/products", { cache: "no-store" });
-      if(!r.ok) throw new Error("商品情報の取得に失敗しました");
-      return await r.json();
-    }
-
-    function pickFuku(products){
-      if (Array.isArray(products)){
-        return products.find(p => p && p.id === FUKU_ID) || null;
-      }
-      // もし API が {products:[...]} 形式なら
-      if (products && Array.isArray(products.products)){
-        return products.products.find(p => p && p.id === FUKU_ID) || null;
-      }
-      return null;
-    }
-
-    function renderProduct(p){
-      document.getElementById("pName").textContent = p.name || "福箱";
-      document.getElementById("pPrice").textContent = yen(p.price);
-      document.getElementById("pDesc").textContent =
-        (p.desc && String(p.desc).trim()) ? p.desc :
-        "中身は開けてからのお楽しみ。人気商品＋久助＋店主セレクトが入ることがあります。";
-      const stock = (typeof p.stock === "number") ? p.stock : null;
-      document.getElementById("pStock").textContent = (stock === null) ? "—" : String(stock);
-
-      const wrap = document.getElementById("imgWrap");
-      wrap.innerHTML = "";
-      if (p.image && String(p.image).trim()){
-        const img = document.createElement("img");
-        img.alt = p.name || "福箱";
-        img.src = p.image;
-        img.loading = "lazy";
-        wrap.appendChild(img);
-      }else{
-        wrap.textContent = "画像なし";
-      }
-
-      const qtyInput = document.getElementById("qtyInput");
-      const q = clampQty(qtyInput.value, stock === null ? Infinity : stock);
-      qtyInput.value = String(q);
-      updateTotalLine(p, q, stock);
-    }
-
-    function updateTotalLine(p, q, stock){
-      const total = (Number(p.price||0) * Number(q||0));
-      const stockText = (typeof stock === "number") ? `在庫 ${stock} 個` : "在庫 —";
-      document.getElementById("totalLine").textContent = `小計：${yen(total)}（${stockText}）`;
-    }
-
-    async function main(){
-      await initLiffSafe();
-
-      setStatus("");
-      document.getElementById("msg").textContent = "";
-
-      let product = null;
-      try{
-        const products = await fetchProducts();
-        product = pickFuku(products);
-        if(!product){
-          setStatus("福箱の商品が見つかりません（products.json に fukubako-2000 を追加してください）");
-          document.getElementById("goConfirmBtn").disabled = true;
-          return;
-        }
-        renderProduct(product);
-      }catch(e){
-        setStatus(e && e.message ? e.message : "読み込みに失敗しました");
-        document.getElementById("goConfirmBtn").disabled = true;
+      const products = await getProducts();
+      const p = products.find(x=>x && x.id === FUKU_ID);
+      if(!p){
+        showErr("福箱の商品が見つかりません（products.json に fukubako-2000 を追加してください）");
+        el("goBtn").disabled = true;
         return;
       }
 
-      const qtyInput = document.getElementById("qtyInput");
-      const minusBtn = document.getElementById("minusBtn");
-      const plusBtn  = document.getElementById("plusBtn");
-      const goBtn    = document.getElementById("goConfirmBtn");
-      const backBtn  = document.getElementById("backBtn");
+      render(p);
 
-      const stock = (typeof product.stock === "number") ? product.stock : Infinity;
+      const stock = (typeof p.stock === "number") ? p.stock : Infinity;
+      const qtyInput = el("qtyInput");
 
-      function applyQty(nextQ){
-        const q = clampQty(nextQ, stock);
+      function applyQty(next){
+        const q = clampInt(next, 1, (Number.isFinite(stock) ? Math.max(stock,1) : Infinity));
         qtyInput.value = String(q);
-        updateTotalLine(product, q, stock);
 
-        if (stock === 0){
-          setStatus("ただいま在庫切れです");
-          goBtn.disabled = true;
-        } else {
-          setStatus("");
-          goBtn.disabled = false;
+        if(stock === 0){
+          showErr("ただいま在庫切れです");
+          el("goBtn").disabled = true;
+        }else{
+          showErr("");
+          el("goBtn").disabled = false;
         }
       }
 
-      minusBtn.addEventListener("click", ()=> applyQty(Number(qtyInput.value) - 1));
-      plusBtn.addEventListener("click",  ()=> applyQty(Number(qtyInput.value) + 1));
-      qtyInput.addEventListener("change", ()=> applyQty(qtyInput.value));
-      qtyInput.addEventListener("input", ()=> {
-        // 入力途中は軽く整形だけ
-        const v = qtyInput.value.replace(/[^\d]/g,'');
-        qtyInput.value = v || "";
-      });
-      qtyInput.addEventListener("blur", ()=> applyQty(qtyInput.value));
+      el("minusBtn").onclick = ()=>applyQty(Number(qtyInput.value) - 1);
+      el("plusBtn").onclick  = ()=>applyQty(Number(qtyInput.value) + 1);
+      qtyInput.onblur = ()=>applyQty(qtyInput.value);
 
-      goBtn.addEventListener("click", ()=>{
-        const q = clampQty(qtyInput.value, stock);
-        if (stock === 0) return;
+      el("goBtn").onclick = ()=>{
+        const q = clampInt(qtyInput.value, 1, (Number.isFinite(stock) ? Math.max(stock,1) : Infinity));
+        if(stock === 0) return;
 
-        // 福箱だけをカートに入れる（他商品を残したい場合はここを変更）
-        // 「福箱専用」なので “福箱のみ” にした方がトラブルが少ないです
-        saveCart([]);
-        upsertFukubakoToCart(product, q);
+        // ✅ 福箱専用：カートを福箱だけにする（混載させない）
+        saveCartOnlyFuku(FUKU_ID, q);
 
-        location.href = CONFIRM_URL + "?from=fukubako";
-      });
+        // ✅ あなたの confirm.html へ
+        location.href = "/confirm.html?from=fukubako";
+      };
 
-      backBtn.addEventListener("click", async ()=>{
+      el("backBtn").onclick = ()=>{
+        // LIFF内なら閉じる、ブラウザなら戻る
         try{
-          if (window.liff && liff.isInClient()){
+          if(window.liff && liff.isInClient()){
             liff.closeWindow();
             return;
           }
         }catch(e){}
         history.back();
-      });
+      };
 
-      // 初期在庫チェック
       applyQty(qtyInput.value);
-    }
 
-    main();
-  </script>
+    }catch(e){
+      showErr("読み込みに失敗しました（/api/products を確認）");
+      el("goBtn").disabled = true;
+    }
+  })();
+
+})();
+</script>
 </body>
 </html>

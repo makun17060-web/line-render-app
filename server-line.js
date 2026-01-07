@@ -17,6 +17,9 @@
  *
  * ✅ 今回の修正（重要）
  * - /api/store-order が「旧クライアント形式」(userId/items/payment_method:"cash") でも通るように互換対応
+ *
+ * ✅ 今回の追加（福箱）
+ * - ★ 福箱は「専用・混載不可」「1人1個」「過去購入があればNG」をサーバ側で強制
  */
 
 "use strict";
@@ -74,6 +77,9 @@ const KEYWORD_DIRECT = env.KEYWORD_DIRECT || "直接注文";
 const KEYWORD_KUSUKE = env.KEYWORD_KUSUKE || "久助";
 
 const ORIGINAL_SET_PRODUCT_ID = (env.ORIGINAL_SET_PRODUCT_ID || "original-set-2000").trim();
+
+// ✅ 福箱（1人1個限定・混載不可）— ENV対応
+const FUKUBAKO_PRODUCT_ID = (env.FUKUBAKO_PRODUCT_ID || "fukubako-2026").trim();
 
 if (!LINE_CHANNEL_ACCESS_TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
 if (!LINE_CHANNEL_SECRET) throw new Error("LINE_CHANNEL_SECRET is required");
@@ -239,7 +245,17 @@ async function ensureProductsFile() {
       volume: "セット",
       desc: "人気の詰め合わせ。",
       image: ""
-    }
+    },
+    // 福箱を seed に入れたいならここで追加してOK（IDは FUKUBAKO_PRODUCT_ID に合わせて）
+    // {
+    //   id: FUKUBAKO_PRODUCT_ID,
+    //   name: "福箱",
+    //   price: 9999,
+    //   stock: 999,
+    //   volume: "1箱",
+    //   desc: "福箱（お一人様1回限り）",
+    //   image: "uploads/fukubako.jpg"
+    // },
   ];
 
   await writeJsonAtomic(PRODUCTS_FILE, seed);
@@ -499,6 +515,64 @@ async function calcPackageSizeFromItems_DB(items, productsById) {
 }
 
 /* =========================
+ * 福箱：一人一個 & 混載不可（サーバ強制）
+ * ========================= */
+function findFukubakoLine(items) {
+  const fid = String(FUKUBAKO_PRODUCT_ID || "").trim();
+  if (!fid) return null;
+  return (items || []).find(x => String(x?.id || "").trim() === fid) || null;
+}
+
+async function hasEverOrderedFukubako(userId) {
+  const fid = String(FUKUBAKO_PRODUCT_ID || "").trim();
+  if (!fid) return false;
+
+  const r = await pool.query(
+    `
+    SELECT 1
+    FROM orders
+    WHERE user_id = $1
+      AND COALESCE(status,'') <> 'canceled'
+      AND items @> $2::jsonb
+    LIMIT 1
+    `,
+    [String(userId), JSON.stringify([{ id: fid }])]
+  );
+  return r.rowCount > 0;
+}
+
+async function enforceFukubakoRulesOrThrow({ userId, items }) {
+  const fid = String(FUKUBAKO_PRODUCT_ID || "").trim();
+  if (!fid) return;
+
+  const fk = findFukubakoLine(items);
+  if (!fk) return;
+
+  // ① 混載不可
+  const nonFuku = (items || []).filter(x => String(x?.id || "").trim() !== fid);
+  if (nonFuku.length > 0) {
+    const err = new Error("FUKUBAKO_MIX_NOT_ALLOWED");
+    err.code = "FUKUBAKO_MIX_NOT_ALLOWED";
+    throw err;
+  }
+
+  // ② 1注文あたり1個（qty=1）
+  if (Number(fk.qty || 0) !== 1) {
+    const err = new Error("FUKUBAKO_QTY_MUST_BE_ONE");
+    err.code = "FUKUBAKO_QTY_MUST_BE_ONE";
+    throw err;
+  }
+
+  // ③ 過去購入（1件でもあればNG）
+  const already = await hasEverOrderedFukubako(userId);
+  if (already) {
+    const err = new Error("FUKUBAKO_ALREADY_ORDERED");
+    err.code = "FUKUBAKO_ALREADY_ORDERED";
+    throw err;
+  }
+}
+
+/* =========================
  * ensureDb（テーブル作成＆seed）
  * ========================= */
 async function ensureDb() {
@@ -646,7 +720,7 @@ async function ensureDb() {
     logErr("shipping_yamato_taxed seed failed", e?.message || e);
   }
 
-  // seed: shipping_size_rules が空なら FALLBACK_SIZE_RULES を投入（あなたの列名で）
+  // seed: shipping_size_rules が空なら FALLBACK_SIZE_RULES を投入
   try {
     const cnt2 = await pool.query(`SELECT COUNT(*)::int AS n FROM public.shipping_size_rules`);
     const n2 = cnt2.rows?.[0]?.n || 0;
@@ -896,12 +970,15 @@ async function buildOrderFromCheckout(uid, checkout, opts = {}) {
     shippingFee = await calcShippingFee(addr.prefecture, size);
   }
 
+  // ✅ 福箱のサーバ強制（混載不可・1人1個・過去購入NG）
+  await enforceFukubakoRulesOrThrow({ userId, items });
+
   return { userId, addr, items, subtotal, shippingFee, size, productsById };
 }
 
 /**
  * orders挿入（住所は userId 住所があれば自動でセット）
- * - nameOverride 等で上書き可（店頭受取で住所無しでも名前だけ保存したい時に使用）
+ * - nameOverride 等で上書き可
  */
 async function insertOrderToDb({
   userId,
@@ -1035,9 +1112,6 @@ async function markOrderNotified(orderId) {
   }
 }
 
-/**
- * 通知（配送/店頭受取 両対応）
- */
 async function notifyOrderCompleted({
   orderId,
   userId,
@@ -1143,9 +1217,6 @@ async function notifyOrderCompleted({
   return { ok: true };
 }
 
-/**
- * ★カードの「仮受付」通知（notified_atは立てない）
- */
 async function notifyCardPending({
   orderId,
   userId,
@@ -1283,6 +1354,7 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
     res.status(500).send("server_error");
   }
 });
+
 /* =========================
  * LINE Webhook（★ここをJSONより前に！）
  * ========================= */
@@ -1295,6 +1367,7 @@ app.post("/webhook", line.middleware(lineConfig), async (req, res) => {
     catch (e) { logErr("handleEvent failed", e?.stack || e); }
   }
 });
+
 /* =========================
  * 通常JSON
  * ========================= */
@@ -1343,16 +1416,12 @@ app.use("/public/uploads", express.static(UPLOAD_DIR));
 
 // health
 app.get("/health", (req, res) => res.json({ ok: true, time: nowISO() }));
-// =========================
+
 // Health check（DB込み）
-// =========================
 app.get("/health/db", async (req, res) => {
   const startedAt = Date.now();
   try {
-    // ① DB接続チェック
     await pool.query("SELECT 1");
-
-    // ② 主要テーブルの存在チェック（軽い）
     const r = await pool.query(`
       SELECT
         (SELECT COUNT(*) FROM orders)  AS orders,
@@ -1596,7 +1665,6 @@ app.post("/api/shipping/quote", async (req, res) => {
     const products = await loadProducts();
     const byId = Object.fromEntries(products.map(p => [p.id, p]));
 
-    // ★ 疑似商品（カテゴリ指定）を追加して、サイズ計算で必ず数えられるようにする
     const kusukeReal = products.find(p => (p.id || "").includes("kusuke") || (p.name || "").includes("久助"));
     const akashaReal = products.find(p => (p.id || "").includes("akasha") || (p.name || "").includes("あかしゃ"));
 
@@ -1973,47 +2041,30 @@ app.post("/api/admin/upload-image", requireAdmin, async (req, res) => {
 /* =========================
  * Payment / Orders
  * ========================= */
+function respondFukubakoErrors(res, code) {
+  if (code === "FUKUBAKO_MIX_NOT_ALLOWED") return res.status(409).json({ ok:false, error:"FUKUBAKO_MIX_NOT_ALLOWED" });
+  if (code === "FUKUBAKO_QTY_MUST_BE_ONE") return res.status(409).json({ ok:false, error:"FUKUBAKO_QTY_MUST_BE_ONE" });
+  if (code === "FUKUBAKO_ALREADY_ORDERED") return res.status(409).json({ ok:false, error:"FUKUBAKO_ALREADY_ORDERED" });
+  return null;
+}
 
 /**
  * ★ /api/store-order（互換対応版）
- *
- * ✅ 新方式（推奨）:
- * {
- *   "uid": "...",
- *   "checkout": { "items":[{"id":"xxx","qty":2}] },
- *   "paymentMethod": "cod" | "pickup_cash" | "card",
- *   "deliveryMethod": "delivery" | "pickup",
- *   "pickup": { "name": "...", "phone": "...", "shopName":"磯屋", "shopNote":"..." }
- * }
- *
- * ✅ 旧方式（あなたの店舗受取HTMLが送ってる形式）:
- * {
- *   "userId": "...",
- *   "name": "山田 太郎",
- *   "items": [{"id":"xxx","qty":2}],
- *   "payment_method": "cash",
- *   "pickup": true,
- *   "source": "store_liff"
- * }
  */
 app.post("/api/store-order", async (req, res) => {
   try {
     const b = req.body || {};
 
-    // uid / userId 両対応
     const uid = String(b.uid || b.userId || "").trim();
     if (!uid) return res.status(400).json({ ok:false, error:"uid required" });
 
-    // items 取り出し（checkout優先、なければ直下items）
     const itemsRaw = (b.checkout && Array.isArray(b.checkout.items)) ? b.checkout.items :
                      (Array.isArray(b.items) ? b.items : null);
     if (!itemsRaw) return res.status(400).json({ ok:false, error:"items required" });
 
-    // payment / delivery の推定（旧形式にも合わせる）
     const paymentRaw = String(b.paymentMethod || b.payment_method || "").trim().toLowerCase();
     const pickupFlag = !!b.pickup;
 
-    // 旧：payment_method:"cash" は店頭受取（現金）
     const paymentMethod =
       (paymentRaw === "cash" || paymentRaw === "pickup" || paymentRaw === "pickup_cash") ? "pickup_cash" :
       (paymentRaw === "card") ? "card" :
@@ -2024,24 +2075,20 @@ app.post("/api/store-order", async (req, res) => {
     const deliveryMethod =
       (deliveryRaw === "pickup" || paymentMethod === "pickup_cash" || pickupFlag) ? "pickup" : "delivery";
 
-    // 店頭受取：名前は body.name を優先（あなたのHTMLが送ってる）
     const pickup = b.pickup && typeof b.pickup === "object" ? b.pickup : (b.pickup ? {} : (b.pickupInfo || {}));
     const customerName = String(b.name || pickup?.name || "").trim();
     const customerPhone = String(pickup?.phone || b.phone || "").trim();
 
     await touchUser(uid, "seen");
 
-    // 配送＝住所必須 / 店頭受取＝住所不要
     const built = await buildOrderFromCheckout(uid, { items: itemsRaw }, { requireAddress: (deliveryMethod !== "pickup") });
 
     const codFee = (paymentMethod === "cod") ? Number(COD_FEE || 330) : 0;
     const shippingFee = (deliveryMethod === "pickup") ? 0 : Number(built.shippingFee || 0);
     const size = (deliveryMethod === "pickup") ? null : built.size;
 
-    // total は必ずサーバ側で再計算（クライアントtotalは信用しない）
     const total = Number(built.subtotal || 0) + shippingFee + codFee;
 
-    // 店頭受取の時は orders.name に入力名を保存（必須運用なら空チェックしてもOK）
     const nameOverride = (deliveryMethod === "pickup" ? customerName : "");
 
     const rawEvent = {
@@ -2070,13 +2117,11 @@ app.post("/api/store-order", async (req, res) => {
       rawEvent,
       source: (deliveryMethod === "pickup") ? "store_liff" : "liff",
       nameOverride,
-      // 店頭受取は住所空でOK
       zipOverride: "",
       prefOverride: "",
       addressOverride: "",
     });
 
-    // 通知：pickup_cash / cod は即確定通知
     if (paymentMethod === "pickup_cash") {
       const pseudoAddr = {
         name: customerName || built.addr?.name || "",
@@ -2117,8 +2162,6 @@ app.post("/api/store-order", async (req, res) => {
         isPaid: false,
         deliveryMethod,
       });
-    } else {
-      // card: 原則 webhook で確定通知（必要なら notifyCardPending を呼ぶ設計も可能）
     }
 
     res.json({
@@ -2135,6 +2178,9 @@ app.post("/api/store-order", async (req, res) => {
   } catch (e) {
     const code = e?.code || "";
     logErr("POST /api/store-order", code, e?.stack || e);
+
+    const handled = respondFukubakoErrors(res, code);
+    if (handled) return;
 
     if (code === "NO_ADDRESS") return res.status(409).json({ ok:false, error:"NO_ADDRESS" });
     if (code === "OUT_OF_STOCK") return res.status(409).json({ ok:false, error:"OUT_OF_STOCK", productId: e.productId });
@@ -2206,6 +2252,9 @@ app.post("/api/pay/stripe/create", async (req, res) => {
     const code = e?.code || "";
     logErr("POST /api/pay/stripe/create", code, e?.stack || e);
 
+    const handled = respondFukubakoErrors(res, code);
+    if (handled) return;
+
     if (code === "NO_ADDRESS") return res.status(409).json({ ok:false, error:"NO_ADDRESS" });
     if (code === "OUT_OF_STOCK") return res.status(409).json({ ok:false, error:"OUT_OF_STOCK", productId: e.productId });
     if (code === "EMPTY_ITEMS") return res.status(400).json({ ok:false, error:"EMPTY_ITEMS" });
@@ -2238,6 +2287,9 @@ app.post("/api/order/quote", async (req, res) => {
     const code = e?.code || "";
     logErr("POST /api/order/quote", code, e?.stack || e);
 
+    const handled = respondFukubakoErrors(res, code);
+    if (handled) return;
+
     if (code === "NO_ADDRESS") return res.status(409).json({ ok:false, error:"NO_ADDRESS" });
     if (code === "OUT_OF_STOCK") return res.status(409).json({ ok:false, error:"OUT_OF_STOCK", productId: e.productId });
     if (code === "EMPTY_ITEMS") return res.status(400).json({ ok:false, error:"EMPTY_ITEMS" });
@@ -2246,7 +2298,7 @@ app.post("/api/order/quote", async (req, res) => {
   }
 });
 
-// 代引き：作成（＝注文完了通知を送る）
+// 代引き：作成
 app.post("/api/order/cod/create", async (req, res) => {
   try {
     const uid = String(req.body?.uid || "").trim();
@@ -2297,6 +2349,9 @@ app.post("/api/order/cod/create", async (req, res) => {
   } catch (e) {
     const code = e?.code || "";
     logErr("POST /api/order/cod/create", code, e?.stack || e);
+
+    const handled = respondFukubakoErrors(res, code);
+    if (handled) return;
 
     if (code === "NO_ADDRESS") return res.status(409).json({ ok:false, error:"NO_ADDRESS" });
     if (code === "OUT_OF_STOCK") return res.status(409).json({ ok:false, error:"OUT_OF_STOCK", productId: e.productId });
@@ -2362,6 +2417,9 @@ app.post("/api/orders/original", async (req, res) => {
     const code = e?.code || "";
     logErr("POST /api/orders/original", code, e?.stack || e);
 
+    const handled = respondFukubakoErrors(res, code);
+    if (handled) return;
+
     if (code === "NO_ADDRESS") return res.status(409).json({ ok:false, error:"NO_ADDRESS" });
     if (code === "OUT_OF_STOCK") return res.status(409).json({ ok:false, error:"OUT_OF_STOCK", productId: e.productId });
     if (code === "EMPTY_ITEMS") return res.status(400).json({ ok:false, error:"EMPTY_ITEMS" });
@@ -2422,6 +2480,9 @@ app.post("/api/order/cod/confirm", async (req, res) => {
     const code = e?.code || "";
     logErr("POST /api/order/cod/confirm", code, e?.stack || e);
 
+    const handled = respondFukubakoErrors(res, code);
+    if (handled) return;
+
     if (code === "NO_ADDRESS") return res.status(409).json({ ok:false, error:"NO_ADDRESS" });
     if (code === "OUT_OF_STOCK") return res.status(409).json({ ok:false, error:"OUT_OF_STOCK", productId: e.productId });
     if (code === "EMPTY_ITEMS") return res.status(400).json({ ok:false, error:"EMPTY_ITEMS" });
@@ -2450,8 +2511,6 @@ app.get("/api/order/status", async (req, res) => {
     res.status(500).json({ ok:false, error:"server_error" });
   }
 });
-
-
 
 async function handleEvent(ev) {
   const type = ev.type;
@@ -2494,14 +2553,13 @@ async function onFollow(ev) {
 
   try { await notifyAdminFriendAdded({ userId, displayName, day }); } catch {}
 
- await lineClient.pushMessage(userId, {
-  type: "text",
-  text:
-    "友だち追加ありがとうございます！\n\n" +
-    "このLINEからご注文いただけます。\n\n" +
-    "下のメニューをタップしてご利用ください。"
-});
-
+  await lineClient.pushMessage(userId, {
+    type: "text",
+    text:
+      "友だち追加ありがとうございます！\n\n" +
+      "このLINEからご注文いただけます。\n\n" +
+      "下のメニューをタップしてご利用ください。"
+  });
 }
 
 async function onUnfollow(ev) {
@@ -2529,9 +2587,7 @@ async function onUnfollow(ev) {
   }
 }
 
-async function onPostback() {
-  // 必要なら拡張
-}
+async function onPostback() {}
 
 async function onTextMessage(ev) {
   const userId = ev?.source?.userId || "";
@@ -2558,16 +2614,14 @@ async function onTextMessage(ev) {
     await replyKusukeStart(ev.replyToken, userId, qty);
     return;
   }
-
-  // それ以外は無反応
 }
 
 async function replyDirectStart(replyToken) {
-const orderLiffId   = (LIFF_ID_ORDER || LIFF_ID_DEFAULT || "").trim();
-const addressLiffId = (LIFF_ID_ADDRESS || LIFF_ID_ADD || LIFF_ID_DEFAULT || "").trim();
+  const orderLiffId   = (LIFF_ID_ORDER || LIFF_ID_DEFAULT || "").trim();
+  const addressLiffId = (LIFF_ID_ADDRESS || LIFF_ID_ADD || LIFF_ID_DEFAULT || "").trim();
 
-const urlProducts = `https://liff.line.me/${orderLiffId}`;
-const urlAddress  = `https://liff.line.me/${addressLiffId}`;
+  const urlProducts = `https://liff.line.me/${orderLiffId}`;
+  const urlAddress  = `https://liff.line.me/${addressLiffId}`;
 
   await lineClient.replyMessage(replyToken, {
     type: "text",

@@ -12,25 +12,18 @@
       --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280;
       --line:#e5e7eb; --pri:#0b3a53; --danger:#b91c1c;
       --shadow:0 1px 3px rgba(0,0,0,.06); --radius:14px;
-      --barH: 120px;
-      --accent:#b45309;
+      --barH:120px; --accent:#b45309;
     }
     *{ box-sizing:border-box; }
     body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
-
-    .wrap{
-      max-width:980px; margin:0 auto;
-      padding:14px 14px calc(var(--barH) + env(safe-area-inset-bottom) + 18px);
-    }
-
+    .wrap{ max-width:980px; margin:0 auto; padding:14px 14px calc(var(--barH) + env(safe-area-inset-bottom) + 18px); }
     .topTitle{ display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap; }
     h1{ margin:0; font-size:18px; }
     .pill{
       display:inline-flex; align-items:center; gap:8px;
       padding:6px 10px; border-radius:999px;
       border:1px solid var(--line); background:#fff;
-      font-size:12px; font-weight:900;
-      color:var(--accent);
+      font-size:12px; font-weight:900; color:var(--accent);
     }
     .muted{ color:var(--muted); font-size:13px; line-height:1.6; margin-top:8px; }
     .danger{ color:var(--danger); font-weight:900; }
@@ -43,16 +36,8 @@
       box-shadow:var(--shadow);
       margin-top:12px;
     }
-
-    .imgbox{
-      height:260px; background:#fff;
-      display:flex; align-items:center; justify-content:center;
-    }
-    .imgbox img{
-      max-width:100%; max-height:100%;
-      width:auto; height:auto;
-      object-fit:contain; display:block;
-    }
+    .imgbox{ height:260px; background:#fff; display:flex; align-items:center; justify-content:center; }
+    .imgbox img{ max-width:100%; max-height:100%; width:auto; height:auto; object-fit:contain; display:block; }
 
     .body{ padding:12px; }
     .name{ font-weight:900; font-size:16px; }
@@ -62,40 +47,19 @@
     .badge{ font-size:12px; border:1px solid var(--line); background:#fafafa; border-radius:999px; padding:2px 8px; white-space:nowrap; }
     .badgeHot{ border-color:rgba(180,83,9,.25); background:rgba(180,83,9,.08); color:var(--accent); font-weight:900; }
 
-    /* 折りたたみ */
     .metaBox{ margin-top:10px; }
-    .metaDetails{
-      border:1px solid var(--line);
-      border-radius:12px;
-      background:#fafafa;
-      padding:8px 10px;
-    }
+    .metaDetails{ border:1px solid var(--line); border-radius:12px; background:#fafafa; padding:8px 10px; }
     .metaDetails > summary{
-      list-style:none;
-      cursor:pointer;
-      font-weight:900;
-      color:var(--pri);
-      font-size:12px;
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:8px;
-      user-select:none;
+      list-style:none; cursor:pointer; font-weight:900; color:var(--pri);
+      font-size:12px; display:flex; align-items:center; justify-content:space-between; gap:8px; user-select:none;
     }
     .metaDetails > summary::-webkit-details-marker{ display:none; }
     .metaDetails > summary::after{ content:"＋"; font-size:14px; line-height:1; }
     .metaDetails[open] > summary::after{ content:"−"; }
-    .metaText{
-      margin-top:8px;
-      font-size:12px;
-      color:var(--muted);
-      line-height:1.7;
-      word-break:break-word;
-    }
+    .metaText{ margin-top:8px; font-size:12px; color:var(--muted); line-height:1.7; word-break:break-word; }
     .metaLine{ margin-top:6px; }
     .metaLabel{ color:var(--text); font-weight:900; }
 
-    /* 操作部 */
     .controls{ display:flex; flex-direction:column; gap:10px; margin-top:12px; }
     .controlsTop{ display:flex; justify-content:space-between; align-items:center; gap:10px; }
     .qty{ display:flex; align-items:center; gap:8px; }
@@ -120,7 +84,6 @@
     .btnAdd:active{ transform:translateY(1px); }
     .btnAdd:disabled{ opacity:.55; cursor:not-allowed; }
 
-    /* 固定バー */
     .bar{
       position:fixed; left:0; right:0; bottom:0;
       border-top:1px solid var(--line);
@@ -140,23 +103,12 @@
     .sumLabel{ font-size:11px; color:var(--muted); letter-spacing:.06em; }
     .sumAmount{ font-size:20px; font-weight:900; color:var(--pri); line-height:1.1; }
     .sumCount{ font-size:12px; color:var(--muted); }
-
-    .bar .right{
-      display:flex; gap:8px; flex-wrap:wrap;
-      justify-content:flex-end;
-      width:100%;
-    }
-    .btnAddr,.btnClear,.btnNext{
-      max-width:100%;
-      border-radius:14px;
-      padding:12px 14px;
-      font-weight:900;
-    }
+    .bar .right{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; width:100%; }
+    .btnAddr,.btnClear,.btnNext{ max-width:100%; border-radius:14px; padding:12px 14px; font-weight:900; }
     .btnAddr{ background:#fff; border:1px solid var(--line); color:var(--text); }
     .btnClear{ background:#fff; border:1px solid #fecaca; color:var(--danger); }
     .btnNext{ background:var(--pri); color:#fff; min-width:210px; }
     .btnDisabled{ opacity:.55; pointer-events:none; }
-
     @media (max-width:520px){
       .btnAddr,.btnClear{ flex:1 1 calc(50% - 4px); }
       .btnNext{ flex:1 1 100%; min-width:0; }
@@ -217,21 +169,19 @@
   // =========================
   // 設定
   // =========================
-  const LIFF_ID_ORDER = "2008406620-G5j1gjzM"; // products.htmlと同じ注文LIFF
-  const FUKUBAKO_ID   = "fukubako-2026";
+  const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
+  const FUKUBAKO_ID = "fukubako-2026";
 
-  // ✅ 福箱専用カート（混ぜない）
-  const KEY_CART = "isoya_cart_fukubako";
   const KEY_UID  = "isoya_userId";
+  const KEY_CART = "isoya_cart_fukubako"; // ✅ 福箱専用カート
 
-  // ✅ 住所入力へ渡す戻り先（福箱モードでconfirmへ）
-  const RETURN_TO_CONFIRM = "/confirm.html?mode=fukubako";
   const MODE = "fukubako";
+  const RETURN_TO = "/confirm.html?mode=fukubako";
 
   const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
 
   // =========================
-  // util
+  // utils
   // =========================
   function escapeHtml(s){
     return String(s ?? "")
@@ -241,15 +191,18 @@
       .replaceAll('"',"&quot;")
       .replaceAll("'","&#039;");
   }
+
   function normalizeImageSrc(image){
     const v = String(image || "").trim();
     if(!v) return "";
     if(v.startsWith("http://") || v.startsWith("https://") || v.startsWith("/")) return v;
     return "/uploads/" + v;
   }
+
   function getBestBefore(p){
     return p.best_before ?? p.bestBefore ?? p.expiry ?? p.expiration ?? p.shelf_life ?? "";
   }
+
   function metaDetailsHtml(p){
     const ing = (p.ingredients ?? p.ingredient ?? "").toString().trim();
     const bb  = (getBestBefore(p) ?? "").toString().trim();
@@ -278,6 +231,7 @@
     return { items: [] };
   }
   function saveCart(cart){ localStorage.setItem(KEY_CART, JSON.stringify(cart)); }
+
   function normItems(items){
     const map = new Map();
     for(const it of (items||[])){
@@ -290,26 +244,18 @@
   }
 
   // =========================
-  // LIFF（失敗しても表示は続行）
+  // LIFF（福箱ページは通常通り）
   // =========================
-  async function ensureLiffUserSoft(){
-    try{
-      await liff.init({ liffId: LIFF_ID_ORDER });
-      if(!liff.isLoggedIn()){
-        try{
-          liff.login({ redirectUri: location.href });
-          return { ok:false, msg:"LIFFログイン中…" };
-        }catch{
-          return { ok:true, msg:"（ブラウザ表示：LIFFログイン省略）" };
-        }
-      }
-      const prof = await liff.getProfile();
-      const uid = (prof?.userId || "").trim();
-      if(uid) localStorage.setItem(KEY_UID, uid);
-      return { ok:true, uid };
-    }catch{
-      return { ok:true, msg:"（ブラウザ表示：LIFF初期化なし）" };
+  async function ensureLiffUser(){
+    await liff.init({ liffId: LIFF_ID_ORDER });
+    if(!liff.isLoggedIn()){
+      liff.login({ redirectUri: location.href });
+      return null;
     }
+    const prof = await liff.getProfile();
+    const uid = (prof?.userId || "").trim();
+    if(uid) localStorage.setItem(KEY_UID, uid);
+    return uid;
   }
 
   // =========================
@@ -329,6 +275,7 @@
     const h = Math.ceil(bar.getBoundingClientRect().height || 0);
     if(h > 0) document.documentElement.style.setProperty("--barH", h + "px");
   }
+
   function showToast(msg){
     if(!toastEl) return;
     toastEl.textContent = msg || "カートに追加しました";
@@ -338,7 +285,7 @@
   }
 
   // =========================
-  // state
+  // cart
   // =========================
   let cart = loadCart();
   cart.items = normItems(cart.items);
@@ -348,14 +295,12 @@
 
   function renderSum(){
     let subtotal = 0, count = 0;
-
     for(const it of (cart.items||[])){
       if(!product) continue;
       if(String(it.id||"").trim() !== String(product.id||"").trim()) continue;
       subtotal += Number(product.price||0) * Number(it.qty||0);
       count += Number(it.qty||0);
     }
-
     sumEl.innerHTML = `
       <div class="sumLabel">小計</div>
       <div class="sumAmount">${yen(subtotal)}</div>
@@ -369,11 +314,9 @@
     if(!product) return;
     const id = String(product.id||"").trim();
     const qty = Math.max(1, Math.floor(Number(qtyToAdd||1)));
-
     const ex = cart.items.find(x => String(x.id||"").trim() === id);
     if(ex) ex.qty += qty;
     else cart.items.push({ id, qty });
-
     cart.items = normItems(cart.items);
     saveCart(cart);
     renderSum();
@@ -416,7 +359,7 @@
         </div>
 
         <div class="muted" style="margin-top:10px;">
-          ※このページは「福箱専用」です（通常商品カートとは混ざりません）
+          ※このページは「福箱専用カート」です（通常商品とは混ざりません）
         </div>
       </div>
     `;
@@ -439,7 +382,6 @@
       const add = Math.max(1, Math.floor(Number(q.value||1)));
       const inCart = cart.items.find(x => String(x.id||"").trim() === String(p.id||"").trim())?.qty || 0;
       const next = inCart + add;
-
       if(Number.isFinite(stock) && stock >= 0 && next > stock){
         alert(`在庫不足です（在庫 ${stock}）。個数を減らしてください。`);
         return;
@@ -452,21 +394,23 @@
   }
 
   function goAddress(){
-    const ret = encodeURIComponent(RETURN_TO_CONFIRM);
+    const ret = encodeURIComponent(RETURN_TO);
     const mode = encodeURIComponent(MODE);
     location.href = `/cod-register.html?returnTo=${ret}&mode=${mode}&liff.hback=2`;
   }
 
   // =========================
-  // boot
+  // start
   // =========================
-  const l = await ensureLiffUserSoft();
-  if(l && l.ok === false){
-    statusEl.innerHTML = '<span class="danger">LIFFログイン中…</span>';
+  try{
+    const uid = await ensureLiffUser();
+    if(!uid){
+      statusEl.innerHTML = '<span class="danger">LIFFログイン中…</span>';
+      return;
+    }
+  }catch{
+    statusEl.innerHTML = '<span class="danger">LIFF初期化に失敗しました</span>';
     return;
-  }
-  if(l && l.msg){
-    statusEl.innerHTML = `<span class="muted">${escapeHtml(l.msg)}</span>`;
   }
 
   syncBarHeight();
@@ -509,11 +453,9 @@
     statusEl.textContent = "";
     mountEl.innerHTML = "";
     mountEl.appendChild(renderCard(product));
-
-    // 既存カートに福箱が入ってたら合計更新
     renderSum();
     syncBarHeight();
-  }catch(e){
+  }catch{
     statusEl.innerHTML = '<span class="danger">読み込み失敗：/api/products を確認してください</span>';
     mountEl.innerHTML = "";
     renderSum();

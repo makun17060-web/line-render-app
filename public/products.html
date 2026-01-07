@@ -481,9 +481,20 @@
     const d = await r.json().catch(()=>({}));
     if(!r.ok || !d.ok) throw new Error(d?.error || ("HTTP "+r.status));
 
-    // ✅ 商品一覧からオリジナルセット除外（ID + 名前）
-    const raw = Array.isArray(d.products) ? d.products : [];
-    products = raw.filter(p => !isOriginalSet(p));
+    
+    // ✅ hidden:true の商品は一覧に出さない（福箱など）
+// 文字列 "true" で入ってても除外できるようにする
+const raw = Array.isArray(d.products) ? d.products : [];
+products = raw.filter(p => {
+  if (isOriginalSet(p)) return false;
+
+  const h = p?.hidden;
+  const hidden = (h === true) || (String(h).toLowerCase() === "true") || (Number(h) === 1);
+  if (hidden) return false;
+
+  return true;
+});
+
 
     statusEl.textContent = products.length ? "" : "商品がありません（products.json を確認）";
     gridEl.innerHTML = "";

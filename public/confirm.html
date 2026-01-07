@@ -40,6 +40,24 @@
       font-size:16px; font-weight:900;
     }
 
+    /* 追加：合計を2行に */
+    .row.total2{
+      margin-top:0; padding-top:6px;
+      font-size:15px; font-weight:900;
+    }
+    .badge{
+      display:inline-block;
+      font-size:11px;
+      font-weight:900;
+      padding:2px 8px;
+      border:1px solid var(--line);
+      border-radius:999px;
+      background:#fff;
+      margin-left:6px;
+      color:var(--muted);
+      vertical-align:middle;
+    }
+
     .btns{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
     button{
       border:none;border-radius:14px;padding:12px 14px;
@@ -71,8 +89,19 @@
 
       <div class="row"><div>小計</div><div id="subtotal">0円</div></div>
       <div class="row"><div>送料</div><div id="shipping">—</div></div>
+
+      <!-- 代引手数料は“項目として残す”が、合計を分ける -->
       <div class="row"><div>代引手数料</div><div id="codFee">—</div></div>
-      <div class="row total"><div>合計（代引）</div><div id="totalCod">—</div></div>
+
+      <!-- 合計を2行に分離 -->
+      <div class="row total">
+        <div>合計（クレジット）<span class="badge">代引手数料なし</span></div>
+        <div id="totalCard">—</div>
+      </div>
+      <div class="row total2">
+        <div>合計（代引）<span class="badge">代引手数料込み</span></div>
+        <div id="totalCod">—</div>
+      </div>
 
       <div class="btns">
         <button id="backBtn" type="button">戻る（住所入力へ）</button>
@@ -119,6 +148,7 @@
   const subtotalEl=document.getElementById("subtotal");
   const shippingEl=document.getElementById("shipping");
   const codFeeEl=document.getElementById("codFee");
+  const totalCardEl=document.getElementById("totalCard");
   const totalCodEl=document.getElementById("totalCod");
 
   const backBtn=document.getElementById("backBtn");
@@ -238,12 +268,23 @@
 
     shippingEl.textContent="計算中…";
     codFeeEl.textContent="計算中…";
+    totalCardEl.textContent="計算中…";
     totalCodEl.textContent="計算中…";
 
     const quote = await postJson("/api/order/quote", { uid, checkout:{ items } });
-    shippingEl.textContent = `${yen(quote.shippingFee)}（ヤマト ${quote.size}サイズ）`;
-    codFeeEl.textContent   = yen(quote.codFee);
-    totalCodEl.textContent = yen(quote.totalCod);
+
+    // quote から表示を分離
+    const shippingFee = Number(quote.shippingFee||0);
+    const codFee      = Number(quote.codFee||0);
+    const totalCod    = Number(quote.totalCod||0);
+    const totalCard   = totalCod - codFee; // ✅ 代引手数料を除いた合計（商品+送料）
+
+    shippingEl.textContent = `${yen(shippingFee)}（ヤマト ${quote.size}サイズ）`;
+    codFeeEl.textContent   = yen(codFee);
+
+    // ✅ ここが肝：カードと代引を別表示
+    totalCardEl.textContent = yen(totalCard);
+    totalCodEl.textContent  = yen(totalCod);
 
     status.textContent="内容をご確認ください。";
 

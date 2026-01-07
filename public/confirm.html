@@ -1,18 +1,53 @@
-    const quote = await postJson("/api/order/quote", { uid, checkout:{ items } });
+      <div class="row"><div>小計</div><div id="subtotal">0円</div></div>
+      <div class="row"><div>送料</div><div id="shipping">—</div></div>
 
-    const shippingFee = Number(quote.shippingFee||0);
-    const codFee      = Number(quote.codFee||0);
-    const totalCod    = Number(quote.totalCod||0);
-    const totalCard   = totalCod - codFee;
+      <!-- ✅ 支払い方法ごとに「別カード」で見やすく -->
+      <div class="payGrid">
 
-    // 小計はすでに subtotalEl に入ってるので流用
-    const subtotalText = subtotalEl.textContent;
+        <!-- クレジット -->
+        <div class="card" style="margin-top:0">
+          <div class="payCardTitle">クレジットでのお支払い</div>
+          <div class="payHint">※代引手数料はかかりません。Stripe決済画面へ進みます。</div>
 
-    subtotal2El.textContent = subtotalText;
-    shipping2El.textContent = `${yen(shippingFee)}（ヤマト ${quote.size}サイズ）`;
-    totalCardEl.textContent = yen(totalCard);
+          <div class="miniRow"><div>小計</div><div id="subtotal2">—</div></div>
+          <div class="miniRow"><div>送料</div><div id="shipping2">—</div></div>
 
-    subtotal3El.textContent = subtotalText;
-    shipping3El.textContent = `${yen(shippingFee)}（ヤマト ${quote.size}サイズ）`;
-    codFeeEl.textContent    = yen(codFee);
-    totalCodEl.textContent  = yen(totalCod);
+          <div class="payTotal">
+            <div class="label">合計（クレジット）</div>
+            <div class="price" id="totalCard">—</div>
+          </div>
+
+          <button id="cardBtn" class="payBtn" style="background:var(--pri2);color:#fff" type="button">
+            クレジットで支払う
+          </button>
+        </div>
+
+        <!-- 代引 -->
+        <div class="card" style="margin-top:0">
+          <div class="payCardTitle">代引きでのお支払い</div>
+          <div class="payHint">※代引手数料がかかります。配達員へ現金でお支払いください。</div>
+
+          <div class="miniRow"><div>小計</div><div id="subtotal3">—</div></div>
+          <div class="miniRow"><div>送料</div><div id="shipping3">—</div></div>
+          <div class="miniRow"><div>代引手数料</div><div id="codFee">—</div></div>
+
+          <div class="payTotal">
+            <div class="label">合計（代引）</div>
+            <div class="price" id="totalCod">—</div>
+          </div>
+
+          <button id="codBtn" class="payBtn" style="background:var(--pri);color:#fff" type="button">
+            代引きで注文確定
+          </button>
+        </div>
+
+        <!-- 戻るは最後にまとめる -->
+        <button id="backBtn" class="payBtn" style="background:#fff;border:1px solid var(--line);color:#111827" type="button">
+          戻る（住所入力へ）
+        </button>
+
+      </div>
+
+      <div class="muted" style="margin-top:8px">
+        ※送料は見積り表示です（確定時に再計算されます）。
+      </div>

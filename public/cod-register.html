@@ -75,11 +75,24 @@
   "use strict";
 
   const LIFF_ID_ADDRESS = "2008406620-4kyQVyqe";
-  const KEY_UID = "isoya_userId";
+  const KEY_UID  = "isoya_userId";
 
   const qs = new URLSearchParams(location.search);
+
+  // ✅ mode（original / fukubako / その他）
   const mode = (qs.get("mode") || "").trim();
-  const returnTo = (mode === "original") ? "/confirm-original.html" : "/confirm.html";
+
+  // ✅ returnTo があれば最優先（例: /confirm.html?mode=fukubako）
+  const returnToRaw = qs.get("returnTo") || "";
+  let returnTo = "";
+  try { returnTo = returnToRaw ? decodeURIComponent(returnToRaw) : ""; }
+  catch { returnTo = returnToRaw; }
+
+  // ✅ 既定の戻り先（returnToが無い場合だけ使う）
+  const defaultReturnTo = (mode === "original") ? "/confirm-original.html" : "/confirm.html";
+  const GO_RETURN_TO = returnTo || defaultReturnTo;
+
+  // ✅ カートキー：originalだけ別。それ以外（福箱含む）は通常カート
   const KEY_CART = (mode === "original") ? "isoya_cart_original" : "isoya_cart";
 
   const $ = id => document.getElementById(id);
@@ -111,7 +124,7 @@
   try{
     const uid = localStorage.getItem(KEY_UID) || "";
     const r = await fetch(`/api/address/get?userId=${encodeURIComponent(uid)}`, { cache:"no-store" });
-    const d = await r.json();
+    const d = await r.json().catch(()=>({}));
     if(r.ok && d?.ok && d.address){
       Object.entries(d.address).forEach(([k,v])=>{
         if($(k)) $(k).value = v || "";
@@ -121,6 +134,12 @@
 
   /* 戻る */
   $("backBtn").onclick = ()=>{
+    // ✅ returnTo があるなら、そこへ戻す（福箱→confirm?mode=fukubako を維持）
+    if(returnTo){
+      location.href = GO_RETURN_TO;
+      return;
+    }
+    // 既存挙動
     location.href = (mode === "original") ? "/original-set.html" : "/products.html";
   };
 
@@ -143,6 +162,11 @@
       address2: $("address2").value.trim(),
     };
 
+    if(!payload.userId){
+      alert("ユーザー情報が取得できませんでした（LIFF）");
+      return;
+    }
+
     if(!payload.name || !payload.phone || !payload.postal ||
        !payload.prefecture || !payload.city || !payload.address1){
       alert("必須項目をすべて入力してください");
@@ -155,12 +179,13 @@
         headers:{ "Content-Type":"application/json" },
         body: JSON.stringify(payload)
       });
-      const d = await r.json();
-      if(!r.ok || !d?.ok) throw new Error();
+      const d = await r.json().catch(()=>({}));
+      if(!r.ok || !d?.ok) throw new Error(d?.error || "save failed");
 
       alert("住所を保存しました");
-      location.href = returnTo;
-    }catch{
+      // ✅ ここが最重要：returnTo（mode付き）へ戻す
+      location.href = GO_RETURN_TO;
+    }catch(e){
       alert("住所の保存に失敗しました");
     }
   };

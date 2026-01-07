@@ -3,211 +3,541 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>福箱（お楽しみ箱）</title>
+  <title>福箱（数量限定）</title>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
   <style>
     :root{
-      --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280; --line:#e5e7eb;
-      --pri:#7c3aed; --danger:#b91c1c; --shadow:0 1px 3px rgba(0,0,0,.06); --radius:14px;
+      --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280;
+      --line:#e5e7eb; --pri:#0b3a53; --danger:#b91c1c;
+      --shadow:0 1px 3px rgba(0,0,0,.06); --radius:14px;
+      --barH: 120px;
+      --accent:#b45309; /* 福箱っぽいアクセント */
     }
     *{ box-sizing:border-box; }
     body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
-    .wrap{ max-width:860px; margin:0 auto; padding:14px 14px 28px; }
-    .hero{ background:#fff; border:1px solid var(--line); border-radius:18px; padding:14px; box-shadow:var(--shadow); }
-    h1{ margin:0 0 6px; font-size:20px; }
-    .muted{ color:var(--muted); font-size:13px; line-height:1.6; }
-    .card{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); padding:14px; margin-top:12px; }
-    .row{ display:flex; justify-content:space-between; gap:10px; align-items:center; }
-    .price{ font-size:22px; font-weight:900; }
-    .img{ width:100%; aspect-ratio:16/9; border:1px solid var(--line); border-radius:12px; background:#f1f5f9; overflow:hidden; display:flex; align-items:center; justify-content:center; }
-    .img img{ width:100%; height:100%; object-fit:contain; background:#fff; }
-    .qtyBox{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px; border:1px solid var(--line); border-radius:12px; background:#fafafa; margin-top:12px; }
-    .stepper{ display:flex; align-items:center; gap:8px; }
-    .btnIcon{ width:38px; height:38px; border-radius:10px; border:1px solid var(--line); background:#fff; cursor:pointer; font-size:18px; }
-    .qty{ width:54px; height:38px; border-radius:10px; border:1px solid var(--line); text-align:center; font-size:14px; background:#fff; }
-    .btnRow{ display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
-    button{ border:none; border-radius:14px; padding:12px 14px; font-weight:900; cursor:pointer; flex:1; min-width:180px; }
-    #goBtn{ background:var(--pri); color:#fff; }
-    #backBtn{ background:#fff; border:1px solid var(--line); color:#111827; }
-    button:disabled{ opacity:.55; cursor:not-allowed; }
-    .err{ color:var(--danger); font-weight:900; font-size:12px; margin-top:10px; }
+
+    .wrap{
+      max-width:980px; margin:0 auto;
+      padding:14px 14px calc(var(--barH) + env(safe-area-inset-bottom) + 18px);
+    }
+
+    .topTitle{ display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+    h1{ margin:0; font-size:18px; }
+    .pill{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:6px 10px; border-radius:999px;
+      border:1px solid var(--line); background:#fff;
+      font-size:12px; font-weight:900;
+      color:var(--accent);
+    }
+    .muted{ color:var(--muted); font-size:13px; line-height:1.6; margin-top:8px; }
+    .danger{ color:var(--danger); font-weight:900; }
+
+    .card{
+      background:var(--card);
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      overflow:hidden;
+      box-shadow:var(--shadow);
+      margin-top:12px;
+    }
+
+    .imgbox{
+      height:260px; background:#fff;
+      display:flex; align-items:center; justify-content:center;
+    }
+    .imgbox img{
+      max-width:100%; max-height:100%;
+      width:auto; height:auto;
+      object-fit:contain; display:block;
+    }
+
+    .body{ padding:12px; }
+    .name{ font-weight:900; font-size:16px; }
+    .desc{ margin-top:6px; color:var(--muted); font-size:12px; line-height:1.6; }
+    .row{ display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:10px; flex-wrap:wrap; }
+    .price{ font-weight:900; color:var(--pri); font-size:18px; }
+    .badge{ font-size:12px; border:1px solid var(--line); background:#fafafa; border-radius:999px; padding:2px 8px; white-space:nowrap; }
+    .badgeHot{ border-color:rgba(180,83,9,.25); background:rgba(180,83,9,.08); color:var(--accent); font-weight:900; }
+
+    /* ✅ 折りたたみ（原材料・賞味期限） */
+    .metaBox{ margin-top:10px; }
+    .metaDetails{
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:#fafafa;
+      padding:8px 10px;
+    }
+    .metaDetails > summary{
+      list-style:none;
+      cursor:pointer;
+      font-weight:900;
+      color:var(--pri);
+      font-size:12px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:8px;
+      user-select:none;
+    }
+    .metaDetails > summary::-webkit-details-marker{ display:none; }
+    .metaDetails > summary::after{ content:"＋"; font-size:14px; line-height:1; }
+    .metaDetails[open] > summary::after{ content:"−"; }
+    .metaText{
+      margin-top:8px;
+      font-size:12px;
+      color:var(--muted);
+      line-height:1.7;
+      word-break:break-word;
+    }
+    .metaLine{ margin-top:6px; }
+    .metaLabel{ color:var(--text); font-weight:900; }
+
+    /* 操作部 */
+    .controls{ display:flex; flex-direction:column; gap:10px; margin-top:12px; }
+    .controlsTop{ display:flex; justify-content:space-between; align-items:center; gap:10px; }
+    .qty{ display:flex; align-items:center; gap:8px; }
+    .qty button{
+      width:40px; height:40px; border-radius:12px; border:1px solid var(--line);
+      background:#fff; font-size:20px; cursor:pointer;
+    }
+    .qty input{
+      width:90px; height:40px; border-radius:12px; border:1px solid var(--line);
+      text-align:center; font-size:16px; font-weight:800;
+    }
+    .btn{ border:none; border-radius:12px; padding:10px 12px; font-weight:900; cursor:pointer; }
+    .btnAdd{
+      width:100%;
+      background:var(--pri); color:#fff;
+      padding:14px 14px;
+      border-radius:14px;
+      font-size:16px;
+      box-shadow:0 6px 16px rgba(11,58,83,.18);
+      border:1px solid rgba(255,255,255,.2);
+    }
+    .btnAdd:active{ transform:translateY(1px); }
+    .btnAdd:disabled{ opacity:.55; cursor:not-allowed; }
+
+    /* 固定バー */
+    .bar{
+      position:fixed; left:0; right:0; bottom:0;
+      border-top:1px solid var(--line);
+      background:rgba(246,247,249,.92);
+      backdrop-filter:blur(10px);
+      padding:10px 12px;
+      padding-bottom: calc(10px + env(safe-area-inset-bottom));
+    }
+    .bar .inner{
+      max-width:980px; margin:0 auto;
+      display:flex; gap:10px;
+      justify-content:space-between;
+      align-items:flex-start;
+      flex-wrap:wrap;
+    }
+    .sumBox{ flex:1 1 auto; min-width:160px; }
+    .sumLabel{ font-size:11px; color:var(--muted); letter-spacing:.06em; }
+    .sumAmount{ font-size:20px; font-weight:900; color:var(--pri); line-height:1.1; }
+    .sumCount{ font-size:12px; color:var(--muted); }
+
+    .bar .right{
+      display:flex; gap:8px; flex-wrap:wrap;
+      justify-content:flex-end;
+      width:100%;
+    }
+    .btnAddr,.btnClear,.btnNext{
+      max-width:100%;
+      border-radius:14px;
+      padding:12px 14px;
+      font-weight:900;
+    }
+    .btnAddr{ background:#fff; border:1px solid var(--line); color:var(--text); }
+    .btnClear{ background:#fff; border:1px solid #fecaca; color:var(--danger); }
+    .btnNext{ background:var(--pri); color:#fff; min-width:210px; }
+    .btnDisabled{ opacity:.55; pointer-events:none; }
+
+    @media (max-width:520px){
+      .btnAddr,.btnClear{ flex:1 1 calc(50% - 4px); }
+      .btnNext{ flex:1 1 100%; min-width:0; }
+    }
+
+    .toast{
+      position:fixed;
+      left:50%;
+      bottom: calc(var(--barH) + env(safe-area-inset-bottom) + 14px);
+      transform:translateX(-50%);
+      background:rgba(17,24,39,.92);
+      color:#fff;
+      padding:10px 14px;
+      border-radius:999px;
+      font-size:13px;
+      font-weight:800;
+      z-index:9999;
+      opacity:0;
+      pointer-events:none;
+      transition:opacity .18s ease;
+    }
+    .toast.show{ opacity:1; }
   </style>
 </head>
 
 <body>
-  <div class="wrap">
-    <div class="hero">
-      <h1>🎍 磯屋 福箱（お楽しみ箱）</h1>
-      <div class="muted">
-        ダンボール箱でお届けする福袋企画です。<br>
-        中身は開けてからのお楽しみ（時期・在庫で変わります）。
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="muted">商品</div>
-      <div style="font-weight:900;font-size:16px;margin-top:6px" id="pName">読み込み中…</div>
-
-      <div class="img" id="imgWrap" style="margin-top:10px;">画像なし</div>
-
-      <div style="margin-top:10px" class="row">
-        <div>
-          <div class="muted">価格（税込）</div>
-          <div class="price" id="pPrice">—</div>
-        </div>
-        <div style="text-align:right">
-          <div class="muted">在庫</div>
-          <div style="font-weight:900" id="pStock">—</div>
-        </div>
-      </div>
-
-      <div class="qtyBox">
-        <div>
-          <div style="font-weight:900">個数</div>
-          <div class="muted">確認画面で送料を見積りします</div>
-        </div>
-        <div class="stepper">
-          <button class="btnIcon" id="minusBtn" aria-label="減らす">−</button>
-          <input class="qty" id="qtyInput" inputmode="numeric" value="1" />
-          <button class="btnIcon" id="plusBtn" aria-label="増やす">＋</button>
-        </div>
-      </div>
-
-      <div class="btnRow">
-        <button id="goBtn" type="button">注文内容を確認へ</button>
-        <button id="backBtn" type="button">戻る</button>
-      </div>
-
-      <div id="err" class="err" style="display:none"></div>
-    </div>
+<div class="wrap">
+  <div class="topTitle">
+    <h1>福箱（数量限定）</h1>
+    <span class="pill">🎁 ここからだけ購入できます</span>
   </div>
 
+  <div class="muted" id="status">読み込み中…</div>
+  <div id="mount"></div>
+</div>
+
+<div class="bar">
+  <div class="inner">
+    <div class="sumBox" id="sum">
+      <div class="sumLabel">小計</div>
+      <div class="sumAmount">0円</div>
+      <div class="sumCount">（0点）</div>
+    </div>
+    <div class="right">
+      <button class="btn btnAddr" id="addrBtn" type="button">住所入力（登録／変更）</button>
+      <button class="btn btnClear" id="clearBtn" type="button">空にする</button>
+      <button class="btn btnNext btnDisabled" id="nextBtn" type="button">次へ（住所入力）</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast">カートに追加しました</div>
+
 <script>
-(function(){
+(async function(){
   "use strict";
 
-  // ✅ confirm.html と揃える
+  // =========================
+  // 設定
+  // =========================
+  // ここは products.html と同じ「注文用LIFF」を入れてください
+  // ※あなたが貼ってくれた products.html では "2008406620-G5j1gjzM" になってます
+  const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
+
+  // 福箱の product id（今回あなたが指定）
+  const FUKUBAKO_ID = "fukubako-2026";
+
+  // カート・UIDキー（既存と同じにする）
+  const KEY_UID  = "isoya_userId";
   const KEY_CART = "isoya_cart";
 
-  // ✅ products.json 側の福箱ID
-  const FUKU_ID = "fukubako-2000";
+  // 住所ページへの導線（cod-register.html 側で mode を使っているならここで渡す）
+  const ADDRESS_RETURN_TO = "/confirm.html";     // 既存confirmに合流
+  const ADDRESS_MODE      = "fukubako";          // cod-registerがmode対応してれば使える（未対応でも無害）
 
-  const el = (id)=>document.getElementById(id);
-  const errEl = el("err");
+  const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
 
-  const yen = (n)=>(Number(n)||0).toLocaleString("ja-JP")+"円";
-
-  function showErr(msg){
-    if(!msg){ errEl.style.display="none"; errEl.textContent=""; return; }
-    errEl.style.display="block";
-    errEl.textContent=msg;
+  // =========================
+  // ユーティリティ
+  // =========================
+  function escapeHtml(s){
+    return String(s ?? "")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#039;");
   }
 
-  function clampInt(v, min, max){
-    let n = Math.floor(Number(String(v).replace(/[^\d]/g,"")));
-    if(!Number.isFinite(n)) n = min;
-    if(n < min) n = min;
-    if(Number.isFinite(max) && n > max) n = max;
-    return n;
+  function normalizeImageSrc(image){
+    const v = String(image || "").trim();
+    if(!v) return "";
+    if(v.startsWith("http://") || v.startsWith("https://") || v.startsWith("/")) return v;
+    return "/uploads/" + v; // Disk uploads の静的配信が /uploads/ ならこれでOK
   }
 
-  function saveCartOnlyFuku(id, qty){
-    // ✅ confirm.html が期待する形式 { items:[{id, qty}] }
-    const cart = { items: [ { id, qty } ] };
-    localStorage.setItem(KEY_CART, JSON.stringify(cart));
+  function getBestBefore(p){
+    return p.best_before ?? p.bestBefore ?? p.expiry ?? p.expiration ?? p.shelf_life ?? "";
   }
 
-  async function getProducts(){
-    const r = await fetch("/api/products", { cache:"no-store" });
-    const d = await r.json().catch(()=>({}));
-    if(!r.ok || !d.ok) throw new Error(d?.error || ("HTTP " + r.status));
-    return Array.isArray(d.products) ? d.products : [];
+  function metaDetailsHtml(p){
+    const ing = (p.ingredients ?? p.ingredient ?? "").toString().trim();
+    const bb  = (getBestBefore(p) ?? "").toString().trim();
+    const hasAny = !!(ing || bb);
+
+    const lines = [];
+    if(ing) lines.push(`<div class="metaLine"><span class="metaLabel">原材料：</span>${escapeHtml(ing)}</div>`);
+    if(bb)  lines.push(`<div class="metaLine"><span class="metaLabel">賞味期限：</span>${escapeHtml(bb)}</div>`);
+    if(!hasAny) lines.push(`<div class="metaLine">${escapeHtml("（準備中）")}</div>`);
+
+    return `
+      <div class="metaBox">
+        <details class="metaDetails">
+          <summary>${hasAny ? "原材料・賞味期限を見る" : "商品情報を見る"}</summary>
+          <div class="metaText">${lines.join("")}</div>
+        </details>
+      </div>
+    `;
   }
 
-  function render(p){
-    el("pName").textContent = p.name || "福箱";
-    el("pPrice").textContent = yen(p.price);
-    el("pStock").textContent = (typeof p.stock === "number") ? String(p.stock) : "—";
-
-    const wrap = el("imgWrap");
-    wrap.innerHTML = "";
-    if(p.image && String(p.image).trim()){
-      const img = document.createElement("img");
-      img.alt = p.name || "福箱";
-      img.src = p.image;
-      img.loading = "lazy";
-      wrap.appendChild(img);
-    }else{
-      wrap.textContent = "画像なし";
-    }
-  }
-
-  (async ()=>{
+  function loadCart(){
     try{
-      showErr("");
+      const v = JSON.parse(localStorage.getItem(KEY_CART) || "");
+      if(v && typeof v==="object") return v;
+    }catch{}
+    return { items: [] };
+  }
+  function saveCart(cart){ localStorage.setItem(KEY_CART, JSON.stringify(cart)); }
 
-      const products = await getProducts();
-      const p = products.find(x=>x && x.id === FUKU_ID);
-      if(!p){
-        showErr("福箱の商品が見つかりません（products.json に fukubako-2000 を追加してください）");
-        el("goBtn").disabled = true;
-        return;
-      }
+  function normItems(items){
+    const map = new Map();
+    for(const it of (items||[])){
+      const id = String(it?.id||"").trim();
+      const qty = Math.max(0, Math.floor(Number(it?.qty||0)));
+      if(!id || qty<=0) continue;
+      map.set(id, (map.get(id)||0) + qty);
+    }
+    return Array.from(map.entries()).map(([id,qty])=>({id,qty}));
+  }
 
-      render(p);
-
-      const stock = (typeof p.stock === "number") ? p.stock : Infinity;
-      const qtyInput = el("qtyInput");
-
-      function applyQty(next){
-        const q = clampInt(next, 1, (Number.isFinite(stock) ? Math.max(stock,1) : Infinity));
-        qtyInput.value = String(q);
-
-        if(stock === 0){
-          showErr("ただいま在庫切れです");
-          el("goBtn").disabled = true;
-        }else{
-          showErr("");
-          el("goBtn").disabled = false;
+  // =========================
+  // LIFF（失敗してもブラウザ表示は続行）
+  // =========================
+  async function ensureLiffUserSoft(){
+    try{
+      await liff.init({ liffId: LIFF_ID_ORDER });
+      if(!liff.isLoggedIn()){
+        // LIFF内ならログインへ。通常ブラウザで見てるなら何もしない（例外になる場合がある）
+        try{
+          liff.login({ redirectUri: location.href });
+          return { ok:false, msg:"LIFFログイン中…" };
+        }catch{
+          return { ok:true, msg:"（ブラウザ表示：LIFFログインは省略）" };
         }
       }
-
-      el("minusBtn").onclick = ()=>applyQty(Number(qtyInput.value) - 1);
-      el("plusBtn").onclick  = ()=>applyQty(Number(qtyInput.value) + 1);
-      qtyInput.onblur = ()=>applyQty(qtyInput.value);
-
-      el("goBtn").onclick = ()=>{
-        const q = clampInt(qtyInput.value, 1, (Number.isFinite(stock) ? Math.max(stock,1) : Infinity));
-        if(stock === 0) return;
-
-        // ✅ 福箱専用：カートを福箱だけにする（混載させない）
-        saveCartOnlyFuku(FUKU_ID, q);
-
-        // ✅ あなたの confirm.html へ
-        location.href = "/confirm.html?from=fukubako";
-      };
-
-      el("backBtn").onclick = ()=>{
-        // LIFF内なら閉じる、ブラウザなら戻る
-        try{
-          if(window.liff && liff.isInClient()){
-            liff.closeWindow();
-            return;
-          }
-        }catch(e){}
-        history.back();
-      };
-
-      applyQty(qtyInput.value);
-
-    }catch(e){
-      showErr("読み込みに失敗しました（/api/products を確認）");
-      el("goBtn").disabled = true;
+      const prof = await liff.getProfile();
+      const uid = (prof?.userId || "").trim();
+      if(uid) localStorage.setItem(KEY_UID, uid);
+      return { ok:true, uid };
+    }catch{
+      return { ok:true, msg:"（ブラウザ表示：LIFF初期化なし）" };
     }
-  })();
+  }
 
+  // =========================
+  // DOM
+  // =========================
+  const statusEl = document.getElementById("status");
+  const mountEl  = document.getElementById("mount");
+
+  const sumEl    = document.getElementById("sum");
+  const clearBtn = document.getElementById("clearBtn");
+  const addrBtn  = document.getElementById("addrBtn");
+  const nextBtn  = document.getElementById("nextBtn");
+  const toastEl  = document.getElementById("toast");
+
+  function syncBarHeight(){
+    const bar = document.querySelector(".bar");
+    if(!bar) return;
+    const h = Math.ceil(bar.getBoundingClientRect().height || 0);
+    if(h > 0) document.documentElement.style.setProperty("--barH", h + "px");
+  }
+
+  function showToast(msg){
+    if(!toastEl) return;
+    toastEl.textContent = msg || "カートに追加しました";
+    toastEl.classList.add("show");
+    clearTimeout(toastEl._t);
+    toastEl._t = setTimeout(()=> toastEl.classList.remove("show"), 700);
+  }
+
+  // =========================
+  // カート・合計
+  // =========================
+  let cart = loadCart();
+  cart.items = normItems(cart.items);
+  saveCart(cart);
+
+  let product = null;
+
+  function renderSum(){
+    let subtotal = 0, count = 0;
+
+    for(const it of (cart.items||[])){
+      if(!product) continue;
+      if(String(it.id||"").trim() !== String(product.id||"").trim()) continue;
+      subtotal += Number(product.price||0) * Number(it.qty||0);
+      count += Number(it.qty||0);
+    }
+
+    sumEl.innerHTML = `
+      <div class="sumLabel">小計</div>
+      <div class="sumAmount">${yen(subtotal)}</div>
+      <div class="sumCount">（${count}点）</div>
+    `;
+    nextBtn.classList.toggle("btnDisabled", count===0);
+    syncBarHeight();
+  }
+
+  function addToCart(qtyToAdd){
+    if(!product) return;
+
+    const id = String(product.id||"").trim();
+    const qty = Math.max(1, Math.floor(Number(qtyToAdd||1)));
+
+    const ex = cart.items.find(x => String(x.id||"").trim() === id);
+    if(ex) ex.qty += qty;
+    else cart.items.push({ id, qty });
+
+    cart.items = normItems(cart.items);
+    saveCart(cart);
+    renderSum();
+  }
+
+  // =========================
+  // 画面（カード）
+  // =========================
+  function renderCard(p){
+    const el = document.createElement("div");
+    el.className = "card";
+
+    const img = normalizeImageSrc(p.image);
+    const stock = Number(p.stock ?? 0);
+
+    el.innerHTML = `
+      <div class="imgbox">${img ? `<img src="${escapeHtml(img)}" alt="">` : ""}</div>
+      <div class="body">
+        <div class="row">
+          <div class="name">${escapeHtml(p.name || "福箱")}</div>
+          <span class="badge badgeHot">数量限定</span>
+        </div>
+
+        <div class="desc">${escapeHtml(p.desc || "福箱の内容はお楽しみ。なくなり次第終了です。")}</div>
+
+        ${metaDetailsHtml(p)}
+
+        <div class="row">
+          <div class="price">${yen(p.price)}</div>
+          <span class="badge">${p.volume ? `内容量 ${escapeHtml(p.volume)}` : `在庫 ${Number.isFinite(stock) ? stock : "-"}`}</span>
+        </div>
+
+        <div class="controls">
+          <div class="controlsTop">
+            <div class="qty">
+              <button type="button" class="dec">−</button>
+              <input class="q" type="number" min="1" step="1" value="1" inputmode="numeric">
+              <button type="button" class="inc">＋</button>
+            </div>
+            <span class="badge">個数</span>
+          </div>
+          <button type="button" class="btn btnAdd add">カートに追加</button>
+        </div>
+
+        <div class="muted" style="margin-top:10px;">
+          ※このページは「福箱専用」です（商品一覧には表示されません）
+        </div>
+      </div>
+    `;
+
+    const im = el.querySelector("img");
+    if(im) im.addEventListener("error", ()=> im.remove());
+
+    const q = el.querySelector(".q");
+    el.querySelector(".dec").onclick = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1))-1)); };
+    el.querySelector(".inc").onclick = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1))+1)); };
+    q.onchange = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1)))); };
+
+    const addBtn = el.querySelector(".add");
+    if(Number.isFinite(stock) && stock <= 0){
+      addBtn.disabled = true;
+      addBtn.textContent = "在庫なし";
+    }
+
+    addBtn.onclick = ()=>{
+      const add = Math.max(1, Math.floor(Number(q.value||1)));
+      const inCart = cart.items.find(x => String(x.id||"").trim() === String(p.id||"").trim())?.qty || 0;
+      const next = inCart + add;
+
+      if(Number.isFinite(stock) && stock >= 0 && next > stock){
+        alert(`在庫不足です（在庫 ${stock}）。個数を減らしてください。`);
+        return;
+      }
+      addToCart(add);
+      showToast("カートに追加しました");
+    };
+
+    return el;
+  }
+
+  function goAddress(){
+    const ret = encodeURIComponent(ADDRESS_RETURN_TO);
+    const mode = encodeURIComponent(ADDRESS_MODE);
+    // modeを受けてない実装でもクエリが付くだけなのでOK
+    location.href = `/cod-register.html?returnTo=${ret}&mode=${mode}&liff.hback=2`;
+  }
+
+  // =========================
+  // 起動
+  // =========================
+  const l = await ensureLiffUserSoft();
+  if(l && l.ok === false){
+    statusEl.innerHTML = '<span class="danger">LIFFログイン中…</span>';
+    return;
+  }
+  if(l && l.msg){
+    statusEl.innerHTML = `<span class="muted">${escapeHtml(l.msg)}</span>`;
+  }
+
+  syncBarHeight();
+  window.addEventListener("resize", syncBarHeight);
+
+  addrBtn.onclick = goAddress;
+  nextBtn.onclick = ()=>{
+    if(nextBtn.classList.contains("btnDisabled")){
+      alert("カートが空です");
+      return;
+    }
+    goAddress();
+  };
+
+  clearBtn.onclick = ()=>{
+    if(!confirm("カートを空にしますか？")) return;
+    cart = { items: [] };
+    saveCart(cart);
+    renderSum();
+    showToast("カートを空にしました");
+  };
+
+  // 商品取得（/api/products）
+  try{
+    const r = await fetch("/api/products", { cache:"no-store" });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok || !d.ok) throw new Error(d?.error || ("HTTP "+r.status));
+
+    const raw = Array.isArray(d.products) ? d.products : [];
+
+    // ✅ 福箱だけ抜き出し（hiddenでも関係なく表示）
+    product = raw.find(p => String(p?.id||"").trim() === FUKUBAKO_ID) || null;
+
+    if(!product){
+      statusEl.innerHTML = `<span class="danger">福箱（${escapeHtml(FUKUBAKO_ID)}）が products に見つかりません</span>`;
+      mountEl.innerHTML = "";
+      renderSum();
+      syncBarHeight();
+      return;
+    }
+
+    // 軽い案内
+    statusEl.textContent = "";
+
+    mountEl.innerHTML = "";
+    mountEl.appendChild(renderCard(product));
+
+    renderSum();
+    syncBarHeight();
+  }catch(e){
+    statusEl.innerHTML = '<span class="danger">読み込み失敗：/api/products を確認してください</span>';
+    mountEl.innerHTML = "";
+    renderSum();
+    syncBarHeight();
+  }
 })();
 </script>
 </body>

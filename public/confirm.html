@@ -92,9 +92,20 @@
   "use strict";
 
   const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
-
-  const KEY_CART="isoya_cart";
   const KEY_UID ="isoya_userId";
+
+  // ✅ modeでカート切替（福箱は専用カート）
+  const qs = new URLSearchParams(location.search);
+  const mode = (qs.get("mode") || "").trim();
+  const KEY_CART =
+    (mode === "original") ? "isoya_cart_original"
+  : (mode === "fukubako") ? "isoya_cart_fukubako"
+  : "isoya_cart";
+
+  // ✅ 「戻る（住所入力へ）」の戻り先も mode を維持
+  const RETURN_TO_THIS = (mode === "fukubako") ? "/confirm.html?mode=fukubako"
+                       : (mode === "original") ? "/confirm-original.html"
+                       : "/confirm.html";
 
   const status=document.getElementById("status");
   const addrText=document.getElementById("addrText");
@@ -187,15 +198,21 @@
     const cart=loadJson(KEY_CART) || {items:[]};
     const items=(cart.items||[]).filter(x=>x?.id && Number(x.qty||0)>0);
     if(items.length===0){
-      status.innerHTML='<span class="err">カートが空です。商品一覧に戻ります。</span>';
-      setTimeout(()=>location.replace("/products.html"), 600);
+      // ✅ mode別の「商品選択へ戻る先」
+      const backTo = (mode === "fukubako") ? "/fukubako.html"
+                   : (mode === "original") ? "/original-set.html"
+                   : "/products.html";
+
+      status.innerHTML='<span class="err">カートが空です。商品選択に戻ります。</span>';
+      setTimeout(()=>location.replace(backTo), 600);
       return;
     }
 
-    // 住所が無ければ住所入力へ（ボタンは出さない）
+    // 住所が無ければ住所入力へ
     const addr=await getAddress(uid).catch(()=>null);
     if(!addr){
-      location.replace(`/cod-register.html?returnTo=${encodeURIComponent("/confirm.html")}`);
+      // ✅ returnTo と mode を維持
+      location.replace(`/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}`);
       return;
     }
 
@@ -206,11 +223,11 @@
     const products=await getProducts();
     renderItems(items, products);
 
-    // 見積り（送料/代引/合計）
     shippingEl.textContent="計算中…";
     codFeeEl.textContent="計算中…";
     totalCodEl.textContent="計算中…";
 
+    // ✅ 見積り（サーバ側で送料サイズ/代引計算）
     const quote = await postJson("/api/order/quote", { uid, checkout:{ items } });
     shippingEl.textContent = `${yen(quote.shippingFee)}（ヤマト ${quote.size}サイズ）`;
     codFeeEl.textContent   = yen(quote.codFee);
@@ -218,7 +235,10 @@
 
     status.textContent="内容をご確認ください。";
 
-    backBtn.onclick = ()=>location.href = `/cod-register.html?returnTo=${encodeURIComponent("/confirm.html")}`;
+    // ✅ 住所入力へ戻る（mode維持）
+    backBtn.onclick = ()=>{
+      location.href = `/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}`;
+    };
 
     // クレジット：Stripeへ
     cardBtn.onclick = async ()=>{
@@ -226,7 +246,7 @@
       try{
         const data = await postJson("/api/pay/stripe/create", { uid, checkout:{ items } });
         if(!data?.url) throw new Error("stripe url missing");
-        location.href = data.url; // Stripeへ
+        location.href = data.url;
       }catch(e){
         console.error(e);
         alert("クレジット決済の開始に失敗しました: " + (e?.message||e));
@@ -239,8 +259,10 @@
       setBusy(true);
       try{
         const data = await postJson("/api/order/cod/create", { uid, checkout:{ items } });
-        // カートを空に
+
+        // ✅ 福箱専用カートだけ空にする（混在防止）
         localStorage.setItem(KEY_CART, JSON.stringify({ items: [] }));
+
         location.href = `/complete.html?method=cod&orderId=${encodeURIComponent(data.orderId||"")}`;
       }catch(e){
         console.error(e);

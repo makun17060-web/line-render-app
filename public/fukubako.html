@@ -13,16 +13,14 @@
       --line:#e5e7eb; --pri:#0b3a53; --danger:#b91c1c;
       --shadow:0 1px 3px rgba(0,0,0,.06); --radius:14px;
       --barH: 120px;
-      --accent:#b45309; /* 福箱っぽいアクセント */
+      --accent:#b45309;
     }
     *{ box-sizing:border-box; }
     body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
-
     .wrap{
       max-width:980px; margin:0 auto;
       padding:14px 14px calc(var(--barH) + env(safe-area-inset-bottom) + 18px);
     }
-
     .topTitle{ display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap; }
     h1{ margin:0; font-size:18px; }
     .pill{
@@ -43,7 +41,6 @@
       box-shadow:var(--shadow);
       margin-top:12px;
     }
-
     .imgbox{
       height:260px; background:#fff;
       display:flex; align-items:center; justify-content:center;
@@ -53,7 +50,6 @@
       width:auto; height:auto;
       object-fit:contain; display:block;
     }
-
     .body{ padding:12px; }
     .name{ font-weight:900; font-size:16px; }
     .desc{ margin-top:6px; color:var(--muted); font-size:12px; line-height:1.6; }
@@ -62,7 +58,6 @@
     .badge{ font-size:12px; border:1px solid var(--line); background:#fafafa; border-radius:999px; padding:2px 8px; white-space:nowrap; }
     .badgeHot{ border-color:rgba(180,83,9,.25); background:rgba(180,83,9,.08); color:var(--accent); font-weight:900; }
 
-    /* ✅ 折りたたみ（原材料・賞味期限） */
     .metaBox{ margin-top:10px; }
     .metaDetails{
       border:1px solid var(--line);
@@ -95,7 +90,6 @@
     .metaLine{ margin-top:6px; }
     .metaLabel{ color:var(--text); font-weight:900; }
 
-    /* 操作部 */
     .controls{ display:flex; flex-direction:column; gap:10px; margin-top:12px; }
     .controlsTop{ display:flex; justify-content:space-between; align-items:center; gap:10px; }
     .qty{ display:flex; align-items:center; gap:8px; }
@@ -120,7 +114,6 @@
     .btnAdd:active{ transform:translateY(1px); }
     .btnAdd:disabled{ opacity:.55; cursor:not-allowed; }
 
-    /* 固定バー */
     .bar{
       position:fixed; left:0; right:0; bottom:0;
       border-top:1px solid var(--line);
@@ -217,26 +210,18 @@
   // =========================
   // 設定
   // =========================
-  // ここは products.html と同じ「注文用LIFF」を入れてください
-  // ※あなたが貼ってくれた products.html では "2008406620-G5j1gjzM" になってます
   const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
+  const FUKUBAKO_ID   = "fukubako-2026";
 
-  // 福箱の product id（今回あなたが指定）
-  const FUKUBAKO_ID = "fukubako-2026";
-
-  // カート・UIDキー（既存と同じにする）
   const KEY_UID  = "isoya_userId";
   const KEY_CART = "isoya_cart";
 
-  // 住所ページへの導線（cod-register.html 側で mode を使っているならここで渡す）
-  const ADDRESS_RETURN_TO = "/confirm.html";     // 既存confirmに合流
-  const ADDRESS_MODE      = "fukubako";          // cod-registerがmode対応してれば使える（未対応でも無害）
+  // ✅ 福箱モードで confirm に渡す（confirm側で分岐しやすくする）
+  const ADDRESS_RETURN_TO = "/confirm.html?mode=fukubako";
+  const ADDRESS_MODE      = "fukubako";
 
   const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
 
-  // =========================
-  // ユーティリティ
-  // =========================
   function escapeHtml(s){
     return String(s ?? "")
       .replaceAll("&","&amp;")
@@ -250,7 +235,7 @@
     const v = String(image || "").trim();
     if(!v) return "";
     if(v.startsWith("http://") || v.startsWith("https://") || v.startsWith("/")) return v;
-    return "/uploads/" + v; // Disk uploads の静的配信が /uploads/ ならこれでOK
+    return "/uploads/" + v;
   }
 
   function getBestBefore(p){
@@ -298,18 +283,17 @@
   }
 
   // =========================
-  // LIFF（失敗してもブラウザ表示は続行）
+  // LIFF（ソフト）
   // =========================
   async function ensureLiffUserSoft(){
     try{
       await liff.init({ liffId: LIFF_ID_ORDER });
       if(!liff.isLoggedIn()){
-        // LIFF内ならログインへ。通常ブラウザで見てるなら何もしない（例外になる場合がある）
         try{
           liff.login({ redirectUri: location.href });
           return { ok:false, msg:"LIFFログイン中…" };
         }catch{
-          return { ok:true, msg:"（ブラウザ表示：LIFFログインは省略）" };
+          return { ok:true, msg:"（ブラウザ表示：LIFFログイン省略）" };
         }
       }
       const prof = await liff.getProfile();
@@ -326,7 +310,6 @@
   // =========================
   const statusEl = document.getElementById("status");
   const mountEl  = document.getElementById("mount");
-
   const sumEl    = document.getElementById("sum");
   const clearBtn = document.getElementById("clearBtn");
   const addrBtn  = document.getElementById("addrBtn");
@@ -347,6 +330,33 @@
     clearTimeout(toastEl._t);
     toastEl._t = setTimeout(()=> toastEl.classList.remove("show"), 700);
   }
+
+  // =========================
+  // 住所状態表示（保存できてるか体感できるように）
+  // =========================
+  async function refreshAddressStatus(){
+    const uid = (localStorage.getItem(KEY_UID) || "").trim();
+    if(!uid){
+      // uidが取れない時は何も出さない（LIFFログイン待ち等）
+      return;
+    }
+    try{
+      const r = await fetch(`/api/address/get?userId=${encodeURIComponent(uid)}`, { cache:"no-store" });
+      const d = await r.json().catch(()=>({}));
+      const has = !!(d && d.ok && d.address && (d.address.address || d.address.pref || d.address.zip));
+      // statusに追記（商品エラー表示を潰さないよう “追記形式”）
+      const base = statusEl.textContent || "";
+      const tag = has ? "✅ 住所：登録済み" : "⚠️ 住所：未登録";
+      // すでにタグがあるなら差し替え
+      const next = base.replace(/(✅ 住所：登録済み|⚠️ 住所：未登録)/g,"").trim();
+      statusEl.textContent = (next ? (next + " / ") : "") + tag;
+    }catch{
+      // 失敗しても無視
+    }
+  }
+
+  // “戻る復帰” に強い
+  window.addEventListener("pageshow", () => { refreshAddressStatus(); });
 
   // =========================
   // カート・合計
@@ -392,7 +402,7 @@
   }
 
   // =========================
-  // 画面（カード）
+  // 表示カード
   // =========================
   function renderCard(p){
     const el = document.createElement("div");
@@ -431,7 +441,7 @@
         </div>
 
         <div class="muted" style="margin-top:10px;">
-          ※このページは「福箱専用」です（商品一覧には表示されません）
+          ※このページは「福箱専用」です（商品一覧には表示しません）
         </div>
       </div>
     `;
@@ -467,9 +477,8 @@
   }
 
   function goAddress(){
-    const ret = encodeURIComponent(ADDRESS_RETURN_TO);
+    const ret  = encodeURIComponent(ADDRESS_RETURN_TO);
     const mode = encodeURIComponent(ADDRESS_MODE);
-    // modeを受けてない実装でもクエリが付くだけなのでOK
     location.href = `/cod-register.html?returnTo=${ret}&mode=${mode}&liff.hback=2`;
   }
 
@@ -482,7 +491,7 @@
     return;
   }
   if(l && l.msg){
-    statusEl.innerHTML = `<span class="muted">${escapeHtml(l.msg)}</span>`;
+    statusEl.textContent = l.msg;
   }
 
   syncBarHeight();
@@ -505,15 +514,26 @@
     showToast("カートを空にしました");
   };
 
-  // 商品取得（/api/products）
+  // 最初に住所状態を表示（体感改善）
+  refreshAddressStatus();
+
+  // 商品取得（hidden除外の可能性に備え、まず includeHidden を試す）
+  async function fetchProductsMaybeHidden(){
+    // サーバ未対応なら落ちてもOK、通常にフォールバック
+    const tryUrls = ["/api/products?includeHidden=1", "/api/products"];
+    for(const url of tryUrls){
+      try{
+        const r = await fetch(url, { cache:"no-store" });
+        const d = await r.json().catch(()=>({}));
+        if(r.ok && d && d.ok && Array.isArray(d.products)) return d.products;
+      }catch{}
+    }
+    throw new Error("products fetch failed");
+  }
+
   try{
-    const r = await fetch("/api/products", { cache:"no-store" });
-    const d = await r.json().catch(()=>({}));
-    if(!r.ok || !d.ok) throw new Error(d?.error || ("HTTP "+r.status));
+    const raw = await fetchProductsMaybeHidden();
 
-    const raw = Array.isArray(d.products) ? d.products : [];
-
-    // ✅ 福箱だけ抜き出し（hiddenでも関係なく表示）
     product = raw.find(p => String(p?.id||"").trim() === FUKUBAKO_ID) || null;
 
     if(!product){
@@ -524,14 +544,14 @@
       return;
     }
 
-    // 軽い案内
+    // 表示
     statusEl.textContent = "";
-
     mountEl.innerHTML = "";
     mountEl.appendChild(renderCard(product));
 
     renderSum();
     syncBarHeight();
+    refreshAddressStatus();
   }catch(e){
     statusEl.innerHTML = '<span class="danger">読み込み失敗：/api/products を確認してください</span>';
     mountEl.innerHTML = "";

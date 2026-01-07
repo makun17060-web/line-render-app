@@ -20,6 +20,11 @@
  *
  * ✅ 今回の追加（福箱）
  * - ★ 福箱は「専用・混載不可」「1人1個」「過去購入があればNG」をサーバ側で強制
+ *
+ * ✅ 今回の追加（テスト用）
+ * - ★ 福箱「1人1回」を “自分だけ何度でもテスト” できるようにする
+ *   - ENV: FUKUBAKO_TEST_ALLOW_USER_IDS=Uxxxx,Uyyyy
+ *   - 許可ユーザーは「過去購入NG」だけスキップ（混載不可・qty=1は維持）
  */
 
 "use strict";
@@ -80,6 +85,23 @@ const ORIGINAL_SET_PRODUCT_ID = (env.ORIGINAL_SET_PRODUCT_ID || "original-set-20
 
 // ✅ 福箱（1人1個限定・混載不可）— ENV対応
 const FUKUBAKO_PRODUCT_ID = (env.FUKUBAKO_PRODUCT_ID || "fukubako-2026").trim();
+
+/** ✅ 福箱テスト許可（この userId は何度でも買える。1人1回チェックだけスキップ）
+ * ENV: FUKUBAKO_TEST_ALLOW_USER_IDS=Uxxxx,Uyyyy
+ */
+const FUKUBAKO_TEST_ALLOW_USER_IDS = (env.FUKUBAKO_TEST_ALLOW_USER_IDS || "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
+
+function isFukubakoTestAllowedUser(userId) {
+  const uid = String(userId || "").trim();
+  if (!uid) return false;
+  if (FUKUBAKO_TEST_ALLOW_USER_IDS.includes(uid)) return true;
+  // 便利：ADMIN_USER_ID を自動で許可したいなら↓もOK（不要なら消してOK）
+  if (ADMIN_USER_ID && uid === String(ADMIN_USER_ID).trim()) return true;
+  return false;
+}
 
 if (!LINE_CHANNEL_ACCESS_TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
 if (!LINE_CHANNEL_SECRET) throw new Error("LINE_CHANNEL_SECRET is required");
@@ -564,11 +586,14 @@ async function enforceFukubakoRulesOrThrow({ userId, items }) {
   }
 
   // ③ 過去購入（1件でもあればNG）
-  const already = await hasEverOrderedFukubako(userId);
-  if (already) {
-    const err = new Error("FUKUBAKO_ALREADY_ORDERED");
-    err.code = "FUKUBAKO_ALREADY_ORDERED";
-    throw err;
+  // ✅ ただし「テスト許可ユーザー」は何度でも通す（本番の他ユーザーは従来通り）
+  if (!isFukubakoTestAllowedUser(userId)) {
+    const already = await hasEverOrderedFukubako(userId);
+    if (already) {
+      const err = new Error("FUKUBAKO_ALREADY_ORDERED");
+      err.code = "FUKUBAKO_ALREADY_ORDERED";
+      throw err;
+    }
   }
 }
 
@@ -970,7 +995,7 @@ async function buildOrderFromCheckout(uid, checkout, opts = {}) {
     shippingFee = await calcShippingFee(addr.prefecture, size);
   }
 
-  // ✅ 福箱のサーバ強制（混載不可・1人1個・過去購入NG）
+  // ✅ 福箱のサーバ強制（混載不可・1人1個・過去購入NG ※テスト許可は過去購入だけスキップ）
   await enforceFukubakoRulesOrThrow({ userId, items });
 
   return { userId, addr, items, subtotal, shippingFee, size, productsById };

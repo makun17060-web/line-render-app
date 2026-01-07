@@ -11,89 +11,62 @@
     :root{
       --bg:#f7f7f7; --card:#fff; --text:#111827; --muted:#6b7280;
       --pri:#0b3a53; --border:#e5e7eb; --radius:14px;
-      --danger:#b91c1c; --ok:#0a7b19;
+      --danger:#b91c1c;
     }
-    *{ box-sizing:border-box; }
     body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
     .wrap{ max-width:720px; margin:0 auto; padding:14px 14px 28px; }
     h1{ font-size:18px; margin:0 0 6px; }
-    .muted{ color:var(--muted); font-size:13px; line-height:1.6; }
-    .danger{ color:var(--danger); font-weight:900; }
-    .ok{ color:var(--ok); font-weight:900; }
-
+    .muted{ color:var(--muted); font-size:13px; line-height:1.5; }
     .card{
       background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
       padding:14px; margin-top:12px;
-      box-shadow:0 1px 3px rgba(0,0,0,.06);
     }
-    label{ font-size:13px; font-weight:900; display:block; margin-top:10px; }
+    label{ font-size:13px; font-weight:800; display:block; margin-top:10px; }
     input{
       width:100%; padding:10px; border-radius:10px; border:1px solid var(--border);
-      font-size:15px;
+      font-size:15px; box-sizing:border-box;
     }
-    .row{ display:flex; gap:10px; margin-top:14px; flex-wrap:wrap; }
     .btn{
-      width:100%; padding:14px;
+      margin-top:14px; width:100%; padding:14px;
       border-radius:14px; border:none;
       background:var(--pri); color:#fff;
       font-weight:900; font-size:16px; cursor:pointer;
     }
     .btnSub{ background:#fff; color:var(--text); border:1px solid var(--border); }
-    .btnHalf{ flex:1 1 240px; width:auto; }
-    .btn:disabled{ opacity:.55; cursor:not-allowed; }
-
-    .pill{
-      display:inline-flex; align-items:center; gap:8px;
-      padding:6px 10px; border-radius:999px;
-      border:1px solid var(--border); background:#fff;
-      font-size:12px; font-weight:900;
-    }
   </style>
 </head>
 
 <body>
 <div class="wrap">
   <h1>住所入力</h1>
-
-  <div class="muted" id="topMsg">
+  <div class="muted" id="lead">
     注文のために住所を入力してください（登録済みの場合は自動で表示されます）
   </div>
 
   <div class="card">
-    <div class="muted" style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;">
-      <span class="pill" id="modePill">モード: 通常</span>
-      <span class="muted" id="status">読み込み中…</span>
-    </div>
-
     <label>お名前</label>
-    <input id="name" autocomplete="name">
+    <input id="name">
 
     <label>電話番号</label>
-    <input id="phone" inputmode="tel" autocomplete="tel">
+    <input id="phone">
 
     <label>郵便番号</label>
-    <input id="postal" inputmode="numeric" autocomplete="postal-code">
+    <input id="postal">
 
     <label>都道府県</label>
-    <input id="prefecture" autocomplete="address-level1">
+    <input id="prefecture">
 
     <label>市区町村</label>
-    <input id="city" autocomplete="address-level2">
+    <input id="city">
 
     <label>番地</label>
-    <input id="address1" autocomplete="street-address">
+    <input id="address1">
 
     <label>建物名など（任意）</label>
-    <input id="address2" autocomplete="address-line2">
+    <input id="address2">
 
-    <div class="row">
-      <button class="btn btnHalf" id="saveBtn" type="button">保存して次へ</button>
-      <button class="btn btnSub btnHalf" id="backBtn" type="button">戻る</button>
-    </div>
-
-    <div class="muted" style="margin-top:10px">
-      ※「次へ」は、URLの <b>returnTo</b>（なければモード既定の確認画面）へ戻ります。
-    </div>
+    <button class="btn" id="saveBtn" type="button">保存して次へ</button>
+    <button class="btn btnSub" id="backBtn" type="button">戻る</button>
   </div>
 </div>
 
@@ -101,144 +74,96 @@
 (async function(){
   "use strict";
 
-  // =========================
-  // 設定
-  // =========================
-  const LIFF_ID_ADDRESS = "2008406620-4kyQVyqe"; // 住所用LIFF
+  const LIFF_ID_ADDRESS = "2008406620-4kyQVyqe";
   const KEY_UID = "isoya_userId";
 
-  // =========================
-  // Query
-  // =========================
   const qs = new URLSearchParams(location.search);
-  const mode = (qs.get("mode") || "").trim();              // "", "fukubako", "original" など
-  const returnToRaw = (qs.get("returnTo") || "").trim();   // "/confirm.html?mode=fukubako" など
+  const mode = (qs.get("mode") || "").trim(); // "", "original", "fukubako"
+  const returnToParam = (qs.get("returnTo") || "").trim();
 
-  // ✅ modeごとのカートキー
+  // ✅ カート切替
   const KEY_CART =
     (mode === "original") ? "isoya_cart_original"
   : (mode === "fukubako") ? "isoya_cart_fukubako"
   : "isoya_cart";
 
-  // ✅ modeごとの「既定の戻り先（returnToが無い場合）」
-  const DEFAULT_RETURN_TO =
+  // ✅ returnTo はパラメータ優先（なければmodeでデフォルト）
+  const defaultReturnTo =
     (mode === "original") ? "/confirm-original.html"
   : (mode === "fukubako") ? "/confirm.html?mode=fukubako"
   : "/confirm.html";
+  const returnTo = returnToParam || defaultReturnTo;
 
-  // ✅ modeごとの「戻る（商品選択へ）」
-  const BACK_TO =
+  const $ = id => document.getElementById(id);
+
+  function hasCart(){
+    try{
+      const c = JSON.parse(localStorage.getItem(KEY_CART) || "");
+      return Array.isArray(c?.items) && c.items.some(x => x?.id && Number(x.qty||0) > 0);
+    }catch{ return false; }
+  }
+
+  // ✅ 戻る先（mode別）
+  const backTo =
     (mode === "original") ? "/original-set.html"
   : (mode === "fukubako") ? "/fukubako.html"
   : "/products.html";
 
-  const RETURN_TO = returnToRaw || DEFAULT_RETURN_TO;
-
-  // =========================
-  // DOM
-  // =========================
-  const $ = id => document.getElementById(id);
-  const statusEl = $("status");
-  const pillEl = $("modePill");
-  const saveBtn = $("saveBtn");
-  const backBtn = $("backBtn");
-
-  // 表示
-  pillEl.textContent =
-    mode === "fukubako" ? "モード: 福箱（専用）"
-  : mode === "original" ? "モード: オリジナル"
-  : "モード: 通常";
-
-  // =========================
-  // util
-  // =========================
-  const loadJson = k => { try{ return JSON.parse(localStorage.getItem(k)||""); }catch{ return null; } };
-
-  function hasCart(){
-    const c = loadJson(KEY_CART) || { items: [] };
-    const items = (c.items || []).filter(x => x?.id && Number(x.qty||0) > 0);
-    return items.length > 0;
-  }
-
-  function setStatus(msg, kind){
-    if(kind === "danger"){
-      statusEl.innerHTML = `<span class="danger">${msg}</span>`;
-    }else if(kind === "ok"){
-      statusEl.innerHTML = `<span class="ok">${msg}</span>`;
-    }else{
-      statusEl.textContent = msg;
+  // 表示文ちょい出し分け
+  try{
+    const lead = document.getElementById("lead");
+    if(mode === "fukubako"){
+      lead.textContent = "福箱の注文のために住所を入力してください（登録済みの場合は自動で表示されます）";
     }
-  }
+  }catch{}
 
-  async function ensureLiff(){
+  // =========================
+  // LIFF 初期化（住所用）
+  // =========================
+  try{
     await liff.init({ liffId: LIFF_ID_ADDRESS });
     if(!liff.isLoggedIn()){
       liff.login({ redirectUri: location.href });
-      return null;
+      return;
     }
     const prof = await liff.getProfile();
-    const uid = (prof?.userId || "").trim();
-    if(uid) localStorage.setItem(KEY_UID, uid);
-    return uid;
-  }
-
-  async function fetchJson(url, opt){
-    const r = await fetch(url, opt);
-    const d = await r.json().catch(()=>({}));
-    if(!r.ok) throw new Error(d?.error || ("HTTP " + r.status));
-    return d;
-  }
-
-  // =========================
-  // boot
-  // =========================
-  try{
-    setStatus("LIFF確認中…");
-    const uid = await ensureLiff();
-    if(!uid) return;
-
-    setStatus("住所を読み込み中…");
-
-    // 既存住所ロード
-    try{
-      const d = await fetchJson(`/api/address/get?userId=${encodeURIComponent(uid)}`, { cache:"no-store" });
-      if(d?.ok && d.address){
-        Object.entries(d.address).forEach(([k,v])=>{
-          if($(k)) $(k).value = v || "";
-        });
-        setStatus("住所を読み込みました", "ok");
-      }else{
-        setStatus("住所を入力してください");
-      }
-    }catch{
-      setStatus("住所を入力してください");
+    if(prof?.userId){
+      localStorage.setItem(KEY_UID, prof.userId);
     }
-
-  }catch(e){
-    console.error(e);
-    setStatus("住所登録画面の初期化に失敗しました", "danger");
-    saveBtn.disabled = true;
+  }catch{
+    alert("住所登録画面の初期化に失敗しました");
     return;
   }
 
   // =========================
-  // handlers
+  // 既存住所ロード
   // =========================
-  backBtn.onclick = ()=>{
-    // 商品選択へ戻る
-    location.href = BACK_TO;
-  };
+  try{
+    const uid = (localStorage.getItem(KEY_UID) || "").trim();
+    if(uid){
+      const r = await fetch(`/api/address/get?userId=${encodeURIComponent(uid)}`, { cache:"no-store" });
+      const d = await r.json().catch(()=>({}));
+      if(r.ok && d?.ok && d.address){
+        Object.entries(d.address).forEach(([k,v])=>{
+          if($(k)) $(k).value = v || "";
+        });
+      }
+    }
+  }catch{}
 
-  saveBtn.onclick = async ()=>{
-    // ✅ 正しいキーでカートを確認（福箱なら専用カート）
+  // 戻る
+  $("backBtn").onclick = ()=>{ location.href = backTo; };
+
+  // 保存
+  $("saveBtn").onclick = async ()=>{
     if(!hasCart()){
       alert("カートが空です。商品選択からやり直してください。");
-      location.href = BACK_TO;
+      location.href = backTo;
       return;
     }
 
     const payload = {
-      userId: localStorage.getItem(KEY_UID) || "",
+      userId: (localStorage.getItem(KEY_UID) || "").trim(),
       name: $("name").value.trim(),
       phone: $("phone").value.trim(),
       postal: $("postal").value.trim(),
@@ -249,7 +174,7 @@
     };
 
     if(!payload.userId){
-      alert("ユーザーIDが取得できませんでした。もう一度開き直してください。");
+      alert("ユーザー情報が取得できません。ページを開き直してください。");
       return;
     }
 
@@ -259,30 +184,22 @@
       return;
     }
 
-    saveBtn.disabled = true;
-    setStatus("保存中…");
-
     try{
-      const d = await fetchJson("/api/address/set", {
+      const r = await fetch("/api/address/set", {
         method:"POST",
         headers:{ "Content-Type":"application/json" },
         body: JSON.stringify(payload)
       });
-
-      if(!d?.ok) throw new Error(d?.error || "save failed");
+      const d = await r.json().catch(()=>({}));
+      if(!r.ok || !d?.ok) throw new Error(d?.error || "save failed");
 
       alert("住所を保存しました");
-      // ✅ returnTo を尊重して戻る（福箱なら /confirm.html?mode=fukubako へ戻る）
-      location.href = RETURN_TO;
-
+      location.href = returnTo; // ✅ returnToへ
     }catch(e){
       console.error(e);
       alert("住所の保存に失敗しました");
-      setStatus("保存に失敗しました（/api/address/set を確認）", "danger");
-      saveBtn.disabled = false;
     }
   };
-
 })();
 </script>
 </body>

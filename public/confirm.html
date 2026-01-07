@@ -1,3 +1,132 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+  <title>注文内容の確認</title>
+
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+  <style>
+    :root{
+      --bg:#f6f7f9;--card:#fff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;
+      --pri:#0b3a53;--pri2:#123b66;--danger:#b91c1c;
+      --shadow:0 1px 3px rgba(0,0,0,.06);--radius:14px;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)}
+    .wrap{max-width:860px;margin:0 auto;padding:14px 14px 26px}
+    h1{margin:0 0 6px;font-size:18px}
+    .muted{color:var(--muted);font-size:13px;line-height:1.5}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:12px;margin-top:12px;box-shadow:var(--shadow)}
+    .row{display:flex;justify-content:space-between;gap:10px;margin:0;padding:6px 0;font-size:14px}
+    .err{color:var(--danger);font-weight:900}
+    #addrText{ white-space: pre-line; }
+
+    .items{margin-top:10px;border-top:1px solid var(--line)}
+    .item{
+      display:grid; grid-template-columns: 1fr auto;
+      gap:6px 10px; padding:12px 0;
+      border-bottom:1px dashed var(--line); font-size:14px;
+    }
+    .item:last-child{border-bottom:none}
+    .item .name{font-weight:800}
+    .item .qty{grid-column:1 / 2;color:var(--muted);font-size:13px}
+    .item .price{grid-column:2 / 3;grid-row:1 / 3;align-self:center;font-weight:900;white-space:nowrap}
+
+    /* ===== 支払いカード分離UI（追加） ===== */
+    .payGrid{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap:12px;
+      margin-top:12px;
+    }
+    @media (min-width:720px){
+      .payGrid{
+        grid-template-columns: 1fr 1fr;
+      }
+      /* 戻るボタンは2列またぎ */
+      #backBtn{ grid-column: 1 / -1; }
+    }
+
+    .payCardTitle{
+      font-weight:1000;
+      font-size:15px;
+      margin:0 0 4px;
+    }
+    .payHint{
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.45;
+      margin-bottom:10px;
+    }
+    .miniRow{
+      display:flex;
+      justify-content:space-between;
+      gap:10px;
+      padding:6px 0;
+      font-size:13px;
+      border-top:1px dashed var(--line);
+    }
+    .miniRow:first-of-type{ border-top:none; }
+
+    .payTotal{
+      margin-top:10px;
+      border-top:2px solid var(--line);
+      padding-top:10px;
+      display:flex;
+      justify-content:space-between;
+      align-items:baseline;
+      gap:10px;
+    }
+    .payTotal .label{
+      font-weight:900;
+      font-size:14px;
+    }
+    .payTotal .price{
+      font-weight:1000;
+      font-size:18px;
+      white-space:nowrap;
+    }
+
+    .payBtn{
+      width:100%;
+      border:none;
+      border-radius:14px;
+      padding:12px 14px;
+      font-weight:1000;
+      cursor:pointer;
+      margin-top:10px;
+    }
+    .payBtn:disabled{opacity:.55;cursor:not-allowed}
+
+    /* 既存「合計（代引）」等が残っていても崩れないように */
+    .row.total{
+      border-top:2px solid var(--line);
+      margin-top:6px; padding-top:10px;
+      font-size:16px; font-weight:900;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <h1>注文内容の確認</h1>
+    <div class="muted" id="status">読み込み中…</div>
+
+    <div class="card">
+      <div class="muted">お届け先</div>
+      <div id="addrText" style="margin-top:6px;font-weight:900">—</div>
+      <div class="muted" style="margin-top:8px">
+        ※住所を修正したい場合は「戻る」で住所入力へ戻ってください。
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="muted">ご注文商品</div>
+      <div class="items" id="items"></div>
+
+      <!-- 共通（参考表示） -->
       <div class="row"><div>小計</div><div id="subtotal">0円</div></div>
       <div class="row"><div>送料</div><div id="shipping">—</div></div>
 
@@ -51,3 +180,236 @@
       <div class="muted" style="margin-top:8px">
         ※送料は見積り表示です（確定時に再計算されます）。
       </div>
+    </div>
+  </div>
+
+<script>
+(async function(){
+  "use strict";
+
+  const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
+  const KEY_UID ="isoya_userId";
+
+  // ✅ modeでカート切替（福箱は専用カート）
+  const qs = new URLSearchParams(location.search);
+  const mode = (qs.get("mode") || "").trim();
+
+  const KEY_CART =
+    (mode === "original") ? "isoya_cart_original"
+  : (mode === "fukubako") ? "isoya_cart_fukubako"
+  : "isoya_cart";
+
+  const backTo =
+    (mode === "original") ? "/original-set.html"
+  : (mode === "fukubako") ? "/fukubako.html"
+  : "/products.html";
+
+  const RETURN_TO_THIS =
+    (mode === "fukubako") ? "/confirm.html?mode=fukubako"
+  : (mode === "original") ? "/confirm-original.html"
+  : "/confirm.html";
+
+  const status=document.getElementById("status");
+  const addrText=document.getElementById("addrText");
+  const itemsEl=document.getElementById("items");
+
+  const subtotalEl=document.getElementById("subtotal");
+  const shippingEl=document.getElementById("shipping");
+
+  // 分離UI
+  const subtotal2El=document.getElementById("subtotal2");
+  const shipping2El=document.getElementById("shipping2");
+  const totalCardEl=document.getElementById("totalCard");
+
+  const subtotal3El=document.getElementById("subtotal3");
+  const shipping3El=document.getElementById("shipping3");
+  const codFeeEl=document.getElementById("codFee");
+  const totalCodEl=document.getElementById("totalCod");
+
+  const backBtn=document.getElementById("backBtn");
+  const cardBtn=document.getElementById("cardBtn");
+  const codBtn=document.getElementById("codBtn");
+
+  const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
+  const loadJson=k=>{try{return JSON.parse(localStorage.getItem(k)||"");}catch{return null;}};
+
+  function setBusy(disabled){
+    codBtn.disabled = disabled;
+    cardBtn.disabled = disabled;
+    codBtn.textContent  = disabled ? "確定中…" : "代引きで注文確定";
+    cardBtn.textContent = disabled ? "移動中…" : "クレジットで支払う";
+  }
+
+  async function postJson(url, body){
+    const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d?.error || ("HTTP "+r.status));
+    return d;
+  }
+
+  async function getAddress(userId){
+    const r=await fetch(`/api/address/get?userId=${encodeURIComponent(userId)}`,{cache:"no-store"});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d?.error||("HTTP "+r.status));
+    return d?.address || null;
+  }
+
+  async function getProducts(){
+    const r=await fetch("/api/products",{cache:"no-store"});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok || !d.ok) throw new Error(d?.error||("HTTP "+r.status));
+    return Array.isArray(d.products)?d.products:[];
+  }
+
+  function renderItems(cartItems, products){
+    const byId=Object.fromEntries(products.map(p=>[p.id,p]));
+    itemsEl.innerHTML="";
+    let subtotal=0;
+
+    for(const it of cartItems){
+      const p=byId[it.id];
+      if(!p) continue;
+
+      const qty = Number(it.qty||0);
+      const line=Number(p.price||0) * qty;
+      subtotal += line;
+
+      const div=document.createElement("div");
+      div.className="item";
+      div.innerHTML = `
+        <div class="name">${p.name || ""}${p.volume ? `（${p.volume}）` : ""}</div>
+        <div class="price">${yen(line)}</div>
+        <div class="qty">× ${qty} 点</div>
+      `;
+      itemsEl.appendChild(div);
+    }
+
+    subtotalEl.textContent=yen(subtotal);
+    // 分離UIへも反映
+    if (subtotal2El) subtotal2El.textContent = yen(subtotal);
+    if (subtotal3El) subtotal3El.textContent = yen(subtotal);
+
+    return subtotal;
+  }
+
+  // ✅ confirmは LIFF失敗しても止めない（住所LIFF内でも動かす）
+  async function ensureUserSoft(){
+    const cached = (localStorage.getItem(KEY_UID) || "").trim();
+    if(cached) return cached;
+
+    try{
+      await liff.init({ liffId: LIFF_ID_ORDER });
+      if(liff.isLoggedIn()){
+        const prof = await liff.getProfile();
+        const uid = (prof?.userId||"").trim();
+        if(uid) localStorage.setItem(KEY_UID, uid);
+        return uid || null;
+      }
+      return null;
+    }catch{
+      return null;
+    }
+  }
+
+  try{
+    status.textContent="確認中…";
+
+    const uid = await ensureUserSoft();
+    if(!uid){
+      status.innerHTML = '<span class="err">ユーザー情報が取得できません。いったん商品ページから開き直してください。</span>';
+      setTimeout(()=>location.replace(backTo), 900);
+      return;
+    }
+
+    const cart=loadJson(KEY_CART) || {items:[]};
+    const items=(cart.items||[]).filter(x=>x?.id && Number(x.qty||0)>0);
+
+    if(items.length===0){
+      status.innerHTML='<span class="err">カートが空です。商品選択に戻ります。</span>';
+      setTimeout(()=>location.replace(backTo), 700);
+      return;
+    }
+
+    // 住所が無ければ住所入力へ
+    const addr=await getAddress(uid).catch(()=>null);
+    if(!addr){
+      location.replace(`/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`);
+      return;
+    }
+
+    const nameLine = addr.name ? `${addr.name} 様\n` : "";
+    addrText.textContent =
+      `${nameLine}〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim();
+
+    const products=await getProducts();
+    renderItems(items, products);
+
+    // 見積り
+    shippingEl.textContent="計算中…";
+    if (shipping2El) shipping2El.textContent="計算中…";
+    if (shipping3El) shipping3El.textContent="計算中…";
+    codFeeEl.textContent="計算中…";
+    totalCodEl.textContent="計算中…";
+    if (totalCardEl) totalCardEl.textContent="計算中…";
+
+    const quote = await postJson("/api/order/quote", { uid, checkout:{ items } });
+
+    const shippingText = `${yen(quote.shippingFee)}（ヤマト ${quote.size}サイズ）`;
+
+    shippingEl.textContent = shippingText;
+    if (shipping2El) shipping2El.textContent = shippingText;
+    if (shipping3El) shipping3El.textContent = shippingText;
+
+    codFeeEl.textContent   = yen(quote.codFee);
+    totalCodEl.textContent = yen(quote.totalCod);
+
+    // ✅ クレジット合計は「代引合計 - 代引手数料」
+    const totalCard = (Number(quote.totalCod)||0) - (Number(quote.codFee)||0);
+    if (totalCardEl) totalCardEl.textContent = yen(totalCard);
+
+    status.textContent="内容をご確認ください。";
+
+    // 戻る
+    backBtn.onclick = ()=>{
+      location.href = `/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`;
+    };
+
+    // クレジット
+    cardBtn.onclick = async ()=>{
+      setBusy(true);
+      try{
+        const data = await postJson("/api/pay/stripe/create", { uid, checkout:{ items } });
+        if(!data?.url) throw new Error("stripe url missing");
+        location.href = data.url;
+      }catch(e){
+        console.error(e);
+        alert("クレジット決済の開始に失敗しました: " + (e?.message||e));
+        setBusy(false);
+      }
+    };
+
+    // 代引
+    codBtn.onclick = async ()=>{
+      setBusy(true);
+      try{
+        const data = await postJson("/api/order/cod/create", { uid, checkout:{ items } });
+
+        // ✅ このconfirmで使っているカートだけ空にする
+        localStorage.setItem(KEY_CART, JSON.stringify({ items: [] }));
+
+        location.href = `/complete.html?method=cod&orderId=${encodeURIComponent(data.orderId||"")}`;
+      }catch(e){
+        console.error(e);
+        alert("代引き確定に失敗しました: " + (e?.message||e));
+        setBusy(false);
+      }
+    };
+
+  }catch(e){
+    console.error(e);
+    status.innerHTML='<span class="err">読み込みに失敗しました（住所API/商品API/DBを確認）</span>';
+  }
+})();
+</script>
+</body>
+</html>

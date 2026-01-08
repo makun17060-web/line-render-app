@@ -1,7 +1,7 @@
 /**
- * server.js — “完全・全部入り” 丸ごと版（統合・最終修正版）
+ * server.js — “完全・全部入り” 丸ごと版（統合・最終修正版 + 常連候補 + 定期リマインド）
  *
- * ✅ 最重要（あなたの要望を反映）
+ * ✅ 既存の重要仕様（維持）
  * - 送料：DB優先（shipping_yamato_taxed）  region+size -> fee
  * - サイズ：DB優先（shipping_size_rules） shipping_group + qty_range -> size
  * - /api/admin/orders の subtotal（小計）が代引手数料込みになっていたのを修正
@@ -9,22 +9,17 @@
  * - ★ LIFF_ID_ADDRESS の別名対応（LIFF_ID_ADD を吸収）
  * - オリジナルセット専用注文API（混載不可）
  * - Render Disk 永続化（products.json / sessions.json / uploads）
+ * - ★ /api/store-order を実装（互換対応）
+ * - ★ 福箱「混載不可」「1人1個」「過去購入NG」(テスト許可ユーザーは過去購入NGだけスキップ)
  *
- * ✅ 追加（今回の依頼）
- * - ★ /api/store-order を実装：
- *    - orderId返却
- *    - 管理者/購入者へ通知（代引・店頭受取は即通知、カードは任意で「仮受付通知」も可能）
+ * ✅ 今回追加（あなたの要望）
+ * - ★ LIFF起動ログ（liff_open_logs）を記録（未起動/起動回数の集計が可能）
+ * - ★ 「起動した人を自動で常連候補(prospect_regular)に入れる」テーブル user_segments を追加
+ * - ★ 常連候補の表示API（/api/admin/segments/prospect_regular）
+ * - ★ 定期購入(=定期案内)の仕組み：reorder_reminders + ボタン(postback)で登録/解除
+ * - ★ 期限到来の人へ送る管理API（/api/admin/reorder/send-due）→ cron/手動で叩ける
  *
- * ✅ 今回の修正（重要）
- * - /api/store-order が「旧クライアント形式」(userId/items/payment_method:"cash") でも通るように互換対応
- *
- * ✅ 今回の追加（福箱）
- * - ★ 福箱は「専用・混載不可」「1人1個」「過去購入があればNG」をサーバ側で強制
- *
- * ✅ 今回の追加（テスト用）
- * - ★ 福箱「1人1回」を “自分だけ何度でもテスト” できるようにする
- *   - ENV: FUKUBAKO_TEST_ALLOW_USER_IDS=Uxxxx,Uyyyy
- *   - 許可ユーザーは「過去購入NG」だけスキップ（混載不可・qty=1は維持）
+ * ※ LINEで「ボタンを押した userId は記録される？」→ postback で userId が取れてDBに保存します
  */
 
 "use strict";
@@ -94,11 +89,15 @@ const FUKUBAKO_TEST_ALLOW_USER_IDS = (env.FUKUBAKO_TEST_ALLOW_USER_IDS || "")
   .map(s => s.trim())
   .filter(Boolean);
 
+// ✅ 定期案内用（postbackボタンを送るか）
+const ENABLE_REORDER_BUTTONS = String(env.ENABLE_REORDER_BUTTONS || "1").trim() === "1";
+// ✅ 定期案内のデフォルト文言（管理API送信時）
+const REORDER_MESSAGE_TEMPLATE = String(env.REORDER_MESSAGE_TEMPLATE || "").trim(); // 任意
+
 function isFukubakoTestAllowedUser(userId) {
   const uid = String(userId || "").trim();
   if (!uid) return false;
   if (FUKUBAKO_TEST_ALLOW_USER_IDS.includes(uid)) return true;
-  // 便利：ADMIN_USER_ID を自動で許可したいなら↓もOK（不要なら消してOK）
   if (ADMIN_USER_ID && uid === String(ADMIN_USER_ID).trim()) return true;
   return false;
 }
@@ -109,10 +108,6 @@ if (!DATABASE_URL) throw new Error("DATABASE_URL is required");
 
 const BASE_URL  = (PUBLIC_BASE_URL || "").replace(/\/$/, "");
 const LIFF_BASE = (LIFF_BASE_URL || BASE_URL || "").replace(/\/$/, "");
-
-if (!BASE_URL) {
-  console.warn("[WARN] PUBLIC_BASE_URL が未設定です（URL生成が必要な箇所ではhostから自動推定します）。");
-}
 
 /* =========================
  * Disk paths
@@ -233,6 +228,12 @@ async function writeJsonAtomic(file, data) {
   await fsp.rename(tmp, file);
 }
 
+function mustInt(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) return null;
+  return n;
+}
+
 /* =========================
  * products.json
  * ========================= */
@@ -268,16 +269,6 @@ async function ensureProductsFile() {
       desc: "人気の詰め合わせ。",
       image: ""
     },
-    // 福箱を seed に入れたいならここで追加してOK（IDは FUKUBAKO_PRODUCT_ID に合わせて）
-    // {
-    //   id: FUKUBAKO_PRODUCT_ID,
-    //   name: "福箱",
-    //   price: 9999,
-    //   stock: 999,
-    //   volume: "1箱",
-    //   desc: "福箱（お一人様1回限り）",
-    //   image: "uploads/fukubako.jpg"
-    // },
   ];
 
   await writeJsonAtomic(PRODUCTS_FILE, seed);
@@ -428,7 +419,6 @@ function pickSizeFromRules(shippingGroup, qty) {
   const q = Math.max(1, Math.floor(Number(qty || 0)));
   const g = String(shippingGroup || "").trim();
 
-  // DB rules
   for (const r of (sizeRuleCache.rules || [])) {
     if (r.shipping_group !== g) continue;
     if (q >= r.qty_min && q <= r.qty_max) {
@@ -437,7 +427,6 @@ function pickSizeFromRules(shippingGroup, qty) {
     }
   }
 
-  // fallback rules
   for (const r of (FALLBACK_SIZE_RULES || [])) {
     if (r.shipping_group !== g) continue;
     if (q >= r.qty_min && q <= r.qty_max) {
@@ -462,7 +451,6 @@ async function calcShippingFee(prefecture, size) {
   const ck = cacheKey(region, s);
   if (shippingCache.map.has(ck)) return Number(shippingCache.map.get(ck));
 
-  // キャッシュにない時は直接SELECT（DBに行が追加された直後など）
   try {
     const r = await pool.query(
       `SELECT fee FROM public.shipping_yamato_taxed WHERE region=$1 AND size=$2 LIMIT 1`,
@@ -475,7 +463,6 @@ async function calcShippingFee(prefecture, size) {
     }
   } catch {}
 
-  // フォールバック：サーバ内の表
   const table = SHIPPING_YAMATO[region] || SHIPPING_YAMATO["chubu"];
   return Number(table[s] || table[80] || 0);
 }
@@ -508,28 +495,23 @@ async function calcPackageSizeFromItems_DB(items, productsById) {
     else otherQty += qty;
   }
 
-  // ① オリジナルセットのみ
   if (originalQty > 0 && akashaQty === 0 && otherQty === 0) {
     return await dbGetSize("original_set", originalQty);
   }
 
-  // ② オリジナルセット + 他
   if (originalQty > 0 && (akashaQty + otherQty) > 0) {
     const base = await dbGetSize("original_set", originalQty);
-    return bumpSizeOnce(base); // 混載は1段階大きく
+    return bumpSizeOnce(base);
   }
 
-  // ③ あかしゃ系のみ
   if (akashaQty > 0 && otherQty === 0) {
     return await dbGetSize("akasha6", akashaQty);
   }
 
-  // ④ その他のみ
   if (otherQty > 0 && akashaQty === 0) {
     return await dbGetSize("default", otherQty);
   }
 
-  // ⑤ 混載（あかしゃ + その他）
   const sizeA = akashaQty > 0 ? await dbGetSize("akasha6", akashaQty) : 0;
   const sizeB = otherQty > 0  ? await dbGetSize("default", otherQty) : 0;
   const base = Math.max(sizeA, sizeB) || 80;
@@ -570,7 +552,6 @@ async function enforceFukubakoRulesOrThrow({ userId, items }) {
   const fk = findFukubakoLine(items);
   if (!fk) return;
 
-  // ① 混載不可
   const nonFuku = (items || []).filter(x => String(x?.id || "").trim() !== fid);
   if (nonFuku.length > 0) {
     const err = new Error("FUKUBAKO_MIX_NOT_ALLOWED");
@@ -578,15 +559,12 @@ async function enforceFukubakoRulesOrThrow({ userId, items }) {
     throw err;
   }
 
-  // ② 1注文あたり1個（qty=1）
   if (Number(fk.qty || 0) !== 1) {
     const err = new Error("FUKUBAKO_QTY_MUST_BE_ONE");
     err.code = "FUKUBAKO_QTY_MUST_BE_ONE";
     throw err;
   }
 
-  // ③ 過去購入（1件でもあればNG）
-  // ✅ ただし「テスト許可ユーザー」は何度でも通す（本番の他ユーザーは従来通り）
   if (!isFukubakoTestAllowedUser(userId)) {
     const already = await hasEverOrderedFukubako(userId);
     if (already) {
@@ -601,6 +579,7 @@ async function enforceFukubakoRulesOrThrow({ userId, items }) {
  * ensureDb（テーブル作成＆seed）
  * ========================= */
 async function ensureDb() {
+  // users
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       user_id TEXT PRIMARY KEY,
@@ -612,6 +591,7 @@ async function ensureDb() {
     );
   `);
 
+  // addresses
   await pool.query(`
     CREATE TABLE IF NOT EXISTS addresses (
       id BIGSERIAL PRIMARY KEY,
@@ -634,6 +614,7 @@ async function ensureDb() {
   try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_member_code_uidx ON addresses(member_code) WHERE member_code IS NOT NULL;`); } catch {}
   try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_address_key_uidx ON addresses(address_key) WHERE address_key IS NOT NULL;`); } catch {}
 
+  // orders
   await pool.query(`
     CREATE TABLE IF NOT EXISTS orders (
       id BIGSERIAL PRIMARY KEY,
@@ -652,10 +633,9 @@ async function ensureDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `);
-
-  // 通知済みフラグ（既存DBに列があってもOK）
   try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;`); } catch {}
 
+  // segment_users（あなたが貼っていた列に寄せて拡張：不足してても自動追加）
   await pool.query(`
     CREATE TABLE IF NOT EXISTS segment_users (
       user_id TEXT PRIMARY KEY,
@@ -664,6 +644,40 @@ async function ensureDb() {
     );
   `);
 
+  // 追加カラム（存在しなければ足す）
+  const alterCols = [
+    `ALTER TABLE segment_users ADD COLUMN IF NOT EXISTS first_seen TIMESTAMPTZ`,
+    `ALTER TABLE segment_users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ`,
+    `ALTER TABLE segment_users ADD COLUMN IF NOT EXISTS last_chat_at TIMESTAMPTZ`,
+    `ALTER TABLE segment_users ADD COLUMN IF NOT EXISTS last_source TEXT`,
+    `ALTER TABLE segment_users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
+    `ALTER TABLE segment_users ADD COLUMN IF NOT EXISTS last_liff_open_at TIMESTAMPTZ`,
+    `ALTER TABLE segment_users ADD COLUMN IF NOT EXISTS has_ordered BOOLEAN NOT NULL DEFAULT false`,
+    `ALTER TABLE segment_users ADD COLUMN IF NOT EXISTS last_order_at TIMESTAMPTZ`,
+    `ALTER TABLE segment_users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()`,
+  ];
+  for (const q of alterCols) {
+    try { await pool.query(q); } catch {}
+  }
+
+  // user_segments（常連候補などの「セグメント所属」）
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_segments (
+      segment_key TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      candidate_since TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_seen_at TIMESTAMPTZ,
+      last_liff_at TIMESTAMPTZ,
+      last_order_at TIMESTAMPTZ,
+      has_ordered BOOLEAN NOT NULL DEFAULT false,
+      last_source TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY(segment_key, user_id)
+    );
+  `);
+  try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_segments_seg ON user_segments(segment_key, updated_at DESC);`); } catch {}
+
+  // segment_blast（配信済み抑止）
   await pool.query(`
     CREATE TABLE IF NOT EXISTS segment_blast (
       segment_key TEXT NOT NULL,
@@ -673,6 +687,7 @@ async function ensureDb() {
     );
   `);
 
+  // friend logs
   await pool.query(`
     CREATE TABLE IF NOT EXISTS friend_logs (
       id BIGSERIAL PRIMARY KEY,
@@ -695,7 +710,7 @@ async function ensureDb() {
     );
   `);
 
-  // ✅ サイズルール（あなたの現DB定義に合わせる）
+  // ✅ サイズルール
   await pool.query(`
     CREATE TABLE IF NOT EXISTS shipping_size_rules (
       shipping_group TEXT NOT NULL,
@@ -707,7 +722,33 @@ async function ensureDb() {
     );
   `);
 
-  // seed: shipping_yamato_taxed が空ならフォールバック表から投入
+  // ✅ LIFF起動ログ（起動回数/未起動判定用）
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS liff_open_logs (
+      id BIGSERIAL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      opened_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      source TEXT
+    );
+  `);
+  try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_liff_open_logs_user ON liff_open_logs(user_id, opened_at DESC);`); } catch {}
+
+  // ✅ 定期案内（押した人だけ）
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS reorder_reminders (
+      user_id text PRIMARY KEY,
+      cycle_days integer NOT NULL CHECK (cycle_days IN (30,45,60)),
+      next_remind_at timestamptz NOT NULL,
+      last_order_id integer,
+      active boolean NOT NULL DEFAULT true,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      last_sent_at timestamptz
+    );
+  `);
+  try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_reorder_reminders_due ON reorder_reminders(active, next_remind_at);`); } catch {}
+
+  // seed: shipping_yamato_taxed が空なら投入
   try {
     const cnt = await pool.query(`SELECT COUNT(*)::int AS n FROM public.shipping_yamato_taxed`);
     const n = cnt.rows?.[0]?.n || 0;
@@ -745,7 +786,7 @@ async function ensureDb() {
     logErr("shipping_yamato_taxed seed failed", e?.message || e);
   }
 
-  // seed: shipping_size_rules が空なら FALLBACK_SIZE_RULES を投入
+  // seed: shipping_size_rules が空なら投入
   try {
     const cnt2 = await pool.query(`SELECT COUNT(*)::int AS n FROM public.shipping_size_rules`);
     const n2 = cnt2.rows?.[0]?.n || 0;
@@ -782,7 +823,10 @@ async function ensureDb() {
 /* =========================
  * User / Address helpers
  * ========================= */
-async function touchUser(userId, kind, displayName = null) {
+async function touchUser(userId, kind, displayName = null, source = null) {
+  const k = String(kind || "seen");
+  const src = source ? String(source) : null;
+
   await pool.query(
     `
     INSERT INTO users (user_id, display_name, last_seen_at, last_liff_at)
@@ -796,22 +840,122 @@ async function touchUser(userId, kind, displayName = null) {
       last_liff_at = CASE WHEN $3='liff' THEN now() ELSE users.last_liff_at END,
       updated_at = now()
     `,
-    [userId, displayName, kind]
+    [userId, displayName, k]
   );
 
+  // segment_users を「拡張版」として更新
   await pool.query(
     `
-    INSERT INTO segment_users (user_id, last_seen_at, last_liff_at)
-    VALUES ($1,
+    INSERT INTO segment_users (
+      user_id, last_seen_at, last_liff_at, first_seen, last_seen, last_chat_at, last_source, last_liff_open_at, updated_at
+    )
+    VALUES (
+      $1,
       CASE WHEN $2='seen' THEN now() ELSE NULL END,
-      CASE WHEN $2='liff' THEN now() ELSE NULL END
+      CASE WHEN $2='liff' THEN now() ELSE NULL END,
+      now(),
+      CASE WHEN $2='seen' THEN now() ELSE NULL END,
+      CASE WHEN $2='chat' THEN now() ELSE NULL END,
+      $3,
+      CASE WHEN $2='liff' THEN now() ELSE NULL END,
+      now()
     )
     ON CONFLICT (user_id) DO UPDATE SET
       last_seen_at = CASE WHEN $2='seen' THEN now() ELSE segment_users.last_seen_at END,
-      last_liff_at = CASE WHEN $2='liff' THEN now() ELSE segment_users.last_liff_at END
+      last_liff_at = CASE WHEN $2='liff' THEN now() ELSE segment_users.last_liff_at END,
+      last_seen = CASE WHEN $2='seen' THEN now() ELSE segment_users.last_seen END,
+      last_chat_at = CASE WHEN $2='chat' THEN now() ELSE segment_users.last_chat_at END,
+      last_source = COALESCE($3, segment_users.last_source),
+      last_liff_open_at = CASE WHEN $2='liff' THEN now() ELSE segment_users.last_liff_open_at END,
+      updated_at = now()
     `,
-    [userId, kind]
+    [userId, k, src]
   );
+}
+
+async function upsertUserSegment(segmentKey, userId, patch = {}) {
+  const seg = String(segmentKey || "").trim();
+  const uid = String(userId || "").trim();
+  if (!seg || !uid) return;
+
+  const {
+    last_seen_at = null,
+    last_liff_at = null,
+    last_order_at = null,
+    has_ordered = null,
+    last_source = null,
+  } = patch;
+
+  await pool.query(
+    `
+    INSERT INTO user_segments (
+      segment_key, user_id, candidate_since, last_seen_at, last_liff_at, last_order_at, has_ordered, last_source, updated_at
+    )
+    VALUES (
+      $1, $2, now(),
+      $3, $4, $5,
+      COALESCE($6, false),
+      $7,
+      now()
+    )
+    ON CONFLICT (segment_key, user_id) DO UPDATE SET
+      last_seen_at = COALESCE(EXCLUDED.last_seen_at, user_segments.last_seen_at),
+      last_liff_at = COALESCE(EXCLUDED.last_liff_at, user_segments.last_liff_at),
+      last_order_at = COALESCE(EXCLUDED.last_order_at, user_segments.last_order_at),
+      has_ordered = CASE WHEN $6 IS NULL THEN user_segments.has_ordered ELSE $6 END,
+      last_source = COALESCE(EXCLUDED.last_source, user_segments.last_source),
+      updated_at = now()
+    `,
+    [seg, uid, last_seen_at, last_liff_at, last_order_at, has_ordered, last_source]
+  );
+}
+
+async function logLiffOpen(userId, source = null) {
+  const uid = String(userId || "").trim();
+  if (!uid) return;
+  try {
+    await pool.query(
+      `INSERT INTO liff_open_logs (user_id, source) VALUES ($1, $2)`,
+      [uid, source ? String(source) : null]
+    );
+  } catch {}
+}
+
+async function markUserOrdered(userId, orderId = null) {
+  const uid = String(userId || "").trim();
+  if (!uid) return;
+
+  try {
+    await pool.query(
+      `
+      UPDATE segment_users
+      SET has_ordered=true,
+          last_order_at=now(),
+          updated_at=now()
+      WHERE user_id=$1
+      `,
+      [uid]
+    );
+  } catch {}
+
+  // prospect_regular もアップデート
+  try {
+    await upsertUserSegment("prospect_regular", uid, {
+      last_order_at: new Date(),
+      has_ordered: true,
+      last_source: "order",
+    });
+  } catch {}
+
+  // reorder_reminders の last_order_id を更新したい場合にも使える（任意）
+  if (orderId != null) {
+    try {
+      await pool.query(
+        `UPDATE reorder_reminders SET last_order_id=$2, updated_at=now() WHERE user_id=$1`,
+        [uid, Number(orderId)]
+      );
+    } catch {}
+  }
 }
 
 async function getAddressByUserId(userId) {
@@ -986,7 +1130,6 @@ async function buildOrderFromCheckout(uid, checkout, opts = {}) {
     throw err;
   }
 
-  // 配送が必要なときだけサイズ＆送料
   let size = null;
   let shippingFee = 0;
 
@@ -995,7 +1138,6 @@ async function buildOrderFromCheckout(uid, checkout, opts = {}) {
     shippingFee = await calcShippingFee(addr.prefecture, size);
   }
 
-  // ✅ 福箱のサーバ強制（混載不可・1人1個・過去購入NG ※テスト許可は過去購入だけスキップ）
   await enforceFukubakoRulesOrThrow({ userId, items });
 
   return { userId, addr, items, subtotal, shippingFee, size, productsById };
@@ -1003,7 +1145,6 @@ async function buildOrderFromCheckout(uid, checkout, opts = {}) {
 
 /**
  * orders挿入（住所は userId 住所があれば自動でセット）
- * - nameOverride 等で上書き可
  */
 async function insertOrderToDb({
   userId,
@@ -1120,6 +1261,14 @@ async function pushTextSafe(to, text) {
     logErr("pushTextSafe failed", to, e?.message || e);
   }
 }
+async function replyTextSafe(replyToken, text) {
+  if (!replyToken) return;
+  try {
+    await lineClient.replyMessage(replyToken, { type: "text", text: String(text || "") });
+  } catch (e) {
+    logErr("replyTextSafe failed", e?.message || e);
+  }
+}
 
 async function getOrderRow(orderId) {
   const r = await pool.query(
@@ -1135,6 +1284,25 @@ async function markOrderNotified(orderId) {
   } catch (e) {
     logErr("markOrderNotified failed", orderId, e?.message || e);
   }
+}
+
+function buildReorderButtonsMessage(orderId) {
+  // LINE "buttons template" で postback を送る（userId はイベントから取得できる）
+  return {
+    type: "template",
+    altText: "次回のご案内設定（30/45/60日）",
+    template: {
+      type: "buttons",
+      title: "次回のご案内",
+      text: "次回のご案内を受け取る間隔を選んでください。",
+      actions: [
+        { type: "postback", label: "30日", data: `reorder:sub:30:${orderId}` },
+        { type: "postback", label: "45日", data: `reorder:sub:45:${orderId}` },
+        { type: "postback", label: "60日", data: `reorder:sub:60:${orderId}` },
+        { type: "postback", label: "案内しない", data: `reorder:unsub::${orderId}` },
+      ]
+    }
+  };
 }
 
 async function notifyOrderCompleted({
@@ -1216,6 +1384,15 @@ async function notifyOrderCompleted({
 
   await pushTextSafe(userId, msgForUser);
 
+  // ✅ 購入者に「次回案内」のボタンを送る（押したら userId がDBに保存される）
+  if (ENABLE_REORDER_BUTTONS) {
+    try {
+      await lineClient.pushMessage(userId, buildReorderButtonsMessage(orderId));
+    } catch (e) {
+      logErr("push reorder buttons failed", e?.message || e);
+    }
+  }
+
   if (ADMIN_USER_ID) {
     const msgForAdmin =
       `【${title}】\n` +
@@ -1242,14 +1419,7 @@ async function notifyOrderCompleted({
   return { ok: true };
 }
 
-async function notifyCardPending({
-  orderId,
-  userId,
-  items,
-  shippingFee,
-  total,
-  size,
-}) {
+async function notifyCardPending({ orderId, userId, items, shippingFee, total, size }) {
   const itemLines = buildItemLines(items || []);
   const msgForUser =
     `ご注文の仮受付をしました。\n` +
@@ -1352,6 +1522,8 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
         await pool.query(`UPDATE orders SET status='paid' WHERE id=$1`, [orderId]);
         logInfo("Order paid:", orderId);
 
+        await markUserOrdered(userId || "", Number(orderId)).catch(()=>{});
+
         const row = await getOrderRow(orderId);
         if (row) {
           const items = Array.isArray(row.items) ? row.items : (row.items || []);
@@ -1385,7 +1557,7 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
  * ========================= */
 app.post("/webhook", line.middleware(lineConfig), async (req, res) => {
   const events = req.body?.events || [];
-  res.status(200).end(); // 先に200
+  res.status(200).end();
 
   for (const ev of events) {
     try { await handleEvent(ev); }
@@ -1442,28 +1614,7 @@ app.use("/public/uploads", express.static(UPLOAD_DIR));
 // health
 app.get("/health", (req, res) => res.json({ ok: true, time: nowISO() }));
 
-// Health check（DB込み）
 app.get("/health/db", async (req, res) => {
-/* =========================
- * LINE Webhook（★ここをJSONより前に！）
- * ========================= */
-app.post("/webhook", ...);
-
-/* =========================
- * 通常JSON
- * ========================= */
-app.use(express.json(...));
-app.use(express.urlencoded(...));
-...
-// health
-app.get("/health", ...)
-...
-/* =========================
- * Admin auth（1個だけ）
- * ========================= */
-const ADMIN_TOKEN = ...
-function requireAdmin(...) ...
-
   const startedAt = Date.now();
   try {
     await pool.query("SELECT 1");
@@ -1617,7 +1768,108 @@ app.post("/api/admin/orders/notify-shipped", requireAdmin, async (req, res) => {
 });
 
 /* =========================
- * Admin：セグメント
+ * Admin：常連候補（prospect_regular）表示
+ * ========================= */
+app.get("/api/admin/segments/prospect_regular", requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(2000, Math.max(1, Number(req.query.limit || 200)));
+    const onlyNoOrder = String(req.query.onlyNoOrder || "0") === "1";
+
+    const r = await pool.query(
+      `
+      SELECT
+        user_id,
+        candidate_since,
+        last_liff_at,
+        last_seen_at,
+        last_order_at,
+        has_ordered,
+        last_source,
+        updated_at
+      FROM user_segments
+      WHERE segment_key='prospect_regular'
+        ${onlyNoOrder ? "AND has_ordered=false" : ""}
+      ORDER BY updated_at DESC
+      LIMIT $1
+      `,
+      [limit]
+    );
+
+    res.json({ ok: true, total: r.rowCount, items: r.rows });
+  } catch (e) {
+    logErr("[api/admin/segments/prospect_regular] failed", e?.message || e);
+    res.status(500).json({ ok:false, error:"failed" });
+  }
+});
+
+/* =========================
+ * Admin：定期案内 期限到来分を送信（手動/cron用）
+ * ========================= */
+function buildReorderText(cycleDays) {
+  // テンプレ未設定ならデフォルト
+  if (REORDER_MESSAGE_TEMPLATE) {
+    return REORDER_MESSAGE_TEMPLATE.replace(/\{cycle_days\}/g, String(cycleDays));
+  }
+  return (
+    `いつもありがとうございます。\n` +
+    `前回のご注文からそろそろ ${cycleDays}日 ほど経ちました。\n\n` +
+    `よろしければ、ミニアプリからご注文いただけます。\n` +
+    `${LIFF_ID_ORDER ? `https://liff.line.me/${LIFF_ID_ORDER}` : (LIFF_BASE ? `${LIFF_BASE}/products.html` : "（注文URL未設定）")}\n\n` +
+    `※ご案内が不要な場合は「次回のご案内」ボタンから解除できます。`
+  );
+}
+
+app.post("/api/admin/reorder/send-due", requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(500, Math.max(1, Number(req.body?.limit || 200)));
+
+    const r = await pool.query(
+      `
+      SELECT user_id, cycle_days
+      FROM reorder_reminders
+      WHERE active=true
+        AND next_remind_at <= now()
+      ORDER BY next_remind_at ASC
+      LIMIT $1
+      `,
+      [limit]
+    );
+
+    let sent = 0;
+    for (const row of (r.rows || [])) {
+      const uid = row.user_id;
+      const days = Number(row.cycle_days);
+
+      const text = buildReorderText(days);
+      try {
+        await lineClient.pushMessage(uid, { type:"text", text });
+        sent++;
+
+        await pool.query(
+          `
+          UPDATE reorder_reminders
+          SET last_sent_at=now(),
+              next_remind_at = now() + (cycle_days || ' days')::interval,
+              updated_at=now()
+          WHERE user_id=$1
+          `,
+          [uid]
+        );
+      } catch (e) {
+        // ブロック等で失敗 → active=false に落とすのは運用次第（ここでは落とさない）
+        logErr("reorder push failed", uid, e?.message || e);
+      }
+    }
+
+    res.json({ ok: true, due: r.rowCount, sent });
+  } catch (e) {
+    logErr("[api/admin/reorder/send-due] failed", e?.message || e);
+    res.status(500).json({ ok:false, error:"failed" });
+  }
+});
+
+/* =========================
+ * Admin：セグメント配信（簡易）
  * ========================= */
 app.post("/api/admin/segment/preview", requireAdmin, async (req, res) => {
   try {
@@ -1662,6 +1914,15 @@ app.post("/api/admin/segment/preview", requireAdmin, async (req, res) => {
          FROM addresses
          WHERE user_id IS NOT NULL AND user_id <> ''
          ORDER BY user_id
+         LIMIT 2000`
+      );
+      userIds = r.rows.map(x => x.user_id);
+    } else if (t === "prospect_regular") {
+      const r = await pool.query(
+        `SELECT user_id
+         FROM user_segments
+         WHERE segment_key='prospect_regular'
+         ORDER BY updated_at DESC
          LIMIT 2000`
       );
       userIds = r.rows.map(x => x.user_id);
@@ -1885,13 +2146,25 @@ app.post("/api/liff/verify", async (req, res) => {
   }
 });
 
+/* =========================
+ * LIFF 起動ログ（DB保存 + 常連候補へ自動追加）
+ * ========================= */
+async function onLiffOpened(userId, source = "liff") {
+  await touchUser(userId, "liff", null, source);
+  await logLiffOpen(userId, source);
+  await upsertUserSegment("prospect_regular", userId, {
+    last_liff_at: new Date(),
+    last_source: source,
+  });
+}
+
 // LIFF 起動ログ
 app.post("/api/liff/opened", async (req, res) => {
   try {
     const userId = String(req.body?.userId || "").trim();
     if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
 
-    await touchUser(userId, "liff");
+    await onLiffOpened(userId, "liff_opened");
     res.json({ ok: true });
   } catch (e) {
     logErr("POST /api/liff/opened", e?.stack || e);
@@ -1902,7 +2175,7 @@ app.post("/api/liff/open", async (req, res) => {
   try {
     const userId = String(req.body?.userId || "").trim();
     if (!userId) return res.status(400).json({ ok:false, error:"userId required" });
-    await touchUser(userId, "liff");
+    await onLiffOpened(userId, "liff_open");
     res.json({ ok:true });
   } catch (e) {
     logErr("POST /api/liff/open", e?.stack || e);
@@ -2124,7 +2397,7 @@ app.post("/api/store-order", async (req, res) => {
     const customerName = String(b.name || pickup?.name || "").trim();
     const customerPhone = String(pickup?.phone || b.phone || "").trim();
 
-    await touchUser(uid, "seen");
+    await touchUser(uid, "seen", null, "store_order");
 
     const built = await buildOrderFromCheckout(uid, { items: itemsRaw }, { requireAddress: (deliveryMethod !== "pickup") });
 
@@ -2166,6 +2439,9 @@ app.post("/api/store-order", async (req, res) => {
       prefOverride: "",
       addressOverride: "",
     });
+
+    // ✅ 「購入した」フラグ更新
+    await markUserOrdered(built.userId, Number(orderId)).catch(()=>{});
 
     if (paymentMethod === "pickup_cash") {
       const pseudoAddr = {
@@ -2243,7 +2519,7 @@ app.post("/api/pay/stripe/create", async (req, res) => {
     const uid = String(req.body?.uid || "").trim();
     const checkout = req.body?.checkout || null;
 
-    await touchUser(uid, "seen");
+    await touchUser(uid, "seen", null, "stripe_create");
     const built = await buildOrderFromCheckout(uid, checkout, { requireAddress: true });
 
     const lineItems = built.items.map(it => ({
@@ -2285,6 +2561,16 @@ app.post("/api/pay/stripe/create", async (req, res) => {
       metadata: { orderId: String(orderId), userId: built.userId },
     });
 
+    // ✅ 仮受付通知（必要なら有効化）
+    await notifyCardPending({
+      orderId,
+      userId: built.userId,
+      items: built.items,
+      shippingFee: built.shippingFee,
+      total: built.subtotal + built.shippingFee,
+      size: built.size
+    }).catch(()=>{});
+
     res.json({
       ok: true,
       orderId,
@@ -2314,7 +2600,7 @@ app.post("/api/order/quote", async (req, res) => {
     const uid = String(req.body?.uid || "").trim();
     const checkout = req.body?.checkout || null;
 
-    await touchUser(uid, "seen");
+    await touchUser(uid, "seen", null, "quote");
     const built = await buildOrderFromCheckout(uid, checkout, { requireAddress: true });
 
     const codFee = Number(COD_FEE || 330);
@@ -2349,7 +2635,7 @@ app.post("/api/order/cod/create", async (req, res) => {
     const uid = String(req.body?.uid || "").trim();
     const checkout = req.body?.checkout || null;
 
-    await touchUser(uid, "seen");
+    await touchUser(uid, "seen", null, "cod_create");
     const built = await buildOrderFromCheckout(uid, checkout, { requireAddress: true });
 
     const codFee = Number(COD_FEE || 330);
@@ -2365,6 +2651,8 @@ app.post("/api/order/cod/create", async (req, res) => {
       rawEvent: { type: "cod_create_v2" },
       source: "liff",
     });
+
+    await markUserOrdered(built.userId, Number(orderId)).catch(()=>{});
 
     await notifyOrderCompleted({
       orderId,
@@ -2414,7 +2702,7 @@ app.post("/api/orders/original", async (req, res) => {
     if (!uid) return res.status(400).json({ ok:false, error:"uid required" });
     if (!cart || !Array.isArray(cart.items)) return res.status(400).json({ ok:false, error:"cart.items required" });
 
-    await touchUser(uid, "seen");
+    await touchUser(uid, "seen", null, "original_cod");
 
     const items = cart.items.filter(x => x && x.id && Number(x.qty) > 0);
     if (items.length !== 1) return res.status(409).json({ ok:false, error:"MIX_NOT_ALLOWED" });
@@ -2442,6 +2730,8 @@ app.post("/api/orders/original", async (req, res) => {
       source: "liff",
     });
 
+    await markUserOrdered(built.userId, Number(orderId)).catch(()=>{});
+
     await notifyOrderCompleted({
       orderId,
       userId: built.userId,
@@ -2461,69 +2751,6 @@ app.post("/api/orders/original", async (req, res) => {
   } catch (e) {
     const code = e?.code || "";
     logErr("POST /api/orders/original", code, e?.stack || e);
-
-    const handled = respondFukubakoErrors(res, code);
-    if (handled) return;
-
-    if (code === "NO_ADDRESS") return res.status(409).json({ ok:false, error:"NO_ADDRESS" });
-    if (code === "OUT_OF_STOCK") return res.status(409).json({ ok:false, error:"OUT_OF_STOCK", productId: e.productId });
-    if (code === "EMPTY_ITEMS") return res.status(400).json({ ok:false, error:"EMPTY_ITEMS" });
-
-    res.status(500).json({ ok:false, error:"server_error" });
-  }
-});
-
-// 代引き確定（互換用）
-app.post("/api/order/cod/confirm", async (req, res) => {
-  try {
-    const uid = String(req.body?.uid || "").trim();
-    const checkout = req.body?.checkout || null;
-
-    await touchUser(uid, "seen");
-    const built = await buildOrderFromCheckout(uid, checkout, { requireAddress: true });
-
-    const codFee = Number(COD_FEE || 330);
-    const totalCod = built.subtotal + built.shippingFee + codFee;
-
-    const orderId = await insertOrderToDb({
-      userId: built.userId,
-      items: built.items,
-      total: totalCod,
-      shippingFee: built.shippingFee,
-      paymentMethod: "cod",
-      status: "confirmed",
-      rawEvent: { type: "cod_confirm_v1" },
-      source: "liff",
-    });
-
-    await notifyOrderCompleted({
-      orderId,
-      userId: built.userId,
-      items: built.items,
-      shippingFee: built.shippingFee,
-      total: totalCod,
-      paymentMethod: "cod",
-      codFee,
-      size: built.size,
-      addr: built.addr,
-      title: "新規注文（代引）",
-      isPaid: false,
-      deliveryMethod: "delivery",
-    });
-
-    res.json({
-      ok: true,
-      orderId,
-      subtotal: built.subtotal,
-      shippingFee: built.shippingFee,
-      codFee,
-      totalCod,
-      size: built.size,
-      redirect: `/confirm-cod.html?orderId=${encodeURIComponent(orderId)}`
-    });
-  } catch (e) {
-    const code = e?.code || "";
-    logErr("POST /api/order/cod/confirm", code, e?.stack || e);
 
     const handled = respondFukubakoErrors(res, code);
     if (handled) return;
@@ -2557,12 +2784,90 @@ app.get("/api/order/status", async (req, res) => {
   }
 });
 
+/* =========================
+ * Reorder reminder APIs（外部/LIFFから使う場合用：postbackじゃなくAPIで登録したい時）
+ * ========================= */
+app.post("/api/reorder/subscribe", async (req, res) => {
+  try {
+    const { user_id, cycle_days, last_order_id } = req.body || {};
+    const days = mustInt(cycle_days);
+
+    if (!user_id || typeof user_id !== "string") {
+      return res.status(400).json({ ok: false, error: "user_id required" });
+    }
+    if (![30, 45, 60].includes(days)) {
+      return res.status(400).json({ ok: false, error: "cycle_days must be 30/45/60" });
+    }
+
+    const orderId = last_order_id == null ? null : mustInt(last_order_id);
+
+    const q = `
+      INSERT INTO reorder_reminders
+        (user_id, cycle_days, next_remind_at, last_order_id, active, updated_at)
+      VALUES
+        ($1, $2, now() + ($2 || ' days')::interval, $3, true, now())
+      ON CONFLICT (user_id)
+      DO UPDATE SET
+        cycle_days = EXCLUDED.cycle_days,
+        next_remind_at = EXCLUDED.next_remind_at,
+        last_order_id = COALESCE(EXCLUDED.last_order_id, reorder_reminders.last_order_id),
+        active = true,
+        updated_at = now()
+      RETURNING user_id, cycle_days, next_remind_at, active;
+    `;
+    const r = await pool.query(q, [user_id, days, orderId]);
+
+    res.json({ ok: true, reminder: r.rows[0] });
+  } catch (e) {
+    logErr("[reorder/subscribe] failed", e?.message || e);
+    res.status(500).json({ ok: false, error: e.message || String(e) });
+  }
+});
+
+app.post("/api/reorder/unsubscribe", async (req, res) => {
+  try {
+    const { user_id } = req.body || {};
+    if (!user_id || typeof user_id !== "string") {
+      return res.status(400).json({ ok: false, error: "user_id required" });
+    }
+    await pool.query(
+      `UPDATE reorder_reminders SET active=false, updated_at=now() WHERE user_id=$1`,
+      [user_id]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    logErr("[reorder/unsubscribe] failed", e?.message || e);
+    res.status(500).json({ ok: false, error: e.message || String(e) });
+  }
+});
+
+app.get("/api/reorder/status", async (req, res) => {
+  try {
+    const user_id = String(req.query.user_id || "");
+    if (!user_id) return res.status(400).json({ ok: false, error: "user_id required" });
+
+    const r = await pool.query(
+      `SELECT user_id, cycle_days, next_remind_at, active, created_at, updated_at, last_sent_at
+       FROM reorder_reminders
+       WHERE user_id=$1`,
+      [user_id]
+    );
+    res.json({ ok: true, reminder: r.rows[0] || null });
+  } catch (e) {
+    logErr("[reorder/status] failed", e?.message || e);
+    res.status(500).json({ ok: false, error: e.message || String(e) });
+  }
+});
+
+/* =========================
+ * LINE Event handlers
+ * ========================= */
 async function handleEvent(ev) {
   const type = ev.type;
   const userId = ev?.source?.userId || "";
 
   if (userId) {
-    try { await touchUser(userId, "seen"); } catch {}
+    try { await touchUser(userId, "seen", null, "line"); } catch {}
   }
 
   if (type === "follow") return onFollow(ev);
@@ -2594,7 +2899,7 @@ async function onFollow(ev) {
     const prof = await lineClient.getProfile(userId);
     displayName = prof?.displayName || null;
   } catch {}
-  try { await touchUser(userId, "seen", displayName); } catch {}
+  try { await touchUser(userId, "seen", displayName, "follow"); } catch {}
 
   try { await notifyAdminFriendAdded({ userId, displayName, day }); } catch {}
 
@@ -2632,12 +2937,73 @@ async function onUnfollow(ev) {
   }
 }
 
-async function onPostback() {}
+async function onPostback(ev) {
+  const userId = ev?.source?.userId || "";
+  const data = String(ev?.postback?.data || "");
+  const replyToken = ev?.replyToken;
+
+  // ✅ 定期案内 postback: reorder:sub:30:ORDERID / reorder:unsub::ORDERID
+  if (data.startsWith("reorder:")) {
+    const parts = data.split(":"); // ["reorder","sub","30","123"]
+    const kind = parts[1] || "";
+    const daysStr = parts[2] || "";
+    const orderIdStr = parts[3] || "";
+    const orderId = mustInt(orderIdStr);
+
+    if (!userId) return;
+
+    if (kind === "sub") {
+      const days = mustInt(daysStr);
+      if (![30,45,60].includes(days)) {
+        await replyTextSafe(replyToken, "設定に失敗しました（間隔が不正です）。");
+        return;
+      }
+      try {
+        await pool.query(
+          `
+          INSERT INTO reorder_reminders (user_id, cycle_days, next_remind_at, last_order_id, active, updated_at)
+          VALUES ($1, $2, now() + ($2 || ' days')::interval, $3, true, now())
+          ON CONFLICT (user_id)
+          DO UPDATE SET
+            cycle_days = EXCLUDED.cycle_days,
+            next_remind_at = EXCLUDED.next_remind_at,
+            last_order_id = COALESCE(EXCLUDED.last_order_id, reorder_reminders.last_order_id),
+            active = true,
+            updated_at = now()
+          `,
+          [userId, days, orderId]
+        );
+        await replyTextSafe(replyToken, `OK！${days}日ごとにご案内します。\n（いつでも解除できます）`);
+      } catch (e) {
+        logErr("reorder subscribe failed", e?.message || e);
+        await replyTextSafe(replyToken, "設定に失敗しました。時間をおいてお試しください。");
+      }
+      return;
+    }
+
+    if (kind === "unsub") {
+      try {
+        await pool.query(
+          `UPDATE reorder_reminders SET active=false, updated_at=now() WHERE user_id=$1`,
+          [userId]
+        );
+        await replyTextSafe(replyToken, "OK！次回のご案内を停止しました。");
+      } catch (e) {
+        logErr("reorder unsubscribe failed", e?.message || e);
+        await replyTextSafe(replyToken, "解除に失敗しました。時間をおいてお試しください。");
+      }
+      return;
+    }
+  }
+}
 
 async function onTextMessage(ev) {
   const userId = ev?.source?.userId || "";
   const text = (ev.message?.text || "").trim();
   if (!userId || !text) return;
+
+  // チャットとして記録（任意）
+  try { await touchUser(userId, "chat", null, "chat"); } catch {}
 
   const sess = getSession(userId);
   if (sess) {
@@ -2665,8 +3031,8 @@ async function replyDirectStart(replyToken) {
   const orderLiffId   = (LIFF_ID_ORDER || LIFF_ID_DEFAULT || "").trim();
   const addressLiffId = (LIFF_ID_ADDRESS || LIFF_ID_ADD || LIFF_ID_DEFAULT || "").trim();
 
-  const urlProducts = `https://liff.line.me/${orderLiffId}`;
-  const urlAddress  = `https://liff.line.me/${addressLiffId}`;
+  const urlProducts = orderLiffId ? `https://liff.line.me/${orderLiffId}` : liffUrl("/products.html");
+  const urlAddress  = addressLiffId ? `https://liff.line.me/${addressLiffId}` : liffUrl("/address.html");
 
   await lineClient.replyMessage(replyToken, {
     type: "text",
@@ -2739,6 +3105,8 @@ async function finalizeKusukeOrder(replyToken, userId, qty) {
       rawEvent: { type: "line_kusuke" },
       source: "line",
     });
+
+    await markUserOrdered(userId, Number(orderId)).catch(()=>{});
 
     await notifyOrderCompleted({
       orderId,

@@ -293,6 +293,50 @@
 
   let product = null;
 
+  function updateFukubakoUiLock(){
+    if(!product) return;
+
+    const id = String(product.id||"").trim();
+    const inCart = cart.items.find(x => String(x.id||"").trim() === id)?.qty || 0;
+
+    const card = mountEl.querySelector(".card");
+    if(!card) return;
+
+    const qInput = card.querySelector(".q");
+    const decBtn = card.querySelector(".dec");
+    const incBtn = card.querySelector(".inc");
+    const addBtn = card.querySelector(".add");
+
+    // ✅ 数量は常に1固定（操作不可）
+    if(qInput){
+      qInput.value = "1";
+      qInput.min = "1";
+      qInput.max = "1";
+      qInput.readOnly = true;
+      qInput.disabled = true;
+    }
+    if(decBtn) decBtn.disabled = true;
+    if(incBtn) incBtn.disabled = true;
+
+    // ✅ 既にカートに入ってたら追加できない
+    if(addBtn){
+      if(inCart >= 1){
+        addBtn.disabled = true;
+        addBtn.textContent = "福箱は1人1つまで";
+      }else{
+        // 在庫0表示のケースを壊さない
+        const stock = Number(product.stock ?? 0);
+        if(Number.isFinite(stock) && stock <= 0){
+          addBtn.disabled = true;
+          addBtn.textContent = "在庫なし";
+        }else{
+          addBtn.disabled = false;
+          addBtn.textContent = "カートに追加";
+        }
+      }
+    }
+  }
+
   function renderSum(){
     let subtotal = 0, count = 0;
     for(const it of (cart.items||[])){
@@ -308,18 +352,21 @@
     `;
     nextBtn.classList.toggle("btnDisabled", count===0);
     syncBarHeight();
+
+    // ✅ UIロック更新
+    updateFukubakoUiLock();
   }
 
-  function addToCart(qtyToAdd){
+  function addToCart(){
     if(!product) return;
     const id = String(product.id||"").trim();
-    const qty = Math.max(1, Math.floor(Number(qtyToAdd||1)));
-    const ex = cart.items.find(x => String(x.id||"").trim() === id);
-    if(ex) ex.qty += qty;
-    else cart.items.push({ id, qty });
-    cart.items = normItems(cart.items);
+
+    // ✅ 福箱は必ず 1 個だけ（足し算しない）
+    cart.items = [{ id, qty: 1 }];
+
     saveCart(cart);
     renderSum();
+    updateFukubakoUiLock();
   }
 
   function renderCard(p){
@@ -350,7 +397,7 @@
           <div class="controlsTop">
             <div class="qty">
               <button type="button" class="dec">−</button>
-              <input class="q" type="number" min="1" step="1" value="1" inputmode="numeric">
+              <input class="q" type="number" min="1" max="1" step="1" value="1" inputmode="numeric">
               <button type="button" class="inc">＋</button>
             </div>
             <span class="badge">個数</span>
@@ -359,7 +406,8 @@
         </div>
 
         <div class="muted" style="margin-top:10px;">
-          ※このページは「福箱専用カート」です（通常商品とは混ざりません）
+          ※このページは「福箱専用カート」です（通常商品とは混ざりません）<br>
+          ※福箱は <b>1人1つまで</b>（この画面でも固定しています）
         </div>
       </div>
     `;
@@ -367,10 +415,19 @@
     const im = el.querySelector("img");
     if(im) im.addEventListener("error", ()=> im.remove());
 
+    // ✅ 数量操作は無効（UIだけでなく実処理も固定）
     const q = el.querySelector(".q");
-    el.querySelector(".dec").onclick = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1))-1)); };
-    el.querySelector(".inc").onclick = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1))+1)); };
-    q.onchange = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1)))); };
+    const dec = el.querySelector(".dec");
+    const inc = el.querySelector(".inc");
+    if(q){
+      q.value = "1";
+      q.readOnly = true;
+      q.disabled = true;
+      q.onchange = ()=>{ q.value = "1"; };
+      q.oninput  = ()=>{ q.value = "1"; };
+    }
+    if(dec) dec.disabled = true;
+    if(inc) inc.disabled = true;
 
     const addBtn = el.querySelector(".add");
     if(Number.isFinite(stock) && stock <= 0){
@@ -379,15 +436,9 @@
     }
 
     addBtn.onclick = ()=>{
-      const add = Math.max(1, Math.floor(Number(q.value||1)));
-      const inCart = cart.items.find(x => String(x.id||"").trim() === String(p.id||"").trim())?.qty || 0;
-      const next = inCart + add;
-      if(Number.isFinite(stock) && stock >= 0 && next > stock){
-        alert(`在庫不足です（在庫 ${stock}）。個数を減らしてください。`);
-        return;
-      }
-      addToCart(add);
-      showToast("カートに追加しました");
+      // ✅ 福箱は1固定で追加（すでに入ってたらUIロックで押せない）
+      addToCart();
+      showToast("福箱をカートに入れました（1つのみ）");
     };
 
     return el;

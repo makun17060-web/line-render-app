@@ -1378,9 +1378,7 @@ async function notifyOrderCompleted({
     `【合計】${yen(total)}\n\n` +
     (deliveryMethod === "delivery" && addrText ? `【お届け先】\n${addrText}\n\n` : "") +
     (deliveryMethod === "delivery"
-      ? `住所変更：\n${liffUrl("/cod-register.html")}`
-      : `連絡先の変更がある場合はLINEでご連絡ください。`
-    );
+      );
 
   await pushTextSafe(userId, msgForUser);
 

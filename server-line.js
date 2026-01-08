@@ -2798,14 +2798,17 @@ app.post("/api/reorder/subscribe", async (req, res) => {
     const days = Number(req.body?.days);
 
     if (!userId) return res.status(400).json({ ok:false, error:"userId required" });
-    if (![30,45,60].includes(days)) {
-      return res.status(400).json({ ok:false, error:"days must be one of 30,45,60" });
+    if (!Number.isFinite(days) || ![30,45,60].includes(days)) {
+      return res.status(400).json({ ok:false, error:"days must be 30 or 45 or 60" });
     }
+
+    // ✅ interval は別パラメータで渡す（型衝突回避）
+    const intervalStr = `${days} days`;
 
     await pool.query(
       `
       INSERT INTO reorder_reminders (user_id, cycle_days, next_remind_at, active, updated_at)
-      VALUES ($1, $2, now() + ($2::text || ' days')::interval, true, now())
+      VALUES ($1, $2, now() + $3::interval, true, now())
       ON CONFLICT (user_id)
       DO UPDATE SET
         cycle_days = EXCLUDED.cycle_days,
@@ -2813,15 +2816,16 @@ app.post("/api/reorder/subscribe", async (req, res) => {
         active = true,
         updated_at = now()
       `,
-      [userId, days]
+      [userId, days, intervalStr]
     );
 
     res.json({ ok:true });
   } catch (e) {
-    console.error("[reorder subscribe failed]", e);
+    logErr("[reorder subscribe failed]", e?.message || e);
     res.status(500).json({ ok:false, error:"server_error" });
   }
 });
+
 
 app.post("/api/reorder/unsubscribe", async (req, res) => {
   try {
@@ -2950,17 +2954,21 @@ async function onPostback(ev) {
 
     if (!userId) return;
 
-    if (kind === "sub") {
+       if (kind === "sub") {
       const days = mustInt(daysStr);
       if (![30,45,60].includes(days)) {
         await replyTextSafe(replyToken, "設定に失敗しました（間隔が不正です）。");
         return;
       }
+
       try {
+        // ✅ interval は「文字列」を別パラメータで渡す（型衝突回避）
+        const intervalStr = `${days} days`;
+
         await pool.query(
           `
           INSERT INTO reorder_reminders (user_id, cycle_days, next_remind_at, last_order_id, active, updated_at)
-          VALUES ($1, $2, now() + ($2::text || ' days')::interval, $3, true, now())
+          VALUES ($1, $2, now() + $3::interval, $4, true, now())
           ON CONFLICT (user_id)
           DO UPDATE SET
             cycle_days = EXCLUDED.cycle_days,
@@ -2969,8 +2977,9 @@ async function onPostback(ev) {
             active = true,
             updated_at = now()
           `,
-          [userId, days, orderId]
+          [userId, days, intervalStr, orderId]
         );
+
         await replyTextSafe(replyToken, `OK！${days}日ごとにご案内します。\n（いつでも解除できます）`);
       } catch (e) {
         logErr("reorder subscribe failed", e?.message || e);
@@ -2978,6 +2987,7 @@ async function onPostback(ev) {
       }
       return;
     }
+
 
     if (kind === "unsub") {
       try {

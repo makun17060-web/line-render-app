@@ -2797,32 +2797,36 @@ app.post("/api/reorder/subscribe", async (req, res) => {
     const userId = String(req.body?.userId || req.body?.uid || "").trim();
     const days = Number(req.body?.days);
 
-    if (!userId) return res.status(400).json({ ok:false, error:"userId required" });
+    if (!userId) {
+      return res.status(400).json({ error: "userId required" });
+    }
     if (!Number.isFinite(days) || ![30,45,60].includes(days)) {
-      return res.status(400).json({ ok:false, error:"days must be 30 or 45 or 60" });
+      return res.status(400).json({ error: "days must be 30 or 45 or 60" });
     }
 
-    // ✅ interval は別パラメータで渡す（型衝突回避）
     const intervalStr = `${days} days`;
 
     await pool.query(
       `
-      INSERT INTO reorder_reminders (user_id, cycle_days, next_remind_at, active, updated_at)
-      VALUES ($1, $2, now() + $3::interval, true, now())
+      INSERT INTO reorder_reminders
+        (user_id, cycle_days, next_remind_at, active, updated_at)
+      VALUES
+        ($1, $2, now() + $3::interval, true, now())
       ON CONFLICT (user_id)
       DO UPDATE SET
-        cycle_days = EXCLUDED.cycle_days,
+        cycle_days     = EXCLUDED.cycle_days,
         next_remind_at = EXCLUDED.next_remind_at,
-        active = true,
-        updated_at = now()
+        active         = true,
+        updated_at     = now()
       `,
       [userId, days, intervalStr]
     );
 
-    res.json({ ok:true });
+    // レスポンスも簡素に（ok を返さない）
+    res.json({ status: "subscribed", days });
   } catch (e) {
-    logErr("[reorder subscribe failed]", e?.message || e);
-    res.status(500).json({ ok:false, error:"server_error" });
+    logErr("reorder subscribe failed", e?.message || e);
+    res.status(500).json({ error: "server_error" });
   }
 });
 
@@ -2954,39 +2958,46 @@ async function onPostback(ev) {
 
     if (!userId) return;
 
-       if (kind === "sub") {
-      const days = mustInt(daysStr);
-      if (![30,45,60].includes(days)) {
-        await replyTextSafe(replyToken, "設定に失敗しました（間隔が不正です）。");
-        return;
-      }
+     if (kind === "sub") {
+  const days = mustInt(daysStr);
+  if (![30,45,60].includes(days)) {
+    await replyTextSafe(replyToken, "設定に失敗しました（間隔が不正です）。");
+    return;
+  }
 
-      try {
-        // ✅ interval は「文字列」を別パラメータで渡す（型衝突回避）
-        const intervalStr = `${days} days`;
+  try {
+    // interval は文字列で渡す（型衝突回避）
+    const intervalStr = `${days} days`;
 
-        await pool.query(
-          `
-          INSERT INTO reorder_reminders (user_id, cycle_days, next_remind_at, last_order_id, active, updated_at)
-          VALUES ($1, $2, now() + $3::interval, $4, true, now())
-          ON CONFLICT (user_id)
-          DO UPDATE SET
-            cycle_days = EXCLUDED.cycle_days,
-            next_remind_at = EXCLUDED.next_remind_at,
-            last_order_id = COALESCE(EXCLUDED.last_order_id, reorder_reminders.last_order_id),
-            active = true,
-            updated_at = now()
-          `,
-          [userId, days, intervalStr, orderId]
-        );
+    await pool.query(
+      `
+      INSERT INTO reorder_reminders
+        (user_id, cycle_days, next_remind_at, last_order_id, active, updated_at)
+      VALUES
+        ($1, $2, now() + $3::interval, $4, true, now())
+      ON CONFLICT (user_id)
+      DO UPDATE SET
+        cycle_days     = EXCLUDED.cycle_days,
+        next_remind_at = EXCLUDED.next_remind_at,
+        last_order_id  = COALESCE(EXCLUDED.last_order_id, reorder_reminders.last_order_id),
+        active         = true,
+        updated_at     = now()
+      `,
+      [userId, days, intervalStr, orderId]
+    );
 
-        await replyTextSafe(replyToken, `OK！${days}日ごとにご案内します。\n（いつでも解除できます）`);
-      } catch (e) {
-        logErr("reorder subscribe failed", e?.message || e);
-        await replyTextSafe(replyToken, "設定に失敗しました。時間をおいてお試しください。");
-      }
-      return;
-    }
+    // ✅ 「OK」などの肯定文言を使わない
+    await replyTextSafe(
+      replyToken,
+      `${days}日ごとのご案内を設定しました。\n（いつでも解除できます）`
+    );
+  } catch (e) {
+    logErr("reorder subscribe failed", e?.message || e);
+    await replyTextSafe(replyToken, "設定に失敗しました。時間をおいてお試しください。");
+  }
+  return;
+}
+
 
 
     if (kind === "unsub") {

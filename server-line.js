@@ -1444,6 +1444,26 @@ app.get("/health", (req, res) => res.json({ ok: true, time: nowISO() }));
 
 // Health check（DB込み）
 app.get("/health/db", async (req, res) => {
+/* =========================
+ * LINE Webhook（★ここをJSONより前に！）
+ * ========================= */
+app.post("/webhook", ...);
+
+/* =========================
+ * 通常JSON
+ * ========================= */
+app.use(express.json(...));
+app.use(express.urlencoded(...));
+...
+// health
+app.get("/health", ...)
+...
+/* =========================
+ * Admin auth（1個だけ）
+ * ========================= */
+const ADMIN_TOKEN = ...
+function requireAdmin(...) ...
+
   const startedAt = Date.now();
   try {
     await pool.query("SELECT 1");

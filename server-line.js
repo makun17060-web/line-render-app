@@ -2787,40 +2787,33 @@ app.get("/api/order/status", async (req, res) => {
  * ========================= */
 app.post("/api/reorder/subscribe", async (req, res) => {
   try {
-    const { user_id, cycle_days, last_order_id } = req.body || {};
-    const days = mustInt(cycle_days);
+    const userId = String(req.body?.userId || req.body?.uid || "").trim();
+    const daysRaw = req.body?.days;
 
-    if (!user_id || typeof user_id !== "string") {
-      return res.status(400).json({ ok: false, error: "user_id required" });
+    if (!userId) return res.status(400).json({ ok:false, error:"userId required" });
+
+    // days は必ず number 化（ここ重要）
+    const days = Number(daysRaw);
+    if (!Number.isFinite(days) || days <= 0) {
+      return res.status(400).json({ ok:false, error:"days must be positive number" });
     }
-    if (![30, 45, 60].includes(days)) {
-      return res.status(400).json({ ok: false, error: "cycle_days must be 30/45/60" });
-    }
 
-    const orderId = last_order_id == null ? null : mustInt(last_order_id);
+    await pool.query(`
+      INSERT INTO public.reorder_subscriptions (user_id, days, enabled, updated_at)
+      VALUES ($1::text, $2::int, true, now())
+      ON CONFLICT (user_id) DO UPDATE
+      SET days = EXCLUDED.days,
+          enabled = true,
+          updated_at = now()
+    `, [userId, days]);
 
-    const q = `
-      INSERT INTO reorder_reminders
-        (user_id, cycle_days, next_remind_at, last_order_id, active, updated_at)
-      VALUES
-        ($1, $2, now() + ($2 || ' days')::interval, $3, true, now())
-      ON CONFLICT (user_id)
-      DO UPDATE SET
-        cycle_days = EXCLUDED.cycle_days,
-        next_remind_at = EXCLUDED.next_remind_at,
-        last_order_id = COALESCE(EXCLUDED.last_order_id, reorder_reminders.last_order_id),
-        active = true,
-        updated_at = now()
-      RETURNING user_id, cycle_days, next_remind_at, active;
-    `;
-    const r = await pool.query(q, [user_id, days, orderId]);
-
-    res.json({ ok: true, reminder: r.rows[0] });
+    res.json({ ok:true });
   } catch (e) {
-    logErr("[reorder/subscribe] failed", e?.message || e);
-    res.status(500).json({ ok: false, error: e.message || String(e) });
+    console.error("[reorder subscribe failed]", e);
+    res.status(500).json({ ok:false, error:"server_error" });
   }
 });
+
 
 app.post("/api/reorder/unsubscribe", async (req, res) => {
   try {

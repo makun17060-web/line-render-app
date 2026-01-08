@@ -1368,6 +1368,7 @@ async function notifyOrderCompleted({
       `【送料】0円${shopNote}\n`;
   }
 
+  // ✅ ここが途切れていたので修正版（SyntaxError修正）
   const msgForUser =
     `ご注文ありがとうございます。\n` +
     `【注文ID】${orderId}\n` +
@@ -1376,9 +1377,12 @@ async function notifyOrderCompleted({
     `\n【内容】\n${itemLines}\n\n` +
     shipBlock +
     `【合計】${yen(total)}\n\n` +
-    (deliveryMethod === "delivery" && addrText ? `【お届け先】\n${addrText}\n\n` : "") +
-    (deliveryMethod === "delivery"
-      );
+    (
+      deliveryMethod === "delivery"
+        ? (addrText ? `【お届け先】\n${addrText}\n\n` : "")
+        : `【店頭受取】\nお名前：${a?.name || "（未入力）"}\n${a?.phone ? `TEL：${a.phone}\n` : ""}\n`
+    ) +
+    `このあと担当よりご連絡する場合があります。`;
 
   await pushTextSafe(userId, msgForUser);
 
@@ -1843,11 +1847,12 @@ app.post("/api/admin/reorder/send-due", requireAdmin, async (req, res) => {
         await lineClient.pushMessage(uid, { type:"text", text });
         sent++;
 
+        // ✅ interval生成の型事故を防ぐ（cycle_days::text）
         await pool.query(
           `
           UPDATE reorder_reminders
           SET last_sent_at=now(),
-              next_remind_at = now() + (cycle_days || ' days')::interval,
+              next_remind_at = now() + (cycle_days::text || ' days')::interval,
               updated_at=now()
           WHERE user_id=$1
           `,
@@ -2783,33 +2788,33 @@ app.get("/api/order/status", async (req, res) => {
 });
 
 /* =========================
- * Reorder reminder APIs（外部/LIFFから使う場合用：postbackじゃなくAPIで登録したい時）
+ * Reorder reminder APIs（外部/LIFFから使う場合用）
  * ========================= */
+
+// ✅ 修正版：存在しない reorder_subscriptions を使わず reorder_reminders に統一
 app.post("/api/reorder/subscribe", async (req, res) => {
   try {
     const userId = String(req.body?.userId || req.body?.uid || "").trim();
     const days = Number(req.body?.days);
 
     if (!userId) return res.status(400).json({ ok:false, error:"userId required" });
-    if (!Number.isFinite(days) || days <= 0) {
-      return res.status(400).json({ ok:false, error:"days must be positive number" });
+    if (![30,45,60].includes(days)) {
+      return res.status(400).json({ ok:false, error:"days must be one of 30,45,60" });
     }
 
-    const sql = `
-      INSERT INTO public.reorder_subscriptions (user_id, days, enabled, updated_at)
-      VALUES ($1::text, $2::int, true, now())
-      ON CONFLICT (user_id) DO UPDATE
-      SET days = EXCLUDED.days,
-          enabled = true,
-          updated_at = now()
-    `;
-
-    const params = [userId, days];
-
-    console.log("[DEBUG][reorder] sql =", sql);
-    console.log("[DEBUG][reorder] params =", params, params.map(v => typeof v));
-
-    await pool.query(sql, params);
+    await pool.query(
+      `
+      INSERT INTO reorder_reminders (user_id, cycle_days, next_remind_at, active, updated_at)
+      VALUES ($1, $2, now() + ($2::text || ' days')::interval, true, now())
+      ON CONFLICT (user_id)
+      DO UPDATE SET
+        cycle_days = EXCLUDED.cycle_days,
+        next_remind_at = EXCLUDED.next_remind_at,
+        active = true,
+        updated_at = now()
+      `,
+      [userId, days]
+    );
 
     res.json({ ok:true });
   } catch (e) {
@@ -2818,16 +2823,14 @@ app.post("/api/reorder/subscribe", async (req, res) => {
   }
 });
 
-
 app.post("/api/reorder/unsubscribe", async (req, res) => {
   try {
-    const { user_id } = req.body || {};
-    if (!user_id || typeof user_id !== "string") {
-      return res.status(400).json({ ok: false, error: "user_id required" });
-    }
+    const userId = String(req.body?.userId || req.body?.user_id || "").trim();
+    if (!userId) return res.status(400).json({ ok:false, error:"userId required" });
+
     await pool.query(
       `UPDATE reorder_reminders SET active=false, updated_at=now() WHERE user_id=$1`,
-      [user_id]
+      [userId]
     );
     res.json({ ok: true });
   } catch (e) {
@@ -2838,14 +2841,14 @@ app.post("/api/reorder/unsubscribe", async (req, res) => {
 
 app.get("/api/reorder/status", async (req, res) => {
   try {
-    const user_id = String(req.query.user_id || "");
-    if (!user_id) return res.status(400).json({ ok: false, error: "user_id required" });
+    const userId = String(req.query.userId || req.query.user_id || "").trim();
+    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
 
     const r = await pool.query(
       `SELECT user_id, cycle_days, next_remind_at, active, created_at, updated_at, last_sent_at
        FROM reorder_reminders
        WHERE user_id=$1`,
-      [user_id]
+      [userId]
     );
     res.json({ ok: true, reminder: r.rows[0] || null });
   } catch (e) {
@@ -2957,7 +2960,7 @@ async function onPostback(ev) {
         await pool.query(
           `
           INSERT INTO reorder_reminders (user_id, cycle_days, next_remind_at, last_order_id, active, updated_at)
-          VALUES ($1, $2, now() + ($2 || ' days')::interval, $3, true, now())
+          VALUES ($1, $2, now() + ($2::text || ' days')::interval, $3, true, now())
           ON CONFLICT (user_id)
           DO UPDATE SET
             cycle_days = EXCLUDED.cycle_days,

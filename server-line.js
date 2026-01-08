@@ -2788,24 +2788,28 @@ app.get("/api/order/status", async (req, res) => {
 app.post("/api/reorder/subscribe", async (req, res) => {
   try {
     const userId = String(req.body?.userId || req.body?.uid || "").trim();
-    const daysRaw = req.body?.days;
+    const days = Number(req.body?.days);
 
     if (!userId) return res.status(400).json({ ok:false, error:"userId required" });
-
-    // days は必ず number 化（ここ重要）
-    const days = Number(daysRaw);
     if (!Number.isFinite(days) || days <= 0) {
       return res.status(400).json({ ok:false, error:"days must be positive number" });
     }
 
-    await pool.query(`
+    const sql = `
       INSERT INTO public.reorder_subscriptions (user_id, days, enabled, updated_at)
       VALUES ($1::text, $2::int, true, now())
       ON CONFLICT (user_id) DO UPDATE
       SET days = EXCLUDED.days,
           enabled = true,
           updated_at = now()
-    `, [userId, days]);
+    `;
+
+    const params = [userId, days];
+
+    console.log("[DEBUG][reorder] sql =", sql);
+    console.log("[DEBUG][reorder] params =", params, params.map(v => typeof v));
+
+    await pool.query(sql, params);
 
     res.json({ ok:true });
   } catch (e) {

@@ -506,16 +506,37 @@
     return;
   }
 
-  // ✅ 追加：サーバ側の「購入済み」チェック
-  const st = await checkAlreadyOrdered(uid);
-  if(st && st.ok && st.allowed === false){
-    allowedByServer = false;
-    alreadyReason = st.reason || "already_ordered";
-    statusEl.innerHTML = '<span class="danger">すでに福箱をご購入済みです（2回目は購入できません）</span>';
-    if(onceNotice) onceNotice.innerHTML = '⚠️ <b>ご購入済みのため</b>、今回は福箱をご注文いただけません（2回目不可）';
-  }else{
-    allowedByServer = true;
+// ✅ 追加：サーバ側の「購入済み」チェック
+const st = await checkAlreadyOrdered(uid);
+if(st && st.ok && st.allowed === false){
+  allowedByServer = false;
+  alreadyReason = st.reason || "already_ordered";
+
+  statusEl.innerHTML = '<span class="danger">すでに福箱をご購入済みです（2回目は購入できません）</span>';
+  if(onceNotice) onceNotice.innerHTML = '⚠️ <b>ご購入済みのため</b>、今回は福箱をご注文いただけません（2回目不可）';
+
+  // ✅ ここが追加：住所入力ボタンも無効化
+  if(addrBtn){
+    addrBtn.disabled = true;
+    addrBtn.classList.add("btnDisabled"); // 見た目も無効化（pointer-events:none）
+    addrBtn.textContent = "住所入力（購入済みのため不可）";
   }
+
+  // ✅ 次へも念のため無効化（あなたの renderSum でも止まるけど二重で安全）
+  if(nextBtn){
+    nextBtn.classList.add("btnDisabled");
+  }
+}else{
+  allowedByServer = true;
+
+  // （念のため）通常時は戻す
+  if(addrBtn){
+    addrBtn.disabled = false;
+    addrBtn.classList.remove("btnDisabled");
+    addrBtn.textContent = "住所入力（登録／変更）";
+  }
+}
+
 
   syncBarHeight();
   window.addEventListener("resize", syncBarHeight);

@@ -6,7 +6,7 @@
       "type": "bubble",
       "hero": {
         "type": "image",
-        "url": "https://line-render-app-1.onrender.com/uploads/fukubako-2026.jpg
+        "url": "https://line-render-app-1.onrender.com/uploads/fukubako-2026.jpg",
         "size": "full",
         "aspectRatio": "1:1",
         "aspectMode": "cover"
@@ -25,7 +25,7 @@
           },
           {
             "type": "text",
-            "text": "数量限定・特別価格の\n「福箱」をご用意しました。",
+            "text": "数量限定・特別価格の\\n「福箱」をご用意しました。",
             "size": "sm",
             "wrap": true
           },

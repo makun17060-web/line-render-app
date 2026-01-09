@@ -28,6 +28,19 @@
     .muted{ color:var(--muted); font-size:13px; line-height:1.6; margin-top:8px; }
     .danger{ color:var(--danger); font-weight:900; }
 
+    /* ✅ 追加：注意ボックス */
+    .notice{
+      margin-top:10px;
+      padding:10px 12px;
+      border-radius:12px;
+      border:1px solid #fecaca;
+      background:#fff5f5;
+      color:#991b1b;
+      font-weight:900;
+      font-size:13px;
+      line-height:1.6;
+    }
+
     .card{
       background:var(--card);
       border:1px solid var(--line);
@@ -141,6 +154,11 @@
     <span class="pill">🎁 ここからだけ購入できます</span>
   </div>
 
+  <!-- ✅ 追加：2回目不可の注意（最上部） -->
+  <div class="notice" id="onceNotice">
+    ⚠️ 福箱は <b>お一人様1回限り</b> の商品です（2回目以降はご購入できません）
+  </div>
+
   <div class="muted" id="status">読み込み中…</div>
   <div id="mount"></div>
 </div>
@@ -244,7 +262,7 @@
   }
 
   // =========================
-  // LIFF（福箱ページは通常通り）
+  // LIFF
   // =========================
   async function ensureLiffUser(){
     await liff.init({ liffId: LIFF_ID_ORDER });
@@ -259,6 +277,23 @@
   }
 
   // =========================
+  // ✅ 追加：2回目購入チェック（サーバ判定）
+  // 期待レスポンス例:
+  //   { ok:true, allowed:true }
+  //   { ok:true, allowed:false, reason:"already_ordered" }
+  // =========================
+  async function checkAlreadyOrdered(uid){
+    try{
+      const r = await fetch(`/api/fukubako/status?userId=${encodeURIComponent(uid)}&productId=${encodeURIComponent(FUKUBAKO_ID)}`, { cache:"no-store" });
+      const d = await r.json().catch(()=>({}));
+      if(!r.ok || !d.ok) return { ok:false, allowed:true };
+      return d; // {ok, allowed, reason?}
+    }catch{
+      return { ok:false, allowed:true };
+    }
+  }
+
+  // =========================
   // DOM
   // =========================
   const statusEl = document.getElementById("status");
@@ -268,6 +303,7 @@
   const addrBtn  = document.getElementById("addrBtn");
   const nextBtn  = document.getElementById("nextBtn");
   const toastEl  = document.getElementById("toast");
+  const onceNotice = document.getElementById("onceNotice");
 
   function syncBarHeight(){
     const bar = document.querySelector(".bar");
@@ -281,7 +317,7 @@
     toastEl.textContent = msg || "カートに追加しました";
     toastEl.classList.add("show");
     clearTimeout(toastEl._t);
-    toastEl._t = setTimeout(()=> toastEl.classList.remove("show"), 700);
+    toastEl._t = setTimeout(()=> toastEl.classList.remove("show"), 800);
   }
 
   // =========================
@@ -292,15 +328,12 @@
   saveCart(cart);
 
   let product = null;
+  let allowedByServer = true; // ✅ サーバチェック結果
+  let alreadyReason = "";
 
   function updateFukubakoUiLock(){
-    if(!product) return;
-
-    const id = String(product.id||"").trim();
-    const inCart = cart.items.find(x => String(x.id||"").trim() === id)?.qty || 0;
-
     const card = mountEl.querySelector(".card");
-    if(!card) return;
+    if(!card || !product) return;
 
     const qInput = card.querySelector(".q");
     const decBtn = card.querySelector(".dec");
@@ -310,29 +343,41 @@
     // ✅ 数量は常に1固定（操作不可）
     if(qInput){
       qInput.value = "1";
-      qInput.min = "1";
-      qInput.max = "1";
       qInput.readOnly = true;
       qInput.disabled = true;
     }
     if(decBtn) decBtn.disabled = true;
     if(incBtn) incBtn.disabled = true;
 
-    // ✅ 既にカートに入ってたら追加できない
+    const stock = Number(product.stock ?? 0);
+
+    // ✅ サーバで2回目判定されたら完全ロック
+    if(!allowedByServer){
+      if(addBtn){
+        addBtn.disabled = true;
+        addBtn.textContent = "購入済み（2回目は不可）";
+      }
+      // カートも空にしておく（誤操作防止）
+      cart = { items: [] };
+      saveCart(cart);
+      renderSum();
+      return;
+    }
+
+    // ✅ 画面内は1個のみ（カートに入ってたら追加不可）
+    const id = String(product.id||"").trim();
+    const inCart = cart.items.find(x => String(x.id||"").trim() === id)?.qty || 0;
+
     if(addBtn){
-      if(inCart >= 1){
+      if(Number.isFinite(stock) && stock <= 0){
+        addBtn.disabled = true;
+        addBtn.textContent = "在庫なし";
+      }else if(inCart >= 1){
         addBtn.disabled = true;
         addBtn.textContent = "福箱は1人1つまで";
       }else{
-        // 在庫0表示のケースを壊さない
-        const stock = Number(product.stock ?? 0);
-        if(Number.isFinite(stock) && stock <= 0){
-          addBtn.disabled = true;
-          addBtn.textContent = "在庫なし";
-        }else{
-          addBtn.disabled = false;
-          addBtn.textContent = "カートに追加";
-        }
+        addBtn.disabled = false;
+        addBtn.textContent = "カートに追加";
       }
     }
   }
@@ -350,20 +395,18 @@
       <div class="sumAmount">${yen(subtotal)}</div>
       <div class="sumCount">（${count}点）</div>
     `;
-    nextBtn.classList.toggle("btnDisabled", count===0);
+    nextBtn.classList.toggle("btnDisabled", count===0 || !allowedByServer);
     syncBarHeight();
-
-    // ✅ UIロック更新
-    updateFukubakoUiLock();
   }
 
   function addToCart(){
     if(!product) return;
+    if(!allowedByServer){
+      alert("すでに福箱をご購入済みのため、今回はご注文できません。");
+      return;
+    }
     const id = String(product.id||"").trim();
-
-    // ✅ 福箱は必ず 1 個だけ（足し算しない）
-    cart.items = [{ id, qty: 1 }];
-
+    cart.items = [{ id, qty: 1 }]; // ✅ 必ず1個固定
     saveCart(cart);
     renderSum();
     updateFukubakoUiLock();
@@ -407,7 +450,7 @@
 
         <div class="muted" style="margin-top:10px;">
           ※このページは「福箱専用カート」です（通常商品とは混ざりません）<br>
-          ※福箱は <b>1人1つまで</b>（この画面でも固定しています）
+          ※福箱は <b>お一人様1回限り</b>（2回目以降はご購入できません）
         </div>
       </div>
     `;
@@ -415,7 +458,7 @@
     const im = el.querySelector("img");
     if(im) im.addEventListener("error", ()=> im.remove());
 
-    // ✅ 数量操作は無効（UIだけでなく実処理も固定）
+    // 数量操作は無効
     const q = el.querySelector(".q");
     const dec = el.querySelector(".dec");
     const inc = el.querySelector(".inc");
@@ -430,13 +473,7 @@
     if(inc) inc.disabled = true;
 
     const addBtn = el.querySelector(".add");
-    if(Number.isFinite(stock) && stock <= 0){
-      addBtn.disabled = true;
-      addBtn.textContent = "在庫なし";
-    }
-
     addBtn.onclick = ()=>{
-      // ✅ 福箱は1固定で追加（すでに入ってたらUIロックで押せない）
       addToCart();
       showToast("福箱をカートに入れました（1つのみ）");
     };
@@ -445,6 +482,10 @@
   }
 
   function goAddress(){
+    if(!allowedByServer){
+      alert("すでに福箱をご購入済みのため、今回はご注文できません。");
+      return;
+    }
     const ret = encodeURIComponent(RETURN_TO);
     const mode = encodeURIComponent(MODE);
     location.href = `/cod-register.html?returnTo=${ret}&mode=${mode}&liff.hback=2`;
@@ -453,8 +494,9 @@
   // =========================
   // start
   // =========================
+  let uid = "";
   try{
-    const uid = await ensureLiffUser();
+    uid = await ensureLiffUser();
     if(!uid){
       statusEl.innerHTML = '<span class="danger">LIFFログイン中…</span>';
       return;
@@ -464,13 +506,24 @@
     return;
   }
 
+  // ✅ 追加：サーバ側の「購入済み」チェック
+  const st = await checkAlreadyOrdered(uid);
+  if(st && st.ok && st.allowed === false){
+    allowedByServer = false;
+    alreadyReason = st.reason || "already_ordered";
+    statusEl.innerHTML = '<span class="danger">すでに福箱をご購入済みです（2回目は購入できません）</span>';
+    if(onceNotice) onceNotice.innerHTML = '⚠️ <b>ご購入済みのため</b>、今回は福箱をご注文いただけません（2回目不可）';
+  }else{
+    allowedByServer = true;
+  }
+
   syncBarHeight();
   window.addEventListener("resize", syncBarHeight);
 
   addrBtn.onclick = goAddress;
   nextBtn.onclick = ()=>{
     if(nextBtn.classList.contains("btnDisabled")){
-      alert("カートが空です");
+      alert(!allowedByServer ? "購入済みのため進めません" : "カートが空です");
       return;
     }
     goAddress();
@@ -481,6 +534,7 @@
     cart = { items: [] };
     saveCart(cart);
     renderSum();
+    updateFukubakoUiLock();
     showToast("カートを空にしました");
   };
 
@@ -501,10 +555,10 @@
       return;
     }
 
-    statusEl.textContent = "";
     mountEl.innerHTML = "";
     mountEl.appendChild(renderCard(product));
     renderSum();
+    updateFukubakoUiLock();
     syncBarHeight();
   }catch{
     statusEl.innerHTML = '<span class="danger">読み込み失敗：/api/products を確認してください</span>';

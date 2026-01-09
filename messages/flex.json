@@ -1,12 +1,12 @@
 [
   {
     "type": "flex",
-    "altText": "磯屋ミニアプリのご案内",
+    "altText": "【数量限定】磯屋の福箱のご案内",
     "contents": {
       "type": "bubble",
       "hero": {
         "type": "image",
-        "url": "https://line-render-app-1.onrender.com/public/uploads/1766470786708_akashi_item.jpg",
+        "url": "https://line-render-app-1.onrender.com/uploads/fukubako-2026.jpg
         "size": "full",
         "aspectRatio": "1:1",
         "aspectMode": "cover"
@@ -16,10 +16,47 @@
         "layout": "vertical",
         "spacing": "md",
         "contents": [
-          { "type": "text", "text": "手造りえびせんべい 磯屋", "weight": "bold", "size": "lg", "wrap": true },
-          { "type": "text", "text": "ミニアプリから簡単にご注文できます。見るだけでもOKです😊", "size": "sm", "color": "#666666", "wrap": true },
-          { "type": "separator", "margin": "md" },
-          { "type": "text", "text": "✔ 種類を選んで数量入力\n✔ 住所登録で次回からスムーズ", "size": "sm", "wrap": true }
+          {
+            "type": "text",
+            "text": "手造りえびせんべい 磯屋",
+            "weight": "bold",
+            "size": "lg",
+            "wrap": true
+          },
+          {
+            "type": "text",
+            "text": "数量限定・特別価格の\n「福箱」をご用意しました。",
+            "size": "sm",
+            "wrap": true
+          },
+          {
+            "type": "box",
+            "layout": "vertical",
+            "margin": "md",
+            "spacing": "sm",
+            "contents": [
+              {
+                "type": "text",
+                "text": "✔ 人気のえびせんべいを詰め合わせ",
+                "size": "sm",
+                "wrap": true
+              },
+              {
+                "type": "text",
+                "text": "✔ 何が入るかは届いてからのお楽しみ",
+                "size": "sm",
+                "wrap": true
+              },
+              {
+                "type": "text",
+                "text": "✔ お一人様1回限り",
+                "size": "sm",
+                "color": "#b91c1c",
+                "weight": "bold",
+                "wrap": true
+              }
+            ]
+          }
         ]
       },
       "footer": {
@@ -30,9 +67,19 @@
           {
             "type": "button",
             "style": "primary",
-            "action": { "type": "uri", "label": "ミニアプリを開く", "uri": "https://liff.line.me/2008406620-G5j1gjzM" }
+            "action": {
+              "type": "uri",
+              "label": "福箱を見てみる",
+              "uri": "https://liff.line.me/2008406620-yQFRswAu"
+            }
           },
-          { "type": "text", "text": "※在庫・受取方法は画面で確認できます", "size": "xs", "color": "#888888", "wrap": true }
+          {
+            "type": "text",
+            "text": "※ 数量限定・なくなり次第終了",
+            "size": "xs",
+            "color": "#6b7280",
+            "wrap": true
+          }
         ]
       }
     }

@@ -1,6 +1,9 @@
-// send_blast_once.js — コマンドだけで Text/Flex 切替版
+// send_blast_once.js — 福箱向け（未送信 + 未購入者だけ配信）Text/Flex 切替版
 // Run:
-//   SEGMENT_KEY=... MESSAGE_FILE=... node send_blast_once.js
+//   SEGMENT_KEY=... MESSAGE_FILE=... FUKUBAKO_ID=fukubako-2026 node send_blast_once.js
+// Optional:
+//   FUKUBAKO_URL="https://.../fukubako.html"   (Flex内リンク作成に使いたい場合)
+//   DRY_RUN=1  (送信せず対象件数だけ表示)
 // Requires: DATABASE_URL, LINE_CHANNEL_ACCESS_TOKEN
 //
 // MESSAGE_FILE の形式：
@@ -17,13 +20,20 @@ const fs = require("fs");
 const path = require("path");
 const { Pool } = require("pg");
 
-const SEGMENT_KEY = process.env.SEGMENT_KEY || "liff_200_blast_20251223";
-const TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
-const DBURL = process.env.DATABASE_URL;
-const MESSAGE_FILE = process.env.MESSAGE_FILE || ""; // ここが切替のキー
+const SEGMENT_KEY   = process.env.SEGMENT_KEY || "fukubako_blast_20260109";
+const TOKEN         = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+const DBURL         = process.env.DATABASE_URL;
+const MESSAGE_FILE  = process.env.MESSAGE_FILE || ""; // 外部JSON切替
+const DRY_RUN       = String(process.env.DRY_RUN || "").trim() === "1";
+
+// 福箱判定（商品ID）
+const FUKUBAKO_ID   = (process.env.FUKUBAKO_ID || "fukubako-2026").trim();
+// 使うなら（Flexのリンク埋め込みなど）
+const FUKUBAKO_URL  = (process.env.FUKUBAKO_URL || "").trim();
 
 if (!TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
 if (!DBURL) throw new Error("DATABASE_URL is required");
+if (!FUKUBAKO_ID) throw new Error("FUKUBAKO_ID is required");
 
 const pool = new Pool({
   connectionString: DBURL,
@@ -41,16 +51,17 @@ function mustString(x, name) {
   return x.trim();
 }
 
-// messages を外部JSONから読み込む（JS固定で切替）
+// messages を外部JSONから読み込む
 function loadMessages() {
   // MESSAGE_FILE 未指定ならデフォルト（テキスト）
   if (!MESSAGE_FILE) {
-    return [
-      {
-        type: "text",
-        text: "（デフォルト）テスト配信です。MESSAGE_FILEを指定すると内容を切替できます。",
-      },
-    ];
+    const text =
+`【福箱（数量限定）ご案内】
+お一人様1回限りの限定福箱です🎁
+こちらから購入できます👇
+${FUKUBAKO_URL || "（URL未設定：FUKUBAKO_URLを指定してください）"}`;
+
+    return [{ type: "text", text }];
   }
 
   const fp = path.resolve(process.cwd(), MESSAGE_FILE);
@@ -74,6 +85,7 @@ function loadMessages() {
     const m = msgs[i];
     if (!m || typeof m !== "object") throw new Error(`messages[${i}] must be an object`);
     const type = mustString(m.type, `messages[${i}].type`);
+
     if (type === "text") {
       mustString(m.text, `messages[${i}].text`);
     } else if (type === "flex") {
@@ -83,7 +95,6 @@ function loadMessages() {
       mustString(m.originalContentUrl, `messages[${i}].originalContentUrl`);
       mustString(m.previewImageUrl, `messages[${i}].previewImageUrl`);
     } else {
-      // 必要なら他のtypeも許可してOK。今は安全重視で拒否
       throw new Error(`Unsupported message type: ${type} (allowed: text, flex, image)`);
     }
   }
@@ -92,6 +103,7 @@ function loadMessages() {
 }
 
 async function lineMulticast(to, messages) {
+  // Node 18+ は fetch あり。無い環境なら node-fetch を入れる必要あり。
   const res = await fetch("https://api.line.me/v2/bot/message/multicast", {
     method: "POST",
     headers: {
@@ -106,14 +118,51 @@ async function lineMulticast(to, messages) {
   return text;
 }
 
+// ✅ 福箱購入済み判定（orders.items が jsonb）
+// - items が配列: [{id, qty, ...}, ...] でも
+// - items がオブジェクト: {items:[{id..}], ...} でも
+// 両方拾えるようにする
+function buildAlreadyBoughtSQL() {
+  // items が配列の場合：jsonb_array_elements(items)
+// items が {items:[...]} の場合：jsonb_array_elements(items->'items')
+  return `
+    SELECT DISTINCT o.user_id
+      FROM orders o
+     WHERE o.user_id IS NOT NULL
+       AND o.user_id <> ''
+       AND (
+         EXISTS (
+           SELECT 1
+             FROM jsonb_array_elements(
+               CASE
+                 WHEN jsonb_typeof(o.items) = 'array' THEN o.items
+                 WHEN jsonb_typeof(o.items) = 'object' AND jsonb_typeof(o.items->'items') = 'array' THEN o.items->'items'
+                 ELSE '[]'::jsonb
+               END
+             ) elem
+            WHERE (elem->>'id') = $1
+         )
+       )
+  `;
+}
+
 (async () => {
-  // ✅ messages を確定（ここでファイル読み込み）
   const messages = loadMessages();
+
   console.log(`SEGMENT_KEY=${SEGMENT_KEY}`);
   console.log(`MESSAGE_FILE=${MESSAGE_FILE || "(default)"}`);
+  console.log(`FUKUBAKO_ID=${FUKUBAKO_ID}`);
+  console.log(`DRY_RUN=${DRY_RUN ? "1" : "0"}`);
   console.log(`messages_count=${messages.length}, first_type=${messages[0]?.type}`);
 
-  // 未送信だけ取得（最大20000→500ずつ分割）
+  // ① まず「福箱を買ったことがある user_id」を取得
+  //    ※ ここで除外するので「2回目の人には配信されない」
+  const boughtSql = buildAlreadyBoughtSQL();
+  const bought = await pool.query(boughtSql, [FUKUBAKO_ID]);
+  const boughtSet = new Set(bought.rows.map(r => r.user_id).filter(Boolean));
+  console.log(`already_bought_users=${boughtSet.size}`);
+
+  // ② segment_blast から「未送信」を取得（最大20000）
   const { rows } = await pool.query(
     `
     SELECT user_id
@@ -126,11 +175,21 @@ async function lineMulticast(to, messages) {
     [SEGMENT_KEY]
   );
 
-  const ids = rows.map((r) => r.user_id).filter(Boolean);
-  console.log(`unsent targets=${ids.length}`);
+  const allTargets = rows.map(r => r.user_id).filter(Boolean);
+  console.log(`unsent_targets=${allTargets.length}`);
+
+  // ③ 既購入者を除外（福箱用）
+  const ids = allTargets.filter(uid => !boughtSet.has(uid));
+  console.log(`eligible_targets (exclude bought)=${ids.length}`);
 
   if (ids.length === 0) {
-    console.log("Nothing to send.");
+    console.log("Nothing to send (all unsent are already bought or empty).");
+    await pool.end();
+    return;
+  }
+
+  if (DRY_RUN) {
+    console.log("DRY_RUN=1 so not sending.");
     await pool.end();
     return;
   }

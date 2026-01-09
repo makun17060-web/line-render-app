@@ -2958,47 +2958,44 @@ async function onPostback(ev) {
 
     if (!userId) return;
 
-     if (kind === "sub") {
-  const days = mustInt(daysStr);
-  if (![30,45,60].includes(days)) {
-    await replyTextSafe(replyToken, "設定に失敗しました（間隔が不正です）。");
-    return;
-  }
+    if (kind === "sub") {
+      const days = mustInt(daysStr);
+      if (![30, 45, 60].includes(days)) {
+        await replyTextSafe(replyToken, "設定に失敗しました（間隔が不正です）。");
+        return;
+      }
 
-  try {
-    // interval は文字列で渡す（型衝突回避）
-    const intervalStr = `${days} days`;
+      try {
+        const intervalStr = `${days} days`;
 
-    await pool.query(
-      `
-      INSERT INTO reorder_reminders
-        (user_id, cycle_days, next_remind_at, last_order_id, active, updated_at)
-      VALUES
-        ($1, $2, now() + $3::interval, $4, true, now())
-      ON CONFLICT (user_id)
-      DO UPDATE SET
-        cycle_days     = EXCLUDED.cycle_days,
-        next_remind_at = EXCLUDED.next_remind_at,
-        last_order_id  = COALESCE(EXCLUDED.last_order_id, reorder_reminders.last_order_id),
-        active         = true,
-        updated_at     = now()
-      `,
-      [userId, days, intervalStr, orderId]
-    );
+        await pool.query(
+          `
+          INSERT INTO reorder_reminders
+            (user_id, cycle_days, next_remind_at, last_order_id, active, updated_at)
+          VALUES
+            ($1, $2, now() + $3::interval, $4, true, now())
+          ON CONFLICT (user_id)
+          DO UPDATE SET
+            cycle_days     = EXCLUDED.cycle_days,
+            next_remind_at = EXCLUDED.next_remind_at,
+            last_order_id  = COALESCE(EXCLUDED.last_order_id, reorder_reminders.last_order_id),
+            active         = true,
+            updated_at     = now()
+          `,
+          [userId, days, intervalStr, orderId]
+        );
 
-    // ✅ 「OK」などの肯定文言を使わない
-    await replyTextSafe(
-      replyToken,
-      `${days}日ごとのご案内を設定しました。\n（いつでも解除できます）`
-    );
-  } catch (e) {
-    logErr("reorder subscribe failed", e?.message || e);
-    await replyTextSafe(replyToken, "設定に失敗しました。時間をおいてお試しください。");
-  }
-  return;
-}
-
-
+        // ✅ 「OK」など肯定語は使わない
+        await replyTextSafe(
+          replyToken,
+          `${days}日ごとのご案内を設定しました。\n（いつでも解除できます）`
+        );
+      } catch (e) {
+        logErr("reorder subscribe failed", e?.message || e);
+        await replyTextSafe(replyToken, "設定に失敗しました。時間をおいてお試しください。");
+      }
+      return;
+    }
 
     if (kind === "unsub") {
       try {
@@ -3006,7 +3003,9 @@ async function onPostback(ev) {
           `UPDATE reorder_reminders SET active=false, updated_at=now() WHERE user_id=$1`,
           [userId]
         );
-        await replyTextSafe(replyToken, "OK！次回のご案内を停止しました。");
+
+        // ✅ OK を消す
+        await replyTextSafe(replyToken, "次回のご案内を停止しました。");
       } catch (e) {
         logErr("reorder unsubscribe failed", e?.message || e);
         await replyTextSafe(replyToken, "解除に失敗しました。時間をおいてお試しください。");
@@ -3015,6 +3014,7 @@ async function onPostback(ev) {
     }
   }
 }
+
 
 async function onTextMessage(ev) {
   const userId = ev?.source?.userId || "";

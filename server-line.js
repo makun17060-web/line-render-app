@@ -1959,6 +1959,137 @@ app.post("/api/admin/segment/send", requireAdmin, async (req, res) => {
     res.status(500).send("failed");
   }
 });
+/* =========================
+ * Admin：福箱 新規友だち自動配信（cron用）
+ * - 対象抽出：users.created_at が直近 lookback_hours 以内
+ * - 二重送信防止：segment_blast に segment_key を記録
+ * - 送信成功した userId だけ記録（失敗は記録しない）
+ * - segment_key はデフォルトで日付入り：fukubako_new_friend_YYYYMMDD
+ * ========================= */
+
+function ymdJst() {
+  const d = new Date();
+  const parts = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(d);
+  const get = (t) => parts.find(p => p.type === t)?.value || "";
+  return `${get("year")}${get("month")}${get("day")}`; // YYYYMMDD
+}
+
+function buildFukubakoMessage() {
+  // 福箱の案内文（自由に編集OK）
+  // できれば福箱専用LIFF/URLがあればここに入れる
+  const orderUrl =
+    (LIFF_ID_ORDER ? `https://liff.line.me/${LIFF_ID_ORDER}` :
+     (LIFF_BASE ? `${LIFF_BASE}/products.html` : ""));
+
+  const fukuName = "福箱";
+  const note =
+    `🎁 ${fukuName}のご案内\n\n` +
+    `友だち追加ありがとうございます！\n` +
+    `数量限定の「福箱」を受付中です。\n\n` +
+    `ご注文はこちら：\n${orderUrl || "（注文URL未設定）"}\n\n` +
+    `※在庫がなくなり次第終了です。`;
+
+  return note;
+}
+
+/**
+ * POST /api/admin/fukubako/send-new-friends
+ * body:
+ *  - lookback_hours: number (default 24)
+ *  - limit: number (default 200)
+ *  - segment_key: string (optional) 例: fukubako_open1
+ *  - dry_run: 1 | 0 (optional) 送信せず件数だけ見る
+ */
+app.post("/api/admin/fukubako/send-new-friends", requireAdmin, async (req, res) => {
+  try {
+    const lookbackHours = Math.min(24 * 30, Math.max(1, Number(req.body?.lookback_hours || 24)));
+    const limit = Math.min(1000, Math.max(1, Number(req.body?.limit || 200)));
+    const dryRun = String(req.body?.dry_run || "0") === "1";
+
+    // segment_key（送信済み判定のキー）
+    // デフォルト：日付ごとに一回だけ送る
+    const defaultSegKey = `fukubako_new_friend_${ymdJst()}`;
+    const segmentKey = String(req.body?.segment_key || defaultSegKey).trim() || defaultSegKey;
+
+    // 抽出：直近lookbackHours以内に users に入った人
+    // 送信済み（segment_blast）を除外
+    const r = await pool.query(
+      `
+      WITH targets AS (
+        SELECT u.user_id
+        FROM users u
+        WHERE u.user_id IS NOT NULL AND u.user_id <> ''
+          AND u.created_at >= now() - ($1::text || ' hours')::interval
+      )
+      SELECT t.user_id
+      FROM targets t
+      LEFT JOIN segment_blast sb
+        ON sb.segment_key = $2 AND sb.user_id = t.user_id
+      WHERE sb.user_id IS NULL
+      ORDER BY t.user_id
+      LIMIT $3
+      `,
+      [String(lookbackHours), segmentKey, limit]
+    );
+
+    const targets = (r.rows || []).map(x => x.user_id).filter(Boolean);
+
+    // dry_run は送らない
+    if (dryRun) {
+      return res.json({
+        ok: true,
+        segment_key: segmentKey,
+        lookback_hours: lookbackHours,
+        due: targets.length,
+        sent: 0,
+        dry_run: true,
+        sample: targets.slice(0, 5),
+      });
+    }
+
+    const text = buildFukubakoMessage();
+
+    let sent = 0;
+    let failed = 0;
+
+    for (const uid of targets) {
+      try {
+        await lineClient.pushMessage(uid, { type: "text", text });
+
+        // 送信成功したら blast 記録（重複防止）
+        await pool.query(
+          `
+          INSERT INTO segment_blast (segment_key, user_id, created_at)
+          VALUES ($1, $2, now())
+          ON CONFLICT (segment_key, user_id) DO NOTHING
+          `,
+          [segmentKey, uid]
+        );
+
+        sent++;
+      } catch (e) {
+        failed++;
+        logErr("fukubako push failed", uid, e?.message || e);
+        // 失敗は記録しない（再試行できる）
+      }
+    }
+
+    res.json({
+      ok: true,
+      segment_key: segmentKey,
+      lookback_hours: lookbackHours,
+      due: targets.length,
+      sent,
+      failed,
+    });
+  } catch (e) {
+    logErr("[api/admin/fukubako/send-new-friends] failed", e?.message || e);
+    res.status(500).json({ ok: false, error: "failed" });
+  }
+});
 
 /* =========================
  * 送料見積り（住所未登録でもOK）

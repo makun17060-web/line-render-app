@@ -1,19 +1,21 @@
-// send_blast_once.js — 福箱向け（未送信 + 未購入者だけ配信）Text/Flex 切替版
-//  + 友だち追加N日後 自動名簿追加（AUTO_ROSTER_3D）
-//  + 直近N日クールダウン除外（COOLDOWN_DAYS / fukubako%）
-//
-// Run (cron想定):
-//   SEGMENT_KEY=fukubako_3d AUTO_ROSTER_3D=1 FIRST_SEEN_DAYS=3 COOLDOWN_DAYS=7 node send_blast_once.js
-//
+// send_blast_once.js — 福箱向け（名簿自動追加 + 未送信 + 未購入 + 「一人1回のみ」永久除外）Text/Flex 切替版
+// Run:
+//   SEGMENT_KEY=... MESSAGE_FILE=... FUKUBAKO_ID=fukubako-2026 node send_blast_once.js
 // Optional:
-//   MESSAGE_FILE=./messages/flex.json  (外部JSON切替)
-//   FUKUBAKO_ID=fukubako-2026
-//   FUKUBAKO_URL="https://.../fukubako.html"
-//   DRY_RUN=1
-//   ROSTER_LIMIT=50000
-//   COOLDOWN_PREFIX=fukubako          (デフォルト: fukubako -> fukubako% を除外)
-//
+//   FUKUBAKO_URL="https://.../fukubako.html"   (Flex内リンク作成に使いたい場合)
+//   DRY_RUN=1  (送信せず対象件数だけ表示)
+//   AUTO_ROSTER_3D=1 FIRST_SEEN_DAYS=3  (3日経過した友だちを名簿に入れる)
+//   ONCE_ONLY=1  (デフォルト1。fukubako%に sent_at が1回でもあれば永久除外＝再送なし)
+//   ONCE_PREFIX=fukubako  (デフォルトfukubako。過去送信の判定に使うプレフィックス)
 // Requires: DATABASE_URL, LINE_CHANNEL_ACCESS_TOKEN
+//
+// MESSAGE_FILE の形式：
+//   - JSON配列: [ {message}, {message} ... ]
+//   - または: { "messages": [ ... ] }
+//
+// 例:
+//   MESSAGE_FILE=./messages/text.json
+//   MESSAGE_FILE=./messages/flex.json
 
 "use strict";
 
@@ -24,36 +26,45 @@ const { Pool } = require("pg");
 const SEGMENT_KEY   = (process.env.SEGMENT_KEY || "fukubako_3d").trim();
 const TOKEN         = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 const DBURL         = process.env.DATABASE_URL;
-const MESSAGE_FILE  = process.env.MESSAGE_FILE || ""; // 外部JSON切替
+
+const MESSAGE_FILE  = (process.env.MESSAGE_FILE || "./messages/flex.json").trim(); // 既定：flex.json
 const DRY_RUN       = String(process.env.DRY_RUN || "").trim() === "1";
 
-// ✅ 友だち追加N日後の名簿追加
-const AUTO_ROSTER_3D  = String(process.env.AUTO_ROSTER_3D || "").trim() === "1";
+const AUTO_ROSTER_3D = String(process.env.AUTO_ROSTER_3D || "").trim() === "1";
 const FIRST_SEEN_DAYS = Number(process.env.FIRST_SEEN_DAYS || 3);
-const ROSTER_LIMIT    = Number(process.env.ROSTER_LIMIT || 50000);
 
-// ✅ クールダウン（直近N日に福箱系を送った人を除外）
-const COOLDOWN_DAYS   = Number(process.env.COOLDOWN_DAYS || 0);
-// prefix だけ指定しておいて ILIKE 'prefix%' にする
-const COOLDOWN_PREFIX = (process.env.COOLDOWN_PREFIX || "fukubako").trim();
-
-// 福箱判定（商品ID）
 const FUKUBAKO_ID   = (process.env.FUKUBAKO_ID || "fukubako-2026").trim();
-// 使うなら（Flexのリンク埋め込みなど）
 const FUKUBAKO_URL  = (process.env.FUKUBAKO_URL || "").trim();
+
+// ✅ 一人1回のみ（再送なし）
+// - デフォルトON（ONCE_ONLY=1）
+const ONCE_ONLY = String(process.env.ONCE_ONLY || "1").trim() !== "0";
+const ONCE_PREFIX = (process.env.ONCE_PREFIX || "fukubako").trim(); // fukubako%
 
 if (!TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
 if (!DBURL) throw new Error("DATABASE_URL is required");
 if (!FUKUBAKO_ID) throw new Error("FUKUBAKO_ID is required");
-if (!SEGMENT_KEY) throw new Error("SEGMENT_KEY is required");
-if (!Number.isFinite(FIRST_SEEN_DAYS) || FIRST_SEEN_DAYS <= 0) throw new Error("FIRST_SEEN_DAYS must be a positive number");
-if (!Number.isFinite(ROSTER_LIMIT) || ROSTER_LIMIT <= 0) throw new Error("ROSTER_LIMIT must be a positive number");
-if (!Number.isFinite(COOLDOWN_DAYS) || COOLDOWN_DAYS < 0) throw new Error("COOLDOWN_DAYS must be >= 0");
 
 const pool = new Pool({
   connectionString: DBURL,
   ssl: { rejectUnauthorized: false },
 });
+
+// Node 18+ は fetch あり。無い環境なら node-fetch を入れる必要あり。
+async function lineMulticast(to, messages) {
+  const res = await fetch("https://api.line.me/v2/bot/message/multicast", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${TOKEN}`,
+    },
+    body: JSON.stringify({ to, messages }),
+  });
+
+  const text = await res.text();
+  if (!res.ok) throw new Error(`LINE multicast failed: ${res.status} ${text}`);
+  return text;
+}
 
 function chunk(arr, size) {
   const out = [];
@@ -64,6 +75,12 @@ function chunk(arr, size) {
 function mustString(x, name) {
   if (typeof x !== "string" || x.trim() === "") throw new Error(`${name} must be a non-empty string`);
   return x.trim();
+}
+
+// ✅ LINE userId 妥当性チェック（事故防止）
+function isValidLineUserId(uid) {
+  // LINE userId は通常 "U" + 32桁hex（計33文字）
+  return typeof uid === "string" && /^U[0-9a-f]{32}$/i.test(uid.trim());
 }
 
 // messages を外部JSONから読み込む
@@ -117,88 +134,32 @@ ${FUKUBAKO_URL || "（URL未設定：FUKUBAKO_URLを指定してください）"
   return msgs;
 }
 
-async function lineMulticast(to, messages) {
-  const res = await fetch("https://api.line.me/v2/bot/message/multicast", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${TOKEN}`,
-    },
-    body: JSON.stringify({ to, messages }),
-  });
-
-  const text = await res.text();
-  if (!res.ok) throw new Error(`LINE multicast failed: ${res.status} ${text}`);
-  return text;
-}
-
 // ✅ 福箱購入済み判定（orders.items が jsonb）
+// - items が配列: [{id, qty, ...}, ...] でも
+// - items がオブジェクト: {items:[{id..}], ...} でも
+// 両方拾えるようにする
 function buildAlreadyBoughtSQL() {
   return `
     SELECT DISTINCT o.user_id
       FROM orders o
      WHERE o.user_id IS NOT NULL
        AND o.user_id <> ''
-       AND (
-         EXISTS (
-           SELECT 1
-             FROM jsonb_array_elements(
-               CASE
-                 WHEN jsonb_typeof(o.items) = 'array' THEN o.items
-                 WHEN jsonb_typeof(o.items) = 'object' AND jsonb_typeof(o.items->'items') = 'array' THEN o.items->'items'
-                 ELSE '[]'::jsonb
-               END
-             ) elem
-            WHERE (elem->>'id') = $1
-         )
+       AND EXISTS (
+         SELECT 1
+           FROM jsonb_array_elements(
+             CASE
+               WHEN jsonb_typeof(o.items) = 'array' THEN o.items
+               WHEN jsonb_typeof(o.items) = 'object' AND jsonb_typeof(o.items->'items') = 'array' THEN o.items->'items'
+               ELSE '[]'::jsonb
+             END
+           ) elem
+          WHERE (elem->>'id') = $1
        )
   `;
 }
 
-// ✅ 友だち追加から N 日経過した人を名簿（segment_blast）へ追加
-async function backfillRosterByFirstSeenDays() {
-  const cnt = await pool.query(
-    `
-    SELECT COUNT(*)::int AS n
-      FROM segment_users su
-     WHERE su.user_id IS NOT NULL
-       AND su.user_id <> ''
-       AND su.first_seen <= NOW() - ($1 || ' days')::interval
-    `,
-    [String(FIRST_SEEN_DAYS)]
-  );
-
-  const n = cnt.rows?.[0]?.n ?? 0;
-  console.log(`roster_candidates_by_first_seen=${n} (days=${FIRST_SEEN_DAYS})`);
-
-  if (n > ROSTER_LIMIT) {
-    throw new Error(`Roster candidates too many: ${n} > ROSTER_LIMIT=${ROSTER_LIMIT} (safety stop)`);
-  }
-
-  const r = await pool.query(
-    `
-    INSERT INTO segment_blast (segment_key, user_id, created_at)
-    SELECT $1, su.user_id, NOW()
-      FROM segment_users su
-     WHERE su.user_id IS NOT NULL
-       AND su.user_id <> ''
-       AND su.first_seen <= NOW() - ($2 || ' days')::interval
-    ON CONFLICT (segment_key, user_id) DO NOTHING
-    `,
-    [SEGMENT_KEY, String(FIRST_SEEN_DAYS)]
-  );
-
-  console.log(`roster_inserted=${r.rowCount} (segment_key=${SEGMENT_KEY})`);
-}
-
-// ✅ クールダウン除外（直近N日に fukubako% を送った user_id を集める）
-async function loadCooldownUsers() {
-  if (!COOLDOWN_DAYS || COOLDOWN_DAYS <= 0) return new Set();
-
-  // prefix が空なら安全のため無効化
-  if (!COOLDOWN_PREFIX) return new Set();
-
-  const likePattern = `${COOLDOWN_PREFIX}%`;
+// ✅ 「福箱を過去に1回でも送った人」永久除外（再送なし）
+async function loadEverSentSet(prefix) {
   const { rows } = await pool.query(
     `
     SELECT DISTINCT user_id
@@ -206,12 +167,38 @@ async function loadCooldownUsers() {
      WHERE user_id IS NOT NULL
        AND user_id <> ''
        AND segment_key ILIKE $1
-       AND sent_at >= NOW() - ($2 || ' days')::interval
+       AND sent_at IS NOT NULL
     `,
-    [likePattern, String(COOLDOWN_DAYS)]
+    [`${prefix}%`]
+  );
+  return new Set(rows.map(r => r.user_id).filter(Boolean));
+}
+
+// ✅ 3日経過した友だちを名簿に入れる（送信は別）
+async function autoRosterByFirstSeen(days) {
+  const d = Number(days);
+  if (!Number.isFinite(d) || d <= 0) throw new Error(`FIRST_SEEN_DAYS invalid: ${days}`);
+
+  // segment_users.first_seen を基準に、未追加の人だけ segment_blast に入れる
+  const r = await pool.query(
+    `
+    WITH cand AS (
+      SELECT su.user_id
+      FROM segment_users su
+      WHERE su.user_id IS NOT NULL
+        AND su.user_id <> ''
+        AND su.first_seen <= NOW() - ($2::text || ' days')::interval
+    )
+    INSERT INTO segment_blast (segment_key, user_id, created_at)
+    SELECT $1, c.user_id, NOW()
+    FROM cand c
+    ON CONFLICT (segment_key, user_id) DO NOTHING
+    RETURNING user_id
+    `,
+    [SEGMENT_KEY, String(d)]
   );
 
-  return new Set(rows.map(r => r.user_id));
+  return r.rowCount || 0;
 }
 
 (async () => {
@@ -222,26 +209,37 @@ async function loadCooldownUsers() {
   console.log(`FUKUBAKO_ID=${FUKUBAKO_ID}`);
   console.log(`FUKUBAKO_URL=${FUKUBAKO_URL || "(none)"}`);
   console.log(`DRY_RUN=${DRY_RUN ? "1" : "0"}`);
+
   console.log(`AUTO_ROSTER_3D=${AUTO_ROSTER_3D ? "1" : "0"} FIRST_SEEN_DAYS=${FIRST_SEEN_DAYS}`);
-  console.log(`COOLDOWN_DAYS=${COOLDOWN_DAYS} COOLDOWN_PREFIX=${COOLDOWN_PREFIX || "(none)"}`);
+  console.log(`ONCE_ONLY=${ONCE_ONLY ? "1" : "0"} ONCE_PREFIX=${ONCE_PREFIX}`);
   console.log(`messages_count=${messages.length}, first_type=${messages[0]?.type}`);
 
-  // 0) ✅ 先に名簿追加（必要なときだけ）
+  // 0) AUTO_ROSTER（3日経過を名簿へ）
   if (AUTO_ROSTER_3D) {
-    await backfillRosterByFirstSeenDays();
+    const cand = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM segment_users su WHERE su.first_seen <= NOW() - ($1::text || ' days')::interval`,
+      [String(FIRST_SEEN_DAYS)]
+    );
+    console.log(`roster_candidates_by_first_seen=${cand.rows?.[0]?.n ?? "?"} (days=${FIRST_SEEN_DAYS})`);
+
+    const inserted = await autoRosterByFirstSeen(FIRST_SEEN_DAYS);
+    console.log(`roster_inserted=${inserted} (segment_key=${SEGMENT_KEY})`);
   }
 
-  // 0.5) ✅ クールダウン対象をロード
-  const cooldownSet = await loadCooldownUsers();
-  console.log(`cooldown_excluded_users=${cooldownSet.size}`);
-
-  // ① まず「福箱を買ったことがある user_id」を取得
+  // 1) 福箱購入済み user を取得（除外用）
   const boughtSql = buildAlreadyBoughtSQL();
   const bought = await pool.query(boughtSql, [FUKUBAKO_ID]);
   const boughtSet = new Set(bought.rows.map(r => r.user_id).filter(Boolean));
   console.log(`already_bought_users=${boughtSet.size}`);
 
-  // ② segment_blast から「未送信」を取得（最大20000）
+  // 2) 一人1回のみ：過去に福箱（ONCE_PREFIX%）を送った user を取得（永久除外）
+  let everSentSet = new Set();
+  if (ONCE_ONLY) {
+    everSentSet = await loadEverSentSet(ONCE_PREFIX);
+    console.log(`ever_sent_excluded_users=${everSentSet.size}`);
+  }
+
+  // 3) segment_blast から「未送信」を取得（最大20000）
   const { rows } = await pool.query(
     `
     SELECT user_id
@@ -257,12 +255,33 @@ async function loadCooldownUsers() {
   const allTargets = rows.map(r => r.user_id).filter(Boolean);
   console.log(`unsent_targets=${allTargets.length}`);
 
-  // ③ 既購入者 & クールダウン対象を除外（福箱用）
-  const ids = allTargets.filter(uid => !boughtSet.has(uid) && !cooldownSet.has(uid));
-  console.log(`eligible_targets (exclude bought + cooldown)=${ids.length}`);
+  // 4) 既購入者・既送信者（永久）を除外
+  let ids = allTargets.filter(uid => !boughtSet.has(uid));
+  if (ONCE_ONLY) ids = ids.filter(uid => !everSentSet.has(uid));
 
-  if (ids.length === 0) {
-    console.log("Nothing to send (eligible_targets=0).");
+  // 5) 不正userId（TEST_USERなど）を除外して落ちないようにする
+  const invalid = ids.filter(uid => !isValidLineUserId(String(uid).trim()));
+  const valid = ids.filter(uid => isValidLineUserId(String(uid).trim()));
+
+  console.log(`eligible_targets (exclude bought${ONCE_ONLY ? " + ever_sent" : ""})=${ids.length}`);
+  console.log(`valid_targets=${valid.length} invalid_targets=${invalid.length}`);
+  if (invalid.length) {
+    console.log(`invalid_sample=${invalid.slice(0, 5).join(",")}`);
+
+    // DBに記録（次回以降も原因追跡できる）
+    await pool.query(
+      `
+      UPDATE segment_blast
+         SET last_error = $3
+       WHERE segment_key = $1
+         AND user_id = ANY($2::text[])
+      `,
+      [SEGMENT_KEY, invalid, "INVALID_LINE_USER_ID (filtered before multicast)"]
+    );
+  }
+
+  if (valid.length === 0) {
+    console.log("Nothing to send (no valid targets after filters).");
     await pool.end();
     return;
   }
@@ -273,7 +292,7 @@ async function loadCooldownUsers() {
     return;
   }
 
-  const batches = chunk(ids, 500); // multicastは最大500
+  const batches = chunk(valid, 500); // multicastは最大500
   let sent = 0;
   let failed = 0;
 
@@ -308,6 +327,7 @@ async function loadCooldownUsers() {
       );
     }
 
+    // レート対策（軽く間隔）
     await new Promise((r) => setTimeout(r, 200));
   }
 

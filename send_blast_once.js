@@ -1,18 +1,18 @@
-// send_blast_once.js — 福箱向け（未送信 + 未購入者だけ配信）Text/Flex 切替版
-// Run:
+// send_blast_once.js — 福箱向け（未送信 + 未購入者だけ配信）Text/Flex 切替版 + 3日後自動名簿追加
+// Run (cron想定):
+//   SEGMENT_KEY=fukubako_3d AUTO_ROSTER_3D=1 node send_blast_once.js
+//
+// 従来どおり手動でもOK:
 //   SEGMENT_KEY=... MESSAGE_FILE=... FUKUBAKO_ID=fukubako-2026 node send_blast_once.js
+//
 // Optional:
 //   FUKUBAKO_URL="https://.../fukubako.html"   (Flex内リンク作成に使いたい場合)
 //   DRY_RUN=1  (送信せず対象件数だけ表示)
+//   AUTO_ROSTER_3D=1  (友だち追加3日後を自動で名簿追加する)
+//   FIRST_SEEN_DAYS=3 (デフォルト3日。4にしたければ4)
+//   ROSTER_LIMIT=50000 (名簿追加の上限：保険)
+//
 // Requires: DATABASE_URL, LINE_CHANNEL_ACCESS_TOKEN
-//
-// MESSAGE_FILE の形式：
-//   - JSON配列: [ {message}, {message} ... ]
-//   - または: { "messages": [ ... ] }
-//
-// 例:
-//   MESSAGE_FILE=./messages/text.json
-//   MESSAGE_FILE=./messages/flex.json
 
 "use strict";
 
@@ -20,11 +20,16 @@ const fs = require("fs");
 const path = require("path");
 const { Pool } = require("pg");
 
-const SEGMENT_KEY   = process.env.SEGMENT_KEY || "fukubako_blast_20260109";
+const SEGMENT_KEY   = process.env.SEGMENT_KEY || "fukubako_3d";
 const TOKEN         = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 const DBURL         = process.env.DATABASE_URL;
 const MESSAGE_FILE  = process.env.MESSAGE_FILE || ""; // 外部JSON切替
 const DRY_RUN       = String(process.env.DRY_RUN || "").trim() === "1";
+
+// ✅ 友だち追加3日後の名簿追加をこのJSでやる
+const AUTO_ROSTER_3D = String(process.env.AUTO_ROSTER_3D || "").trim() === "1";
+const FIRST_SEEN_DAYS = Number(process.env.FIRST_SEEN_DAYS || 3);
+const ROSTER_LIMIT = Number(process.env.ROSTER_LIMIT || 50000);
 
 // 福箱判定（商品ID）
 const FUKUBAKO_ID   = (process.env.FUKUBAKO_ID || "fukubako-2026").trim();
@@ -34,6 +39,9 @@ const FUKUBAKO_URL  = (process.env.FUKUBAKO_URL || "").trim();
 if (!TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
 if (!DBURL) throw new Error("DATABASE_URL is required");
 if (!FUKUBAKO_ID) throw new Error("FUKUBAKO_ID is required");
+if (!SEGMENT_KEY) throw new Error("SEGMENT_KEY is required");
+if (!Number.isFinite(FIRST_SEEN_DAYS) || FIRST_SEEN_DAYS <= 0) throw new Error("FIRST_SEEN_DAYS must be a positive number");
+if (!Number.isFinite(ROSTER_LIMIT) || ROSTER_LIMIT <= 0) throw new Error("ROSTER_LIMIT must be a positive number");
 
 const pool = new Pool({
   connectionString: DBURL,
@@ -103,7 +111,6 @@ ${FUKUBAKO_URL || "（URL未設定：FUKUBAKO_URLを指定してください）"
 }
 
 async function lineMulticast(to, messages) {
-  // Node 18+ は fetch あり。無い環境なら node-fetch を入れる必要あり。
   const res = await fetch("https://api.line.me/v2/bot/message/multicast", {
     method: "POST",
     headers: {
@@ -119,12 +126,7 @@ async function lineMulticast(to, messages) {
 }
 
 // ✅ 福箱購入済み判定（orders.items が jsonb）
-// - items が配列: [{id, qty, ...}, ...] でも
-// - items がオブジェクト: {items:[{id..}], ...} でも
-// 両方拾えるようにする
 function buildAlreadyBoughtSQL() {
-  // items が配列の場合：jsonb_array_elements(items)
-// items が {items:[...]} の場合：jsonb_array_elements(items->'items')
   return `
     SELECT DISTINCT o.user_id
       FROM orders o
@@ -146,17 +148,61 @@ function buildAlreadyBoughtSQL() {
   `;
 }
 
+// ✅ 友だち追加から N 日経過した人を名簿（segment_blast）へ追加
+async function backfillRosterByFirstSeenDays() {
+  // segment_users.first_seen がある前提（あなたのSQLと同じ）
+  // 既に segment_blast に存在する人は ON CONFLICT で無視
+  const sql = `
+    INSERT INTO segment_blast (segment_key, user_id, created_at)
+    SELECT $1, su.user_id, NOW()
+      FROM segment_users su
+     WHERE su.user_id IS NOT NULL
+       AND su.user_id <> ''
+       AND su.first_seen <= NOW() - ($2 || ' days')::interval
+    ON CONFLICT (segment_key, user_id) DO NOTHING
+  `;
+
+  // 上限（爆増保険）: 追加件数を見たいので、追加前に候補数を数える
+  const cnt = await pool.query(
+    `
+    SELECT COUNT(*)::int AS n
+      FROM segment_users su
+     WHERE su.user_id IS NOT NULL
+       AND su.user_id <> ''
+       AND su.first_seen <= NOW() - ($1 || ' days')::interval
+    `,
+    [String(FIRST_SEEN_DAYS)]
+  );
+
+  const n = cnt.rows?.[0]?.n ?? 0;
+  console.log(`roster_candidates_by_first_seen=${n} (days=${FIRST_SEEN_DAYS})`);
+
+  if (n > ROSTER_LIMIT) {
+    throw new Error(`Roster candidates too many: ${n} > ROSTER_LIMIT=${ROSTER_LIMIT} (safety stop)`);
+  }
+
+  const r = await pool.query(sql, [SEGMENT_KEY, String(FIRST_SEEN_DAYS)]);
+  // pg は INSERT の件数を rowCount で返す
+  console.log(`roster_inserted=${r.rowCount} (segment_key=${SEGMENT_KEY})`);
+}
+
 (async () => {
   const messages = loadMessages();
 
   console.log(`SEGMENT_KEY=${SEGMENT_KEY}`);
   console.log(`MESSAGE_FILE=${MESSAGE_FILE || "(default)"}`);
   console.log(`FUKUBAKO_ID=${FUKUBAKO_ID}`);
+  console.log(`FUKUBAKO_URL=${FUKUBAKO_URL || "(none)"}`);
   console.log(`DRY_RUN=${DRY_RUN ? "1" : "0"}`);
+  console.log(`AUTO_ROSTER_3D=${AUTO_ROSTER_3D ? "1" : "0"} FIRST_SEEN_DAYS=${FIRST_SEEN_DAYS}`);
   console.log(`messages_count=${messages.length}, first_type=${messages[0]?.type}`);
 
+  // 0) ✅ 先に名簿追加（必要なときだけ）
+  if (AUTO_ROSTER_3D) {
+    await backfillRosterByFirstSeenDays();
+  }
+
   // ① まず「福箱を買ったことがある user_id」を取得
-  //    ※ ここで除外するので「2回目の人には配信されない」
   const boughtSql = buildAlreadyBoughtSQL();
   const bought = await pool.query(boughtSql, [FUKUBAKO_ID]);
   const boughtSet = new Set(bought.rows.map(r => r.user_id).filter(Boolean));
@@ -229,7 +275,6 @@ function buildAlreadyBoughtSQL() {
       );
     }
 
-    // レート対策（軽く間隔）
     await new Promise((r) => setTimeout(r, 200));
   }
 

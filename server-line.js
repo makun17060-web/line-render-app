@@ -1870,6 +1870,160 @@ app.post("/api/admin/reorder/send-due", requireAdmin, async (req, res) => {
     res.status(500).json({ ok:false, error:"failed" });
   }
 });
+/* =========================
+ * Admin：友だち追加（follow）3日後に福箱案内を配信
+ * - follow_events を基準に抽出
+ * - segment_blast へ記録して重複配信防止
+ * - dry_run 対応
+ *
+ * 叩き方（例）
+ * curl -sS --fail-with-body -X POST "https://YOUR.onrender.com/api/admin/fukubako/send-follow-plus-3d" \
+ *  -H "Content-Type: application/json" \
+ *  -H "x-admin-token: XXXXX" \
+ *  -d '{"limit":200,"dry_run":true}'
+ * ========================= */
+
+function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+// 福箱案内メッセージ（必要ならここを好きに編集）
+function buildFukubakoIntroMessage() {
+  const orderUrl =
+    (LIFF_ID_ORDER ? `https://liff.line.me/${LIFF_ID_ORDER}` :
+     (LIFF_BASE ? `${LIFF_BASE}/products.html` : ""));
+
+  // 福箱ページが別LIFFならここを福箱専用URLにしてOK
+  return (
+    "【福箱のご案内】\n" +
+    "友だち追加ありがとうございます！\n\n" +
+    "数量限定の福箱をご用意しています。\n" +
+    "よろしければ下からご覧ください。\n\n" +
+    (orderUrl ? `${orderUrl}\n\n` : "") +
+    "※在庫がなくなり次第終了です。"
+  );
+}
+
+// follow_events の列名ゆれに対応（created_at / followed_at など）
+async function detectFollowEventsTimestampColumn() {
+  const r = await pool.query(`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema='public'
+      AND table_name='follow_events'
+  `);
+  const cols = r.rows.map(x => String(x.column_name));
+  if (cols.includes("followed_at")) return "followed_at";
+  if (cols.includes("created_at"))  return "created_at";
+  if (cols.includes("event_time"))  return "event_time";
+  // 最後の保険
+  return "created_at";
+}
+
+app.post("/api/admin/fukubako/send-follow-plus-3d", requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(2000, Math.max(1, Number(req.body?.limit || 200)));
+    const dryRun = String(req.body?.dry_run || req.body?.dryRun || "0") === "1" || req.body?.dry_run === true;
+
+    // 3日後配信なので、毎日1回叩く前提で「3日前の1日分」を拾う
+    // 例：毎日10:00に叩くなら、(今 - 4日)〜(今 - 3日) の範囲を対象にするとズレに強い
+    const windowHours = Math.min(72, Math.max(1, Number(req.body?.window_hours || 24))); // デフォは24h分
+    const tsCol = await detectFollowEventsTimestampColumn();
+
+    // segment_key は「配信目的 + 実行日」で固定（同じ日に2回叩いても二重送信しない）
+    const keyDate = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" }).replace(/-/g, "");
+    const segmentKey = String(req.body?.segment_key || `fukubako_follow_plus3d_${keyDate}`).trim();
+
+    // 対象抽出：follow_events の user_id を 3日後レンジで拾う
+    // - follow時刻が「今から3日以上前」かつ「今から(3日+window)以内」
+    // - すでに segment_blast に入っている人は除外
+    const r = await pool.query(
+      `
+      WITH targets AS (
+        SELECT DISTINCT fe.user_id
+        FROM follow_events fe
+        WHERE fe.user_id IS NOT NULL AND fe.user_id <> ''
+          AND fe.${tsCol} <= now() - interval '3 days'
+          AND fe.${tsCol} >  now() - interval '3 days' - ($1::text || ' hours')::interval
+      ),
+      unsent AS (
+        SELECT t.user_id
+        FROM targets t
+        LEFT JOIN segment_blast sb
+          ON sb.segment_key = $2 AND sb.user_id = t.user_id
+        WHERE sb.user_id IS NULL
+      )
+      SELECT user_id
+      FROM unsent
+      LIMIT $3
+      `,
+      [String(windowHours), segmentKey, limit]
+    );
+
+    const userIds = (r.rows || []).map(x => x.user_id).filter(Boolean);
+
+    // dry_run のときは送らずに返す
+    if (dryRun) {
+      return res.json({
+        ok: true,
+        kind: "fukubako_follow_plus3d",
+        segment_key: segmentKey,
+        window_hours: windowHours,
+        due: userIds.length,
+        sent: 0,
+        dry_run: true,
+        sample: userIds.slice(0, 10),
+      });
+    }
+
+    const messageText = buildFukubakoIntroMessage();
+    let sent = 0;
+
+    // LINE multicast は最大500件
+    const batches = chunk(userIds, 500);
+
+    for (const batch of batches) {
+      if (!batch.length) continue;
+
+      // 送信
+      await lineClient.multicast(batch, [{ type: "text", text: messageText }]);
+      sent += batch.length;
+
+      // segment_blast に記録（重複防止）
+      // 大量insertはまとめてVALUESでOK
+      const values = [];
+      const params = [];
+      let i = 1;
+      for (const uid of batch) {
+        values.push(`($${i++}, $${i++})`);
+        params.push(segmentKey, uid);
+      }
+      await pool.query(
+        `
+        INSERT INTO segment_blast (segment_key, user_id)
+        VALUES ${values.join(",")}
+        ON CONFLICT (segment_key, user_id) DO NOTHING
+        `,
+        params
+      );
+    }
+
+    res.json({
+      ok: true,
+      kind: "fukubako_follow_plus3d",
+      segment_key: segmentKey,
+      window_hours: windowHours,
+      due: userIds.length,
+      sent,
+      dry_run: false,
+    });
+  } catch (e) {
+    logErr("[api/admin/fukubako/send-follow-plus-3d] failed", e?.message || e);
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
 
 /* =========================
  * Admin：セグメント配信（簡易）

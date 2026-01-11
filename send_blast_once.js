@@ -1,16 +1,17 @@
-// send_blast_once.js — 福箱向け（未送信 + 未購入者だけ配信）Text/Flex 切替版 + 3日後自動名簿追加
-// Run (cron想定):
-//   SEGMENT_KEY=fukubako_3d AUTO_ROSTER_3D=1 node send_blast_once.js
+// send_blast_once.js — 福箱向け（未送信 + 未購入者だけ配信）Text/Flex 切替版
+//  + 友だち追加N日後 自動名簿追加（AUTO_ROSTER_3D）
+//  + 直近N日クールダウン除外（COOLDOWN_DAYS / fukubako%）
 //
-// 従来どおり手動でもOK:
-//   SEGMENT_KEY=... MESSAGE_FILE=... FUKUBAKO_ID=fukubako-2026 node send_blast_once.js
+// Run (cron想定):
+//   SEGMENT_KEY=fukubako_3d AUTO_ROSTER_3D=1 FIRST_SEEN_DAYS=3 COOLDOWN_DAYS=7 node send_blast_once.js
 //
 // Optional:
-//   FUKUBAKO_URL="https://.../fukubako.html"   (Flex内リンク作成に使いたい場合)
-//   DRY_RUN=1  (送信せず対象件数だけ表示)
-//   AUTO_ROSTER_3D=1  (友だち追加3日後を自動で名簿追加する)
-//   FIRST_SEEN_DAYS=3 (デフォルト3日。4にしたければ4)
-//   ROSTER_LIMIT=50000 (名簿追加の上限：保険)
+//   MESSAGE_FILE=./messages/flex.json  (外部JSON切替)
+//   FUKUBAKO_ID=fukubako-2026
+//   FUKUBAKO_URL="https://.../fukubako.html"
+//   DRY_RUN=1
+//   ROSTER_LIMIT=50000
+//   COOLDOWN_PREFIX=fukubako          (デフォルト: fukubako -> fukubako% を除外)
 //
 // Requires: DATABASE_URL, LINE_CHANNEL_ACCESS_TOKEN
 
@@ -20,16 +21,21 @@ const fs = require("fs");
 const path = require("path");
 const { Pool } = require("pg");
 
-const SEGMENT_KEY   = process.env.SEGMENT_KEY || "fukubako_3d";
+const SEGMENT_KEY   = (process.env.SEGMENT_KEY || "fukubako_3d").trim();
 const TOKEN         = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 const DBURL         = process.env.DATABASE_URL;
 const MESSAGE_FILE  = process.env.MESSAGE_FILE || ""; // 外部JSON切替
 const DRY_RUN       = String(process.env.DRY_RUN || "").trim() === "1";
 
-// ✅ 友だち追加3日後の名簿追加をこのJSでやる
-const AUTO_ROSTER_3D = String(process.env.AUTO_ROSTER_3D || "").trim() === "1";
+// ✅ 友だち追加N日後の名簿追加
+const AUTO_ROSTER_3D  = String(process.env.AUTO_ROSTER_3D || "").trim() === "1";
 const FIRST_SEEN_DAYS = Number(process.env.FIRST_SEEN_DAYS || 3);
-const ROSTER_LIMIT = Number(process.env.ROSTER_LIMIT || 50000);
+const ROSTER_LIMIT    = Number(process.env.ROSTER_LIMIT || 50000);
+
+// ✅ クールダウン（直近N日に福箱系を送った人を除外）
+const COOLDOWN_DAYS   = Number(process.env.COOLDOWN_DAYS || 0);
+// prefix だけ指定しておいて ILIKE 'prefix%' にする
+const COOLDOWN_PREFIX = (process.env.COOLDOWN_PREFIX || "fukubako").trim();
 
 // 福箱判定（商品ID）
 const FUKUBAKO_ID   = (process.env.FUKUBAKO_ID || "fukubako-2026").trim();
@@ -42,6 +48,7 @@ if (!FUKUBAKO_ID) throw new Error("FUKUBAKO_ID is required");
 if (!SEGMENT_KEY) throw new Error("SEGMENT_KEY is required");
 if (!Number.isFinite(FIRST_SEEN_DAYS) || FIRST_SEEN_DAYS <= 0) throw new Error("FIRST_SEEN_DAYS must be a positive number");
 if (!Number.isFinite(ROSTER_LIMIT) || ROSTER_LIMIT <= 0) throw new Error("ROSTER_LIMIT must be a positive number");
+if (!Number.isFinite(COOLDOWN_DAYS) || COOLDOWN_DAYS < 0) throw new Error("COOLDOWN_DAYS must be >= 0");
 
 const pool = new Pool({
   connectionString: DBURL,
@@ -150,19 +157,6 @@ function buildAlreadyBoughtSQL() {
 
 // ✅ 友だち追加から N 日経過した人を名簿（segment_blast）へ追加
 async function backfillRosterByFirstSeenDays() {
-  // segment_users.first_seen がある前提（あなたのSQLと同じ）
-  // 既に segment_blast に存在する人は ON CONFLICT で無視
-  const sql = `
-    INSERT INTO segment_blast (segment_key, user_id, created_at)
-    SELECT $1, su.user_id, NOW()
-      FROM segment_users su
-     WHERE su.user_id IS NOT NULL
-       AND su.user_id <> ''
-       AND su.first_seen <= NOW() - ($2 || ' days')::interval
-    ON CONFLICT (segment_key, user_id) DO NOTHING
-  `;
-
-  // 上限（爆増保険）: 追加件数を見たいので、追加前に候補数を数える
   const cnt = await pool.query(
     `
     SELECT COUNT(*)::int AS n
@@ -181,9 +175,43 @@ async function backfillRosterByFirstSeenDays() {
     throw new Error(`Roster candidates too many: ${n} > ROSTER_LIMIT=${ROSTER_LIMIT} (safety stop)`);
   }
 
-  const r = await pool.query(sql, [SEGMENT_KEY, String(FIRST_SEEN_DAYS)]);
-  // pg は INSERT の件数を rowCount で返す
+  const r = await pool.query(
+    `
+    INSERT INTO segment_blast (segment_key, user_id, created_at)
+    SELECT $1, su.user_id, NOW()
+      FROM segment_users su
+     WHERE su.user_id IS NOT NULL
+       AND su.user_id <> ''
+       AND su.first_seen <= NOW() - ($2 || ' days')::interval
+    ON CONFLICT (segment_key, user_id) DO NOTHING
+    `,
+    [SEGMENT_KEY, String(FIRST_SEEN_DAYS)]
+  );
+
   console.log(`roster_inserted=${r.rowCount} (segment_key=${SEGMENT_KEY})`);
+}
+
+// ✅ クールダウン除外（直近N日に fukubako% を送った user_id を集める）
+async function loadCooldownUsers() {
+  if (!COOLDOWN_DAYS || COOLDOWN_DAYS <= 0) return new Set();
+
+  // prefix が空なら安全のため無効化
+  if (!COOLDOWN_PREFIX) return new Set();
+
+  const likePattern = `${COOLDOWN_PREFIX}%`;
+  const { rows } = await pool.query(
+    `
+    SELECT DISTINCT user_id
+      FROM segment_blast
+     WHERE user_id IS NOT NULL
+       AND user_id <> ''
+       AND segment_key ILIKE $1
+       AND sent_at >= NOW() - ($2 || ' days')::interval
+    `,
+    [likePattern, String(COOLDOWN_DAYS)]
+  );
+
+  return new Set(rows.map(r => r.user_id));
 }
 
 (async () => {
@@ -195,12 +223,17 @@ async function backfillRosterByFirstSeenDays() {
   console.log(`FUKUBAKO_URL=${FUKUBAKO_URL || "(none)"}`);
   console.log(`DRY_RUN=${DRY_RUN ? "1" : "0"}`);
   console.log(`AUTO_ROSTER_3D=${AUTO_ROSTER_3D ? "1" : "0"} FIRST_SEEN_DAYS=${FIRST_SEEN_DAYS}`);
+  console.log(`COOLDOWN_DAYS=${COOLDOWN_DAYS} COOLDOWN_PREFIX=${COOLDOWN_PREFIX || "(none)"}`);
   console.log(`messages_count=${messages.length}, first_type=${messages[0]?.type}`);
 
   // 0) ✅ 先に名簿追加（必要なときだけ）
   if (AUTO_ROSTER_3D) {
     await backfillRosterByFirstSeenDays();
   }
+
+  // 0.5) ✅ クールダウン対象をロード
+  const cooldownSet = await loadCooldownUsers();
+  console.log(`cooldown_excluded_users=${cooldownSet.size}`);
 
   // ① まず「福箱を買ったことがある user_id」を取得
   const boughtSql = buildAlreadyBoughtSQL();
@@ -224,12 +257,12 @@ async function backfillRosterByFirstSeenDays() {
   const allTargets = rows.map(r => r.user_id).filter(Boolean);
   console.log(`unsent_targets=${allTargets.length}`);
 
-  // ③ 既購入者を除外（福箱用）
-  const ids = allTargets.filter(uid => !boughtSet.has(uid));
-  console.log(`eligible_targets (exclude bought)=${ids.length}`);
+  // ③ 既購入者 & クールダウン対象を除外（福箱用）
+  const ids = allTargets.filter(uid => !boughtSet.has(uid) && !cooldownSet.has(uid));
+  console.log(`eligible_targets (exclude bought + cooldown)=${ids.length}`);
 
   if (ids.length === 0) {
-    console.log("Nothing to send (all unsent are already bought or empty).");
+    console.log("Nothing to send (eligible_targets=0).");
     await pool.end();
     return;
   }

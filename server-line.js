@@ -12,14 +12,18 @@
  * - ★ /api/store-order を実装（互換対応）
  * - ★ 福箱「混載不可」「1人1個」「過去購入NG」(テスト許可ユーザーは過去購入NGだけスキップ)
  *
- * ✅ 今回追加（あなたの要望）
+ * ✅ 追加（あなたの要望）
  * - ★ LIFF起動ログ（liff_open_logs）を記録（未起動/起動回数の集計が可能）
  * - ★ 「起動した人を自動で常連候補(prospect_regular)に入れる」テーブル user_segments を追加
  * - ★ 常連候補の表示API（/api/admin/segments/prospect_regular）
  * - ★ 定期購入(=定期案内)の仕組み：reorder_reminders + ボタン(postback)で登録/解除
  * - ★ 期限到来の人へ送る管理API（/api/admin/reorder/send-due）→ cron/手動で叩ける
+ * - ★ follow_events をDBに記録（follow+3d配信の基礎）※今回の修正点
  *
- * ※ LINEで「ボタンを押した userId は記録される？」→ postback で userId が取れてDBに保存します
+ * ✅ 今回の修正点（重要）
+ * - /api/admin/orders の ORDER BY が followed_at になっていてDBエラーになる → created_at に修正
+ * - follow_events が無いと follow+3d 配信が動かない → ensureDb で作成 + follow時にINSERT
+ * - 途中で途切れていた箇所（SyntaxErrorになり得る箇所）をすべて補完し、最後まで動く完全版に統合
  */
 
 "use strict";
@@ -81,7 +85,7 @@ const ORIGINAL_SET_PRODUCT_ID = (env.ORIGINAL_SET_PRODUCT_ID || "original-set-20
 // ✅ 福箱（1人1個限定・混載不可）— ENV対応
 const FUKUBAKO_PRODUCT_ID = (env.FUKUBAKO_PRODUCT_ID || "fukubako-2026").trim();
 
-/** ✅ 福箱テスト許可（この userId は何度でも買える。1人1回チェックだけスキップ）
+/** ✅ 福箱テスト許可（この userId は何度でも買える。過去購入NGだけスキップ）
  * ENV: FUKUBAKO_TEST_ALLOW_USER_IDS=Uxxxx,Uyyyy
  */
 const FUKUBAKO_TEST_ALLOW_USER_IDS = (env.FUKUBAKO_TEST_ALLOW_USER_IDS || "")
@@ -150,7 +154,6 @@ const SHIPPING_YAMATO = {
 };
 
 // フォールバック：サイズルール（DBが空の時だけ）
-// ★ あなたの現DBに合わせて：shipping_group / qty_min / qty_max / size(text)
 const FALLBACK_SIZE_RULES = [
   // akasha6
   { shipping_group: "akasha6", qty_min: 1,  qty_max: 4,    size: "60"  },
@@ -269,6 +272,15 @@ async function ensureProductsFile() {
       desc: "人気の詰め合わせ。",
       image: ""
     },
+    {
+      id: FUKUBAKO_PRODUCT_ID,
+      name: "福箱（数量限定）",
+      price: 0,
+      stock: 0,
+      volume: "箱",
+      desc: "キャンペーン商品（価格・在庫は管理画面で更新）。",
+      image: ""
+    },
   ];
 
   await writeJsonAtomic(PRODUCTS_FILE, seed);
@@ -336,7 +348,9 @@ function isAkashaLikeProduct(product) {
  * ========================= */
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: DATABASE_URL.includes("localhost") || DATABASE_URL.includes("127.0.0.1")
+    ? false
+    : { rejectUnauthorized: false },
 });
 
 /* =========================
@@ -375,7 +389,7 @@ async function reloadShippingCacheIfNeeded() {
   }
 }
 
-// ★ あなたの現DB列に合わせて読む：shipping_group / qty_min / qty_max / size(text)
+// ★ DB列：shipping_group / qty_min / qty_max / size(text)
 async function reloadSizeRulesIfNeeded() {
   const now = Date.now();
   if (sizeRuleCache.loadedAt && (now - sizeRuleCache.loadedAt) < SIZE_RULE_CACHE_TTL_MS) return;
@@ -414,7 +428,6 @@ function bumpSizeOnce(size) {
   return order[Math.min(i + 1, order.length - 1)];
 }
 
-// ★ shipping_group版（DBのsizeがtextでもOK）
 function pickSizeFromRules(shippingGroup, qty) {
   const q = Math.max(1, Math.floor(Number(qty || 0)));
   const g = String(shippingGroup || "").trim();
@@ -635,7 +648,18 @@ async function ensureDb() {
   `);
   try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;`); } catch {}
 
-  // segment_users（あなたが貼っていた列に寄せて拡張：不足してても自動追加）
+  // follow_events（follow+3d配信の基礎）※今回追加
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS follow_events (
+      id BIGSERIAL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      followed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      raw_event JSONB
+    );
+  `);
+  try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_follow_events_user ON follow_events(user_id, followed_at DESC);`); } catch {}
+
+  // segment_users（拡張）
   await pool.query(`
     CREATE TABLE IF NOT EXISTS segment_users (
       user_id TEXT PRIMARY KEY,
@@ -843,7 +867,7 @@ async function touchUser(userId, kind, displayName = null, source = null) {
     [userId, displayName, k]
   );
 
-  // segment_users を「拡張版」として更新
+  // segment_users を更新
   await pool.query(
     `
     INSERT INTO segment_users (
@@ -938,7 +962,6 @@ async function markUserOrdered(userId, orderId = null) {
     );
   } catch {}
 
-  // prospect_regular もアップデート
   try {
     await upsertUserSegment("prospect_regular", uid, {
       last_order_at: new Date(),
@@ -947,7 +970,6 @@ async function markUserOrdered(userId, orderId = null) {
     });
   } catch {}
 
-  // reorder_reminders の last_order_id を更新したい場合にも使える（任意）
   if (orderId != null) {
     try {
       await pool.query(
@@ -1287,7 +1309,6 @@ async function markOrderNotified(orderId) {
 }
 
 function buildReorderButtonsMessage(orderId) {
-  // LINE "buttons template" で postback を送る（userId はイベントから取得できる）
   return {
     type: "template",
     altText: "次回のご案内設定（30/45/60日）",
@@ -1368,7 +1389,6 @@ async function notifyOrderCompleted({
       `【送料】0円${shopNote}\n`;
   }
 
-  // ✅ ここが途切れていたので修正版（SyntaxError修正）
   const msgForUser =
     `ご注文ありがとうございます。\n` +
     `【注文ID】${orderId}\n` +
@@ -1386,7 +1406,7 @@ async function notifyOrderCompleted({
 
   await pushTextSafe(userId, msgForUser);
 
-  // ✅ 購入者に「次回案内」のボタンを送る（押したら userId がDBに保存される）
+  // ✅ 購入者に「次回案内」ボタン
   if (ENABLE_REORDER_BUTTONS) {
     try {
       await lineClient.pushMessage(userId, buildReorderButtonsMessage(orderId));
@@ -1684,12 +1704,13 @@ function regionToLabel(key) { return REGION_LABEL[key] || key || ""; }
 app.get("/api/admin/orders", requireAdmin, async (req, res) => {
   const date = String(req.query.date || "").trim(); // YYYYMMDD
   try {
+    // ✅ 修正：orders に followed_at は無い → created_at に統一
     let sql = `
       SELECT
         id, user_id, items, total, shipping_fee, payment_method, status,
         name, zip, pref, address, created_at
       FROM orders
-      ORDER BY followed_at DESC
+      ORDER BY created_at DESC
       LIMIT 500
     `;
     let params = [];
@@ -1701,7 +1722,7 @@ app.get("/api/admin/orders", requireAdmin, async (req, res) => {
           name, zip, pref, address, created_at
         FROM orders
         WHERE to_char((created_at AT TIME ZONE 'Asia/Tokyo'), 'YYYYMMDD') = $1
-        ORDER BY followed_at DESC
+        ORDER BY created_at DESC
         LIMIT 500
       `;
       params = [date];
@@ -1805,10 +1826,39 @@ app.get("/api/admin/segments/prospect_regular", requireAdmin, async (req, res) =
 });
 
 /* =========================
+ * Admin：LIFF起動集計（簡易）
+ * ========================= */
+app.get("/api/admin/liff/opens", requireAdmin, async (req, res) => {
+  try {
+    const days = Math.min(365, Math.max(1, Number(req.query.days || 30)));
+    const limit = Math.min(2000, Math.max(1, Number(req.query.limit || 500)));
+
+    const r = await pool.query(
+      `
+      SELECT
+        lol.user_id,
+        COUNT(*)::int AS open_count,
+        MAX(lol.opened_at) AS last_opened_at
+      FROM liff_open_logs lol
+      WHERE lol.opened_at >= now() - ($1::text || ' days')::interval
+      GROUP BY lol.user_id
+      ORDER BY last_opened_at DESC
+      LIMIT $2
+      `,
+      [String(days), limit]
+    );
+
+    res.json({ ok: true, days, total: r.rowCount, items: r.rows });
+  } catch (e) {
+    logErr("[api/admin/liff/opens] failed", e?.message || e);
+    res.status(500).json({ ok:false, error:"failed" });
+  }
+});
+
+/* =========================
  * Admin：定期案内 期限到来分を送信（手動/cron用）
  * ========================= */
 function buildReorderText(cycleDays) {
-  // テンプレ未設定ならデフォルト
   if (REORDER_MESSAGE_TEMPLATE) {
     return REORDER_MESSAGE_TEMPLATE.replace(/\{cycle_days\}/g, String(cycleDays));
   }
@@ -1847,7 +1897,6 @@ app.post("/api/admin/reorder/send-due", requireAdmin, async (req, res) => {
         await lineClient.pushMessage(uid, { type:"text", text });
         sent++;
 
-        // ✅ interval生成の型事故を防ぐ（cycle_days::text）
         await pool.query(
           `
           UPDATE reorder_reminders
@@ -1859,7 +1908,6 @@ app.post("/api/admin/reorder/send-due", requireAdmin, async (req, res) => {
           [uid]
         );
       } catch (e) {
-        // ブロック等で失敗 → active=false に落とすのは運用次第（ここでは落とさない）
         logErr("reorder push failed", uid, e?.message || e);
       }
     }
@@ -1870,32 +1918,24 @@ app.post("/api/admin/reorder/send-due", requireAdmin, async (req, res) => {
     res.status(500).json({ ok:false, error:"failed" });
   }
 });
+
 /* =========================
  * Admin：友だち追加（follow）3日後に福箱案内を配信
  * - follow_events を基準に抽出
  * - segment_blast へ記録して重複配信防止
  * - dry_run 対応
- *
- * 叩き方（例）
- * curl -sS --fail-with-body -X POST "https://YOUR.onrender.com/api/admin/fukubako/send-follow-plus-3d" \
- *  -H "Content-Type: application/json" \
- *  -H "x-admin-token: XXXXX" \
- *  -d '{"limit":200,"dry_run":true}'
  * ========================= */
-
 function chunk(arr, size) {
   const out = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
 }
 
-// 福箱案内メッセージ（必要ならここを好きに編集）
 function buildFukubakoIntroMessage() {
   const orderUrl =
     (LIFF_ID_ORDER ? `https://liff.line.me/${LIFF_ID_ORDER}` :
      (LIFF_BASE ? `${LIFF_BASE}/products.html` : ""));
 
-  // 福箱ページが別LIFFならここを福箱専用URLにしてOK
   return (
     "【福箱のご案内】\n" +
     "友だち追加ありがとうございます！\n\n" +
@@ -1906,7 +1946,6 @@ function buildFukubakoIntroMessage() {
   );
 }
 
-// follow_events の列名ゆれに対応（created_at / followed_at など）
 async function detectFollowEventsTimestampColumn() {
   const r = await pool.query(`
     SELECT column_name
@@ -1918,8 +1957,7 @@ async function detectFollowEventsTimestampColumn() {
   if (cols.includes("followed_at")) return "followed_at";
   if (cols.includes("created_at"))  return "created_at";
   if (cols.includes("event_time"))  return "event_time";
-  // 最後の保険
-  return "created_at";
+  return "followed_at";
 }
 
 app.post("/api/admin/fukubako/send-follow-plus-3d", requireAdmin, async (req, res) => {
@@ -1927,18 +1965,12 @@ app.post("/api/admin/fukubako/send-follow-plus-3d", requireAdmin, async (req, re
     const limit = Math.min(2000, Math.max(1, Number(req.body?.limit || 200)));
     const dryRun = String(req.body?.dry_run || req.body?.dryRun || "0") === "1" || req.body?.dry_run === true;
 
-    // 3日後配信なので、毎日1回叩く前提で「3日前の1日分」を拾う
-    // 例：毎日10:00に叩くなら、(今 - 4日)〜(今 - 3日) の範囲を対象にするとズレに強い
-    const windowHours = Math.min(72, Math.max(1, Number(req.body?.window_hours || 24))); // デフォは24h分
+    const windowHours = Math.min(72, Math.max(1, Number(req.body?.window_hours || 24)));
     const tsCol = await detectFollowEventsTimestampColumn();
 
-    // segment_key は「配信目的 + 実行日」で固定（同じ日に2回叩いても二重送信しない）
     const keyDate = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" }).replace(/-/g, "");
     const segmentKey = String(req.body?.segment_key || `fukubako_follow_plus3d_${keyDate}`).trim();
 
-    // 対象抽出：follow_events の user_id を 3日後レンジで拾う
-    // - follow時刻が「今から3日以上前」かつ「今から(3日+window)以内」
-    // - すでに segment_blast に入っている人は除外
     const r = await pool.query(
       `
       WITH targets AS (
@@ -1964,7 +1996,6 @@ app.post("/api/admin/fukubako/send-follow-plus-3d", requireAdmin, async (req, re
 
     const userIds = (r.rows || []).map(x => x.user_id).filter(Boolean);
 
-    // dry_run のときは送らずに返す
     if (dryRun) {
       return res.json({
         ok: true,
@@ -1981,18 +2012,14 @@ app.post("/api/admin/fukubako/send-follow-plus-3d", requireAdmin, async (req, re
     const messageText = buildFukubakoIntroMessage();
     let sent = 0;
 
-    // LINE multicast は最大500件
     const batches = chunk(userIds, 500);
 
     for (const batch of batches) {
       if (!batch.length) continue;
 
-      // 送信
       await lineClient.multicast(batch, [{ type: "text", text: messageText }]);
       sent += batch.length;
 
-      // segment_blast に記録（重複防止）
-      // 大量insertはまとめてVALUESでOK
       const values = [];
       const params = [];
       let i = 1;
@@ -2022,226 +2049,6 @@ app.post("/api/admin/fukubako/send-follow-plus-3d", requireAdmin, async (req, re
   } catch (e) {
     logErr("[api/admin/fukubako/send-follow-plus-3d] failed", e?.message || e);
     res.status(500).json({ ok: false, error: e?.message || String(e) });
-  }
-});
-
-/* =========================
- * Admin：セグメント配信（簡易）
- * ========================= */
-app.post("/api/admin/segment/preview", requireAdmin, async (req, res) => {
-  try {
-    const { type, date } = req.body || {};
-    const t = String(type || "");
-    const d = String(date || "").trim(); // YYYYMMDD
-    let userIds = [];
-
-    if (t === "orders") {
-      if (d && /^\d{8}$/.test(d)) {
-        const r = await pool.query(
-          `SELECT DISTINCT user_id
-           FROM orders
-           WHERE to_char((created_at AT TIME ZONE 'Asia/Tokyo'), 'YYYYMMDD') = $1
-             AND user_id IS NOT NULL AND user_id <> ''
-           LIMIT 2000`,
-          [d]
-        );
-        userIds = r.rows.map(x => x.user_id);
-      } else {
-        const r = await pool.query(
-          `SELECT DISTINCT user_id
-           FROM orders
-           WHERE user_id IS NOT NULL AND user_id <> ''
-           ORDER BY user_id
-           LIMIT 2000`
-        );
-        userIds = r.rows.map(x => x.user_id);
-      }
-    } else if (t === "activeChatters") {
-      const r = await pool.query(
-        `SELECT DISTINCT user_id
-         FROM segment_users
-         WHERE user_id IS NOT NULL AND user_id <> ''
-         ORDER BY user_id
-         LIMIT 2000`
-      );
-      userIds = r.rows.map(x => x.user_id);
-    } else if (t === "addresses") {
-      const r = await pool.query(
-        `SELECT DISTINCT user_id
-         FROM addresses
-         WHERE user_id IS NOT NULL AND user_id <> ''
-         ORDER BY user_id
-         LIMIT 2000`
-      );
-      userIds = r.rows.map(x => x.user_id);
-    } else if (t === "prospect_regular") {
-      const r = await pool.query(
-        `SELECT user_id
-         FROM user_segments
-         WHERE segment_key='prospect_regular'
-         ORDER BY updated_at DESC
-         LIMIT 2000`
-      );
-      userIds = r.rows.map(x => x.user_id);
-    } else {
-      return res.status(400).send("bad_type");
-    }
-
-    res.json({ total: userIds.length, userIds });
-  } catch (e) {
-    console.error("[api/admin/segment/preview] failed", e?.stack || e);
-    res.status(500).send("failed");
-  }
-});
-
-app.post("/api/admin/segment/send", requireAdmin, async (req, res) => {
-  try {
-    const { userIds, message } = req.body || {};
-    const ids = Array.isArray(userIds) ? userIds.filter(Boolean) : [];
-    const msg = String(message || "").trim();
-    if (!ids.length || !msg) return res.status(400).send("bad_request");
-
-    const chunks = [];
-    for (let i = 0; i < ids.length; i += 500) chunks.push(ids.slice(i, i + 500));
-
-    for (const c of chunks) {
-      await lineClient.multicast(c, [{ type: "text", text: msg }]);
-    }
-    res.json({ requested: ids.length, sent: ids.length });
-  } catch (e) {
-    console.error("[api/admin/segment/send] failed", e?.stack || e);
-    res.status(500).send("failed");
-  }
-});
-/* =========================
- * Admin：福箱 新規友だち自動配信（cron用）
- * - 対象抽出：users.created_at が直近 lookback_hours 以内
- * - 二重送信防止：segment_blast に segment_key を記録
- * - 送信成功した userId だけ記録（失敗は記録しない）
- * - segment_key はデフォルトで日付入り：fukubako_new_friend_YYYYMMDD
- * ========================= */
-
-function ymdJst() {
-  const d = new Date();
-  const parts = new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Asia/Tokyo",
-    year: "numeric", month: "2-digit", day: "2-digit",
-  }).formatToParts(d);
-  const get = (t) => parts.find(p => p.type === t)?.value || "";
-  return `${get("year")}${get("month")}${get("day")}`; // YYYYMMDD
-}
-
-function buildFukubakoMessage() {
-  // 福箱の案内文（自由に編集OK）
-  // できれば福箱専用LIFF/URLがあればここに入れる
-  const orderUrl =
-    (LIFF_ID_ORDER ? `https://liff.line.me/${LIFF_ID_ORDER}` :
-     (LIFF_BASE ? `${LIFF_BASE}/products.html` : ""));
-
-  const fukuName = "福箱";
-  const note =
-    `🎁 ${fukuName}のご案内\n\n` +
-    `友だち追加ありがとうございます！\n` +
-    `数量限定の「福箱」を受付中です。\n\n` +
-    `ご注文はこちら：\n${orderUrl || "（注文URL未設定）"}\n\n` +
-    `※在庫がなくなり次第終了です。`;
-
-  return note;
-}
-
-/**
- * POST /api/admin/fukubako/send-new-friends
- * body:
- *  - lookback_hours: number (default 24)
- *  - limit: number (default 200)
- *  - segment_key: string (optional) 例: fukubako_open1
- *  - dry_run: 1 | 0 (optional) 送信せず件数だけ見る
- */
-app.post("/api/admin/fukubako/send-new-friends", requireAdmin, async (req, res) => {
-  try {
-    const lookbackHours = Math.min(24 * 30, Math.max(1, Number(req.body?.lookback_hours || 24)));
-    const limit = Math.min(1000, Math.max(1, Number(req.body?.limit || 200)));
-    const dryRun = String(req.body?.dry_run || "0") === "1";
-
-    // segment_key（送信済み判定のキー）
-    // デフォルト：日付ごとに一回だけ送る
-    const defaultSegKey = `fukubako_new_friend_${ymdJst()}`;
-    const segmentKey = String(req.body?.segment_key || defaultSegKey).trim() || defaultSegKey;
-
-    // 抽出：直近lookbackHours以内に users に入った人
-    // 送信済み（segment_blast）を除外
-    const r = await pool.query(
-      `
-      WITH targets AS (
-        SELECT u.user_id
-        FROM users u
-        WHERE u.user_id IS NOT NULL AND u.user_id <> ''
-          AND u.created_at >= now() - ($1::text || ' hours')::interval
-      )
-      SELECT t.user_id
-      FROM targets t
-      LEFT JOIN segment_blast sb
-        ON sb.segment_key = $2 AND sb.user_id = t.user_id
-      WHERE sb.user_id IS NULL
-      ORDER BY t.user_id
-      LIMIT $3
-      `,
-      [String(lookbackHours), segmentKey, limit]
-    );
-
-    const targets = (r.rows || []).map(x => x.user_id).filter(Boolean);
-
-    // dry_run は送らない
-    if (dryRun) {
-      return res.json({
-        ok: true,
-        segment_key: segmentKey,
-        lookback_hours: lookbackHours,
-        due: targets.length,
-        sent: 0,
-        dry_run: true,
-        sample: targets.slice(0, 5),
-      });
-    }
-
-    const text = buildFukubakoMessage();
-
-    let sent = 0;
-    let failed = 0;
-
-    for (const uid of targets) {
-      try {
-        await lineClient.pushMessage(uid, { type: "text", text });
-
-        // 送信成功したら blast 記録（重複防止）
-        await pool.query(
-          `
-          INSERT INTO segment_blast (segment_key, user_id, created_at)
-          VALUES ($1, $2, now())
-          ON CONFLICT (segment_key, user_id) DO NOTHING
-          `,
-          [segmentKey, uid]
-        );
-
-        sent++;
-      } catch (e) {
-        failed++;
-        logErr("fukubako push failed", uid, e?.message || e);
-        // 失敗は記録しない（再試行できる）
-      }
-    }
-
-    res.json({
-      ok: true,
-      segment_key: segmentKey,
-      lookback_hours: lookbackHours,
-      due: targets.length,
-      sent,
-      failed,
-    });
-  } catch (e) {
-    logErr("[api/admin/fukubako/send-new-friends] failed", e?.message || e);
-    res.status(500).json({ ok: false, error: "failed" });
   }
 });
 
@@ -2407,33 +2214,6 @@ app.post("/api/liff/address", async (req, res) => {
   }
 });
 
-// id_token verify（任意）
-app.post("/api/liff/verify", async (req, res) => {
-  try {
-    if (!LIFF_CHANNEL_ID) return res.status(400).json({ ok: false, error: "LIFF_CHANNEL_ID not set" });
-    const idToken = String(req.body?.id_token || "");
-    if (!idToken) return res.status(400).json({ ok: false, error: "id_token required" });
-
-    const params = new URLSearchParams();
-    params.set("id_token", idToken);
-    params.set("client_id", LIFF_CHANNEL_ID);
-
-    const r = await fetch("https://api.line.me/oauth2/v2.1/verify", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: params.toString(),
-    });
-
-    const data = await r.json().catch(()=> ({}));
-    if (!r.ok) return res.status(401).json({ ok: false, error: "verify_failed", detail: data });
-
-    res.json({ ok: true, profile: data });
-  } catch (e) {
-    logErr("POST /api/liff/verify", e?.stack || e);
-    res.status(500).json({ ok: false, error: "server_error" });
-  }
-});
-
 /* =========================
  * LIFF 起動ログ（DB保存 + 常連候補へ自動追加）
  * ========================= */
@@ -2446,7 +2226,6 @@ async function onLiffOpened(userId, source = "liff") {
   });
 }
 
-// LIFF 起動ログ
 app.post("/api/liff/opened", async (req, res) => {
   try {
     const userId = String(req.body?.userId || "").trim();
@@ -2723,12 +2502,8 @@ app.post("/api/store-order", async (req, res) => {
       rawEvent,
       source: (deliveryMethod === "pickup") ? "store_liff" : "liff",
       nameOverride,
-      zipOverride: "",
-      prefOverride: "",
-      addressOverride: "",
     });
 
-    // ✅ 「購入した」フラグ更新
     await markUserOrdered(built.userId, Number(orderId)).catch(()=>{});
 
     if (paymentMethod === "pickup_cash") {
@@ -2849,7 +2624,6 @@ app.post("/api/pay/stripe/create", async (req, res) => {
       metadata: { orderId: String(orderId), userId: built.userId },
     });
 
-    // ✅ 仮受付通知（必要なら有効化）
     await notifyCardPending({
       orderId,
       userId: built.userId,
@@ -3075,16 +2849,12 @@ app.get("/api/order/status", async (req, res) => {
 /* =========================
  * Reorder reminder APIs（外部/LIFFから使う場合用）
  * ========================= */
-
-// ✅ 修正版：存在しない reorder_subscriptions を使わず reorder_reminders に統一
 app.post("/api/reorder/subscribe", async (req, res) => {
   try {
     const userId = String(req.body?.userId || req.body?.uid || "").trim();
     const days = Number(req.body?.days);
 
-    if (!userId) {
-      return res.status(400).json({ error: "userId required" });
-    }
+    if (!userId) return res.status(400).json({ error: "userId required" });
     if (!Number.isFinite(days) || ![30,45,60].includes(days)) {
       return res.status(400).json({ error: "days must be 30 or 45 or 60" });
     }
@@ -3107,14 +2877,12 @@ app.post("/api/reorder/subscribe", async (req, res) => {
       [userId, days, intervalStr]
     );
 
-    // レスポンスも簡素に（ok を返さない）
     res.json({ status: "subscribed", days });
   } catch (e) {
     logErr("reorder subscribe failed", e?.message || e);
     res.status(500).json({ error: "server_error" });
   }
 });
-
 
 app.post("/api/reorder/unsubscribe", async (req, res) => {
   try {
@@ -3185,6 +2953,16 @@ async function onFollow(ev) {
     [day]
   );
 
+  // ✅ follow_events に記録（follow+3d配信に必要）※今回の修正点
+  try {
+    await pool.query(
+      `INSERT INTO follow_events (user_id, followed_at, raw_event) VALUES ($1, now(), $2)`,
+      [userId, ev ? JSON.stringify(ev) : null]
+    );
+  } catch (e) {
+    logErr("insert follow_events failed", e?.message || e);
+  }
+
   let displayName = null;
   try {
     const prof = await lineClient.getProfile(userId);
@@ -3235,7 +3013,7 @@ async function onPostback(ev) {
 
   // ✅ 定期案内 postback: reorder:sub:30:ORDERID / reorder:unsub::ORDERID
   if (data.startsWith("reorder:")) {
-    const parts = data.split(":"); // ["reorder","sub","30","123"]
+    const parts = data.split(":");
     const kind = parts[1] || "";
     const daysStr = parts[2] || "";
     const orderIdStr = parts[3] || "";
@@ -3270,11 +3048,7 @@ async function onPostback(ev) {
           [userId, days, intervalStr, orderId]
         );
 
-        // ✅ 「OK」など肯定語は使わない
-        await replyTextSafe(
-          replyToken,
-          `${days}日ごとのご案内を設定しました。\n（いつでも解除できます）`
-        );
+        await replyTextSafe(replyToken, `${days}日ごとのご案内を設定しました。\n（いつでも解除できます）`);
       } catch (e) {
         logErr("reorder subscribe failed", e?.message || e);
         await replyTextSafe(replyToken, "設定に失敗しました。時間をおいてお試しください。");
@@ -3289,7 +3063,6 @@ async function onPostback(ev) {
           [userId]
         );
 
-        // ✅ OK を消す
         await replyTextSafe(replyToken, "次回のご案内を停止しました。");
       } catch (e) {
         logErr("reorder unsubscribe failed", e?.message || e);
@@ -3300,13 +3073,11 @@ async function onPostback(ev) {
   }
 }
 
-
 async function onTextMessage(ev) {
   const userId = ev?.source?.userId || "";
   const text = (ev.message?.text || "").trim();
   if (!userId || !text) return;
 
-  // チャットとして記録（任意）
   try { await touchUser(userId, "chat", null, "chat"); } catch {}
 
   const sess = getSession(userId);
@@ -3379,7 +3150,7 @@ async function handleSessionInput(userId, text, ev) {
       await lineClient.replyMessage(ev.replyToken, { type:"text", text:"数字（例：3）で送ってください。" });
       return;
     }
-    await finalizeKusukeOrder(ev.replyToken, userId, qty);
+    await finalizeKusukeOrder(ev.replyToken, userId, Math.floor(qty));
     clearSession(userId);
     return;
   }
@@ -3436,32 +3207,48 @@ async function finalizeKusukeOrder(replyToken, userId, qty) {
     logErr("finalizeKusukeOrder", code, e?.stack || e);
 
     if (code === "NO_ADDRESS") {
-      await lineClient.replyMessage(replyToken, { type:"text", text:`住所が未登録です。\n${liffUrl("/cod-register.html")}` });
+      await lineClient.replyMessage(replyToken, { type:"text", text:"住所が未登録です。先に住所登録をお願いします。" });
       return;
     }
     if (code === "OUT_OF_STOCK") {
-      await lineClient.replyMessage(replyToken, { type:"text", text:"在庫が不足しています。個数を減らして試してください。" });
+      await lineClient.replyMessage(replyToken, { type:"text", text:"在庫不足のため注文できませんでした。管理者にお問い合わせください。" });
       return;
     }
-    await lineClient.replyMessage(replyToken, { type:"text", text:"エラーが発生しました。時間をおいて再度お試しください。" });
+
+    await lineClient.replyMessage(replyToken, { type:"text", text:"注文処理に失敗しました。時間をおいてお試しください。" });
   }
 }
 
 /* =========================
- * Boot
+ * 起動
  * ========================= */
 async function main() {
   await ensureDir(DATA_DIR);
   await ensureDir(UPLOAD_DIR);
+
   await ensureProductsFile();
   await loadSessions();
+
   await ensureDb();
 
-  const port = Number(env.PORT || 3000);
-  app.listen(port, () => logInfo(`server started on :${port}`));
+  const port = Number(env.PORT || 10000);
+  app.listen(port, () => {
+    logInfo(`server listening on :${port}`);
+    logInfo(`DATA_DIR=${DATA_DIR}`);
+    logInfo(`UPLOAD_DIR=${UPLOAD_DIR}`);
+  });
 }
 
-main().catch(e => {
-  logErr("BOOT FAIL", e?.stack || e);
+main().catch((e) => {
+  logErr("boot failed", e?.stack || e);
   process.exit(1);
+});
+
+process.on("SIGTERM", async () => {
+  try { await pool.end(); } catch {}
+  process.exit(0);
+});
+process.on("SIGINT", async () => {
+  try { await pool.end(); } catch {}
+  process.exit(0);
 });

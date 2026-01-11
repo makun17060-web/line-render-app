@@ -1689,7 +1689,7 @@ app.get("/api/admin/orders", requireAdmin, async (req, res) => {
         id, user_id, items, total, shipping_fee, payment_method, status,
         name, zip, pref, address, created_at
       FROM orders
-      ORDER BY created_at DESC
+      ORDER BY followed_at DESC
       LIMIT 500
     `;
     let params = [];
@@ -1701,7 +1701,7 @@ app.get("/api/admin/orders", requireAdmin, async (req, res) => {
           name, zip, pref, address, created_at
         FROM orders
         WHERE to_char((created_at AT TIME ZONE 'Asia/Tokyo'), 'YYYYMMDD') = $1
-        ORDER BY created_at DESC
+        ORDER BY followed_at DESC
         LIMIT 500
       `;
       params = [date];

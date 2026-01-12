@@ -2166,6 +2166,43 @@ app.get("/api/address/get", async (req, res) => {
 });
 
 app.post("/api/address/set", async (req, res) => {
+  // =========================
+// GET /api/address/list  ← cod-register 用
+// =========================
+app.get("/api/address/list", async (req, res) => {
+  try {
+    const userId = String(req.query.userId || "").trim();
+    if (!userId) {
+      return res.status(400).json({ ok: false, error: "userId required" });
+    }
+
+    const r = await pool.query(
+      `
+      SELECT
+        id,
+        COALESCE(label,'')        AS label,
+        COALESCE(name,'')         AS name,
+        COALESCE(phone,'')        AS phone,
+        COALESCE(postal,'')       AS postal,
+        COALESCE(prefecture,'')   AS prefecture,
+        COALESCE(city,'')         AS city,
+        COALESCE(address1,'')     AS address1,
+        COALESCE(address2,'')     AS address2,
+        COALESCE(is_default,false) AS is_default
+      FROM addresses
+      WHERE user_id = $1
+      ORDER BY is_default DESC, id DESC
+      `,
+      [userId]
+    );
+
+    res.json({ ok: true, addresses: r.rows });
+  } catch (e) {
+    console.error("address/list error", e);
+    res.status(500).json({ ok: false, error: "db error" });
+  }
+});
+
   try {
     const b = req.body || {};
     const userId = String(b.userId || "").trim();

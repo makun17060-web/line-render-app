@@ -6,6 +6,10 @@
  * - orders に通知系カラムを追加（notified_user_at / notified_admin_at / notified_kind）※既存DBでもALTERで追従
  * - notifyOrderCompleted / notifyCardPending で通知記録を更新（管理/ユーザー通知の二重送信点検にも使える）
  *
+ * ✅ 今回の「致命的バグ修正」（あなたの貼ったコード上の不具合）
+ * - /api/address/list が2回定義されていたので「1個に統一」
+ * - addresses テーブルに label / is_default 列が無いのに参照していたので ALTER で追従（既存DBもOK）
+ *
  * ※ それ以外は、あなたの貼った “修正版丸ごと” の内容を維持しています。
  */
 
@@ -606,6 +610,10 @@ async function ensureDb() {
     );
   `);
 
+  // ✅ 追加：/api/address/list で参照している列を追従（既存DBもOK）
+  try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS label TEXT;`); } catch {}
+  try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT false;`); } catch {}
+
   try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_user_id_uidx ON addresses(user_id) WHERE user_id IS NOT NULL;`); } catch {}
   try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_member_code_uidx ON addresses(member_code) WHERE member_code IS NOT NULL;`); } catch {}
   try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_address_key_uidx ON addresses(address_key) WHERE address_key IS NOT NULL;`); } catch {}
@@ -970,8 +978,10 @@ async function markUserOrdered(userId, orderId = null) {
 
 async function getAddressByUserId(userId) {
   const r = await pool.query(
-    `SELECT member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at
-     FROM addresses WHERE user_id=$1`,
+    `SELECT member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at, label, is_default
+     FROM addresses WHERE user_id=$1
+     ORDER BY is_default DESC, id DESC
+     LIMIT 1`,
     [userId]
   );
   return r.rows[0] || null;
@@ -1008,8 +1018,8 @@ async function upsertAddress(userId, addr) {
   let saved;
   try {
     const q = `
-      INSERT INTO addresses (user_id, member_code, name, phone, postal, prefecture, city, address1, address2, address_key)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      INSERT INTO addresses (user_id, member_code, name, phone, postal, prefecture, city, address1, address2, address_key, label, is_default)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
       ON CONFLICT (user_id) DO UPDATE SET
         member_code = EXCLUDED.member_code,
         name = EXCLUDED.name,
@@ -1020,8 +1030,10 @@ async function upsertAddress(userId, addr) {
         address1 = EXCLUDED.address1,
         address2 = EXCLUDED.address2,
         address_key = EXCLUDED.address_key,
+        label = COALESCE(EXCLUDED.label, addresses.label),
+        is_default = COALESCE(EXCLUDED.is_default, addresses.is_default),
         updated_at = now()
-      RETURNING member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at
+      RETURNING member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at, label, is_default
     `;
     const r = await pool.query(q, [
       userId,
@@ -1033,7 +1045,9 @@ async function upsertAddress(userId, addr) {
       addr.city || "",
       addr.address1 || "",
       addr.address2 || "",
-      addressKey
+      addressKey,
+      addr.label != null ? String(addr.label) : null,
+      addr.is_default != null ? !!addr.is_default : null,
     ]);
     saved = r.rows[0];
   } catch (e) {
@@ -1041,8 +1055,8 @@ async function upsertAddress(userId, addr) {
     if (msg.includes("member_code") || msg.includes("duplicate key")) {
       const newCode = await issueUniqueMemberCode();
       const q2 = `
-        INSERT INTO addresses (user_id, member_code, name, phone, postal, prefecture, city, address1, address2, address_key)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        INSERT INTO addresses (user_id, member_code, name, phone, postal, prefecture, city, address1, address2, address_key, label, is_default)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
         ON CONFLICT (user_id) DO UPDATE SET
           member_code = EXCLUDED.member_code,
           name = EXCLUDED.name,
@@ -1053,8 +1067,10 @@ async function upsertAddress(userId, addr) {
           address1 = EXCLUDED.address1,
           address2 = EXCLUDED.address2,
           address_key = EXCLUDED.address_key,
+          label = COALESCE(EXCLUDED.label, addresses.label),
+          is_default = COALESCE(EXCLUDED.is_default, addresses.is_default),
           updated_at = now()
-        RETURNING member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at
+        RETURNING member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at, label, is_default
       `;
       const r2 = await pool.query(q2, [
         userId,
@@ -1066,7 +1082,9 @@ async function upsertAddress(userId, addr) {
         addr.city || "",
         addr.address1 || "",
         addr.address2 || "",
-        addressKey
+        addressKey,
+        addr.label != null ? String(addr.label) : null,
+        addr.is_default != null ? !!addr.is_default : null,
       ]);
       saved = r2.rows[0];
     } else {
@@ -1294,8 +1312,6 @@ async function markOrderNotified(orderId, patch = {}) {
     const userAt = patch.userNotified ? "now()" : null;
     const adminAt = patch.adminNotified ? "now()" : null;
 
-    // 最低限：notified_at を入れる（旧仕様互換）
-    // 追加：notified_user_at / notified_admin_at / notified_kind
     await pool.query(
       `
       UPDATE orders
@@ -1330,8 +1346,8 @@ function buildReorderButtonsMessage(orderId) {
     }
   };
 }
-async function notifyOrderCompleted({
 
+async function notifyOrderCompleted({
   orderId,
   userId,
   items,
@@ -1355,10 +1371,6 @@ async function notifyOrderCompleted({
     logInfo("notify skipped (already completed):", orderId);
     return { ok: true, skipped: true };
   }
-
-  // （以下は元のままでOK）
-  
-
 
   const a = addr || (await getAddressByUserId(userId).catch(()=>null));
   const addrText = joinAddrText(a);
@@ -1724,7 +1736,6 @@ function regionToLabel(key) { return REGION_LABEL[key] || key || ""; }
 app.get("/api/admin/orders", requireAdmin, async (req, res) => {
   const date = String(req.query.date || "").trim(); // YYYYMMDD
   try {
-    // ✅ 修正：orders に followed_at は無い → created_at に統一
     let sql = `
       SELECT
         id, user_id, items, total, shipping_fee, payment_method, status,
@@ -2148,9 +2159,10 @@ app.get("/api/liff/config", (req, res) => {
   if (!liffId) return res.status(400).json({ ok:false, error:"LIFF_ID_NOT_SET", kind });
   return res.json({ ok:true, liffId });
 });
-// =========================
-// Address API
-// =========================
+
+/* =========================
+ * Address API
+ * ========================= */
 app.get("/api/address/get", async (req, res) => {
   try {
     const userId = String(req.query.userId || "").trim();
@@ -2164,9 +2176,7 @@ app.get("/api/address/get", async (req, res) => {
   }
 });
 
-// =========================
-// GET /api/address/list  ← cod-register 用
-// =========================
+// ✅ GET /api/address/list  ← cod-register 用（これ1個に統一）
 app.get("/api/address/list", async (req, res) => {
   try {
     const userId = String(req.query.userId || "").trim();
@@ -2176,14 +2186,14 @@ app.get("/api/address/list", async (req, res) => {
       `
       SELECT
         id,
-        COALESCE(label,'')        AS label,
-        COALESCE(name,'')         AS name,
-        COALESCE(phone,'')        AS phone,
-        COALESCE(postal,'')       AS postal,
-        COALESCE(prefecture,'')   AS prefecture,
-        COALESCE(city,'')         AS city,
-        COALESCE(address1,'')     AS address1,
-        COALESCE(address2,'')     AS address2,
+        COALESCE(label,'')         AS label,
+        COALESCE(name,'')          AS name,
+        COALESCE(phone,'')         AS phone,
+        COALESCE(postal,'')        AS postal,
+        COALESCE(prefecture,'')    AS prefecture,
+        COALESCE(city,'')          AS city,
+        COALESCE(address1,'')      AS address1,
+        COALESCE(address2,'')      AS address2,
         COALESCE(is_default,false) AS is_default
       FROM addresses
       WHERE user_id = $1
@@ -2199,9 +2209,7 @@ app.get("/api/address/list", async (req, res) => {
   }
 });
 
-// =========================
 // POST /api/address/set
-// =========================
 app.post("/api/address/set", async (req, res) => {
   try {
     const b = req.body || {};
@@ -2217,48 +2225,15 @@ app.post("/api/address/set", async (req, res) => {
       city: b.city,
       address1: b.address1,
       address2: b.address2,
-      address_key: b.address_key
+      address_key: b.address_key,
+      label: b.label,
+      is_default: b.is_default,
     });
 
     res.json({ ok: true, address: saved });
   } catch (e) {
     logErr("POST /api/address/set", e?.stack || e);
     res.status(500).json({ ok: false, error: "server_error" });
-  }
-});
-
-// =========================
-// GET /api/address/list  ← cod-register 用（これ1個に統一）
-// =========================
-app.get("/api/address/list", async (req, res) => {
-  try {
-    const userId = String(req.query.userId || "").trim();
-    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
-
-    const r = await pool.query(
-      `
-      SELECT
-        id,
-        COALESCE(label,'')        AS label,
-        COALESCE(name,'')         AS name,
-        COALESCE(phone,'')        AS phone,
-        COALESCE(postal,'')       AS postal,
-        COALESCE(prefecture,'')   AS prefecture,
-        COALESCE(city,'')         AS city,
-        COALESCE(address1,'')     AS address1,
-        COALESCE(address2,'')     AS address2,
-        COALESCE(is_default,false) AS is_default
-      FROM addresses
-      WHERE user_id = $1
-      ORDER BY is_default DESC, id DESC
-      `,
-      [userId]
-    );
-
-    res.json({ ok: true, addresses: r.rows || [] });
-  } catch (e) {
-    console.error("address/list error", e);
-    res.status(500).json({ ok: false, error: "db error" });
   }
 });
 
@@ -2293,7 +2268,9 @@ app.post("/api/liff/address", async (req, res) => {
       city: address.city,
       address1: address.address1,
       address2: address.address2,
-      address_key: address.address_key
+      address_key: address.address_key,
+      label: address.label,
+      is_default: address.is_default,
     });
 
     res.json({ ok:true, memberCode: saved?.member_code, address: saved });

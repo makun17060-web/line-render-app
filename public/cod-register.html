@@ -81,7 +81,8 @@
     <div id="addrBookWrap" class="hide" style="margin-top:10px;">
       <div style="font-weight:900; font-size:13px;">登録済み住所から選ぶ（タップで即切替）</div>
       <div id="addrList" class="addrList"></div>
-      <!-- ✅ 「＋ 新しい住所を入力する」は削除（フォームを直接編集すればOK） -->
+      <!-- ✅ 「新しい住所を入力する」は残す（必要なら後で消せる） -->
+      <button class="btn btnSub" id="newAddrBtn" type="button">＋ 新しい住所を入力する</button>
     </div>
   </div>
 
@@ -125,11 +126,11 @@
   "use strict";
 
   // =========================
-  // 設計（今回の仕様）
-  // - 次回は必ず「自宅表示」から開始（安全）
-  // - 自宅 = is_default を自動入力（固定）
-  // - ギフト = フォームを「新規入力状態」にして別住所を作りやすく（ボタン不要）
-  // - ✅ gift のとき confirm に戻る際に ship=gift を付ける + isoya_ship_to を保存
+  // 仕様（今回の修正）
+  // - ✅ gift でも「既存住所を自動選択」して UPDATE になるように（null→INSERT事故を減らす）
+  // - ✅ addressId:null を送らない（サーバが落ちる/分岐できない対策）
+  // - ✅ confirm に ship=gift を付けて戻る + localStorage isoya_ship_to を保存
+  // - ✅ エラーをアラートに出して原因を見える化
   // =========================
 
   const LIFF_ID_ADDRESS = "2008406620-4kyQVyqe";
@@ -168,33 +169,6 @@
 
   const $ = id => document.getElementById(id);
 
-  // ✅ gift/self を confirm に確実に伝える（URL + localStorage）
-  function getShipMode(){
-    return document.querySelector('input[name="shipMode"]:checked')?.value || "self";
-  }
-  function persistShipTo(){
-    const m = (getShipMode() || "self").trim();
-    localStorage.setItem("isoya_ship_to", (m === "gift") ? "gift" : "self");
-    return m;
-  }
-  function withShipParam(url){
-    try{
-      const m = (getShipMode() || "self").trim();
-      const u = new URL(url, location.origin);
-      if(m === "gift") u.searchParams.set("ship","gift");
-      else u.searchParams.delete("ship");
-      return u.pathname + u.search;
-    }catch{
-      const m = (getShipMode() || "self").trim();
-      if(m !== "gift") return url;
-      return (url.includes("?") ? (url + "&ship=gift") : (url + "?ship=gift"));
-    }
-  }
-  function goReturnTo(){
-    persistShipTo();
-    location.href = withShipParam(returnTo);
-  }
-
   function hasCart(){
     try{
       const c = JSON.parse(localStorage.getItem(KEY_CART) || "");
@@ -211,6 +185,37 @@
     }
   }
   setLead();
+
+  // =========================
+  // ship mode persist + returnTo helper
+  // =========================
+  function getShipMode(){
+    return document.querySelector('input[name="shipMode"]:checked')?.value || "self";
+  }
+  function setShipMode(v){
+    const el = document.querySelector(`input[name="shipMode"][value="${v}"]`);
+    if(el) el.checked = true;
+  }
+  function persistShipTo(){
+    const m = (getShipMode() || "self").trim();
+    localStorage.setItem("isoya_ship_to", (m === "gift") ? "gift" : "self");
+    return m;
+  }
+  function withShipParam(url){
+    const m = (getShipMode() || "self").trim();
+    if(m !== "gift") return url;
+    try{
+      const u = new URL(url, location.origin);
+      u.searchParams.set("ship","gift");
+      return u.pathname + u.search;
+    }catch{
+      return (url.includes("?") ? (url + "&ship=gift") : (url + "?ship=gift"));
+    }
+  }
+  function goReturnTo(){
+    persistShipTo();
+    location.href = withShipParam(returnTo);
+  }
 
   // =========================
   // LIFF init
@@ -241,7 +246,6 @@
   // =========================
   let addressBook = [];
 
-  // self/gift の選択ID（別保存）
   let selfSelectedId = Number(localStorage.getItem(KEY_SELF_ADDR_ID) || "") || null;
   let giftSelectedId = Number(localStorage.getItem(KEY_GIFT_ADDR_ID) || "") || null;
 
@@ -263,8 +267,7 @@
     return (getShipMode() === "self") ? selfSelectedId : giftSelectedId;
   }
   function setCurrentSelectedId(id){
-    const m = getShipMode();
-    if(m === "self"){
+    if(getShipMode() === "self"){
       selfSelectedId = id;
       if(id) localStorage.setItem(KEY_SELF_ADDR_ID, String(id));
       else localStorage.removeItem(KEY_SELF_ADDR_ID);
@@ -275,9 +278,6 @@
     }
   }
 
-  // =========================
-  // Form fill / clear
-  // =========================
   function fillFormFromAddress(a){
     $("label").value = (a.label || (a.is_default ? "自宅" : ""));
     $("name").value = a.name || "";
@@ -300,7 +300,6 @@
     $("address1").value = "";
     $("address2").value = "";
     $("setDefault").checked = false;
-    // ✅ 新規入力 = 今のモード側IDを消す
     setCurrentSelectedId(null);
   }
 
@@ -318,16 +317,42 @@
     if(!$("label").value.trim()) $("label").value = "自宅";
   }
 
-  // ✅ ギフト = 「新規入力状態」にして作りやすく（ボタン無し）
-  //   ※ もし「前回ギフトを復元」したいなら、下のコメントブロックを使って復活できる
+  // ✅ 修正ポイント：gift でも既存住所を優先して選ぶ（UPDATEに寄せる）
   function ensureGiftAutoFill(){
+    // ① 前回ギフトがあればそれ
+    if(giftSelectedId){
+      const hit = addressBook.find(a => a.id === giftSelectedId);
+      if(hit){
+        fillFormFromAddress(hit);
+        if(!$("label").value.trim()) $("label").value = "贈り先";
+        return;
+      }
+    }
+
+    // ② なければ「デフォルト以外」の先頭（＝ギフト候補）を使う
+    const cand = addressBook.find(a => !a.is_default) || addressBook[0];
+    if(cand){
+      giftSelectedId = cand.id;
+      localStorage.setItem(KEY_GIFT_ADDR_ID, String(cand.id));
+      fillFormFromAddress(cand);
+      if(!$("label").value.trim()) $("label").value = "贈り先";
+      return;
+    }
+
+    // ③ 住所帳が空なら新規
     clearFormForNew();
     $("label").value = "贈り先";
   }
 
-  // =========================
-  // Render address book
-  // =========================
+  function escapeHtml(s){
+    return String(s||"")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#39;");
+  }
+
   function renderAddressBook(){
     const wrap = $("addrBookWrap");
     const list = $("addrList");
@@ -360,7 +385,6 @@
         </div>
       `;
 
-      // ✅ タップで即切替（今のモード側に保存）
       div.onclick = ()=>{
         setCurrentSelectedId(a.id);
         fillFormFromAddress(a);
@@ -373,23 +397,14 @@
     }
   }
 
-  // =========================
-  // Mode change handler
-  // =========================
   function onModeChanged(){
-    // ✅ ここで必ず現在のモードを保存（confirm側の判定材料になる）
+    const m = getShipMode();
     persistShipTo();
 
-    const m = getShipMode();
-
     if(addressBook.length > 0){
-      if(m === "self"){
-        ensureSelfAutoFill();
-      }else{
-        ensureGiftAutoFill();
-      }
+      if(m === "self") ensureSelfAutoFill();
+      else ensureGiftAutoFill();
     }else{
-      // 住所帳が空のとき
       clearFormForNew();
       $("label").value = (m === "gift") ? "贈り先" : "自宅";
     }
@@ -406,16 +421,21 @@
     location.href = backTo;
   };
 
+  $("newAddrBtn").onclick = ()=>{
+    // 新規入力に切替（今のモード側IDを外す）
+    clearFormForNew();
+    $("label").value = (getShipMode() === "gift") ? "贈り先" : "自宅";
+    renderAddressBook();
+  };
+
   // =========================
   // Boot
   // =========================
   await loadAddressBook();
+  renderAddressBook();
 
   // ✅ 次回は必ず「自宅表示」から開始（安全）
-  //   ただし「ページを開いた瞬間に isoya_ship_to も self で上書き」されるので混乱しない
-  document.querySelector('input[name="shipMode"][value="self"]').checked = true;
-  persistShipTo();
-
+  setShipMode("self");
   onModeChanged();
 
   // =========================
@@ -429,16 +449,13 @@
     }
 
     const shipMode = getShipMode();
-
-    // ✅ gift/self を保存（confirm側で判定できるように）
     persistShipTo();
 
-    // 今のモード側の addressId（null なら新規）
     const addressId = currentSelectedId();
 
     const payload = {
       userId: uid,
-      addressId: addressId, // nullなら新規（※サーバが対応していないと失敗します）
+      addressId: addressId, // ✅ null のときは後で消す
       label: ($("label").value || (shipMode==="gift" ? "贈り先" : "自宅")).trim(),
       is_default: $("setDefault").checked,
       name: $("name").value.trim(),
@@ -449,6 +466,9 @@
       address1: $("address1").value.trim(),
       address2: $("address2").value.trim(),
     };
+
+    // ✅ null を送るとサーバ側が落ちたり分岐できないことがあるので送らない
+    if(payload.addressId == null) delete payload.addressId;
 
     if(!payload.name || !payload.phone || !payload.postal ||
        !payload.prefecture || !payload.city || !payload.address1){
@@ -462,20 +482,17 @@
         headers:{ "Content-Type":"application/json" },
         body: JSON.stringify(payload)
       });
+
       const d = await r.json().catch(()=>({}));
-      if(!r.ok || !d?.ok) throw new Error(d?.error || "save failed");
+      if(!r.ok || !d?.ok) throw new Error(d?.error || ("HTTP "+r.status));
 
       const newId = Number(d.addressId) || null;
       if(newId){
-        // ✅ 保存後は、今のモード側IDとして覚える
         setCurrentSelectedId(newId);
 
         if(getShipMode() === "self"){
           selfSelectedId = newId;
           localStorage.setItem(KEY_SELF_ADDR_ID, String(newId));
-        }else{
-          giftSelectedId = newId;
-          localStorage.setItem(KEY_GIFT_ADDR_ID, String(newId));
         }
       }
 
@@ -483,18 +500,9 @@
       goReturnTo();
     }catch(e){
       console.error(e);
-      alert("住所の保存に失敗しました");
+      alert("住所の保存に失敗しました: " + (e?.message || e));
     }
   };
-
-  function escapeHtml(s){
-    return String(s||"")
-      .replaceAll("&","&amp;")
-      .replaceAll("<","&lt;")
-      .replaceAll(">","&gt;")
-      .replaceAll('"',"&quot;")
-      .replaceAll("'","&#39;");
-  }
 
 })();
 </script>

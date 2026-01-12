@@ -2206,6 +2206,23 @@ app.get("/api/address/list", async (req, res) => {
     res.status(500).json({ ok: false, error: "server_error" });
   }
 });
+app.get("/api/address/list", async (req, res) => {
+  const userId = String(req.query.userId || "").trim();
+  if (!userId) return res.status(400).json({ ok:false, error:"userId required" });
+
+  try{
+    const r = await pool.query(
+      `SELECT id, user_id, label, name, phone, postal, prefecture, city, address1, address2, is_default, created_at, updated_at
+       FROM addresses
+       WHERE user_id=$1
+       ORDER BY is_default DESC, updated_at DESC, id DESC`,
+      [userId]
+    );
+    res.json({ ok:true, addresses: r.rows });
+  }catch(e){
+    res.status(500).json({ ok:false, error: e.message || String(e) });
+  }
+});
 
 // 互換：cod-register.html 用
 app.get("/api/liff/address/me", async (req, res) => {

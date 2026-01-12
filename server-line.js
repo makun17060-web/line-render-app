@@ -2227,29 +2227,38 @@ app.post("/api/address/set", async (req, res) => {
   }
 });
 
-  
-
-    res.json({ ok: true, address: saved });
-  } catch (e) {
-    logErr("POST /api/address/set", e?.stack || e);
-    res.status(500).json({ ok: false, error: "server_error" });
-  }
-});
+// =========================
+// GET /api/address/list  ← cod-register 用（これ1個に統一）
+// =========================
 app.get("/api/address/list", async (req, res) => {
-  const userId = String(req.query.userId || "").trim();
-  if (!userId) return res.status(400).json({ ok:false, error:"userId required" });
+  try {
+    const userId = String(req.query.userId || "").trim();
+    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
 
-  try{
     const r = await pool.query(
-      `SELECT id, user_id, label, name, phone, postal, prefecture, city, address1, address2, is_default, created_at, updated_at
-       FROM addresses
-       WHERE user_id=$1
-       ORDER BY is_default DESC, updated_at DESC, id DESC`,
+      `
+      SELECT
+        id,
+        COALESCE(label,'')        AS label,
+        COALESCE(name,'')         AS name,
+        COALESCE(phone,'')        AS phone,
+        COALESCE(postal,'')       AS postal,
+        COALESCE(prefecture,'')   AS prefecture,
+        COALESCE(city,'')         AS city,
+        COALESCE(address1,'')     AS address1,
+        COALESCE(address2,'')     AS address2,
+        COALESCE(is_default,false) AS is_default
+      FROM addresses
+      WHERE user_id = $1
+      ORDER BY is_default DESC, id DESC
+      `,
       [userId]
     );
-    res.json({ ok:true, addresses: r.rows });
-  }catch(e){
-    res.status(500).json({ ok:false, error: e.message || String(e) });
+
+    res.json({ ok: true, addresses: r.rows || [] });
+  } catch (e) {
+    console.error("address/list error", e);
+    res.status(500).json({ ok: false, error: "db error" });
   }
 });
 

@@ -1356,7 +1356,7 @@ async function notifyOrderCompleted({
   }
 
   // （以下は元のままでOK）
-  ...
+  
 }
 
   const a = addr || (await getAddressByUserId(userId).catch(()=>null));

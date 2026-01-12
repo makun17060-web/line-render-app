@@ -95,6 +95,9 @@ const FUKUBAKO_TEST_ALLOW_USER_IDS = (env.FUKUBAKO_TEST_ALLOW_USER_IDS || "")
 
 // ✅ 定期案内用（postbackボタンを送るか）
 const ENABLE_REORDER_BUTTONS = String(env.ENABLE_REORDER_BUTTONS || "1").trim() === "1";
+// ✅ 注文系だけメンテ停止（1=注文APIを503にする）
+const MAINTENANCE_ORDER = String(env.MAINTENANCE_ORDER || "0").trim() === "1";
+
 // ✅ 定期案内のデフォルト文言（管理API送信時）
 const REORDER_MESSAGE_TEMPLATE = String(env.REORDER_MESSAGE_TEMPLATE || "").trim(); // 任意
 
@@ -1592,6 +1595,42 @@ app.post("/webhook", line.middleware(lineConfig), async (req, res) => {
  * ========================= */
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
+/* =========================
+ * メンテ：注文系だけ停止（503）
+ * - /api/admin/* は止めない
+ * - /webhook, /stripe/webhook は止めない（通知や再送処理があるため）
+ * - /api/address/* や /api/products 等も止めない（閲覧・住所登録はOK）
+ * ========================= */
+const ORDER_BLOCK_PATHS = [
+  "/api/store-order",
+  "/api/pay/stripe/create",
+  "/api/order/quote",
+  "/api/order/cod/create",
+  "/api/orders/original",
+];
+
+app.use((req, res, next) => {
+  if (!MAINTENANCE_ORDER) return next();
+
+  // webhook系・管理系は止めない
+  if (req.path === "/webhook") return next();
+  if (req.path === "/stripe/webhook") return next();
+  if (req.path.startsWith("/api/admin/")) return next();
+  if (req.path.startsWith("/health")) return next();
+
+  // 注文系だけ止める
+  const hit =
+    ORDER_BLOCK_PATHS.includes(req.path);
+
+  if (!hit) return next();
+
+  // 503返す（LIFF側はこのエラーを見て「メンテ中」表示にできる）
+  res.status(503).json({
+    ok: false,
+    error: "MAINTENANCE_ORDER",
+    message: "ただいま注文メンテナンス中です。しばらくしてからお試しください。",
+  });
+});
 
 // ログ
 app.use((req, res, next) => {

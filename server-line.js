@@ -609,6 +609,23 @@ async function ensureDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `);
+  // ✅ addresses に複数住所対応の列を追加
+  try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS label TEXT;`); } catch {}
+  try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT false;`); } catch {}
+
+  // ✅ user_id 1件縛りをやめる（すでにあるなら落とす）
+  try { await pool.query(`DROP INDEX IF EXISTS addresses_user_id_uidx;`); } catch {}
+
+  // ✅ default は user_id ごとに1件だけ
+  try {
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS addresses_default_uidx
+      ON addresses(user_id)
+      WHERE is_default = true
+    `);
+  } catch {}
+
+  try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_addresses_user_id ON addresses(user_id);`); } catch {}
 
   // ✅ 追加：/api/address/list で参照している列を追従（既存DBもOK）
   try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS label TEXT;`); } catch {}
@@ -978,14 +995,18 @@ async function markUserOrdered(userId, orderId = null) {
 
 async function getAddressByUserId(userId) {
   const r = await pool.query(
-    `SELECT member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at, label, is_default
-     FROM addresses WHERE user_id=$1
-     ORDER BY is_default DESC, id DESC
-     LIMIT 1`,
+    `
+    SELECT id, label, is_default, member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at
+    FROM addresses
+    WHERE user_id=$1
+    ORDER BY is_default DESC, updated_at DESC, id DESC
+    LIMIT 1
+    `,
     [userId]
   );
   return r.rows[0] || null;
 }
+
 
 async function issueUniqueMemberCode() {
   for (let i = 0; i < 80; i++) {
@@ -1010,89 +1031,74 @@ function makeAddressKey(a) {
 }
 
 async function upsertAddress(userId, addr) {
-  let memberCode = (addr.member_code || "").trim();
+  const uid = String(userId || "").trim();
+  if (!uid) throw new Error("userId required");
+
+  // ★ 新規追加/更新の分岐：id があれば更新、なければ追加
+  const addressId = addr.id ? Number(addr.id) : null;
+
+  const label = String(addr.label || "").trim(); // "自宅" / "贈り先"
+  const isDefault = !!addr.is_default;
+
+  let memberCode = String(addr.member_code || "").trim();
   if (!memberCode) memberCode = await issueUniqueMemberCode();
 
   const addressKey = addr.address_key ? String(addr.address_key).trim() : makeAddressKey(addr);
 
-  let saved;
-  try {
-    const q = `
-      INSERT INTO addresses (user_id, member_code, name, phone, postal, prefecture, city, address1, address2, address_key, label, is_default)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-      ON CONFLICT (user_id) DO UPDATE SET
-        member_code = EXCLUDED.member_code,
-        name = EXCLUDED.name,
-        phone = EXCLUDED.phone,
-        postal = EXCLUDED.postal,
-        prefecture = EXCLUDED.prefecture,
-        city = EXCLUDED.city,
-        address1 = EXCLUDED.address1,
-        address2 = EXCLUDED.address2,
-        address_key = EXCLUDED.address_key,
-        label = COALESCE(EXCLUDED.label, addresses.label),
-        is_default = COALESCE(EXCLUDED.is_default, addresses.is_default),
-        updated_at = now()
-      RETURNING member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at, label, is_default
-    `;
-    const r = await pool.query(q, [
-      userId,
-      memberCode,
-      addr.name || "",
-      addr.phone || "",
-      addr.postal || "",
-      addr.prefecture || "",
-      addr.city || "",
-      addr.address1 || "",
-      addr.address2 || "",
-      addressKey,
-      addr.label != null ? String(addr.label) : null,
-      addr.is_default != null ? !!addr.is_default : null,
-    ]);
-    saved = r.rows[0];
-  } catch (e) {
-    const msg = String(e?.message || "");
-    if (msg.includes("member_code") || msg.includes("duplicate key")) {
-      const newCode = await issueUniqueMemberCode();
-      const q2 = `
-        INSERT INTO addresses (user_id, member_code, name, phone, postal, prefecture, city, address1, address2, address_key, label, is_default)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-        ON CONFLICT (user_id) DO UPDATE SET
-          member_code = EXCLUDED.member_code,
-          name = EXCLUDED.name,
-          phone = EXCLUDED.phone,
-          postal = EXCLUDED.postal,
-          prefecture = EXCLUDED.prefecture,
-          city = EXCLUDED.city,
-          address1 = EXCLUDED.address1,
-          address2 = EXCLUDED.address2,
-          address_key = EXCLUDED.address_key,
-          label = COALESCE(EXCLUDED.label, addresses.label),
-          is_default = COALESCE(EXCLUDED.is_default, addresses.is_default),
-          updated_at = now()
-        RETURNING member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at, label, is_default
-      `;
-      const r2 = await pool.query(q2, [
-        userId,
-        newCode,
-        addr.name || "",
-        addr.phone || "",
-        addr.postal || "",
-        addr.prefecture || "",
-        addr.city || "",
-        addr.address1 || "",
-        addr.address2 || "",
-        addressKey,
-        addr.label != null ? String(addr.label) : null,
-        addr.is_default != null ? !!addr.is_default : null,
-      ]);
-      saved = r2.rows[0];
-    } else {
-      throw e;
-    }
+  // default を立てるなら、先に全部 false にする（ユニーク制約対策）
+  if (isDefault) {
+    await pool.query(`UPDATE addresses SET is_default=false WHERE user_id=$1`, [uid]);
   }
-  return saved;
+
+  if (addressId) {
+    // 既存更新（id指定）
+    const r = await pool.query(
+      `
+      UPDATE addresses
+      SET
+        label=$3,
+        is_default=$4,
+        member_code=$5,
+        name=$6, phone=$7, postal=$8, prefecture=$9, city=$10, address1=$11, address2=$12,
+        address_key=$13,
+        updated_at=now()
+      WHERE user_id=$1 AND id=$2
+      RETURNING id, label, is_default, member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at
+      `,
+      [
+        uid, addressId,
+        label, isDefault,
+        memberCode,
+        addr.name || "", addr.phone || "", addr.postal || "", addr.prefecture || "", addr.city || "",
+        addr.address1 || "", addr.address2 || "",
+        addressKey
+      ]
+    );
+    if (r.rowCount === 0) throw new Error("address not found");
+    return r.rows[0];
+  }
+
+  // 新規追加（上書きしない）
+  const r = await pool.query(
+    `
+    INSERT INTO addresses
+      (user_id, label, is_default, member_code, name, phone, postal, prefecture, city, address1, address2, address_key)
+    VALUES
+      ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+    RETURNING id, label, is_default, member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at
+    `,
+    [
+      uid, label || "住所",
+      isDefault,
+      memberCode,
+      addr.name || "", addr.phone || "", addr.postal || "", addr.prefecture || "", addr.city || "",
+      addr.address1 || "", addr.address2 || "",
+      addressKey
+    ]
+  );
+  return r.rows[0];
 }
+
 
 /* =========================
  * 注文組み立て（改ざん防止）

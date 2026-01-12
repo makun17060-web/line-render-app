@@ -4,13 +4,16 @@
  * ✅ 今回の「追加修正」（あなたの貼った版からの差分）
  * - 「直接注文」をセッションに残さない（sess.kind="direct" が残って次の入力を拾えない不具合を解消）
  * - orders に通知系カラムを追加（notified_user_at / notified_admin_at / notified_kind）※既存DBでもALTERで追従
- * - notifyOrderCompleted / notifyCardPending で通知記録を更新（管理/ユーザー通知の二重送信点検にも使える）
+ * - notifyOrderCompleted / notifyCardPending で通知記録を更新（二重送信点検にも使える）
  *
  * ✅ 今回の「致命的バグ修正」（あなたの貼ったコード上の不具合）
  * - /api/address/list が2回定義されていたので「1個に統一」
  * - addresses テーブルに label / is_default 列が無いのに参照していたので ALTER で追従（既存DBもOK）
  *
- * ※ それ以外は、あなたの貼った “修正版丸ごと” の内容を維持しています。
+ * ✅ さらに今回ここも修正（実害が出る箇所）
+ * - 「複数住所対応」を潰してしまう UNIQUE INDEX addresses_user_id_uidx を作らない（1ユーザー1件縛りが復活してた）
+ * - label/is_default の ALTER が重複していたので 1回に整理
+ * - /api/address/set /api/liff/address で id を受け取ったら更新できるように対応（upsertAddress の能力を活かす）
  */
 
 "use strict";
@@ -609,14 +612,16 @@ async function ensureDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `);
-  // ✅ addresses に複数住所対応の列を追加
+
+  // ✅ addresses に複数住所対応の列を追加（参照列の存在を保証）
   try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS label TEXT;`); } catch {}
   try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT false;`); } catch {}
 
-  // ✅ user_id 1件縛りをやめる（すでにあるなら落とす）
+  // ✅ もし過去に「1ユーザー1件縛り」を作ってしまっていたら落とす
+  // （これが残ってると複数住所が INSERT で必ずコケます）
   try { await pool.query(`DROP INDEX IF EXISTS addresses_user_id_uidx;`); } catch {}
 
-  // ✅ default は user_id ごとに1件だけ
+  // ✅ default は user_id ごとに1件だけ（部分ユニーク）
   try {
     await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS addresses_default_uidx
@@ -625,13 +630,10 @@ async function ensureDb() {
     `);
   } catch {}
 
+  // ✅ user_id は通常インデックス（ユニークにしない）
   try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_addresses_user_id ON addresses(user_id);`); } catch {}
 
-  // ✅ 追加：/api/address/list で参照している列を追従（既存DBもOK）
-  try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS label TEXT;`); } catch {}
-  try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT false;`); } catch {}
-
-  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_user_id_uidx ON addresses(user_id) WHERE user_id IS NOT NULL;`); } catch {}
+  // ✅ member_code / address_key はユニークでOK
   try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_member_code_uidx ON addresses(member_code) WHERE member_code IS NOT NULL;`); } catch {}
   try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_address_key_uidx ON addresses(address_key) WHERE address_key IS NOT NULL;`); } catch {}
 
@@ -1007,7 +1009,6 @@ async function getAddressByUserId(userId) {
   return r.rows[0] || null;
 }
 
-
 async function issueUniqueMemberCode() {
   for (let i = 0; i < 80; i++) {
     const code = String(Math.floor(1000 + Math.random() * 9000));
@@ -1098,7 +1099,6 @@ async function upsertAddress(userId, addr) {
   );
   return r.rows[0];
 }
-
 
 /* =========================
  * 注文組み立て（改ざん防止）
@@ -2203,7 +2203,7 @@ app.get("/api/address/list", async (req, res) => {
         COALESCE(is_default,false) AS is_default
       FROM addresses
       WHERE user_id = $1
-      ORDER BY is_default DESC, id DESC
+      ORDER BY is_default DESC, updated_at DESC, id DESC
       `,
       [userId]
     );
@@ -2223,6 +2223,7 @@ app.post("/api/address/set", async (req, res) => {
     if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
 
     const saved = await upsertAddress(userId, {
+      id: b.id, // ✅ 追加：id が来たら更新
       member_code: b.member_code,
       name: b.name,
       phone: b.phone,
@@ -2266,6 +2267,7 @@ app.post("/api/liff/address", async (req, res) => {
     if (!address) return res.status(400).json({ ok:false, error:"address required" });
 
     const saved = await upsertAddress(userId, {
+      id: address.id, // ✅ 追加：id が来たら更新
       member_code: address.member_code,
       name: address.name,
       phone: address.phone,

@@ -213,7 +213,7 @@
 
   async function loadAddressBook(){
     try{
-      const r = await fetch(`/api/addresses/list?userId=${encodeURIComponent(uid)}`, { cache:"no-store" });
+      const r = await fetch(`/api/address/list?userId=${encodeURIComponent(uid)}`, { cache:"no-store" });
       const d = await r.json().catch(()=>({}));
       if(r.ok && d?.ok && Array.isArray(d.addresses)){
         addressBook = d.addresses;
@@ -414,7 +414,7 @@
     }
 
     try{
-      const r = await fetch("/api/addresses/set", {
+      const r = await fetch("/api/address/set", {
         method:"POST",
         headers:{ "Content-Type":"application/json" },
         body: JSON.stringify(payload)

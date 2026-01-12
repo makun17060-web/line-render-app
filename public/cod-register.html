@@ -125,6 +125,9 @@
 (async function(){
   "use strict";
 
+  // =========================
+  // 設定
+  // =========================
   const LIFF_ID_ADDRESS = "2008406620-4kyQVyqe";
   const KEY_UID = "isoya_userId";
 
@@ -160,6 +163,18 @@
 
   const $ = id => document.getElementById(id);
 
+  // =========================
+  // ユーティリティ
+  // =========================
+  function escapeHtml(s){
+    return String(s||"")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#39;");
+  }
+
   function hasCart(){
     try{
       const c = JSON.parse(localStorage.getItem(KEY_CART) || "");
@@ -176,44 +191,6 @@
     }
   }
   setLead();
-
-  try{
-    await liff.init({ liffId: LIFF_ID_ADDRESS });
-    if(!liff.isLoggedIn()){
-      liff.login({ redirectUri: location.href });
-      return;
-    }
-    const prof = await liff.getProfile();
-    if(prof?.userId){
-      localStorage.setItem(KEY_UID, prof.userId);
-    }
-  }catch{
-    alert("住所登録画面の初期化に失敗しました");
-    return;
-  }
-
-  const uid = (localStorage.getItem(KEY_UID) || "").trim();
-  if(!uid){
-    alert("ユーザー情報が取得できません。ページを開き直してください。");
-    return;
-  }
-
-  let addressBook = [];
-  let selectedId = Number(localStorage.getItem(KEY_SELECTED_SHIP_ADDR_ID) || "") || null;
-
-  async function loadAddressBook(){
-    try{
-      const r = await fetch(`/api/address/list?userId=${encodeURIComponent(uid)}`, { cache:"no-store" });
-      const d = await r.json().catch(()=>({}));
-      if(r.ok && d?.ok && Array.isArray(d.addresses)){
-        addressBook = d.addresses;
-      }else{
-        addressBook = [];
-      }
-    }catch{
-      addressBook = [];
-    }
-  }
 
   function getShipMode(){
     return document.querySelector('input[name="shipMode"]:checked')?.value || "self";
@@ -246,8 +223,56 @@
     $("address1").value = "";
     $("address2").value = "";
     $("setDefault").checked = false;
-    selectedId = null;
-    localStorage.removeItem(KEY_SELECTED_SHIP_ADDR_ID);
+  }
+
+  // =========================
+  // LIFF init & userId
+  // =========================
+  try{
+    await liff.init({ liffId: LIFF_ID_ADDRESS });
+    if(!liff.isLoggedIn()){
+      liff.login({ redirectUri: location.href });
+      return;
+    }
+    const prof = await liff.getProfile();
+    if(prof?.userId){
+      localStorage.setItem(KEY_UID, prof.userId);
+    }
+  }catch(e){
+    console.error(e);
+    alert("住所登録画面の初期化に失敗しました");
+    return;
+  }
+
+  const uid = (localStorage.getItem(KEY_UID) || "").trim();
+  if(!uid){
+    alert("ユーザー情報が取得できません。ページを開き直してください。");
+    return;
+  }
+
+  // =========================
+  // AddressBook（DBから読み込み）
+  // =========================
+  let addressBook = [];
+  let selectedId = Number(localStorage.getItem(KEY_SELECTED_SHIP_ADDR_ID) || "") || null;
+
+  async function loadAddressBook(){
+    try{
+      // cache: "no-store" にして「2回目以降も最新」優先
+      const r = await fetch(`/api/address/list?userId=${encodeURIComponent(uid)}`, {
+        cache:"no-store",
+        credentials:"include"
+      });
+      const d = await r.json().catch(()=>({}));
+      if(r.ok && d?.ok && Array.isArray(d.addresses)){
+        addressBook = d.addresses;
+      }else{
+        addressBook = [];
+      }
+    }catch(e){
+      console.error(e);
+      addressBook = [];
+    }
   }
 
   // ✅ self のときだけ「未選択→デフォルト自動選択」
@@ -307,7 +332,9 @@
     }
   }
 
-  // 初期モード復元
+  // =========================
+  // 初期モード & 切り替え
+  // =========================
   setShipMode(localStorage.getItem(KEY_SHIP_MODE) || "self");
 
   function onModeChanged(){
@@ -331,6 +358,7 @@
       }
       renderAddressBook();
     }else{
+      // DBに住所が無い初回
       if(m === "gift") $("label").value = "贈り先";
       if(m === "self") $("label").value = "自宅";
     }
@@ -343,16 +371,21 @@
   $("backBtn").onclick = ()=>{ location.href = backTo; };
 
   $("newAddrBtn").onclick = ()=>{
+    // ✅ ギフトで新規入力したい時の挙動：選択を外してフォームを空に
+    selectedId = null;
+    localStorage.removeItem(KEY_SELECTED_SHIP_ADDR_ID);
     clearFormForNew();
     if(getShipMode() === "gift") $("label").value = "贈り先";
-    // ✅ gift で新規入力にしたいので、renderAddressBook() しても selectedId が復活しない（修正済み）
     renderAddressBook();
   };
 
+  // =========================
+  // 初回ロード
+  // =========================
   await loadAddressBook();
   renderAddressBook();
 
-  // 初期フォーム埋め
+  // 初期フォーム埋め（2回目購入の自動入力はここで確定）
   if(addressBook.length > 0){
     if(getShipMode() === "self"){
       selectedId = null;
@@ -360,13 +393,19 @@
     }else{
       const hit = selectedId ? addressBook.find(a => a.id === selectedId) : null;
       if(hit) fillFormFromAddress(hit);
-      else { clearFormForNew(); $("label").value = "贈り先"; }
+      else { selectedId = null; clearFormForNew(); $("label").value = "贈り先"; }
     }
   }else{
     if(getShipMode() === "gift") $("label").value = "贈り先";
     else $("label").value = "自宅";
   }
 
+  // 最後にモード反映（UIと内部状態の同期）
+  onModeChanged();
+
+  // =========================
+  // 保存
+  // =========================
   $("saveBtn").onclick = async ()=>{
     if(!hasCart()){
       alert("カートが空です。商品選択からやり直してください。");
@@ -375,6 +414,7 @@
     }
 
     const shipMode = getShipMode();
+
     const payload = {
       userId: uid,
       addressId: selectedId, // nullなら新規
@@ -399,6 +439,7 @@
       const r = await fetch("/api/address/set", {
         method:"POST",
         headers:{ "Content-Type":"application/json" },
+        credentials:"include",
         body: JSON.stringify(payload)
       });
       const d = await r.json().catch(()=>({}));
@@ -418,18 +459,6 @@
       alert("住所の保存に失敗しました");
     }
   };
-
-  function escapeHtml(s){
-    return String(s||"")
-      .replaceAll("&","&amp;")
-      .replaceAll("<","&lt;")
-      .replaceAll(">","&gt;")
-      .replaceAll('"',"&quot;")
-      .replaceAll("'","&#39;");
-  }
-
-  // 最後にモード反映
-  onModeChanged();
 
 })();
 </script>

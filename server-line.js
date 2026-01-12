@@ -1127,7 +1127,7 @@ async function upsertAddress(userId, addr) {
     ]
   );
   return r.rows[0];
-
+}
 /* =========================
  * 注文組み立て（改ざん防止）
  * ========================= */

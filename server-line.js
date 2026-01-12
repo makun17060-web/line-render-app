@@ -1330,7 +1330,6 @@ function buildReorderButtonsMessage(orderId) {
     }
   };
 }
-
 async function notifyOrderCompleted({
   orderId,
   userId,
@@ -1348,10 +1347,17 @@ async function notifyOrderCompleted({
   skipMarkNotified = false,
 }) {
   const row = await getOrderRow(orderId);
-  if (!skipMarkNotified && row?.notified_at) {
-    logInfo("notify skipped (already notified):", orderId);
+
+  // ✅ 修正：notified_at では止めない（card_pending でも入るため）
+  // 「completed を既に送った」場合だけスキップ
+  if (!skipMarkNotified && row?.notified_kind === "completed") {
+    logInfo("notify skipped (already completed):", orderId);
     return { ok: true, skipped: true };
   }
+
+  // （以下は元のままでOK）
+  ...
+}
 
   const a = addr || (await getAddressByUserId(userId).catch(()=>null));
   const addrText = joinAddrText(a);

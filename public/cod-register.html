@@ -79,7 +79,7 @@
     </div>
 
     <div id="addrBookWrap" class="hide" style="margin-top:10px;">
-      <div style="font-weight:900; font-size:13px;">登録済み住所から選ぶ</div>
+      <div style="font-weight:900; font-size:13px;">登録済み住所から選ぶ（タップで即切替）</div>
       <div id="addrList" class="addrList"></div>
 
       <button class="btn btnSub" id="newAddrBtn" type="button">＋ 新しい住所を入力する</button>
@@ -126,8 +126,13 @@
   "use strict";
 
   // =========================
-  // 設定
+  // 設計（今回の仕様）
+  // - 次回は必ず「自宅表示」から開始（安全）
+  // - 自宅 = is_default を自動入力（固定）
+  // - ギフト = 前回使ったギフト住所（あれば）を自動入力 / なければ新規
+  // - 住所一覧タップで即切替（self/gift それぞれの選択を別保存）
   // =========================
+
   const LIFF_ID_ADDRESS = "2008406620-4kyQVyqe";
   const KEY_UID = "isoya_userId";
 
@@ -151,29 +156,18 @@
   : (mode === "fukubako") ? "/fukubako.html"
   : "/products.html";
 
-  const KEY_SELECTED_SHIP_ADDR_ID =
-    (mode === "original") ? "isoya_shipaddr_original"
-  : (mode === "fukubako") ? "isoya_shipaddr_fukubako"
-  : "isoya_shipaddr";
+  // ✅ self/gift の選択IDを分けて保存（混乱防止）
+  const KEY_SELF_ADDR_ID =
+    (mode === "original") ? "isoya_selfaddr_original"
+  : (mode === "fukubako") ? "isoya_selfaddr_fukubako"
+  : "isoya_selfaddr";
 
-  const KEY_SHIP_MODE =
-    (mode === "original") ? "isoya_shipmode_original"
-  : (mode === "fukubako") ? "isoya_shipmode_fukubako"
-  : "isoya_shipmode";
+  const KEY_GIFT_ADDR_ID =
+    (mode === "original") ? "isoya_giftaddr_original"
+  : (mode === "fukubako") ? "isoya_giftaddr_fukubako"
+  : "isoya_giftaddr";
 
   const $ = id => document.getElementById(id);
-
-  // =========================
-  // ユーティリティ
-  // =========================
-  function escapeHtml(s){
-    return String(s||"")
-      .replaceAll("&","&amp;")
-      .replaceAll("<","&lt;")
-      .replaceAll(">","&gt;")
-      .replaceAll('"',"&quot;")
-      .replaceAll("'","&#39;");
-  }
 
   function hasCart(){
     try{
@@ -185,22 +179,90 @@
   function setLead(){
     const lead = $("lead");
     if(mode === "fukubako"){
-      lead.textContent = "福箱の注文のためにお届け先を選択してください（登録済み住所は選択できます）";
+      lead.textContent = "福箱の注文のためにお届け先を選択してください（登録済み住所はタップで即切替できます）";
     }else{
-      lead.textContent = "注文のためにお届け先を選択してください（登録済み住所は選択できます）";
+      lead.textContent = "注文のためにお届け先を選択してください（登録済み住所はタップで即切替できます）";
     }
   }
   setLead();
 
+  // =========================
+  // LIFF init
+  // =========================
+  try{
+    await liff.init({ liffId: LIFF_ID_ADDRESS });
+    if(!liff.isLoggedIn()){
+      liff.login({ redirectUri: location.href });
+      return;
+    }
+    const prof = await liff.getProfile();
+    if(prof?.userId){
+      localStorage.setItem(KEY_UID, prof.userId);
+    }
+  }catch{
+    alert("住所登録画面の初期化に失敗しました");
+    return;
+  }
+
+  const uid = (localStorage.getItem(KEY_UID) || "").trim();
+  if(!uid){
+    alert("ユーザー情報が取得できません。ページを開き直してください。");
+    return;
+  }
+
+  // =========================
+  // Address book load
+  // =========================
+  let addressBook = [];
+
+  // self/gift の選択ID（別保存）
+  let selfSelectedId = Number(localStorage.getItem(KEY_SELF_ADDR_ID) || "") || null;
+  let giftSelectedId = Number(localStorage.getItem(KEY_GIFT_ADDR_ID) || "") || null;
+
+  async function loadAddressBook(){
+    try{
+      // ✅ /api/address/list が必要（サーバ側で追加）
+      const r = await fetch(`/api/address/list?userId=${encodeURIComponent(uid)}`, { cache:"no-store" });
+      const d = await r.json().catch(()=>({}));
+      if(r.ok && d?.ok && Array.isArray(d.addresses)){
+        addressBook = d.addresses;
+      }else{
+        addressBook = [];
+      }
+    }catch{
+      addressBook = [];
+    }
+  }
+
+  // =========================
+  // Mode helpers
+  // =========================
   function getShipMode(){
     return document.querySelector('input[name="shipMode"]:checked')?.value || "self";
   }
   function setShipMode(v){
     const el = document.querySelector(`input[name="shipMode"][value="${v}"]`);
     if(el) el.checked = true;
-    localStorage.setItem(KEY_SHIP_MODE, v);
   }
 
+  function currentSelectedId(){
+    return (getShipMode() === "self") ? selfSelectedId : giftSelectedId;
+  }
+  function setCurrentSelectedId(id){
+    if(getShipMode() === "self"){
+      selfSelectedId = id;
+      if(id) localStorage.setItem(KEY_SELF_ADDR_ID, String(id));
+      else localStorage.removeItem(KEY_SELF_ADDR_ID);
+    }else{
+      giftSelectedId = id;
+      if(id) localStorage.setItem(KEY_GIFT_ADDR_ID, String(id));
+      else localStorage.removeItem(KEY_GIFT_ADDR_ID);
+    }
+  }
+
+  // =========================
+  // Form fill / clear
+  // =========================
   function fillFormFromAddress(a){
     $("label").value = (a.label || (a.is_default ? "自宅" : ""));
     $("name").value = a.name || "";
@@ -223,68 +285,45 @@
     $("address1").value = "";
     $("address2").value = "";
     $("setDefault").checked = false;
+    // 新規入力 = 今のモード側IDを消す
+    setCurrentSelectedId(null);
   }
 
   // =========================
-  // LIFF init & userId
+  // Auto fill policy (今回仕様)
   // =========================
-  try{
-    await liff.init({ liffId: LIFF_ID_ADDRESS });
-    if(!liff.isLoggedIn()){
-      liff.login({ redirectUri: location.href });
+  // ✅ 自宅 = 常に is_default（なければ先頭）
+  function ensureSelfAutoFill(){
+    const def = addressBook.find(a => a.is_default) || addressBook[0];
+    if(!def){
+      // 住所帳が空ならフォームは空のまま（入力して保存）
+      clearFormForNew();
+      $("label").value = "自宅";
       return;
     }
-    const prof = await liff.getProfile();
-    if(prof?.userId){
-      localStorage.setItem(KEY_UID, prof.userId);
-    }
-  }catch(e){
-    console.error(e);
-    alert("住所登録画面の初期化に失敗しました");
-    return;
+    selfSelectedId = def.id;
+    localStorage.setItem(KEY_SELF_ADDR_ID, String(def.id));
+    fillFormFromAddress(def);
+    if(!$("label").value.trim()) $("label").value = "自宅";
   }
 
-  const uid = (localStorage.getItem(KEY_UID) || "").trim();
-  if(!uid){
-    alert("ユーザー情報が取得できません。ページを開き直してください。");
-    return;
-  }
-
-  // =========================
-  // AddressBook（DBから読み込み）
-  // =========================
-  let addressBook = [];
-  let selectedId = Number(localStorage.getItem(KEY_SELECTED_SHIP_ADDR_ID) || "") || null;
-
-  async function loadAddressBook(){
-    try{
-      // cache: "no-store" にして「2回目以降も最新」優先
-      const r = await fetch(`/api/address/list?userId=${encodeURIComponent(uid)}`, {
-        cache:"no-store",
-        credentials:"include"
-      });
-      const d = await r.json().catch(()=>({}));
-      if(r.ok && d?.ok && Array.isArray(d.addresses)){
-        addressBook = d.addresses;
-      }else{
-        addressBook = [];
+  // ✅ ギフト = 前回ギフト（あれば）/ なければ新規
+  function ensureGiftAutoFill(){
+    if(giftSelectedId){
+      const hit = addressBook.find(a => a.id === giftSelectedId);
+      if(hit){
+        fillFormFromAddress(hit);
+        if(!$("label").value.trim()) $("label").value = "贈り先";
+        return;
       }
-    }catch(e){
-      console.error(e);
-      addressBook = [];
     }
+    clearFormForNew();
+    $("label").value = "贈り先";
   }
 
-  // ✅ self のときだけ「未選択→デフォルト自動選択」
-  function ensureSelectedIdForSelf(){
-    if(getShipMode() !== "self") return;
-    if(selectedId) return;
-    const def = addressBook.find(a => a.is_default) || addressBook[0];
-    selectedId = def?.id || null;
-    if(selectedId) localStorage.setItem(KEY_SELECTED_SHIP_ADDR_ID, String(selectedId));
-    if(def) fillFormFromAddress(def);
-  }
-
+  // =========================
+  // Render address book
+  // =========================
   function renderAddressBook(){
     const wrap = $("addrBookWrap");
     const list = $("addrList");
@@ -296,12 +335,11 @@
     }
     wrap.classList.remove("hide");
 
-    // ✅ self だけデフォルトを自動選択（gift は新規入力のため selectedId=null を許可）
-    ensureSelectedIdForSelf();
+    const sid = currentSelectedId();
 
     for(const a of addressBook){
       const div = document.createElement("div");
-      div.className = "addrItem" + (a.id === selectedId ? " active" : "");
+      div.className = "addrItem" + (a.id === sid ? " active" : "");
       div.dataset.id = String(a.id);
 
       const label = (a.label || (a.is_default ? "自宅" : "住所"));
@@ -318,12 +356,11 @@
         </div>
       `;
 
+      // ✅ タップで即切替（今のモード側に保存）
       div.onclick = ()=>{
-        selectedId = a.id;
-        localStorage.setItem(KEY_SELECTED_SHIP_ADDR_ID, String(selectedId));
+        setCurrentSelectedId(a.id);
         fillFormFromAddress(a);
 
-        // ✅ ここは再描画せず class だけ付け替え
         document.querySelectorAll(".addrItem").forEach(el=>el.classList.remove("active"));
         div.classList.add("active");
       };
@@ -333,35 +370,31 @@
   }
 
   // =========================
-  // 初期モード & 切り替え
+  // Mode change handler
   // =========================
-  setShipMode(localStorage.getItem(KEY_SHIP_MODE) || "self");
-
   function onModeChanged(){
     const m = getShipMode();
-    localStorage.setItem(KEY_SHIP_MODE, m);
 
     if(addressBook.length > 0){
       if(m === "self"){
-        // 自宅：必ずデフォルトを使う
-        selectedId = null; // いったんリセットして ensureSelectedIdForSelf に任せる
-        ensureSelectedIdForSelf();
+        // ✅ self は毎回デフォルトへ（前回の self 選択は使わない）
+        ensureSelfAutoFill();
       }else{
-        // gift：最後に選んだ住所 or 新規入力を許可
-        if(selectedId){
-          const hit = addressBook.find(a => a.id === selectedId);
-          if(hit) fillFormFromAddress(hit);
-        }else{
-          clearFormForNew();
-          $("label").value = "贈り先";
-        }
+        // ✅ gift は前回ギフトを復元 or 新規
+        ensureGiftAutoFill();
       }
-      renderAddressBook();
     }else{
-      // DBに住所が無い初回
-      if(m === "gift") $("label").value = "贈り先";
-      if(m === "self") $("label").value = "自宅";
+      // 住所帳が空のとき
+      if(m === "gift"){
+        clearFormForNew();
+        $("label").value = "贈り先";
+      }else{
+        clearFormForNew();
+        $("label").value = "自宅";
+      }
     }
+
+    renderAddressBook();
   }
 
   document.querySelectorAll('input[name="shipMode"]').forEach(r=>{
@@ -371,40 +404,26 @@
   $("backBtn").onclick = ()=>{ location.href = backTo; };
 
   $("newAddrBtn").onclick = ()=>{
-    // ✅ ギフトで新規入力したい時の挙動：選択を外してフォームを空に
-    selectedId = null;
-    localStorage.removeItem(KEY_SELECTED_SHIP_ADDR_ID);
+    // 新規入力に切替（今のモード側IDを外す）
     clearFormForNew();
-    if(getShipMode() === "gift") $("label").value = "贈り先";
+    $("label").value = (getShipMode() === "gift") ? "贈り先" : "自宅";
     renderAddressBook();
   };
 
   // =========================
-  // 初回ロード
+  // Boot
   // =========================
   await loadAddressBook();
   renderAddressBook();
 
-  // 初期フォーム埋め（2回目購入の自動入力はここで確定）
-  if(addressBook.length > 0){
-    if(getShipMode() === "self"){
-      selectedId = null;
-      ensureSelectedIdForSelf();
-    }else{
-      const hit = selectedId ? addressBook.find(a => a.id === selectedId) : null;
-      if(hit) fillFormFromAddress(hit);
-      else { selectedId = null; clearFormForNew(); $("label").value = "贈り先"; }
-    }
-  }else{
-    if(getShipMode() === "gift") $("label").value = "贈り先";
-    else $("label").value = "自宅";
-  }
+  // ✅ 次回は必ず「自宅表示」から開始（安全）
+  setShipMode("self");
 
-  // 最後にモード反映（UIと内部状態の同期）
+  // 初期反映
   onModeChanged();
 
   // =========================
-  // 保存
+  // Save
   // =========================
   $("saveBtn").onclick = async ()=>{
     if(!hasCart()){
@@ -415,9 +434,12 @@
 
     const shipMode = getShipMode();
 
+    // 今のモード側の addressId（null なら新規）
+    const addressId = currentSelectedId();
+
     const payload = {
       userId: uid,
-      addressId: selectedId, // nullなら新規
+      addressId: addressId, // nullなら新規
       label: ($("label").value || (shipMode==="gift" ? "贈り先" : "自宅")).trim(),
       is_default: $("setDefault").checked,
       name: $("name").value.trim(),
@@ -439,7 +461,6 @@
       const r = await fetch("/api/address/set", {
         method:"POST",
         headers:{ "Content-Type":"application/json" },
-        credentials:"include",
         body: JSON.stringify(payload)
       });
       const d = await r.json().catch(()=>({}));
@@ -447,10 +468,16 @@
 
       const newId = Number(d.addressId) || null;
       if(newId){
-        selectedId = newId;
-        localStorage.setItem(KEY_SELECTED_SHIP_ADDR_ID, String(newId));
+        // ✅ 保存後は、今のモード側IDとして覚える
+        setCurrentSelectedId(newId);
+
+        // ✅ self の場合：デフォルト化したなら self はすぐデフォルトへ寄せる
+        //   ただし次回表示は常に self=デフォルトなので、ここで強制同期しておく
+        if(getShipMode() === "self"){
+          selfSelectedId = newId;
+          localStorage.setItem(KEY_SELF_ADDR_ID, String(newId));
+        }
       }
-      localStorage.setItem(KEY_SHIP_MODE, shipMode);
 
       alert("お届け先を保存しました");
       location.href = returnTo;
@@ -459,6 +486,15 @@
       alert("住所の保存に失敗しました");
     }
   };
+
+  function escapeHtml(s){
+    return String(s||"")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#39;");
+  }
 
 })();
 </script>

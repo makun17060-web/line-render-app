@@ -63,7 +63,6 @@
     注文のために住所を入力してください（登録済みの場合は選択できます）
   </div>
 
-  <!-- ✅ ギフト配送の切替 -->
   <div class="card">
     <div style="font-weight:900; font-size:14px;">お届け先</div>
     <div class="note">ギフトの場合は、今回の配送先を別で登録できます（自宅住所は残ります）</div>
@@ -79,7 +78,6 @@
       </label>
     </div>
 
-    <!-- ✅ 住所帳（登録済みがある場合） -->
     <div id="addrBookWrap" class="hide" style="margin-top:10px;">
       <div style="font-weight:900; font-size:13px;">登録済み住所から選ぶ</div>
       <div id="addrList" class="addrList"></div>
@@ -88,7 +86,6 @@
     </div>
   </div>
 
-  <!-- ✅ 入力フォーム -->
   <div class="card" id="formCard">
     <label>ラベル（例：自宅 / 実家 / 贈り先）</label>
     <input id="label" placeholder="自宅">
@@ -151,7 +148,6 @@
   : (mode === "fukubako") ? "/fukubako.html"
   : "/products.html";
 
-  // ✅ 今回の配送先IDを保存（注文API側で参照できるようにする）
   const KEY_SELECTED_SHIP_ADDR_ID =
     (mode === "original") ? "isoya_shipaddr_original"
   : (mode === "fukubako") ? "isoya_shipaddr_fukubako"
@@ -181,9 +177,6 @@
   }
   setLead();
 
-  // =========================
-  // LIFF 初期化
-  // =========================
   try{
     await liff.init({ liffId: LIFF_ID_ADDRESS });
     if(!liff.isLoggedIn()){
@@ -205,9 +198,6 @@
     return;
   }
 
-  // =========================
-  // 住所帳ロード
-  // =========================
   let addressBook = [];
   let selectedId = Number(localStorage.getItem(KEY_SELECTED_SHIP_ADDR_ID) || "") || null;
 
@@ -225,55 +215,13 @@
     }
   }
 
-  function renderAddressBook(){
-    const wrap = $("addrBookWrap");
-    const list = $("addrList");
-    list.innerHTML = "";
-
-    if(addressBook.length === 0){
-      wrap.classList.add("hide");
-      return;
-    }
-    wrap.classList.remove("hide");
-
-    // selectedId が無ければ default を選ぶ
-    if(!selectedId){
-      const def = addressBook.find(a => a.is_default) || addressBook[0];
-      selectedId = def?.id || null;
-    }
-
-    for(const a of addressBook){
-      const div = document.createElement("div");
-      div.className = "addrItem" + (a.id === selectedId ? " active" : "");
-      const label = (a.label || (a.is_default ? "自宅" : "住所"));
-      const topRight = a.is_default ? "自宅(デフォルト)" : "";
-
-      div.innerHTML = `
-        <div class="addrTop">
-          <div class="addrLabel">${escapeHtml(label)}</div>
-          <div class="addrSmall">${escapeHtml(topRight)}</div>
-        </div>
-        <div class="addrSmall">
-          ${escapeHtml(a.name||"")} / ${escapeHtml(a.phone||"")}<br>
-          〒${escapeHtml(a.postal||"")} ${escapeHtml(a.prefecture||"")}${escapeHtml(a.city||"")} ${escapeHtml(a.address1||"")} ${escapeHtml(a.address2||"")}
-        </div>
-      `;
-      div.onclick = ()=>{
-        selectedId = a.id;
-        localStorage.setItem(KEY_SELECTED_SHIP_ADDR_ID, String(selectedId));
-        fillFormFromAddress(a);
-        highlightSelected();
-      };
-      list.appendChild(div);
-    }
+  function getShipMode(){
+    return document.querySelector('input[name="shipMode"]:checked')?.value || "self";
   }
-
-  function highlightSelected(){
-    document.querySelectorAll(".addrItem").forEach(el=>{
-      el.classList.remove("active");
-    });
-    // ざっくり再描画の方が安全だが、今回は軽くやる
-    renderAddressBook();
+  function setShipMode(v){
+    const el = document.querySelector(`input[name="shipMode"][value="${v}"]`);
+    if(el) el.checked = true;
+    localStorage.setItem(KEY_SHIP_MODE, v);
   }
 
   function fillFormFromAddress(a){
@@ -298,50 +246,91 @@
     $("address1").value = "";
     $("address2").value = "";
     $("setDefault").checked = false;
-    selectedId = null; // 新規扱い
+    selectedId = null;
     localStorage.removeItem(KEY_SELECTED_SHIP_ADDR_ID);
   }
 
-  function getShipMode(){
-    const v = document.querySelector('input[name="shipMode"]:checked')?.value || "self";
-    return v;
+  // ✅ self のときだけ「未選択→デフォルト自動選択」
+  function ensureSelectedIdForSelf(){
+    if(getShipMode() !== "self") return;
+    if(selectedId) return;
+    const def = addressBook.find(a => a.is_default) || addressBook[0];
+    selectedId = def?.id || null;
+    if(selectedId) localStorage.setItem(KEY_SELECTED_SHIP_ADDR_ID, String(selectedId));
+    if(def) fillFormFromAddress(def);
   }
-  function setShipMode(v){
-    const el = document.querySelector(`input[name="shipMode"][value="${v}"]`);
-    if(el) el.checked = true;
-    localStorage.setItem(KEY_SHIP_MODE, v);
+
+  function renderAddressBook(){
+    const wrap = $("addrBookWrap");
+    const list = $("addrList");
+    list.innerHTML = "";
+
+    if(addressBook.length === 0){
+      wrap.classList.add("hide");
+      return;
+    }
+    wrap.classList.remove("hide");
+
+    // ✅ self だけデフォルトを自動選択（gift は新規入力のため selectedId=null を許可）
+    ensureSelectedIdForSelf();
+
+    for(const a of addressBook){
+      const div = document.createElement("div");
+      div.className = "addrItem" + (a.id === selectedId ? " active" : "");
+      div.dataset.id = String(a.id);
+
+      const label = (a.label || (a.is_default ? "自宅" : "住所"));
+      const topRight = a.is_default ? "自宅(デフォルト)" : "";
+
+      div.innerHTML = `
+        <div class="addrTop">
+          <div class="addrLabel">${escapeHtml(label)}</div>
+          <div class="addrSmall">${escapeHtml(topRight)}</div>
+        </div>
+        <div class="addrSmall">
+          ${escapeHtml(a.name||"")} / ${escapeHtml(a.phone||"")}<br>
+          〒${escapeHtml(a.postal||"")} ${escapeHtml(a.prefecture||"")}${escapeHtml(a.city||"")} ${escapeHtml(a.address1||"")} ${escapeHtml(a.address2||"")}
+        </div>
+      `;
+
+      div.onclick = ()=>{
+        selectedId = a.id;
+        localStorage.setItem(KEY_SELECTED_SHIP_ADDR_ID, String(selectedId));
+        fillFormFromAddress(a);
+
+        // ✅ ここは再描画せず class だけ付け替え
+        document.querySelectorAll(".addrItem").forEach(el=>el.classList.remove("active"));
+        div.classList.add("active");
+      };
+
+      list.appendChild(div);
+    }
   }
 
   // 初期モード復元
   setShipMode(localStorage.getItem(KEY_SHIP_MODE) || "self");
 
-  // モード切替時の挙動
   function onModeChanged(){
     const m = getShipMode();
     localStorage.setItem(KEY_SHIP_MODE, m);
 
-    // self の場合：デフォルト住所をフォームに入れる
-    // gift の場合：最後に選択した住所（or 新規）を使う
     if(addressBook.length > 0){
       if(m === "self"){
-        const def = addressBook.find(a => a.is_default) || addressBook[0];
-        selectedId = def?.id || null;
-        if(selectedId) localStorage.setItem(KEY_SELECTED_SHIP_ADDR_ID, String(selectedId));
-        if(def) fillFormFromAddress(def);
+        // 自宅：必ずデフォルトを使う
+        selectedId = null; // いったんリセットして ensureSelectedIdForSelf に任せる
+        ensureSelectedIdForSelf();
       }else{
-        // gift
+        // gift：最後に選んだ住所 or 新規入力を許可
         if(selectedId){
           const hit = addressBook.find(a => a.id === selectedId);
           if(hit) fillFormFromAddress(hit);
         }else{
-          // 新規でもOK
           clearFormForNew();
           $("label").value = "贈り先";
         }
       }
       renderAddressBook();
     }else{
-      // 住所帳が空なら、フォーム入力のみ
       if(m === "gift") $("label").value = "贈り先";
       if(m === "self") $("label").value = "自宅";
     }
@@ -351,40 +340,33 @@
     r.addEventListener("change", onModeChanged);
   });
 
-  // 戻る
   $("backBtn").onclick = ()=>{ location.href = backTo; };
 
-  // 住所帳：新規入力
   $("newAddrBtn").onclick = ()=>{
     clearFormForNew();
     if(getShipMode() === "gift") $("label").value = "贈り先";
+    // ✅ gift で新規入力にしたいので、renderAddressBook() しても selectedId が復活しない（修正済み）
+    renderAddressBook();
   };
 
-  // 初回ロード
   await loadAddressBook();
   renderAddressBook();
 
   // 初期フォーム埋め
   if(addressBook.length > 0){
-    const m = getShipMode();
-    if(m === "self"){
-      const def = addressBook.find(a => a.is_default) || addressBook[0];
-      selectedId = def?.id || null;
-      if(def) fillFormFromAddress(def);
-      if(selectedId) localStorage.setItem(KEY_SELECTED_SHIP_ADDR_ID, String(selectedId));
+    if(getShipMode() === "self"){
+      selectedId = null;
+      ensureSelectedIdForSelf();
     }else{
-      // gift
       const hit = selectedId ? addressBook.find(a => a.id === selectedId) : null;
       if(hit) fillFormFromAddress(hit);
       else { clearFormForNew(); $("label").value = "贈り先"; }
     }
   }else{
-    // 住所が無い場合はフォーム入力
     if(getShipMode() === "gift") $("label").value = "贈り先";
     else $("label").value = "自宅";
   }
 
-  // 保存
   $("saveBtn").onclick = async ()=>{
     if(!hasCart()){
       alert("カートが空です。商品選択からやり直してください。");
@@ -397,7 +379,7 @@
       userId: uid,
       addressId: selectedId, // nullなら新規
       label: ($("label").value || (shipMode==="gift" ? "贈り先" : "自宅")).trim(),
-      is_default: $("setDefault").checked, // self用にdefault更新もできる
+      is_default: $("setDefault").checked,
       name: $("name").value.trim(),
       phone: $("phone").value.trim(),
       postal: $("postal").value.trim(),

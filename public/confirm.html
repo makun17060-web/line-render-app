@@ -157,6 +157,11 @@
           <button id="codBtn" class="payBtn" style="background:var(--pri);color:#fff" type="button">
             代引きで注文確定
           </button>
+
+          <!-- ✅ 贈り先のときだけ表示（代引不可の注意） -->
+          <div id="codDisabledNote" class="muted" style="margin-top:8px;display:none">
+            ※贈り先への配送では、代引きはご利用いただけません（クレジットのみ）
+          </div>
         </div>
 
         <!-- 戻る（最後にまとめる） -->
@@ -328,6 +333,23 @@
     safeSetText(totalCodEl, yen(quote.totalCod));
   }
 
+  // ✅ 贈り先のときは代引きを無効化
+  function applyCodAvailability(isGift){
+    const note = document.getElementById("codDisabledNote");
+    if(!codBtn) return;
+
+    if(isGift){
+      codBtn.disabled = true;
+      codBtn.textContent = "贈り先では代引き不可";
+      codBtn.style.opacity = ".55";
+      if(note) note.style.display = "block";
+    }else{
+      codBtn.disabled = false;
+      codBtn.textContent = "代引きで注文確定";
+      if(note) note.style.display = "none";
+    }
+  }
+
   try{
     status.textContent="確認中…";
 
@@ -353,6 +375,20 @@
       location.replace(`/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`);
       return;
     }
+
+    // ✅ 贈り先判定（あなたの運用に合わせてどれかでOK）
+    // - confirm.html?ship=gift or ?gift=1
+    // - localStorage "isoya_ship_to" が "gift"
+    // - addressに is_gift / kind / label が入っている
+    const isGift =
+      (qs.get("ship") || "") === "gift" ||
+      (qs.get("gift") || "") === "1" ||
+      ((localStorage.getItem("isoya_ship_to") || "").trim() === "gift") ||
+      (addr.is_gift === true) ||
+      ((addr.kind || "").trim() === "gift") ||
+      ((addr.label || "").trim() === "gift");
+
+    applyCodAvailability(isGift);
 
     const nameLine = addr.name ? `${addr.name} 様\n` : "";
     addrText.textContent =
@@ -398,8 +434,8 @@
       };
     }
 
-    // ✅ 代引き：確定（codBtn だけbusy）
-    if(codBtn){
+    // ✅ 代引き：確定（贈り先のときは onclick 自体を付けない）
+    if(codBtn && !isGift){
       codBtn.onclick = async ()=>{
         setBtnBusy(codBtn, true, "確定中…", "代引きで注文確定");
         try{

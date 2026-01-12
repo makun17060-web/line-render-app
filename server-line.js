@@ -2251,22 +2251,7 @@ app.get("/api/address/list", async (req, res) => {
   }
 });
 
-  try {
-    const b = req.body || {};
-    const userId = String(b.userId || "").trim();
-    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
-
-    const saved = await upsertAddress(userId, {
-      member_code: b.member_code,
-      name: b.name,
-      phone: b.phone,
-      postal: b.postal,
-      prefecture: b.prefecture,
-      city: b.city,
-      address1: b.address1,
-      address2: b.address2,
-      address_key: b.address_key
-    });
+  
 
     res.json({ ok: true, address: saved });
   } catch (e) {

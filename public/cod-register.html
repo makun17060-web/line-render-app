@@ -414,7 +414,7 @@
     }
 
     try{
-      const r = await fetch("/api/addresses/save", {
+      const r = await fetch("/api/addresses/set", {
         method:"POST",
         headers:{ "Content-Type":"application/json" },
         body: JSON.stringify(payload)

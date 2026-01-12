@@ -2149,105 +2149,81 @@ app.get("/api/liff/config", (req, res) => {
   return res.json({ ok:true, liffId });
 });
 // =========================
-// Address APIs
+// Address API
 // =========================
-
-// ✅ 住所を保存（idがあれば更新 / 無ければ新規作成）
-// - user_id で1件上書きする upsert は禁止（ギフトが自宅を潰す）
-// - is_default=true のときは同一userの他レコードを false にする
-app.post("/api/address/set", async (req, res) => {
-  const b = req.body || {};
-  const userId = String(b.userId || "").trim();
-  if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
-
-  const addressId = b.addressId ? Number(b.addressId) : null;
-
-  const payload = {
-    label: String(b.label || "").trim(),
-    name: String(b.name || "").trim(),
-    phone: String(b.phone || "").trim(),
-    postal: String(b.postal || "").trim(),
-    prefecture: String(b.prefecture || "").trim(),
-    city: String(b.city || "").trim(),
-    address1: String(b.address1 || "").trim(),
-    address2: String(b.address2 || "").trim(),
-    is_default: !!b.is_default,
-  };
-
-  // 必須チェック（軽く）
-  if (!payload.name || !payload.phone || !payload.postal || !payload.prefecture || !payload.city || !payload.address1) {
-    return res.status(400).json({ ok: false, error: "required fields missing" });
-  }
-
-  const client = await pool.connect();
+app.get("/api/address/get", async (req, res) => {
   try {
-    await client.query("BEGIN");
+    const userId = String(req.query.userId || "").trim();
+    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
 
-    if (payload.is_default) {
-      await client.query(
-        `UPDATE addresses SET is_default=false, updated_at=NOW()
-         WHERE user_id=$1 AND is_default=true`,
-        [userId]
-      );
-    }
-
-    let savedId = null;
-
-    if (addressId) {
-      const r = await client.query(
-        `UPDATE addresses
-            SET label=$1,name=$2,phone=$3,postal=$4,prefecture=$5,city=$6,address1=$7,address2=$8,is_default=$9,updated_at=NOW()
-          WHERE id=$10 AND user_id=$11
-          RETURNING id`,
-        [
-          payload.label, payload.name, payload.phone, payload.postal,
-          payload.prefecture, payload.city, payload.address1, payload.address2,
-          payload.is_default, addressId, userId
-        ]
-      );
-      savedId = r.rows[0]?.id || null;
-      if (!savedId) throw new Error("address not found");
-    } else {
-      const r = await client.query(
-        `INSERT INTO addresses (user_id,label,name,phone,postal,prefecture,city,address1,address2,is_default)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-         RETURNING id`,
-        [
-          userId, payload.label, payload.name, payload.phone, payload.postal,
-          payload.prefecture, payload.city, payload.address1, payload.address2,
-          payload.is_default
-        ]
-      );
-      savedId = r.rows[0]?.id || null;
-    }
-
-    await client.query("COMMIT");
-    return res.json({ ok: true, addressId: savedId });
+    const addr = await getAddressByUserId(userId);
+    res.json({ ok: true, address: addr });
   } catch (e) {
-    await client.query("ROLLBACK");
-    return res.status(500).json({ ok: false, error: e?.message || String(e) });
-  } finally {
-    client.release();
+    logErr("GET /api/address/get", e?.stack || e);
+    res.status(500).json({ ok: false, error: "server_error" });
   }
 });
 
-// ✅ 住所一覧（cod-register.html が呼ぶ）
-// /api/address/list?userId=Uxxxx
+// =========================
+// GET /api/address/list  ← cod-register 用
+// =========================
 app.get("/api/address/list", async (req, res) => {
-  const userId = String(req.query.userId || "").trim();
-  if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
-
   try {
+    const userId = String(req.query.userId || "").trim();
+    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
+
     const r = await pool.query(
-      `SELECT id, user_id, label, name, phone, postal, prefecture, city, address1, address2, is_default, created_at, updated_at
-       FROM addresses
-       WHERE user_id=$1
-       ORDER BY is_default DESC, updated_at DESC, id DESC`,
+      `
+      SELECT
+        id,
+        COALESCE(label,'')        AS label,
+        COALESCE(name,'')         AS name,
+        COALESCE(phone,'')        AS phone,
+        COALESCE(postal,'')       AS postal,
+        COALESCE(prefecture,'')   AS prefecture,
+        COALESCE(city,'')         AS city,
+        COALESCE(address1,'')     AS address1,
+        COALESCE(address2,'')     AS address2,
+        COALESCE(is_default,false) AS is_default
+      FROM addresses
+      WHERE user_id = $1
+      ORDER BY is_default DESC, id DESC
+      `,
       [userId]
     );
-    return res.json({ ok: true, addresses: r.rows });
+
+    res.json({ ok: true, addresses: r.rows || [] });
   } catch (e) {
-    return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    console.error("address/list error", e);
+    res.status(500).json({ ok: false, error: "db error" });
+  }
+});
+
+// =========================
+// POST /api/address/set
+// =========================
+app.post("/api/address/set", async (req, res) => {
+  try {
+    const b = req.body || {};
+    const userId = String(b.userId || "").trim();
+    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
+
+    const saved = await upsertAddress(userId, {
+      member_code: b.member_code,
+      name: b.name,
+      phone: b.phone,
+      postal: b.postal,
+      prefecture: b.prefecture,
+      city: b.city,
+      address1: b.address1,
+      address2: b.address2,
+      address_key: b.address_key
+    });
+
+    res.json({ ok: true, address: saved });
+  } catch (e) {
+    logErr("POST /api/address/set", e?.stack || e);
+    res.status(500).json({ ok: false, error: "server_error" });
   }
 });
 

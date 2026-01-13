@@ -184,6 +184,7 @@
 
   const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
   const KEY_UID ="isoya_userId";
+  const KEY_SHIP_TO = "isoya_ship_to"; // "home" / "gift"
 
   // ✅ modeでカート切替（福箱は専用カート）
   const qs = new URLSearchParams(location.search);
@@ -298,17 +299,20 @@
   }
 
   // ✅ confirmは LIFF失敗しても止めない（住所LIFF内でも動かす）
+  // ✅ さらに「makun17060」みたいな偽物UIDは採用しない（U...のみ）
   async function ensureUserSoft(){
     const cached = (localStorage.getItem(KEY_UID) || "").trim();
-    if(cached) return cached;
+
+    // LINE userIdっぽいものだけ（Uで始まる＋ある程度長い）
+    if (cached && /^U[a-fA-F0-9]{10,}$/.test(cached)) return cached;
 
     try{
       await liff.init({ liffId: LIFF_ID_ORDER });
       if(liff.isLoggedIn()){
         const prof = await liff.getProfile();
         const uid = (prof?.userId||"").trim();
-        if(uid) localStorage.setItem(KEY_UID, uid);
-        return uid || null;
+        if(uid && /^U[a-fA-F0-9]{10,}$/.test(uid)) localStorage.setItem(KEY_UID, uid);
+        return (uid && /^U[a-fA-F0-9]{10,}$/.test(uid)) ? uid : null;
       }
       return null;
     }catch{
@@ -346,6 +350,7 @@
     }else{
       codBtn.disabled = false;
       codBtn.textContent = "代引きで注文確定";
+      codBtn.style.opacity = "1";
       if(note) note.style.display = "none";
     }
   }
@@ -376,17 +381,25 @@
       return;
     }
 
-    // ✅ 贈り先判定（あなたの運用に合わせてどれかでOK）
-    // - confirm.html?ship=gift or ?gift=1
-    // - localStorage "isoya_ship_to" が "gift"
-    // - addressに is_gift / kind / label が入っている
-    const isGift =
+    // ✅ 贈り先判定：あなたのDB運用（labelが「住所」「贈り先」）に合わせて確実化
+    const label = (addr.label || "").trim();              // "住所" / "贈り先" / ""
+    const shipTo = (localStorage.getItem(KEY_SHIP_TO) || "").trim(); // "home" / "gift" / ""
+
+    let isGift =
+      (label === "贈り先") ||
       (qs.get("ship") || "") === "gift" ||
       (qs.get("gift") || "") === "1" ||
-      ((localStorage.getItem("isoya_ship_to") || "").trim() === "gift") ||
       (addr.is_gift === true) ||
-      ((addr.kind || "").trim() === "gift") ||
-      ((addr.label || "").trim() === "gift");
+      ((addr.kind || "").trim() === "gift");
+
+    // ✅ 住所ラベルが「住所」なら gift を強制解除（localStorage残り対策）
+    if (label === "住所") isGift = false;
+
+    // ✅ labelが空で、最後の保険として localStorage が gift のときだけ gift 扱い
+    if (!label && shipTo === "gift") isGift = true;
+
+    // ✅ isGiftが確定したら、confirm側でも ship_to を整えておく（次に残らないように）
+    localStorage.setItem(KEY_SHIP_TO, isGift ? "gift" : "home");
 
     applyCodAvailability(isGift);
 

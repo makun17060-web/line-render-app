@@ -39,7 +39,6 @@
     .row{display:flex;justify-content:space-between;gap:10px;margin:0;padding:6px 0;font-size:14px}
     .row strong{font-weight:900}
 
-    /* ✅ 支払い方法を「別カード」にして見やすく */
     .payGrid{
       display:grid;
       grid-template-columns: 1fr;
@@ -115,11 +114,9 @@
       <div class="muted">ご注文商品</div>
       <div class="items" id="items"></div>
 
-      <!-- 共通（参考表示） -->
       <div class="row"><div>小計</div><div id="subtotal">0円</div></div>
       <div class="row"><div>送料（見積）</div><div id="shipping">—</div></div>
 
-      <!-- ✅ 支払い方法ごとに分ける -->
       <div class="payGrid">
 
         <!-- クレジット -->
@@ -158,13 +155,12 @@
             代引きで注文確定
           </button>
 
-          <!-- ✅ 贈り先のときだけ表示（代引不可の注意） -->
           <div id="codDisabledNote" class="muted" style="margin-top:8px;display:none">
             ※贈り先への配送では、代引きはご利用いただけません（クレジットのみ）
           </div>
         </div>
 
-        <!-- 戻る（最後にまとめる） -->
+        <!-- 戻る -->
         <div class="backWrap">
           <button id="backBtn" class="payBtn" type="button">
             戻る（住所入力へ）
@@ -319,21 +315,18 @@
   function applyQuoteToUI(quote){
     const shippingText = `${yen(quote.shippingFee)}（ヤマト ${quote.size}サイズ）`;
 
-    // 共通
     safeSetText(shippingEl, shippingText);
 
-    // クレジット
     safeSetText(shipping2El, shippingText);
     const totalCard = Number(quote.subtotal||0) + Number(quote.shippingFee||0);
     safeSetText(totalCardEl, yen(totalCard));
 
-    // 代引
     safeSetText(shipping3El, shippingText);
     safeSetText(codFeeEl, yen(quote.codFee));
     safeSetText(totalCodEl, yen(quote.totalCod));
   }
 
-  // ✅ 贈り先のときは代引きを無効化
+  // ✅ 贈り先のときは代引きを無効化（明示 gift のときだけ）
   function applyCodAvailability(isGift){
     const note = document.getElementById("codDisabledNote");
     if(!codBtn) return;
@@ -377,26 +370,18 @@
       return;
     }
 
-    // ✅ 贈り先判定（自宅選択を最優先で尊重する版）
-    const shipQS = (qs.get("ship") || "").trim(); // "home" / "gift" を想定
+    // ✅ 贈り先判定：推測しない（選択だけを信じる）
+    const shipQS = (qs.get("ship") || "").trim(); // "home" / "gift"
     const shipLS = (localStorage.getItem("isoya_ship_to") || "").trim(); // "home" / "gift"
 
-    const forceHome = (shipQS === "home") || (shipLS === "home");
-    const forceGift = (shipQS === "gift") || (qs.get("gift") === "1") || (shipLS === "gift");
+    let shipTo = "home"; // デフォルトは自宅（代引OK）
+    if (shipQS === "gift" || shipQS === "home") shipTo = shipQS;
+    else if (shipLS === "gift" || shipLS === "home") shipTo = shipLS;
 
-    const label = (addr.label || "").trim();
-    const kind  = (addr.kind  || "").trim();
-
-    const looksGift =
-      addr.is_gift === true ||
-      /贈り|贈り先|ギフト|gift/i.test(label) ||
-      /贈り|贈り先|ギフト|gift/i.test(kind);
-
-    // ★「自宅を選んだ」が明示されてるなら必ず代引OK
-    const isGift = forceHome ? false : (forceGift || looksGift);
-
+    const isGift = (shipTo === "gift");
     applyCodAvailability(isGift);
 
+    // 住所表示
     const nameLine = addr.name ? `${addr.name} 様\n` : "";
     addrText.textContent =
       `${nameLine}〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim();
@@ -418,10 +403,11 @@
     applyQuoteToUI(quote);
     status.textContent="内容をご確認ください。";
 
-    // 戻る（住所入力へ）
+    // 戻る（住所入力へ）: ship=home を付けて自宅扱いを固定（代引が勝手に死なない）
     if(backBtn){
       backBtn.onclick = ()=>{
-        location.href = `/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`;
+        location.href =
+          `/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&ship=home&liff.hback=2`;
       };
     }
 

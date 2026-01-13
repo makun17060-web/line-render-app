@@ -1,12 +1,12 @@
 /**
  * server.js — “完全・全部入り” 丸ごと版（統合・最終修正版 + 常連候補 + 定期リマインド）
  *
- * ✅ 今回の「追加修正」（あなたの貼った版からの差分）
+ * ✅ 今回の「追加修正」
  * - 「直接注文」をセッションに残さない（sess.kind="direct" が残って次の入力を拾えない不具合を解消）
  * - orders に通知系カラムを追加（notified_user_at / notified_admin_at / notified_kind）※既存DBでもALTERで追従
  * - notifyOrderCompleted / notifyCardPending で通知記録を更新（二重送信点検にも使える）
  *
- * ✅ 今回の「致命的バグ修正」（あなたの貼ったコード上の不具合）
+ * ✅ 今回の「致命的バグ修正」
  * - /api/address/list が2回定義されていたので「1個に統一」
  * - addresses テーブルに label / is_default 列が無いのに参照していたので ALTER で追従（既存DBもOK）
  *
@@ -14,6 +14,7 @@
  * - 「複数住所対応」を潰してしまう UNIQUE INDEX addresses_user_id_uidx を作らない（1ユーザー1件縛りが復活してた）
  * - label/is_default の ALTER が重複していたので 1回に整理
  * - /api/address/set /api/liff/address で id を受け取ったら更新できるように対応（upsertAddress の能力を活かす）
+ * - upsertAddress のSQLが関数外に飛び出していた「構文崩壊」を修正（←これが致命的）
  */
 
 "use strict";
@@ -626,11 +627,15 @@ async function ensureDb() {
   // ✅ 1ユーザー1件縛り（過去に作ってしまっていたら削除）
   try { await pool.query(`DROP INDEX IF EXISTS addresses_user_id_uidx;`); } catch {}
 
-  // ✅ 既に出ているエラー原因：ux_addresses_user_label を消す（(user_id,label) などのユニークを消す）
-  //    ※環境によって constraint / index のどちらで作られてるか違うので両方消す
+  // ✅ 既に出ているエラー原因になりがちな「label系ユニーク」を消す（環境差で index/constraint 両方ケア）
   try { await pool.query(`ALTER TABLE addresses DROP CONSTRAINT IF EXISTS ux_addresses_user_label;`); } catch {}
   try { await pool.query(`DROP INDEX IF EXISTS ux_addresses_user_label;`); } catch {}
   try { await pool.query(`DROP INDEX IF EXISTS addresses_user_label_uidx;`); } catch {}
+
+  // ✅ address_key の “全体ユニーク” が残ってると地雷なので消す（user_id+address_key にする）
+  try { await pool.query(`ALTER TABLE addresses DROP CONSTRAINT IF EXISTS ux_addresses_address_key;`); } catch {}
+  try { await pool.query(`DROP INDEX IF EXISTS ux_addresses_address_key;`); } catch {}
+  try { await pool.query(`DROP INDEX IF EXISTS addresses_address_key_uidx;`); } catch {}
 
   // ✅ user_id は通常INDEX（ユニークにしない）
   try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_addresses_user_id ON addresses(user_id);`); } catch {}
@@ -653,13 +658,7 @@ async function ensureDb() {
     `);
   } catch {}
 
-  // ✅ 「同一住所の再保存」で 500 にならないために：
-  //    address_key は "user_id + address_key" の複合ユニークにする（ユーザー内だけ重複防止）
-  //    以前の “address_key 単体ユニーク” が残ってると地雷なので消す
-  try { await pool.query(`ALTER TABLE addresses DROP CONSTRAINT IF EXISTS ux_addresses_address_key;`); } catch {}
-  try { await pool.query(`DROP INDEX IF EXISTS ux_addresses_address_key;`); } catch {}
-  try { await pool.query(`DROP INDEX IF EXISTS addresses_address_key_uidx;`); } catch {}
-
+  // ✅ 同一住所の再保存で500にならないため： user_id + address_key の複合ユニーク（部分）
   try {
     await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS addresses_user_address_key_uidx
@@ -667,29 +666,6 @@ async function ensureDb() {
       WHERE address_key IS NOT NULL
     `);
   } catch {}
-
-  // ✅ user_id は通常インデックス（ユニークにしない）
-  try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_addresses_user_id ON addresses(user_id);`); } catch {}
-
-  // ✅ member_code / address_key はユニークでOK
-  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_member_code_uidx ON addresses(member_code) WHERE member_code IS NOT NULL;`); } catch {}
-    // ✅ member_code はユニークでOK
-  try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS addresses_member_code_uidx ON addresses(member_code) WHERE member_code IS NOT NULL;`); } catch {}
-
-  // ✅ address_key のユニークは「user_id + address_key」にする（同一ユーザー内だけ重複防止）
-  // 以前の “全体ユニーク” が残っていると、同一住所の再保存で duplicate 500 になります
-  try { await pool.query(`ALTER TABLE addresses DROP CONSTRAINT IF EXISTS ux_addresses_address_key;`); } catch {}
-  try { await pool.query(`DROP INDEX IF EXISTS ux_addresses_address_key;`); } catch {}
-  try { await pool.query(`DROP INDEX IF EXISTS addresses_address_key_uidx;`); } catch {}
-
-  try {
-    await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS addresses_user_address_key_uidx
-      ON addresses(user_id, address_key)
-      WHERE address_key IS NOT NULL
-    `);
-  } catch {}
-
 
   // orders
   await pool.query(`
@@ -697,6 +673,8 @@ async function ensureDb() {
       id BIGSERIAL PRIMARY KEY,
       user_id TEXT,
       source TEXT,
+      member_code TEXT,
+      phone TEXT,
       items JSONB NOT NULL,
       total INTEGER NOT NULL,
       shipping_fee INTEGER NOT NULL,
@@ -710,6 +688,10 @@ async function ensureDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `);
+
+  // 既存DB追従（列が無くても落ちない）
+  try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS member_code TEXT;`); } catch {}
+  try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS phone TEXT;`); } catch {}
 
   // ✅ 通知系（今回追加：既存DBでもALTERで追従）
   try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;`); } catch {}
@@ -1063,6 +1045,32 @@ async function getAddressByUserId(userId) {
   return r.rows[0] || null;
 }
 
+async function listAddressesByUserId(userId) {
+  const r = await pool.query(
+    `
+    SELECT
+      id,
+      COALESCE(label,'')         AS label,
+      COALESCE(name,'')          AS name,
+      COALESCE(phone,'')         AS phone,
+      COALESCE(postal,'')        AS postal,
+      COALESCE(prefecture,'')    AS prefecture,
+      COALESCE(city,'')          AS city,
+      COALESCE(address1,'')      AS address1,
+      COALESCE(address2,'')      AS address2,
+      COALESCE(is_default,false) AS is_default,
+      COALESCE(member_code,'')   AS member_code,
+      COALESCE(address_key,'')   AS address_key,
+      updated_at
+    FROM addresses
+    WHERE user_id=$1
+    ORDER BY is_default DESC, updated_at DESC, id DESC
+    `,
+    [userId]
+  );
+  return r.rows || [];
+}
+
 async function issueUniqueMemberCode() {
   for (let i = 0; i < 80; i++) {
     const code = String(Math.floor(1000 + Math.random() * 9000));
@@ -1088,56 +1096,30 @@ function makeAddressKey(a) {
     norm(a?.address1),
     norm(a?.address2),
   ].join("|");
-  return crypto.createHash("sha1").update(s).digest("hex").slice(0, 20);
+  const base = s.replace(/\|+/g, "|").replace(/^\||\|$/g, "").trim();
+  if (!base) return null;
+  return crypto.createHash("sha1").update(base).digest("hex").slice(0, 20);
 }
 
+/**
+ * ✅ upsertAddress（完全版）
+ * - addr.id があれば「そのidを更新」
+ * - addr.id が無ければ「INSERT」
+ * - ただし INSERT は (user_id,address_key) で衝突したら UPDATE（同一住所の再保存を許可）
+ * - member_code は同一住所の再保存で変えない（既存優先）
+ * - is_default=true の時は、先に同一 user の default を全部 false にしてユニーク違反回避
+ */
+async function upsertAddress(userId, addr) {
+  const uid = String(userId || "").trim();
+  if (!uid) throw new Error("userId required");
 
-  // 新規追加（ただし同一 user_id + address_key が既にあれば UPDATE 扱いにする）
-  const r = await pool.query(
-    `
-    INSERT INTO addresses
-      (user_id, label, is_default, member_code, name, phone, postal, prefecture, city, address1, address2, address_key)
-    VALUES
-      ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-    ON CONFLICT (user_id, address_key)
-    WHERE address_key IS NOT NULL
-    DO UPDATE SET
-      label       = EXCLUDED.label,
-      is_default  = EXCLUDED.is_default,
-      -- ✅ ここ重要：同じ住所を再保存しても member_code は変えない（既存を優先）
-      member_code = COALESCE(addresses.member_code, EXCLUDED.member_code),
-      name        = EXCLUDED.name,
-      phone       = EXCLUDED.phone,
-      postal      = EXCLUDED.postal,
-      prefecture  = EXCLUDED.prefecture,
-      city        = EXCLUDED.city,
-      address1    = EXCLUDED.address1,
-      address2    = EXCLUDED.address2,
-      updated_at  = now()
-    RETURNING id, label, is_default, member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at
-    `,
-    [
-      uid, (label || "住所"),
-      isDefault,
-      memberCode,
-      addr.name || "", addr.phone || "", addr.postal || "", addr.prefecture || "", addr.city || "",
-      addr.address1 || "", addr.address2 || "",
-      addressKey
-    ]
-  );
-  return r.rows[0];
+  const addressId = addr?.id ? Number(addr.id) : null;
 
+  const label = String(addr?.label || "住所").trim();
+  const isDefault = !!addr?.is_default;
 
-  // ★ 新規追加/更新の分岐：id があれば更新、なければ追加
-  const addressId = addr.id ? Number(addr.id) : null;
-
-  const label = String(addr.label || "").trim(); // "自宅" / "贈り先"
-  const isDefault = !!addr.is_default;
-
-  let memberCode = String(addr.member_code || "").trim();
-  if (!memberCode) memberCode = await issueUniqueMemberCode();
-
-  const addressKey = addr.address_key ? String(addr.address_key).trim() : makeAddressKey(addr);
+  const memberCodeIn = String(addr?.member_code || "").trim() || null;
+  const addressKey = (addr?.address_key ? String(addr.address_key).trim() : null) || makeAddressKey(addr);
 
   // default を立てるなら、先に全部 false にする（ユニーク制約対策）
   if (isDefault) {
@@ -1152,9 +1134,9 @@ function makeAddressKey(a) {
       SET
         label=$3,
         is_default=$4,
-        member_code=$5,
+        member_code = COALESCE($5, addresses.member_code),
         name=$6, phone=$7, postal=$8, prefecture=$9, city=$10, address1=$11, address2=$12,
-        address_key=$13,
+        address_key = COALESCE($13, addresses.address_key),
         updated_at=now()
       WHERE user_id=$1 AND id=$2
       RETURNING id, label, is_default, member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at
@@ -1162,16 +1144,26 @@ function makeAddressKey(a) {
       [
         uid, addressId,
         label, isDefault,
-        memberCode,
-        addr.name || "", addr.phone || "", addr.postal || "", addr.prefecture || "", addr.city || "",
-        addr.address1 || "", addr.address2 || "",
+        memberCodeIn,
+        String(addr?.name || ""),
+        String(addr?.phone || ""),
+        String(addr?.postal || ""),
+        String(addr?.prefecture || ""),
+        String(addr?.city || ""),
+        String(addr?.address1 || ""),
+        String(addr?.address2 || ""),
         addressKey
       ]
     );
     if (r.rowCount === 0) throw new Error("address not found");
     return r.rows[0];
   }
-     // 新規追加（ただし同一 user_id + address_key が既にあれば UPDATE 扱いにする）
+
+  // 新規追加：member_code が無ければ発行
+  let memberCode = memberCodeIn;
+  if (!memberCode) memberCode = await issueUniqueMemberCode();
+
+  // 新規追加（ただし同一 user_id + address_key が既にあれば UPDATE 扱いにする）
   const r = await pool.query(
     `
     INSERT INTO addresses
@@ -1183,7 +1175,7 @@ function makeAddressKey(a) {
     DO UPDATE SET
       label       = EXCLUDED.label,
       is_default  = EXCLUDED.is_default,
-      -- ✅ ここ重要：同じ住所を再保存しても member_code は変えない（既存を優先）
+      -- ✅ 同じ住所を再保存しても member_code は変えない（既存優先）
       member_code = COALESCE(addresses.member_code, EXCLUDED.member_code),
       name        = EXCLUDED.name,
       phone       = EXCLUDED.phone,
@@ -1196,15 +1188,21 @@ function makeAddressKey(a) {
     RETURNING id, label, is_default, member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at
     `,
     [
-      uid, (label || "住所"),
+      uid, label,
       isDefault,
       memberCode,
-      addr.name || "", addr.phone || "", addr.postal || "", addr.prefecture || "", addr.city || "",
-      addr.address1 || "", addr.address2 || "",
+      String(addr?.name || ""),
+      String(addr?.phone || ""),
+      String(addr?.postal || ""),
+      String(addr?.prefecture || ""),
+      String(addr?.city || ""),
+      String(addr?.address1 || ""),
+      String(addr?.address2 || ""),
       addressKey
     ]
   );
   return r.rows[0];
+}
 
 /* =========================
  * 注文組み立て（改ざん防止）
@@ -1299,6 +1297,8 @@ async function insertOrderToDb({
   zipOverride = "",
   prefOverride = "",
   addressOverride = "",
+  phoneOverride = "",
+  memberCodeOverride = "",
 }) {
   const addr = await getAddressByUserId(userId).catch(()=>null);
 
@@ -1309,16 +1309,20 @@ async function insertOrderToDb({
   const name = (nameOverride || addr?.name || "").trim();
   const zip  = (zipOverride  || addr?.postal || "").trim();
   const pref = (prefOverride || addr?.prefecture || "").trim();
+  const phone = (phoneOverride || addr?.phone || "").trim();
+  const memberCode = (memberCodeOverride || addr?.member_code || "").trim();
 
   const r = await pool.query(
     `
-    INSERT INTO orders (user_id, source, items, total, shipping_fee, payment_method, status, name, zip, pref, address, raw_event)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+    INSERT INTO orders (user_id, source, member_code, phone, items, total, shipping_fee, payment_method, status, name, zip, pref, address, raw_event)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
     RETURNING id
     `,
     [
       userId,
       source,
+      memberCode || null,
+      phone || null,
       JSON.stringify(items),
       Number(total || 0),
       Number(shippingFee || 0),
@@ -1421,16 +1425,18 @@ async function getOrderRow(orderId) {
 async function markOrderNotified(orderId, patch = {}) {
   try {
     const kind = patch.kind ? String(patch.kind) : null;
-    const userAt = patch.userNotified ? "now()" : null;
-    const adminAt = patch.adminNotified ? "now()" : null;
+
+    // SQL文字列に直接埋めるのは避けたいが、ここは固定値（now()/列）だけなので安全に組み立てる
+    const userAtExpr  = patch.userNotified  ? "now()" : "notified_user_at";
+    const adminAtExpr = patch.adminNotified ? "now()" : "notified_admin_at";
 
     await pool.query(
       `
       UPDATE orders
       SET
         notified_at = COALESCE(notified_at, now()),
-        notified_user_at = COALESCE(notified_user_at, ${userAt || "notified_user_at"}),
-        notified_admin_at = COALESCE(notified_admin_at, ${adminAt || "notified_admin_at"}),
+        notified_user_at = COALESCE(notified_user_at, ${userAtExpr}),
+        notified_admin_at = COALESCE(notified_admin_at, ${adminAtExpr}),
         notified_kind = COALESCE($2, notified_kind)
       WHERE id=$1
       `,
@@ -1929,7 +1935,7 @@ app.post("/api/admin/orders/notify-shipped", requireAdmin, async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     console.error("[api/admin/orders/notify-shipped] failed", e?.stack || e);
-    res.status(500).send("failed");
+    res.status(500).json({ ok:false, error:"failed" });
   }
 });
 
@@ -2294,27 +2300,8 @@ app.get("/api/address/list", async (req, res) => {
     const userId = String(req.query.userId || "").trim();
     if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
 
-    const r = await pool.query(
-      `
-      SELECT
-        id,
-        COALESCE(label,'')         AS label,
-        COALESCE(name,'')          AS name,
-        COALESCE(phone,'')         AS phone,
-        COALESCE(postal,'')        AS postal,
-        COALESCE(prefecture,'')    AS prefecture,
-        COALESCE(city,'')          AS city,
-        COALESCE(address1,'')      AS address1,
-        COALESCE(address2,'')      AS address2,
-        COALESCE(is_default,false) AS is_default
-      FROM addresses
-      WHERE user_id = $1
-      ORDER BY is_default DESC, updated_at DESC, id DESC
-      `,
-      [userId]
-    );
-
-    res.json({ ok: true, addresses: r.rows || [] });
+    const rows = await listAddressesByUserId(userId);
+    res.json({ ok: true, addresses: rows });
   } catch (e) {
     console.error("address/list error", e);
     res.status(500).json({ ok: false, error: "db error" });
@@ -2329,7 +2316,7 @@ app.post("/api/address/set", async (req, res) => {
     if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
 
     const saved = await upsertAddress(userId, {
-      id: b.id, // ✅ 追加：id が来たら更新
+      id: b.id, // ✅ id が来たら更新
       member_code: b.member_code,
       name: b.name,
       phone: b.phone,
@@ -2373,7 +2360,7 @@ app.post("/api/liff/address", async (req, res) => {
     if (!address) return res.status(400).json({ ok:false, error:"address required" });
 
     const saved = await upsertAddress(userId, {
-      id: address.id, // ✅ 追加：id が来たら更新
+      id: address.id, // ✅ id が来たら更新
       member_code: address.member_code,
       name: address.name,
       phone: address.phone,
@@ -2655,6 +2642,7 @@ app.post("/api/store-order", async (req, res) => {
     const total = Number(built.subtotal || 0) + shippingFee + codFee;
 
     const nameOverride = (deliveryMethod === "pickup" ? customerName : "");
+    const phoneOverride = (deliveryMethod === "pickup" ? customerPhone : "");
 
     const rawEvent = {
       type: "store_order",
@@ -2682,6 +2670,7 @@ app.post("/api/store-order", async (req, res) => {
       rawEvent,
       source: (deliveryMethod === "pickup") ? "store_liff" : "liff",
       nameOverride,
+      phoneOverride,
     });
 
     await markUserOrdered(built.userId, Number(orderId)).catch(()=>{});
@@ -3268,7 +3257,7 @@ async function onTextMessage(ev) {
 
   // ✅ 修正：direct はセッションに残さない（残すと次入力が拾えない）
   if (text === KEYWORD_DIRECT) {
-    await replyDirectStart(ev.replyToken);
+    await replyDirectStart(ev.replyToken, ev);
     return;
   }
 
@@ -3282,12 +3271,12 @@ async function onTextMessage(ev) {
   }
 }
 
-async function replyDirectStart(replyToken) {
+async function replyDirectStart(replyToken, reqLike) {
   const orderLiffId   = (LIFF_ID_ORDER || LIFF_ID_DEFAULT || "").trim();
   const addressLiffId = (LIFF_ID_ADDRESS || LIFF_ID_ADD || LIFF_ID_DEFAULT || "").trim();
 
-  const urlProducts = orderLiffId ? `https://liff.line.me/${orderLiffId}` : liffUrl("/products.html");
-  const urlAddress  = addressLiffId ? `https://liff.line.me/${addressLiffId}` : liffUrl("/address.html");
+  const urlProducts = orderLiffId ? `https://liff.line.me/${orderLiffId}` : liffUrl("/products.html", reqLike || null);
+  const urlAddress  = addressLiffId ? `https://liff.line.me/${addressLiffId}` : liffUrl("/address.html", reqLike || null);
 
   await lineClient.replyMessage(replyToken, {
     type: "text",
@@ -3342,36 +3331,49 @@ async function handleSessionInput(userId, text, ev) {
   }
 }
 
+/**
+ * ✅ 久助キーワード注文（代引き確定）
+ */
 async function finalizeKusukeOrder(replyToken, userId, qty) {
   try {
     const products = await loadProducts();
     const kusuke = products.find(p => (p.name || "").includes("久助") || (p.id || "").includes("kusuke"));
     if (!kusuke) {
-      await lineClient.replyMessage(replyToken, { type:"text", text:"久助の商品が products.json に見つかりませんでした。" });
+      await replyTextSafe(replyToken, "久助の商品が見つかりませんでした（products.jsonを確認してください）。");
       return;
     }
 
-    const built = await buildOrderFromCheckout(userId, { items: [{ id: kusuke.id, qty }] }, { requireAddress: true });
+    await touchUser(userId, "seen", null, "kusuke_keyword");
+
+    const built = await buildOrderFromCheckout(
+      userId,
+      { items: [{ id: kusuke.id, qty }] },
+      { requireAddress: true }
+    );
 
     const codFee = Number(COD_FEE || 330);
     const totalCod = built.subtotal + built.shippingFee + codFee;
 
     const orderId = await insertOrderToDb({
-      userId,
+      userId: built.userId,
       items: built.items,
       total: totalCod,
       shippingFee: built.shippingFee,
       paymentMethod: "cod",
       status: "confirmed",
-      rawEvent: { type: "line_kusuke" },
-      source: "line",
+      rawEvent: { type: "kusuke_keyword_cod" },
+      source: "line_keyword",
     });
 
-    await markUserOrdered(userId, Number(orderId)).catch(()=>{});
+    await markUserOrdered(built.userId, Number(orderId)).catch(()=>{});
 
+    // まず返信は短く
+    await replyTextSafe(replyToken, `久助のご注文を受け付けました。\n注文ID：${orderId}`);
+
+    // 詳細はpushで送る
     await notifyOrderCompleted({
       orderId,
-      userId,
+      userId: built.userId,
       items: built.items,
       shippingFee: built.shippingFee,
       total: totalCod,
@@ -3382,59 +3384,58 @@ async function finalizeKusukeOrder(replyToken, userId, qty) {
       title: "新規注文（久助/代引）",
       isPaid: false,
       deliveryMethod: "delivery",
+      // keyword注文のときはボタン送らない方がよければ↓を 0 にする（今は通常通り）
     });
 
-    await lineClient.replyMessage(replyToken, {
-      type:"text",
-      text: `久助 注文を受け付けました（注文ID: ${orderId}）`
-    });
   } catch (e) {
     const code = e?.code || "";
-    logErr("finalizeKusukeOrder", code, e?.stack || e);
+    logErr("finalizeKusukeOrder failed", code, e?.stack || e);
 
     if (code === "NO_ADDRESS") {
-      await lineClient.replyMessage(replyToken, { type:"text", text:"住所が未登録です。先に住所登録をお願いします。" });
+      await replyTextSafe(replyToken, "住所が未登録です。先に住所登録をお願いします：\n" + liffUrl("/cod-register.html"));
       return;
     }
     if (code === "OUT_OF_STOCK") {
-      await lineClient.replyMessage(replyToken, { type:"text", text:"在庫不足のため注文できませんでした。管理者にお問い合わせください。" });
+      await replyTextSafe(replyToken, `在庫不足のため受付できませんでした（${e.productId || "unknown"}）。`);
       return;
     }
-
-    await lineClient.replyMessage(replyToken, { type:"text", text:"注文処理に失敗しました。時間をおいてお試しください。" });
+    await replyTextSafe(replyToken, "注文処理に失敗しました。時間をおいてお試しください。");
   }
 }
 
 /* =========================
- * 起動
+ * Boot
  * ========================= */
-async function main() {
+async function boot() {
   await ensureDir(DATA_DIR);
   await ensureDir(UPLOAD_DIR);
-
   await ensureProductsFile();
   await loadSessions();
-
   await ensureDb();
 
-  const port = Number(env.PORT || 10000);
+  // キャッシュを軽く温める（失敗してもOK）
+  reloadShippingCacheIfNeeded().catch(()=>{});
+  reloadSizeRulesIfNeeded().catch(()=>{});
+
+  const port = Number(env.PORT || 3000);
   app.listen(port, () => {
-    logInfo(`server listening on :${port}`);
-    logInfo(`DATA_DIR=${DATA_DIR}`);
-    logInfo(`UPLOAD_DIR=${UPLOAD_DIR}`);
+    logInfo(`server started on :${port}`);
+    logInfo(`BASE_URL=${BASE_URL || "(auto)"}`);
+    logInfo(`LIFF_BASE=${LIFF_BASE || "(auto)"}`);
   });
 }
 
-main().catch((e) => {
+boot().catch((e) => {
   logErr("boot failed", e?.stack || e);
   process.exit(1);
 });
 
-process.on("SIGTERM", async () => {
-  try { await pool.end(); } catch {}
+// graceful
+process.on("SIGTERM", () => {
+  logInfo("SIGTERM received, exiting.");
   process.exit(0);
 });
-process.on("SIGINT", async () => {
-  try { await pool.end(); } catch {}
+process.on("SIGINT", () => {
+  logInfo("SIGINT received, exiting.");
   process.exit(0);
 });

@@ -4,7 +4,7 @@
  * ✅ 今回の「追加修正」
  * - 「直接注文」をセッションに残さない（sess.kind="direct" が残って次の入力を拾えない不具合を解消）
  * - orders に通知系カラムを追加（notified_user_at / notified_admin_at / notified_kind）※既存DBでもALTERで追従
- * - notifyOrderCompleted / notifyCardPending で通知記録を更新（二重送信点検にも使える）
+ * - notifyOrderCompleted / notifyCardPending で通知記録を更新（二重送信点検にも使える)
  *
  * ✅ 今回の「致命的バグ修正」
  * - /api/address/list が2回定義されていたので「1個に統一」

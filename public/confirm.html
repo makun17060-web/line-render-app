@@ -37,7 +37,6 @@
     .item .price{grid-column:2 / 3;grid-row:1 / 3;align-self:center;font-weight:900;white-space:nowrap}
 
     .row{display:flex;justify-content:space-between;gap:10px;margin:0;padding:6px 0;font-size:14px}
-    .row strong{font-weight:900}
 
     .payGrid{
       display:grid;
@@ -50,31 +49,18 @@
         grid-template-columns: 1fr 1fr;
         align-items:stretch;
       }
-      .backWrap{
-        grid-column: 1 / -1;
-      }
+      .backWrap{ grid-column: 1 / -1; }
     }
 
-    .payCardTitle{
-      font-weight:1000;
-      font-size:14px;
-      margin:0 0 6px;
-    }
-    .payHint{
-      color:var(--muted);
-      font-size:12px;
-      line-height:1.5;
-      margin-bottom:10px;
-    }
+    .payCardTitle{font-weight:1000;font-size:14px;margin:0 0 6px;}
+    .payHint{color:var(--muted);font-size:12px;line-height:1.5;margin-bottom:10px;}
     .miniRow{
       display:flex;justify-content:space-between;gap:10px;
       padding:6px 0;font-size:13px;border-top:1px dashed var(--line);
     }
     .miniRow:first-of-type{border-top:1px solid var(--line)}
     .payTotal{
-      margin-top:10px;
-      padding-top:10px;
-      border-top:2px solid var(--line);
+      margin-top:10px;padding-top:10px;border-top:2px solid var(--line);
       display:flex;justify-content:space-between;align-items:baseline;gap:10px;
     }
     .payTotal .label{font-weight:900;font-size:13px;color:var(--muted)}
@@ -87,12 +73,28 @@
       font-weight:1000;
       cursor:pointer;
       margin-top:10px;
+
+      /* ✅ 「上に何か被って押せない」対策 */
+      position:relative;
+      z-index:10;
     }
     .payBtn:disabled{opacity:.55;cursor:not-allowed}
 
     .backWrap .payBtn{
       background:#fff;border:1px solid var(--line);color:#111827;
       margin-top:0;
+    }
+
+    /* ✅ 状態表示（原因切り分け用） */
+    .debugBox{
+      margin-top:8px;
+      padding:8px 10px;
+      border:1px dashed var(--line);
+      border-radius:12px;
+      font-size:12px;
+      color:#374151;
+      background:#fff;
+      white-space:pre-wrap;
     }
   </style>
 </head>
@@ -101,6 +103,7 @@
   <div class="wrap">
     <h1>注文内容の確認</h1>
     <div class="muted" id="status">読み込み中…</div>
+    <div class="debugBox" id="debug">debug: —</div>
 
     <div class="card">
       <div class="muted">お届け先</div>
@@ -181,7 +184,6 @@
   const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
   const KEY_UID ="isoya_userId";
 
-  // ✅ modeでカート切替（福箱は専用カート）
   const qs = new URLSearchParams(location.search);
   const mode = (qs.get("mode") || "").trim();
 
@@ -201,19 +203,17 @@
   : "/confirm.html";
 
   const status=document.getElementById("status");
+  const debug=document.getElementById("debug");
   const addrText=document.getElementById("addrText");
   const itemsEl=document.getElementById("items");
 
-  // 共通
   const subtotalEl=document.getElementById("subtotal");
   const shippingEl=document.getElementById("shipping");
 
-  // クレジット
   const subtotal2El=document.getElementById("subtotal2");
   const shipping2El=document.getElementById("shipping2");
   const totalCardEl=document.getElementById("totalCard");
 
-  // 代引
   const subtotal3El=document.getElementById("subtotal3");
   const shipping3El=document.getElementById("shipping3");
   const codFeeEl=document.getElementById("codFee");
@@ -226,7 +226,6 @@
   const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
   const loadJson=k=>{try{return JSON.parse(localStorage.getItem(k)||"");}catch{return null;}};
 
-  // ✅ 押したボタンだけ busy（もう片方は触らない）
   function setBtnBusy(btn, busy, busyText, normalText){
     if(!btn) return;
     btn.disabled = !!busy;
@@ -234,8 +233,12 @@
     if (busyText && normalText) btn.textContent = busy ? busyText : normalText;
   }
 
-  function safeSetText(el, txt){
-    if(el) el.textContent = txt;
+  function safeSetText(el, txt){ if(el) el.textContent = txt; }
+
+  function setDebug(obj){
+    if(!debug) return;
+    debug.textContent =
+      Object.entries(obj).map(([k,v])=>`${k}: ${String(v)}`).join("\n");
   }
 
   async function postJson(url, body){
@@ -293,7 +296,6 @@
     return subtotal;
   }
 
-  // ✅ confirmは LIFF失敗しても止めない（住所LIFF内でも動かす）
   async function ensureUserSoft(){
     const cached = (localStorage.getItem(KEY_UID) || "").trim();
     if(cached) return cached;
@@ -326,8 +328,7 @@
     safeSetText(totalCodEl, yen(quote.totalCod));
   }
 
-  // ✅ 贈り先のときは代引きを無効化（明示 gift のときだけ）
-  function applyCodAvailability(isGift){
+  function applyCodAvailability(isGift, reason){
     const note = document.getElementById("codDisabledNote");
     if(!codBtn) return;
 
@@ -342,6 +343,15 @@
       codBtn.style.opacity = "1";
       if(note) note.style.display = "none";
     }
+
+    setDebug({
+      url_ship: (qs.get("ship")||""),
+      ls_ship: (localStorage.getItem("isoya_ship_to")||""),
+      shipTo: (isGift ? "gift" : "home"),
+      isGift: isGift,
+      cod_disabled: codBtn.disabled,
+      reason: reason || ""
+    });
   }
 
   try{
@@ -363,25 +373,26 @@
       return;
     }
 
-    // 住所が無ければ住所入力へ
     const addr=await getAddress(uid).catch(()=>null);
     if(!addr){
       location.replace(`/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`);
       return;
     }
 
-    // ✅ 贈り先判定：推測しない（選択だけを信じる）
-    const shipQS = (qs.get("ship") || "").trim(); // "home" / "gift"
-    const shipLS = (localStorage.getItem("isoya_ship_to") || "").trim(); // "home" / "gift"
+    // ✅ 判定：選択だけを信じる（デフォルト home）
+    const forceCod = (qs.get("forceCod")==="1"); // ←原因切り分け用
+    const shipQS = (qs.get("ship") || "").trim(); // home/gift
+    const shipLS = (localStorage.getItem("isoya_ship_to") || "").trim(); // home/gift
 
-    let shipTo = "home"; // デフォルトは自宅（代引OK）
+    let shipTo = "home";
     if (shipQS === "gift" || shipQS === "home") shipTo = shipQS;
     else if (shipLS === "gift" || shipLS === "home") shipTo = shipLS;
 
-    const isGift = (shipTo === "gift");
-    applyCodAvailability(isGift);
+    let isGift = (shipTo === "gift");
+    if(forceCod) isGift = false;
 
-    // 住所表示
+    applyCodAvailability(isGift, forceCod ? "forceCod=1 で強制ON" : "ship/home|gift の選択を参照");
+
     const nameLine = addr.name ? `${addr.name} 様\n` : "";
     addrText.textContent =
       `${nameLine}〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim();
@@ -389,7 +400,6 @@
     const products=await getProducts();
     const subtotal = renderItems(items, products);
 
-    // 表示を一旦「計算中…」
     safeSetText(shippingEl, "計算中…");
     safeSetText(shipping2El, "計算中…");
     safeSetText(shipping3El, "計算中…");
@@ -398,20 +408,19 @@
     safeSetText(totalCardEl, "計算中…");
 
     const quote = await postJson("/api/order/quote", { uid, checkout:{ items } });
-    quote.subtotal = quote.subtotal ?? subtotal; // 念のため補完
-
+    quote.subtotal = quote.subtotal ?? subtotal;
     applyQuoteToUI(quote);
+
     status.textContent="内容をご確認ください。";
 
-    // 戻る（住所入力へ）: ship=home を付けて自宅扱いを固定（代引が勝手に死なない）
     if(backBtn){
       backBtn.onclick = ()=>{
+        // ✅ 戻る時も ship=home を付けて「giftの残り」を防ぐ
         location.href =
           `/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&ship=home&liff.hback=2`;
       };
     }
 
-    // ✅ クレジット：Stripeへ（cardBtn だけbusy）
     if(cardBtn){
       cardBtn.onclick = async ()=>{
         setBtnBusy(cardBtn, true, "移動中…", "クレジットで支払う");
@@ -427,16 +436,13 @@
       };
     }
 
-    // ✅ 代引き：確定（贈り先のときは onclick 自体を付けない）
+    // ✅ 代引：押せない＝disabled のはず。押せる時だけ付与
     if(codBtn && !isGift){
       codBtn.onclick = async ()=>{
         setBtnBusy(codBtn, true, "確定中…", "代引きで注文確定");
         try{
           const data = await postJson("/api/order/cod/create", { uid, checkout:{ items } });
-
-          // ✅ このconfirmで使っているカートだけ空にする
           localStorage.setItem(KEY_CART, JSON.stringify({ items: [] }));
-
           location.href = `/complete.html?method=cod&orderId=${encodeURIComponent(data.orderId||"")}`;
         }catch(e){
           console.error(e);

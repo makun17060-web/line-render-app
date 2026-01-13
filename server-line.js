@@ -594,7 +594,9 @@ async function ensureDb() {
     );
   `);
 
-  // addresses
+  // =========================
+  // addresses（複数住所 + default 1件 + 同一住所は上書き）
+  // =========================
   await pool.query(`
     CREATE TABLE IF NOT EXISTS addresses (
       id BIGSERIAL PRIMARY KEY,
@@ -609,24 +611,60 @@ async function ensureDb() {
       address2 TEXT,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       address_key TEXT,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      label TEXT,
+      is_default BOOLEAN NOT NULL DEFAULT false
     );
   `);
 
-  // ✅ addresses に複数住所対応の列を追加（参照列の存在を保証）
+  // 既存DB追従（古いテーブル定義でも落ちないように）
   try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS label TEXT;`); } catch {}
   try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT false;`); } catch {}
+  try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS address_key TEXT;`); } catch {}
+  try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();`); } catch {}
 
-  // ✅ もし過去に「1ユーザー1件縛り」を作ってしまっていたら落とす
-  // （これが残ってると複数住所が INSERT で必ずコケます）
+  // ✅ 1ユーザー1件縛り（過去に作ってしまっていたら削除）
   try { await pool.query(`DROP INDEX IF EXISTS addresses_user_id_uidx;`); } catch {}
 
-  // ✅ default は user_id ごとに1件だけ（部分ユニーク）
+  // ✅ 既に出ているエラー原因：ux_addresses_user_label を消す（(user_id,label) などのユニークを消す）
+  //    ※環境によって constraint / index のどちらで作られてるか違うので両方消す
+  try { await pool.query(`ALTER TABLE addresses DROP CONSTRAINT IF EXISTS ux_addresses_user_label;`); } catch {}
+  try { await pool.query(`DROP INDEX IF EXISTS ux_addresses_user_label;`); } catch {}
+  try { await pool.query(`DROP INDEX IF EXISTS addresses_user_label_uidx;`); } catch {}
+
+  // ✅ user_id は通常INDEX（ユニークにしない）
+  try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_addresses_user_id ON addresses(user_id);`); } catch {}
+
+  // ✅ member_code はユニーク（NULLは除外）
+  try {
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS addresses_member_code_uidx
+      ON addresses(member_code)
+      WHERE member_code IS NOT NULL
+    `);
+  } catch {}
+
+  // ✅ default は user_id ごとに 1件だけ（部分ユニーク）
   try {
     await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS addresses_default_uidx
       ON addresses(user_id)
       WHERE is_default = true
+    `);
+  } catch {}
+
+  // ✅ 「同一住所の再保存」で 500 にならないために：
+  //    address_key は "user_id + address_key" の複合ユニークにする（ユーザー内だけ重複防止）
+  //    以前の “address_key 単体ユニーク” が残ってると地雷なので消す
+  try { await pool.query(`ALTER TABLE addresses DROP CONSTRAINT IF EXISTS ux_addresses_address_key;`); } catch {}
+  try { await pool.query(`DROP INDEX IF EXISTS ux_addresses_address_key;`); } catch {}
+  try { await pool.query(`DROP INDEX IF EXISTS addresses_address_key_uidx;`); } catch {}
+
+  try {
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS addresses_user_address_key_uidx
+      ON addresses(user_id, address_key)
+      WHERE address_key IS NOT NULL
     `);
   } catch {}
 
@@ -1034,22 +1072,61 @@ async function issueUniqueMemberCode() {
   return String(Math.floor(10000 + Math.random() * 90000));
 }
 
+function normalizeZip(z) {
+  return String(z || "").replace(/[^\d]/g, "").trim();
+}
+function norm(s) {
+  return String(s || "").replace(/\s+/g, " ").trim();
+}
+
+// ✅ address_key は “住所要素だけ” で作る（名前/電話を含めない）
 function makeAddressKey(a) {
   const s = [
-    a?.postal || "",
-    a?.prefecture || "",
-    a?.city || "",
-    a?.address1 || "",
-    a?.address2 || "",
-    a?.name || "",
-    a?.phone || ""
-  ].join("|").replace(/\s+/g, " ").trim();
+    normalizeZip(a?.postal),
+    norm(a?.prefecture),
+    norm(a?.city),
+    norm(a?.address1),
+    norm(a?.address2),
+  ].join("|");
   return crypto.createHash("sha1").update(s).digest("hex").slice(0, 20);
 }
 
-async function upsertAddress(userId, addr) {
-  const uid = String(userId || "").trim();
-  if (!uid) throw new Error("userId required");
+
+  // 新規追加（ただし同一 user_id + address_key が既にあれば UPDATE 扱いにする）
+  const r = await pool.query(
+    `
+    INSERT INTO addresses
+      (user_id, label, is_default, member_code, name, phone, postal, prefecture, city, address1, address2, address_key)
+    VALUES
+      ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+    ON CONFLICT (user_id, address_key)
+    WHERE address_key IS NOT NULL
+    DO UPDATE SET
+      label       = EXCLUDED.label,
+      is_default  = EXCLUDED.is_default,
+      -- ✅ ここ重要：同じ住所を再保存しても member_code は変えない（既存を優先）
+      member_code = COALESCE(addresses.member_code, EXCLUDED.member_code),
+      name        = EXCLUDED.name,
+      phone       = EXCLUDED.phone,
+      postal      = EXCLUDED.postal,
+      prefecture  = EXCLUDED.prefecture,
+      city        = EXCLUDED.city,
+      address1    = EXCLUDED.address1,
+      address2    = EXCLUDED.address2,
+      updated_at  = now()
+    RETURNING id, label, is_default, member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at
+    `,
+    [
+      uid, (label || "住所"),
+      isDefault,
+      memberCode,
+      addr.name || "", addr.phone || "", addr.postal || "", addr.prefecture || "", addr.city || "",
+      addr.address1 || "", addr.address2 || "",
+      addressKey
+    ]
+  );
+  return r.rows[0];
+
 
   // ★ 新規追加/更新の分岐：id があれば更新、なければ追加
   const addressId = addr.id ? Number(addr.id) : null;
@@ -1094,7 +1171,7 @@ async function upsertAddress(userId, addr) {
     if (r.rowCount === 0) throw new Error("address not found");
     return r.rows[0];
   }
-   // 新規追加（ただし同一 user_id + address_key が既にあれば UPDATE 扱いにする）
+     // 新規追加（ただし同一 user_id + address_key が既にあれば UPDATE 扱いにする）
   const r = await pool.query(
     `
     INSERT INTO addresses
@@ -1106,7 +1183,8 @@ async function upsertAddress(userId, addr) {
     DO UPDATE SET
       label       = EXCLUDED.label,
       is_default  = EXCLUDED.is_default,
-      member_code = EXCLUDED.member_code,
+      -- ✅ ここ重要：同じ住所を再保存しても member_code は変えない（既存を優先）
+      member_code = COALESCE(addresses.member_code, EXCLUDED.member_code),
       name        = EXCLUDED.name,
       phone       = EXCLUDED.phone,
       postal      = EXCLUDED.postal,
@@ -1118,7 +1196,7 @@ async function upsertAddress(userId, addr) {
     RETURNING id, label, is_default, member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at
     `,
     [
-      uid, label || "住所",
+      uid, (label || "住所"),
       isDefault,
       memberCode,
       addr.name || "", addr.phone || "", addr.postal || "", addr.prefecture || "", addr.city || "",
@@ -1127,7 +1205,7 @@ async function upsertAddress(userId, addr) {
     ]
   );
   return r.rows[0];
-}
+
 /* =========================
  * 注文組み立て（改ざん防止）
  * ========================= */

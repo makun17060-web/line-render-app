@@ -184,7 +184,6 @@
 
   const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
   const KEY_UID ="isoya_userId";
-  const KEY_SHIP_TO = "isoya_ship_to"; // "home" / "gift"
 
   // ✅ modeでカート切替（福箱は専用カート）
   const qs = new URLSearchParams(location.search);
@@ -299,20 +298,17 @@
   }
 
   // ✅ confirmは LIFF失敗しても止めない（住所LIFF内でも動かす）
-  // ✅ さらに「makun17060」みたいな偽物UIDは採用しない（U...のみ）
   async function ensureUserSoft(){
     const cached = (localStorage.getItem(KEY_UID) || "").trim();
-
-    // LINE userIdっぽいものだけ（Uで始まる＋ある程度長い）
-    if (cached && /^U[a-fA-F0-9]{10,}$/.test(cached)) return cached;
+    if(cached) return cached;
 
     try{
       await liff.init({ liffId: LIFF_ID_ORDER });
       if(liff.isLoggedIn()){
         const prof = await liff.getProfile();
         const uid = (prof?.userId||"").trim();
-        if(uid && /^U[a-fA-F0-9]{10,}$/.test(uid)) localStorage.setItem(KEY_UID, uid);
-        return (uid && /^U[a-fA-F0-9]{10,}$/.test(uid)) ? uid : null;
+        if(uid) localStorage.setItem(KEY_UID, uid);
+        return uid || null;
       }
       return null;
     }catch{
@@ -381,25 +377,23 @@
       return;
     }
 
-    // ✅ 贈り先判定：あなたのDB運用（labelが「住所」「贈り先」）に合わせて確実化
-    const label = (addr.label || "").trim();              // "住所" / "贈り先" / ""
-    const shipTo = (localStorage.getItem(KEY_SHIP_TO) || "").trim(); // "home" / "gift" / ""
+    // ✅ 贈り先判定（自宅選択を最優先で尊重する版）
+    const shipQS = (qs.get("ship") || "").trim(); // "home" / "gift" を想定
+    const shipLS = (localStorage.getItem("isoya_ship_to") || "").trim(); // "home" / "gift"
 
-    let isGift =
-      (label === "贈り先") ||
-      (qs.get("ship") || "") === "gift" ||
-      (qs.get("gift") || "") === "1" ||
-      (addr.is_gift === true) ||
-      ((addr.kind || "").trim() === "gift");
+    const forceHome = (shipQS === "home") || (shipLS === "home");
+    const forceGift = (shipQS === "gift") || (qs.get("gift") === "1") || (shipLS === "gift");
 
-    // ✅ 住所ラベルが「住所」なら gift を強制解除（localStorage残り対策）
-    if (label === "住所") isGift = false;
+    const label = (addr.label || "").trim();
+    const kind  = (addr.kind  || "").trim();
 
-    // ✅ labelが空で、最後の保険として localStorage が gift のときだけ gift 扱い
-    if (!label && shipTo === "gift") isGift = true;
+    const looksGift =
+      addr.is_gift === true ||
+      /贈り|贈り先|ギフト|gift/i.test(label) ||
+      /贈り|贈り先|ギフト|gift/i.test(kind);
 
-    // ✅ isGiftが確定したら、confirm側でも ship_to を整えておく（次に残らないように）
-    localStorage.setItem(KEY_SHIP_TO, isGift ? "gift" : "home");
+    // ★「自宅を選んだ」が明示されてるなら必ず代引OK
+    const isGift = forceHome ? false : (forceGift || looksGift);
 
     applyCodAvailability(isGift);
 

@@ -95,15 +95,6 @@
       background:#fff;border:1px solid var(--line);color:#111827;
       margin-top:0;
     }
-
-    /* 追加：デバッグ操作ボタン */
-    .debugRow{
-      display:flex;gap:8px;flex-wrap:wrap;margin-top:8px
-    }
-    .debugMiniBtn{
-      background:#fff;border:1px solid var(--line);color:#111827;
-      padding:10px 12px;border-radius:12px;font-weight:900;cursor:pointer
-    }
   </style>
 </head>
 
@@ -111,15 +102,6 @@
   <div class="wrap">
     <h1>注文内容の確認</h1>
     <div class="muted" id="status">読み込み中…</div>
-
-    <!-- ✅ 追加：贈り先判定ログを画面に出す（LIFF内で原因切り分け） -->
-    <div class="muted" id="debugPay" style="margin-top:6px"></div>
-
-    <!-- ✅ 追加：LIFF内だけで home/gift を強制できる -->
-    <div class="debugRow">
-      <button id="forceHomeBtn" class="debugMiniBtn" type="button">自宅として開く（代引OK）</button>
-      <button id="forceGiftBtn" class="debugMiniBtn" type="button">贈り先として開く（代引NG）</button>
-    </div>
 
     <div class="card">
       <div class="muted">お届け先</div>
@@ -223,7 +205,6 @@
   : "/confirm.html";
 
   const status=document.getElementById("status");
-  const debugPay=document.getElementById("debugPay");
   const addrText=document.getElementById("addrText");
   const itemsEl=document.getElementById("items");
 
@@ -246,22 +227,8 @@
   const cardBtn=document.getElementById("cardBtn");
   const codBtn=document.getElementById("codBtn");
 
-  // ✅ 追加：LIFF内で ship を強制するボタン
-  const forceHomeBtn = document.getElementById("forceHomeBtn");
-  const forceGiftBtn = document.getElementById("forceGiftBtn");
-
   const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
   const loadJson=k=>{try{return JSON.parse(localStorage.getItem(k)||"");}catch{return null;}};
-
-  const dbg = (s)=>{ if(debugPay) debugPay.textContent = s; };
-
-  function reloadWithShip(v){
-    const u = new URL(location.href);
-    u.searchParams.set("ship", v); // home / gift
-    location.replace(u.toString());
-  }
-  if(forceHomeBtn) forceHomeBtn.onclick = ()=>reloadWithShip("home");
-  if(forceGiftBtn) forceGiftBtn.onclick = ()=>reloadWithShip("gift");
 
   // ✅ 押したボタンだけ busy（もう片方は触らない）
   function setBtnBusy(btn, busy, busyText, normalText){
@@ -427,8 +394,6 @@
     if (shipQS === "home" || shipLS === "home") isGift = false;
     else if (shipQS === "gift" || shipLS === "gift" || (qs.get("gift")==="1")) isGift = true;
     else isGift = looksGift;
-
-    dbg(`shipQS=${shipQS||"-"} shipLS=${shipLS||"-"} looksGift=${looksGift} => isGift=${isGift}`);
 
     applyCodAvailability(isGift);
 

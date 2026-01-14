@@ -1,177 +1,126 @@
 <!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-  <title>注文内容の確認（オリジナルセット）</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>オリジナルセット（購入）</title>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
   <style>
     :root{
-      --bg:#f6f7f9;--card:#fff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;
-      --pri:#7a1f1f;         /* オリジナルのメイン */
-      --pri2:#0b3a53;        /* クレジット */
-      --danger:#b91c1c;
-      --shadow:0 1px 3px rgba(0,0,0,.06);--radius:14px;
+      --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280;
+      --line:#e5e7eb; --pri:#7a1f1f; --danger:#b91c1c;
+      --shadow:0 1px 3px rgba(0,0,0,.06); --radius:14px;
     }
-    *{box-sizing:border-box}
-    body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)}
-    .wrap{max-width:860px;margin:0 auto;padding:14px 14px 26px}
-    h1{margin:0 0 6px;font-size:18px}
-    .muted{color:var(--muted);font-size:13px;line-height:1.5}
-    .err{color:var(--danger);font-weight:900}
-    .card{
-      background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
-      padding:12px;margin-top:12px;box-shadow:var(--shadow)
+    *{ box-sizing:border-box; }
+    body{ margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
+    .wrap{ max-width:760px; margin:0 auto; padding:14px 14px 118px; }
+    h1{ margin:0 0 6px; font-size:18px; }
+    .muted{ color:var(--muted); font-size:13px; line-height:1.6; }
+    .card{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow); margin-top:12px; }
+    .body{ padding:14px; }
+    .name{ font-weight:900; font-size:16px; }
+    .desc{ margin-top:8px; color:var(--muted); font-size:13px; }
+    .row{ display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:12px; }
+    .price{ font-weight:900; color:var(--pri); font-size:18px; }
+    .badge{ font-size:12px; border:1px solid var(--line); background:#fafafa; border-radius:999px; padding:2px 8px; white-space:nowrap; }
+    .qty{ display:flex; align-items:center; gap:6px; margin-top:12px; }
+    .qty button{
+      width:40px; height:40px; border-radius:12px; border:1px solid var(--line);
+      background:#fff; font-size:20px; cursor:pointer;
     }
-    #addrText{ white-space: pre-line; }
-
-    .items{margin-top:10px;border-top:1px solid var(--line)}
-    .item{
-      display:grid; grid-template-columns: 1fr auto;
-      gap:6px 10px; padding:12px 0;
-      border-bottom:1px dashed var(--line); font-size:14px;
+    .qty input{
+      width:72px; height:40px; border-radius:12px; border:1px solid var(--line);
+      text-align:center; font-size:16px; font-weight:900;
     }
-    .item:last-child{border-bottom:none}
-    .item .name{font-weight:800}
-    .item .qty{grid-column:1 / 2;color:var(--muted);font-size:13px}
-    .item .price{grid-column:2 / 3;grid-row:1 / 3;align-self:center;font-weight:900;white-space:nowrap}
+    .warn{ color:var(--danger); font-weight:900; }
+    .mini{ font-size:12px; color:var(--muted); line-height:1.5; margin-top:6px; }
 
-    .row{display:flex;justify-content:space-between;gap:10px;margin:0;padding:6px 0;font-size:14px}
-
-    /* 支払い方法ラジオ */
-    .paySelect{ display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
-    .payPill{
-      display:flex; align-items:center; gap:8px;
-      padding:10px 12px; border-radius:999px;
-      background:#fff; border:1px solid var(--line);
-      box-shadow:var(--shadow);
-      cursor:pointer; user-select:none;
-      font-size:13px; font-weight:900;
+    /* bottom bar */
+    .bar{
+      position:fixed; left:0; right:0; bottom:0;
+      border-top:1px solid var(--line);
+      background:rgba(246,247,249,.92);
+      backdrop-filter:blur(10px);
+      padding:10px 12px;
     }
-    .payPill input{ transform:scale(1.1); }
-    .payPill[aria-disabled="true"]{ opacity:.55; cursor:not-allowed; }
-    .payPill .sub{ font-weight:700; color:var(--muted); font-size:12px; }
-
-    .payGrid{ display:grid; grid-template-columns:1fr; gap:12px; margin-top:10px; }
-    @media (min-width:760px){
-      .payGrid{ grid-template-columns:1fr 1fr; align-items:stretch; }
-      .backWrap{ grid-column:1 / -1; }
+    .bar .inner{
+      max-width:760px; margin:0 auto;
+      display:flex; justify-content:space-between; align-items:center; gap:10px;
     }
+    .bar .right{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+    .btn{ border:none; border-radius:14px; padding:12px 14px; font-weight:900; cursor:pointer; }
+    .btnBack{ background:#fff; border:1px solid var(--line); color:var(--text); }
+    .btnAddr{ background:#fff; border:1px solid var(--line); color:var(--text); }
+    .btnNext{ background:var(--pri); color:#fff; min-width:220px; }
+    .btnDisabled{ opacity:.55; cursor:not-allowed; pointer-events:none; }
 
-    .payCardTitle{ font-weight:1000; font-size:14px; margin:0 0 6px; }
-    .payHint{ color:var(--muted); font-size:12px; line-height:1.5; margin-bottom:10px; }
-
-    .miniRow{
-      display:flex; justify-content:space-between; gap:10px;
-      padding:6px 0; font-size:13px; border-top:1px dashed var(--line);
-    }
-    .miniRow:first-of-type{border-top:1px solid var(--line)}
-    .payTotal{
-      margin-top:10px; padding-top:10px; border-top:2px solid var(--line);
-      display:flex; justify-content:space-between; align-items:baseline; gap:10px;
-    }
-    .payTotal .label{font-weight:900;font-size:13px;color:var(--muted)}
-    .payTotal .price{font-weight:1000;font-size:18px;white-space:nowrap}
-
-    .payBtn{
-      width:100%;
-      border:none; border-radius:14px;
-      padding:12px 14px;
-      font-weight:1000;
-      cursor:pointer;
-      margin-top:10px;
-    }
-    .payBtn:disabled{opacity:.55;cursor:not-allowed}
-
-    .backWrap .payBtn{ background:#fff;border:1px solid var(--line);color:#111827; margin-top:0; }
-    .inactive{ opacity:.55; filter:saturate(.85); }
+    table{ width:100%; border-collapse:collapse; margin-top:10px; font-size:13px; }
+    th,td{ border:1px solid var(--line); padding:8px; text-align:left; background:#fff; }
+    th{ background:#fafafa; }
   </style>
 </head>
 
 <body>
   <div class="wrap">
-    <h1>注文内容の確認（オリジナルセット）</h1>
+    <h1>オリジナルセット（購入）</h1>
     <div class="muted" id="status">読み込み中…</div>
 
     <div class="card">
-      <div class="muted">お届け先</div>
-      <div id="addrText" style="margin-top:6px;font-weight:900">—</div>
-      <div class="muted" style="margin-top:8px">
-        ※住所を修正したい場合は「戻る」で住所入力へ戻ってください。
+      <div class="body">
+        <!-- ✅ Disk配信した画像を表示 -->
+        <img id="pimg" alt="商品画像" style="
+          width:100%;
+          height:auto;
+          display:none;
+          border-radius:12px;
+          border:1px solid var(--line);
+          background:#fff;
+          margin-bottom:12px;
+        " />
+
+        <div class="name" id="pname">オリジナルセット</div>
+        <div class="desc" id="pdesc">
+          贈答向けの詰め合わせセットです。<span class="warn">単品（あかしゃ等）との混載はできません。</span>
+        </div>
+
+        <div class="row">
+          <div class="price" id="pprice">0円</div>
+          <span class="badge" id="pvolume">内容量</span>
+        </div>
+
+        <div class="qty">
+          <button type="button" id="dec">−</button>
+          <input id="qty" type="number" min="1" step="1" value="1" inputmode="numeric">
+          <button type="button" id="inc">＋</button>
+        </div>
+
+        <div class="mini">
+          送料サイズは数量で決まります：<br>
+          1個→80 / 2個→100 / 3～4個→120 / 5～6個→140
+        </div>
+
+        <table>
+          <thead><tr><th>数量</th><th>送料サイズ</th></tr></thead>
+          <tbody id="sizeTable"></tbody>
+        </table>
+
+        <div class="mini">
+          ※この画面で選んだ数量は「オリジナルセット専用カート」に保存されます。<br>
+          ※住所入力後は最終確認画面へ進みます。
+        </div>
       </div>
     </div>
+  </div>
 
-    <div class="card">
-      <div class="muted">ご注文商品（オリジナルセットは混載不可）</div>
-      <div class="items" id="items"></div>
-
-      <div class="row"><div>小計</div><div id="subtotal">0円</div></div>
-      <div class="row"><div>送料（見積）</div><div id="shipping">—</div></div>
-
-      <!-- 支払い方法ラジオ -->
-      <div class="paySelect" role="radiogroup" aria-label="支払い方法">
-        <label class="payPill" id="pillCard">
-          <input type="radio" name="payMethod" id="payCard" value="card">
-          <div>クレジット<div class="sub">Stripe決済へ</div></div>
-        </label>
-
-        <label class="payPill" id="pillCod">
-          <input type="radio" name="payMethod" id="payCod" value="cod">
-          <div>代引き<div class="sub">配達員へ現金</div></div>
-        </label>
-      </div>
-
-      <div class="payGrid">
-        <!-- クレジット -->
-        <div class="card" id="cardPanel" style="margin-top:0">
-          <div class="payCardTitle">クレジットでのお支払い</div>
-          <div class="payHint">※代引手数料はかかりません。Stripe決済画面へ進みます。</div>
-
-          <div class="miniRow"><div>小計</div><div id="subtotal2">—</div></div>
-          <div class="miniRow"><div>送料</div><div id="shipping2">—</div></div>
-
-          <div class="payTotal">
-            <div class="label">合計（クレジット）</div>
-            <div class="price" id="totalCard">—</div>
-          </div>
-
-          <button id="cardBtn" class="payBtn" style="background:var(--pri2);color:#fff" type="button">
-            クレジットで支払う
-          </button>
-        </div>
-
-        <!-- 代引 -->
-        <div class="card" id="codPanel" style="margin-top:0">
-          <div class="payCardTitle">代引きでのお支払い</div>
-          <div class="payHint">※代引手数料がかかります。配達員へ現金でお支払いください。</div>
-
-          <div class="miniRow"><div>小計</div><div id="subtotal3">—</div></div>
-          <div class="miniRow"><div>送料</div><div id="shipping3">—</div></div>
-          <div class="miniRow"><div>代引手数料</div><div id="codFee">—</div></div>
-
-          <div class="payTotal">
-            <div class="label">合計（代引）</div>
-            <div class="price" id="totalCod">—</div>
-          </div>
-
-          <button id="codBtn" class="payBtn" style="background:var(--pri);color:#fff" type="button">
-            代引きで注文確定
-          </button>
-
-          <div id="codDisabledNote" class="muted" style="margin-top:8px;display:none">
-            ※贈り先への配送では、代引きはご利用いただけません（クレジットのみ）
-          </div>
-        </div>
-
-        <!-- 戻る（住所入力へ） -->
-        <div class="backWrap">
-          <button id="backBtn" class="payBtn" type="button">戻る（住所入力へ）</button>
-          <div class="muted" style="margin-top:8px">
-            ※送料は見積り表示です（確定時に再計算されます）。
-          </div>
-        </div>
+  <div class="bar">
+    <div class="inner">
+      <div class="muted" id="sum">数量 0 / 小計 0円</div>
+      <div class="right">
+        <button class="btn btnBack" id="backBtn" type="button">戻る</button>
+        <button class="btn btnAddr" id="addrBtn" type="button">住所入力（登録／変更）</button>
+        <button class="btn btnNext" id="nextBtn" type="button">次へ（住所入力）</button>
       </div>
     </div>
   </div>
@@ -180,326 +129,220 @@
 (async function(){
   "use strict";
 
-  // ✅ オリジナル用 LIFF
   const LIFF_ID_ORDER = "2008406620-Bd9Zo9od";
-  const KEY_UID ="isoya_userId";
 
-  // ✅ オリジナル専用カート
+  const KEY_UID  = "isoya_userId";
   const KEY_CART = "isoya_cart_original";
 
-  // ✅ confirm 直行防止：必ず一度 cod-register を通す
-  const qs = new URLSearchParams(location.search);
-  const RETURN_TO_THIS = "/confirm-original.html";
+  const ORIGINAL_ID = (window.ORIGINAL_SET_PRODUCT_ID || "original-set-2000").trim();
 
-  const status=document.getElementById("status");
-  const addrText=document.getElementById("addrText");
-  const itemsEl=document.getElementById("items");
+  const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
 
-  const subtotalEl=document.getElementById("subtotal");
-  const shippingEl=document.getElementById("shipping");
-
-  const subtotal2El=document.getElementById("subtotal2");
-  const shipping2El=document.getElementById("shipping2");
-  const totalCardEl=document.getElementById("totalCard");
-
-  const subtotal3El=document.getElementById("subtotal3");
-  const shipping3El=document.getElementById("shipping3");
-  const codFeeEl=document.getElementById("codFee");
-  const totalCodEl=document.getElementById("totalCod");
-
-  const backBtn=document.getElementById("backBtn");
-  const cardBtn=document.getElementById("cardBtn");
-  const codBtn=document.getElementById("codBtn");
-
-  const payCard=document.getElementById("payCard");
-  const payCod=document.getElementById("payCod");
-  const pillCard=document.getElementById("pillCard");
-  const pillCod=document.getElementById("pillCod");
-  const cardPanel=document.getElementById("cardPanel");
-  const codPanel=document.getElementById("codPanel");
-
-  const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
-  const loadJson=k=>{try{return JSON.parse(localStorage.getItem(k)||"");}catch{return null;}};
-
-  function setBtnBusy(btn, busy, busyText, normalText){
-    if(!btn) return;
-    btn.disabled = !!busy;
-    btn.style.pointerEvents = busy ? "none" : "auto";
-    if (busyText && normalText) btn.textContent = busy ? busyText : normalText;
-  }
-  function safeSetText(el, txt){ if(el) el.textContent = txt; }
-
-  async function postJson(url, body){
-    const r=await fetch(url,{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify(body)
-    });
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok) throw new Error(d?.error || ("HTTP "+r.status));
-    return d;
-  }
-
-  async function getAddress(userId){
-    const r=await fetch(`/api/address/get?userId=${encodeURIComponent(userId)}`,{cache:"no-store"});
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok) throw new Error(d?.error||("HTTP "+r.status));
-    return d?.address || null;
-  }
-
-  async function getProducts(){
-    const r=await fetch("/api/products",{cache:"no-store"});
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok || !d.ok) throw new Error(d?.error||("HTTP "+r.status));
-    return Array.isArray(d.products)?d.products:[];
-  }
-
-  function renderItems(cartItems, products){
-    const byId=Object.fromEntries(products.map(p=>[p.id,p]));
-    itemsEl.innerHTML="";
-    let subtotal=0;
-
-    for(const it of cartItems){
-      const p=byId[it.id];
-      if(!p) continue;
-
-      const qty = Number(it.qty||0);
-      const line=Number(p.price||0) * qty;
-      subtotal += line;
-
-      const div=document.createElement("div");
-      div.className="item";
-      div.innerHTML = `
-        <div class="name">${p.name || ""}${p.volume ? `（${p.volume}）` : ""}</div>
-        <div class="price">${yen(line)}</div>
-        <div class="qty">× ${qty} 点</div>
-      `;
-      itemsEl.appendChild(div);
-    }
-
-    safeSetText(subtotalEl, yen(subtotal));
-    safeSetText(subtotal2El, yen(subtotal));
-    safeSetText(subtotal3El, yen(subtotal));
-    return subtotal;
-  }
-
-  async function ensureUserSoft(){
-    const cached = (localStorage.getItem(KEY_UID) || "").trim();
-    if(cached) return cached;
-
+  function loadCart(){
     try{
-      await liff.init({ liffId: LIFF_ID_ORDER });
-      if(liff.isLoggedIn()){
-        const prof = await liff.getProfile();
-        const uid = (prof?.userId||"").trim();
-        if(uid) localStorage.setItem(KEY_UID, uid);
-        return uid || null;
-      }
-      return null;
-    }catch{
+      const v = JSON.parse(localStorage.getItem(KEY_CART) || "");
+      if(v && typeof v==="object") return v;
+    }catch{}
+    return { items: [] };
+  }
+  function saveCart(cart){ localStorage.setItem(KEY_CART, JSON.stringify(cart)); }
+
+  function normItems(items){
+    const map = new Map();
+    for(const it of (items||[])){
+      const id = String(it?.id||"").trim();
+      const qty = Math.max(0, Math.floor(Number(it?.qty||0)));
+      if(!id || qty<=0) continue;
+      map.set(id, (map.get(id)||0) + qty);
+    }
+    return Array.from(map.entries()).map(([id,qty])=>({id,qty}));
+  }
+
+  async function ensureLiffUser(){
+    await liff.init({ liffId: LIFF_ID_ORDER });
+    if(!liff.isLoggedIn()){
+      liff.login({ redirectUri: location.href });
       return null;
     }
+    const prof = await liff.getProfile();
+    const uid = (prof?.userId || "").trim();
+    if(uid) localStorage.setItem(KEY_UID, uid);
+    return uid;
   }
 
-  function applyQuoteToUI(quote){
-    const shippingText = `${yen(quote.shippingFee)}（ヤマト ${quote.size}サイズ）`;
+  const statusEl = document.getElementById("status");
+  const sumEl    = document.getElementById("sum");
+  const backBtn  = document.getElementById("backBtn");
+  const addrBtn  = document.getElementById("addrBtn");
+  const nextBtn  = document.getElementById("nextBtn");
 
-    safeSetText(shippingEl, shippingText);
+  const pnameEl  = document.getElementById("pname");
+  const pdescEl  = document.getElementById("pdesc");
+  const ppriceEl = document.getElementById("pprice");
+  const pvolEl   = document.getElementById("pvolume");
+  const pimgEl   = document.getElementById("pimg"); // ✅追加
 
-    safeSetText(shipping2El, shippingText);
-    const totalCard = Number(quote.subtotal||0) + Number(quote.shippingFee||0);
-    safeSetText(totalCardEl, yen(totalCard));
+  const decBtn   = document.getElementById("dec");
+  const incBtn   = document.getElementById("inc");
+  const qtyEl    = document.getElementById("qty");
+  const sizeTable= document.getElementById("sizeTable");
 
-    safeSetText(shipping3El, shippingText);
-    safeSetText(codFeeEl, yen(quote.codFee));
-    safeSetText(totalCodEl, yen(quote.totalCod));
+  let products = [];
+  let product = null;
+
+  let cart = loadCart();
+  cart.items = normItems(cart.items);
+
+  function sizeByQty(q){
+    q = Number(q)||0;
+    if(q<=0) return 0;
+    if(q===1) return 80;
+    if(q===2) return 100;
+    if(q<=4) return 120;
+    return 140;
   }
 
-  // radioでボタン制御
-  function applyPayMethodUI(method){
-    const isCard = (method === "card");
-
-    if(payCard) payCard.checked = isCard;
-    if(payCod)  payCod.checked  = !isCard;
-
-    if(cardPanel) cardPanel.classList.toggle("inactive", !isCard);
-    if(codPanel)  codPanel.classList.toggle("inactive", isCard);
-
-    if(cardBtn) cardBtn.disabled = !isCard;
-    if(codBtn)  codBtn.disabled  = isCard;
+  function renderSizeTable(){
+    const rows = [
+      {q:"1", s:"80"},
+      {q:"2", s:"100"},
+      {q:"3〜4", s:"120"},
+      {q:"5〜6", s:"140"},
+    ];
+    sizeTable.innerHTML = rows.map(r=>`<tr><td>${r.q}</td><td>${r.s}</td></tr>`).join("");
   }
 
-  // ✅ 贈り先なら代引きを完全ロック（オリジナルも同じ）
-  function lockCodIfGift(isGift){
-    const note = document.getElementById("codDisabledNote");
+  function getQtyInCart(){
+    const it = cart.items.find(x => x.id === ORIGINAL_ID);
+    return it ? Number(it.qty||0) : 0;
+  }
 
-    if(isGift){
-      if(payCod){ payCod.disabled = true; payCod.checked = false; }
-      if(pillCod){ pillCod.setAttribute("aria-disabled","true"); }
-
-      applyPayMethodUI("card");
-
-      if(codBtn){
-        codBtn.disabled = true;
-        codBtn.textContent = "贈り先では代引き不可";
-        codBtn.style.opacity = ".55";
-      }
-      if(note) note.style.display = "block";
-    }else{
-      if(payCod){ payCod.disabled = false; }
-      if(pillCod){ pillCod.removeAttribute("aria-disabled"); }
-
-      if(codBtn){
-        codBtn.textContent = "代引きで注文確定";
-        codBtn.style.opacity = "1";
-      }
-      if(note) note.style.display = "none";
+  function setQtyInCart(qty){
+    qty = Math.max(1, Math.floor(Number(qty||1)));
+    if(qty > 6){
+      alert("オリジナルセットは1回の注文で最大6個までにしてください。");
+      qty = 6;
     }
+    cart.items = [{ id: ORIGINAL_ID, qty }];
+    cart.items = normItems(cart.items);
+    saveCart(cart);
   }
 
+  function renderSum(){
+    const qty = getQtyInCart();
+    const price = Number(product?.price || 0);
+    const subtotal = price * qty;
+    const size = sizeByQty(qty);
+    sumEl.textContent = `数量 ${qty} / 小計 ${yen(subtotal)}（送料サイズ ${size}）`;
+    nextBtn.classList.toggle("btnDisabled", qty<=0);
+  }
+
+  function goAddress(){
+    const ret = encodeURIComponent("/confirm-original.html");
+    location.href = `/cod-register.html?returnTo=${ret}&mode=original`;
+  }
+
+  backBtn.onclick = ()=>{ location.href = "/index.html"; };
+  addrBtn.onclick = goAddress;
+  nextBtn.onclick = ()=>{
+    if(nextBtn.classList.contains("btnDisabled")){
+      alert("数量を選んでください");
+      return;
+    }
+    goAddress();
+  };
+
+  decBtn.onclick = ()=>{
+    const v = Math.max(1, Math.floor(Number(qtyEl.value||1)) - 1);
+    qtyEl.value = String(v);
+    setQtyInCart(v);
+    renderSum();
+  };
+  incBtn.onclick = ()=>{
+    const v = Math.max(1, Math.floor(Number(qtyEl.value||1)) + 1);
+    qtyEl.value = String(v);
+    setQtyInCart(v);
+    renderSum();
+  };
+  qtyEl.onchange = ()=>{
+    let v = Math.max(1, Math.floor(Number(qtyEl.value||1)));
+    if(v > 6){
+      alert("オリジナルセットは1回の注文で最大6個までにしてください。");
+      v = 6;
+    }
+    qtyEl.value = String(v);
+    setQtyInCart(v);
+    renderSum();
+  };
+
+  renderSizeTable();
+
+  // LIFFログイン
   try{
-    status.textContent="確認中…";
-
-    const uid = await ensureUserSoft();
+    const uid = await ensureLiffUser();
     if(!uid){
-      status.innerHTML = '<span class="err">ユーザー情報が取得できません。いったん商品ページから開き直してください。</span>';
-      setTimeout(()=>location.replace("/original-set.html"), 900);
+      statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">LIFFログイン中…</span>';
       return;
     }
+  }catch(e){
+    console.error(e);
+    statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">LIFF初期化に失敗しました（注文用LIFF）</span>';
+    return;
+  }
 
-    // ✅ confirm 直行防止（オリジナルも）
-    const stepped = (qs.get("addr_step") || "").trim();
-    if (stepped !== "1") {
-      const returnUrl = new URL(location.origin + RETURN_TO_THIS);
-      returnUrl.searchParams.set("addr_step", "1");
-      const returnPath = returnUrl.pathname + returnUrl.search;
+  // 商品情報（products.json）から ORIGINAL_ID を引く
+  try{
+    const r = await fetch("/api/products", { cache:"no-store" });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok || !d.ok) throw new Error(d?.error || ("HTTP "+r.status));
 
-      location.replace(
-        `/cod-register.html?returnTo=${encodeURIComponent(returnPath)}&mode=original&liff.hback=2`
-      );
-      return;
+    products = Array.isArray(d.products) ? d.products : [];
+    product = products.find(p => String(p.id||"").trim() === ORIGINAL_ID) || null;
+
+    if(!product){
+      statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">オリジナルセットの商品IDが見つかりません（products.json を確認）</span>';
+      pnameEl.textContent = "オリジナルセット";
+      ppriceEl.textContent = yen(0);
+      pvolEl.textContent = "内容量";
+      pimgEl.style.display = "none";
+    }else{
+      statusEl.textContent = "";
+      pnameEl.textContent = product.name || "オリジナルセット";
+      pdescEl.innerHTML = `${product.desc || "贈答向けの詰め合わせセットです。"} <span class="warn">単品との混載はできません。</span>`;
+      ppriceEl.textContent = yen(product.price);
+      pvolEl.textContent = product.volume ? `内容量 ${product.volume}` : "内容量";
+
+      // ✅ Disk配信の画像URLへ変換して表示
+      const rawImg = String(product.image || "").trim();
+      let imgUrl = "";
+      if(rawImg){
+        if(/^https?:\/\//i.test(rawImg)) imgUrl = rawImg;
+        else if(rawImg.startsWith("/")) imgUrl = rawImg;
+        else imgUrl = "/public/uploads/" + rawImg; // ファイル名だけならこれ
+      }
+
+      if(imgUrl){
+        pimgEl.src = imgUrl;
+        pimgEl.style.display = "block";
+      }else{
+        pimgEl.removeAttribute("src");
+        pimgEl.style.display = "none";
+      }
     }
 
-    const cart=loadJson(KEY_CART) || {items:[]};
-    const items=(cart.items||[]).filter(x=>x?.id && Number(x.qty||0)>0);
-
-    // 混載不可：1件だけ
-    if(items.length !== 1){
-      status.innerHTML = '<span class="err">オリジナルセットは混載不可です。数量選択へ戻ります。</span>';
-      setTimeout(()=>location.replace("/original-set.html"), 900);
-      return;
-    }
-
-    const addr=await getAddress(uid).catch(()=>null);
-    if(!addr){
-      location.replace(`/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=original&liff.hback=2`);
-      return;
-    }
-
-    // 贈り先判定（通常confirmと同じロジック）
-    const shipQS = (qs.get("ship") || "").trim(); // "home" / "gift"
-    let isGift;
-    if (shipQS === "home") isGift = false;
-    else if (shipQS === "gift" || (qs.get("gift") === "1")) isGift = true;
-    else isGift = (addr.is_gift === true);
-
-    const nameLine = addr.name ? `${addr.name} 様\n` : "";
-    addrText.textContent =
-      `${nameLine}〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim();
-
-    const products=await getProducts();
-    const subtotal = renderItems(items, products);
-
-    safeSetText(shippingEl, "計算中…");
-    safeSetText(shipping2El, "計算中…");
-    safeSetText(shipping3El, "計算中…");
-    safeSetText(codFeeEl, "計算中…");
-    safeSetText(totalCodEl, "計算中…");
-    safeSetText(totalCardEl, "計算中…");
-
-    // ✅ 送料/手数料はサーバ計算（オリジナルでも）
-    const quote = await postJson("/api/order/quote", { uid, checkout:{ items } });
-    quote.subtotal = quote.subtotal ?? subtotal;
-    applyQuoteToUI(quote);
-
-    // 初期：クレジット
-    applyPayMethodUI("card");
-
-    // 贈り先なら代引きをロック
-    lockCodIfGift(isGift);
-
-    // pillクリックでも切替（LIFFでchange不安定対策）
-    if(pillCard){
-      pillCard.addEventListener("click", ()=>{
-        if(payCard && !payCard.disabled){
-          payCard.checked = true;
-          applyPayMethodUI("card");
-        }
-      });
-    }
-    if(pillCod){
-      pillCod.addEventListener("click", ()=>{
-        if(payCod && !payCod.disabled){
-          payCod.checked = true;
-          applyPayMethodUI("cod");
-        }
-      });
-    }
-    if(payCard) payCard.addEventListener("change", ()=>applyPayMethodUI("card"));
-    if(payCod)  payCod.addEventListener("change", ()=>{
-      if(payCod.disabled) return;
-      applyPayMethodUI("cod");
-    });
-
-    status.textContent="内容をご確認ください。";
-
-    if(backBtn){
-      backBtn.onclick = ()=>{
-        // 戻るは addr_step を付けない（次回また必ず住所画面を通す）
-        location.href = `/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=original&liff.hback=2`;
-      };
-    }
-
-    if(cardBtn){
-      cardBtn.onclick = async ()=>{
-        if(!(payCard && payCard.checked)) return;
-        setBtnBusy(cardBtn, true, "移動中…", "クレジットで支払う");
-        try{
-          const data = await postJson("/api/pay/stripe/create", { uid, checkout:{ items } });
-          if(!data?.url) throw new Error("stripe url missing");
-          location.href = data.url;
-        }catch(e){
-          console.error(e);
-          alert("クレジット決済の開始に失敗しました: " + (e?.message||e));
-          setBtnBusy(cardBtn, false, "移動中…", "クレジットで支払う");
-        }
-      };
-    }
-
-    if(codBtn){
-      codBtn.onclick = async ()=>{
-        if(!(payCod && payCod.checked)) return;
-        if(isGift) return; // 二重ロック
-
-        setBtnBusy(codBtn, true, "確定中…", "代引きで注文確定");
-        try{
-          const data = await postJson("/api/order/cod/create", { uid, checkout:{ items } });
-
-          // ✅ オリジナル専用カートだけ空にする
-          localStorage.setItem(KEY_CART, JSON.stringify({ items: [] }));
-
-          location.href = `/complete.html?method=cod&orderId=${encodeURIComponent(data.orderId||"")}`;
-        }catch(e){
-          console.error(e);
-          alert("代引き確定に失敗しました: " + (e?.message||e));
-          setBtnBusy(codBtn, false, "確定中…", "代引きで注文確定");
-        }
-      };
-    }
+    const initQty = Math.max(1, Math.floor(getQtyInCart() || 1));
+    qtyEl.value = String(initQty);
+    setQtyInCart(initQty);
+    renderSum();
 
   }catch(e){
     console.error(e);
-    status.innerHTML='<span class="err">読み込みに失敗しました（住所API/商品API/DBを確認）</span>';
+    statusEl.innerHTML = '<span style="color:#b91c1c;font-weight:900">商品読み込み失敗：/api/products を確認してください</span>';
+    const initQty = 1;
+    qtyEl.value = String(initQty);
+    setQtyInCart(initQty);
+    renderSum();
+    pimgEl.style.display = "none";
   }
 })();
 </script>

@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-  <title>お届け先の入力</title>
+  <title>自宅住所の登録</title>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
   <style>
     :root{
       --bg:#f6f7f9;--card:#fff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;
-      --pri:#0b3a53;--pri2:#123b66;--danger:#b91c1c;
+      --pri:#0b3a53;--danger:#b91c1c;
       --shadow:0 1px 3px rgba(0,0,0,.06);--radius:14px;
     }
     *{box-sizing:border-box}
@@ -25,27 +25,10 @@
       padding:12px;margin-top:12px;box-shadow:var(--shadow)
     }
 
-    .pillRow{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
-    .pill{
-      display:flex;align-items:center;gap:8px;
-      padding:10px 12px;border-radius:999px;
-      background:#fff;border:1px solid var(--line);box-shadow:var(--shadow);
-      cursor:pointer;user-select:none;font-size:13px;font-weight:900;
-    }
-    .pill input{transform:scale(1.1)}
-    .pill[aria-disabled="true"]{opacity:.55;cursor:not-allowed}
-    .pill .sub{font-weight:700;color:var(--muted);font-size:12px}
-
-    .addrList{display:grid;gap:10px;margin-top:10px}
-    .addrItem{
+    .addrBox{
       border:1px solid var(--line);border-radius:14px;padding:10px;background:#fff;
-      display:flex;gap:10px;align-items:flex-start;
+      white-space:pre-line;font-size:13px;
     }
-    .addrItem input{margin-top:3px;transform:scale(1.1)}
-    .addrItem .txt{white-space:pre-line;font-size:13px}
-    .addrItem .tagRow{margin-top:6px;display:flex;gap:8px;flex-wrap:wrap}
-    .tag{font-size:11px;font-weight:900;padding:3px 8px;border-radius:999px;border:1px solid var(--line);color:#111827;background:#fff}
-    .tag.gift{border-color:#f0c2c2;color:#8a1f1f}
 
     .grid{display:grid;grid-template-columns:1fr;gap:10px;margin-top:10px}
     @media(min-width:760px){ .grid{grid-template-columns:1fr 1fr} }
@@ -70,41 +53,27 @@
 
 <body>
   <div class="wrap">
-    <h1>お届け先の入力</h1>
+    <h1>自宅住所の登録</h1>
     <div class="muted" id="status">読み込み中…</div>
 
-    <div class="card">
-      <div class="muted">配送先の種類</div>
+    <!-- 住所表示（登録済みの場合） -->
+    <div class="card" id="viewCard" style="display:none">
+      <div class="muted">登録済みの自宅住所</div>
+      <div class="addrBox" id="viewAddr" style="margin-top:10px"></div>
 
-      <!-- ship=home/gift をここで選ぶ（confirm側で代引可否に使える） -->
-      <div class="pillRow" role="radiogroup" aria-label="配送先の種類">
-        <label class="pill" id="pillHome">
-          <input type="radio" name="shipTo" id="shipHome" value="home">
-          <div>自宅配送<div class="sub">代引きOK</div></div>
-        </label>
-
-        <label class="pill" id="pillGift">
-          <input type="radio" name="shipTo" id="shipGift" value="gift">
-          <div>贈答用として送る<div class="sub">代引きNG（クレジットのみ）</div></div>
-        </label>
+      <div class="rowBtns">
+        <button class="btn" id="useBtn" type="button">この住所で進む</button>
+        <button class="btn btnSub" id="editBtn" type="button">住所を編集する</button>
       </div>
 
       <div class="muted" style="margin-top:8px">
-        ※「贈答用として送る」を選ぶと、注文確認で代引きが自動で無効になります。
+        ※贈り先住所は「注文確認（confirm）」で、必要なときだけ入力します。
       </div>
     </div>
 
-    <!-- ✅ 一覧は「あるときだけ表示」 -->
-    <div class="card" id="listCard" style="display:none">
-      <div class="muted">登録済みの住所</div>
-      <div class="addrList" id="addrList"></div>
-      <div class="muted" style="margin-top:8px">※住所を選んで「この住所で進む」を押してください。</div>
-      <div class="muted" style="margin-top:8px">※下のフォームから新しい住所も追加できます。</div>
-    </div>
-
-    <!-- ✅ フォームは常に使える（ボタンで表示切替しない） -->
-    <div class="card" id="formCard" style="display:block">
-      <div class="muted">住所を入力</div>
+    <!-- 住所フォーム（未登録 or 編集時） -->
+    <div class="card" id="formCard" style="display:none">
+      <div class="muted" id="formTitle">自宅住所を入力</div>
 
       <div class="grid">
         <div>
@@ -143,13 +112,13 @@
 
         <div style="grid-column:1/-1">
           <label>ラベル（任意）</label>
-          <input id="label" type="text" placeholder="例）自宅 / 実家 / 会社 など">
+          <input id="label" type="text" placeholder="例）自宅 など">
         </div>
       </div>
 
       <div class="rowBtns">
         <button class="btn" id="saveBtn" type="button">この住所を保存して進む</button>
-        <button class="btn btnSub" id="clearBtn" type="button">入力をクリア</button>
+        <button class="btn btnSub" id="cancelBtn" type="button">キャンセル</button>
       </div>
     </div>
 
@@ -163,19 +132,16 @@
 (async function(){
   "use strict";
 
-  // ★このページの LIFF ID（このHTMLを紐付けているLIFF IDに合わせる）
+  // ★あなたの LIFF ID（cod-register 用）
   const LIFF_ID_COD  = "2008406620-G5j1gjzM";
 
-  const KEY_UID      = "isoya_userId";
-  const KEY_SHIP_TO  = "isoya_ship_to"; // "home" / "gift"
+  const KEY_UID = "isoya_userId";
 
+  // confirm に戻す先
   const qs = new URLSearchParams(location.search);
   const mode = (qs.get("mode") || "").trim();
-
-  // returnTo は confirm から渡される想定
   const returnToRaw = (qs.get("returnTo") || "/confirm.html").trim();
 
-  // 商品ページに戻る先（mode対応）
   const backTo =
     (mode === "original") ? "/original-set.html"
   : (mode === "fukubako") ? "/fukubako.html"
@@ -183,58 +149,47 @@
 
   const status = document.getElementById("status");
 
-  const shipHome = document.getElementById("shipHome");
-  const shipGift = document.getElementById("shipGift");
-  const pillHome = document.getElementById("pillHome");
-  const pillGift = document.getElementById("pillGift");
+  const viewCard = document.getElementById("viewCard");
+  const viewAddr = document.getElementById("viewAddr");
+  const useBtn   = document.getElementById("useBtn");
+  const editBtn  = document.getElementById("editBtn");
 
-  const listCard = document.getElementById("listCard");
-  const addrListEl = document.getElementById("addrList");
+  const formCard  = document.getElementById("formCard");
+  const formTitle = document.getElementById("formTitle");
+  const saveBtn   = document.getElementById("saveBtn");
+  const cancelBtn = document.getElementById("cancelBtn");
 
-  const saveBtn = document.getElementById("saveBtn");
-  const clearBtn = document.getElementById("clearBtn");
   const backBtn = document.getElementById("backBtn");
 
   const el = (id)=>document.getElementById(id);
 
-  function setShipTo(v){
-    localStorage.setItem(KEY_SHIP_TO, v);
-    if (shipHome) shipHome.checked = (v === "home");
-    if (shipGift) shipGift.checked = (v === "gift");
+  let currentAddr = null; // normalize した住所（登録済みなら入る）
+  let isEditing = false;
+
+  function showView(){
+    if(viewCard) viewCard.style.display = "block";
+    if(formCard) formCard.style.display = "none";
+  }
+  function showForm(titleText){
+    if(viewCard) viewCard.style.display = "none";
+    if(formCard) formCard.style.display = "block";
+    if(formTitle) formTitle.textContent = titleText || "自宅住所を入力";
   }
 
-  // 初期 ship_to
-  const shipLS = (localStorage.getItem(KEY_SHIP_TO) || "").trim();
-  const shipQS = (qs.get("ship") || "").trim(); // もし来てたらそれ優先
-  const initialShip =
-    (shipQS === "home" || shipQS === "gift") ? shipQS
-    : (shipLS === "gift" ? "gift" : "home");
-  setShipTo(initialShip);
-
-  // pill クリックでも切替（LIFFでchangeが拾えない対策）
-  if(pillHome) pillHome.addEventListener("click", ()=>{
-    if(shipHome){ shipHome.checked = true; setShipTo("home"); }
-  });
-  if(pillGift) pillGift.addEventListener("click", ()=>{
-    if(shipGift){ shipGift.checked = true; setShipTo("gift"); }
-  });
-  if(shipHome) shipHome.addEventListener("change", ()=>setShipTo("home"));
-  if(shipGift) shipGift.addEventListener("change", ()=>setShipTo("gift"));
-
   async function postJson(url, body){
-    const r=await fetch(url,{
+    const r = await fetch(url, {
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify(body)
+      body: JSON.stringify(body)
     });
-    const d=await r.json().catch(()=>({}));
+    const d = await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(d?.error || ("HTTP "+r.status));
     return d;
   }
 
   async function getJson(url){
-    const r=await fetch(url,{cache:"no-store"});
-    const d=await r.json().catch(()=>({}));
+    const r = await fetch(url, { cache:"no-store" });
+    const d = await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(d?.error || ("HTTP "+r.status));
     return d;
   }
@@ -247,7 +202,7 @@
       await liff.init({ liffId: LIFF_ID_COD });
       if(liff.isLoggedIn()){
         const prof = await liff.getProfile();
-        const uid = (prof?.userId||"").trim();
+        const uid = (prof?.userId || "").trim();
         if(uid) localStorage.setItem(KEY_UID, uid);
         return uid || null;
       }
@@ -255,16 +210,6 @@
     }catch{
       return null;
     }
-  }
-
-  function toAddrText(a){
-    const nameLine = a?.name ? `${a.name} 様\n` : "";
-    const postal = a?.postal || a?.zip || "";
-    const pref = a?.prefecture || a?.pref || "";
-    const city = a?.city || "";
-    const a1 = a?.address1 || a?.address || "";
-    const a2 = a?.address2 || "";
-    return `${nameLine}〒${postal} ${pref}${city}${a1} ${a2}`.trim();
   }
 
   function normalizeAddr(a){
@@ -278,16 +223,49 @@
       address1: a?.address1 ?? a?.address ?? "",
       address2: a?.address2 ?? "",
       label: a?.label ?? "",
-      is_gift: a?.is_gift === true,
       is_default: a?.is_default === true,
-      kind: a?.kind ?? ""
+      is_gift: a?.is_gift === true
+    };
+  }
+
+  function toAddrText(a){
+    const nameLine = a?.name ? `${a.name} 様\n` : "";
+    const postal = a?.postal || "";
+    const pref = a?.prefecture || "";
+    const city = a?.city || "";
+    const a1 = a?.address1 || "";
+    const a2 = a?.address2 || "";
+    const phone = a?.phone ? `\nTEL: ${a.phone}` : "";
+    return `${nameLine}〒${postal} ${pref}${city}${a1} ${a2}${phone}`.trim();
+  }
+
+  function fillForm(a){
+    el("name").value       = a?.name || "";
+    el("phone").value      = a?.phone || "";
+    el("postal").value     = a?.postal || "";
+    el("prefecture").value = a?.prefecture || "";
+    el("city").value       = a?.city || "";
+    el("address1").value   = a?.address1 || "";
+    el("address2").value   = a?.address2 || "";
+    el("label").value      = a?.label || "";
+  }
+
+  function readForm(){
+    return {
+      name: (el("name").value || "").trim(),
+      phone: (el("phone").value || "").trim(),
+      postal: (el("postal").value || "").trim(),
+      prefecture: (el("prefecture").value || "").trim(),
+      city: (el("city").value || "").trim(),
+      address1: (el("address1").value || "").trim(),
+      address2: (el("address2").value || "").trim(),
+      label: (el("label").value || "").trim(),
     };
   }
 
   function buildReturnUrl(){
     const u = new URL(returnToRaw, location.origin);
-    const ship = (localStorage.getItem(KEY_SHIP_TO) || "home").trim();
-    u.searchParams.set("ship", ship);
+    // confirm側が「住所登録済み」判定に使うなら残す（無害）
     u.searchParams.set("addr_step", "1");
     if (mode) u.searchParams.set("mode", mode);
     return u.pathname + u.search;
@@ -297,138 +275,35 @@
     location.replace(buildReturnUrl());
   }
 
-  async function loadAddresses(uid){
+  async function loadHomeAddress(uid){
+    // 1) list があるなら：default優先、なければ先頭
     try{
       const d = await getJson(`/api/address/list?userId=${encodeURIComponent(uid)}`);
       const rows = Array.isArray(d?.addresses) ? d.addresses : (Array.isArray(d?.list) ? d.list : []);
-      if(rows.length > 0) return rows.map(normalizeAddr);
+      if(rows.length > 0){
+        const addrs = rows.map(normalizeAddr);
+        const chosen = addrs.find(x=>x.is_default) || addrs[0];
+        return chosen || null;
+      }
     }catch(e){
-      // list 無しなら fallback
+      // list無し → fallback
     }
 
+    // 2) get のみ（単一）
     try{
       const d = await getJson(`/api/address/get?userId=${encodeURIComponent(uid)}`);
-      if(d?.address) return [ normalizeAddr(d.address) ];
+      if(d?.address) return normalizeAddr(d.address);
     }catch(e){
       // none
     }
-    return [];
+
+    return null;
   }
 
-  function renderAddressList(addrs, uid){
-    addrListEl.innerHTML = "";
+  async function saveHomeAddress(uid){
+    const a = readForm();
 
-    if(!addrs || addrs.length === 0){
-      status.innerHTML = '<span class="muted">住所が未登録です。下のフォームから入力してください。</span>';
-      if(listCard) listCard.style.display = "none";
-      return;
-    }
-
-    status.textContent = "住所を選ぶか、下のフォームで新しい住所を追加できます。";
-    if(listCard) listCard.style.display = "block";
-
-    let selectedId = (addrs.find(a=>a.is_default)?.id ?? addrs[0].id) ?? null;
-
-    addrs.forEach((a, idx)=>{
-      const id = a.id ?? ("idx_"+idx);
-      const wrap = document.createElement("div");
-      wrap.className = "addrItem";
-
-      const radio = document.createElement("input");
-      radio.type = "radio";
-      radio.name = "addrSel";
-      radio.value = String(id);
-      radio.checked = String(id) === String(selectedId);
-      radio.addEventListener("change", ()=>{ selectedId = id; });
-
-      const box = document.createElement("div");
-      const txt = document.createElement("div");
-      txt.className = "txt";
-      txt.textContent = toAddrText(a);
-
-      const tagRow = document.createElement("div");
-      tagRow.className = "tagRow";
-      if(a.label){
-        const t=document.createElement("span"); t.className="tag"; t.textContent=a.label; tagRow.appendChild(t);
-      }
-      if(a.is_gift){
-        const t=document.createElement("span"); t.className="tag gift"; t.textContent="贈答用"; tagRow.appendChild(t);
-      }
-      if(a.is_default){
-        const t=document.createElement("span"); t.className="tag"; t.textContent="既定"; tagRow.appendChild(t);
-      }
-
-      const useBtn = document.createElement("button");
-      useBtn.type = "button";
-      useBtn.className = "btn";
-      useBtn.textContent = "この住所で進む";
-      useBtn.addEventListener("click", async ()=>{
-        const chosen = addrs.find(x=>String(x.id)===String(selectedId)) || addrs[0];
-        if(!chosen) return;
-
-        const ship = (localStorage.getItem(KEY_SHIP_TO) || "home").trim();
-        const isGift = (ship === "gift");
-
-        try{
-          useBtn.disabled = true;
-          useBtn.textContent = "保存中…";
-
-          await postJson("/api/address/set", {
-            userId: uid,
-            address: {
-              id: chosen.id || null,
-              name: chosen.name,
-              phone: chosen.phone,
-              postal: chosen.postal,
-              prefecture: chosen.prefecture,
-              city: chosen.city,
-              address1: chosen.address1,
-              address2: chosen.address2,
-              label: chosen.label,
-              is_gift: isGift
-            }
-          });
-
-          goNext();
-        }catch(e){
-          alert("住所の保存に失敗しました: " + (e?.message||e));
-          useBtn.disabled = false;
-          useBtn.textContent = "この住所で進む";
-        }
-      });
-
-      box.appendChild(txt);
-      box.appendChild(tagRow);
-      box.appendChild(useBtn);
-
-      wrap.appendChild(radio);
-      wrap.appendChild(box);
-      addrListEl.appendChild(wrap);
-    });
-  }
-
-  function clearForm(){
-    ["name","phone","postal","prefecture","city","address1","address2","label"].forEach(id=>{
-      const x = el(id); if(x) x.value = "";
-    });
-  }
-
-  async function saveNewAddress(uid){
-    const ship = (localStorage.getItem(KEY_SHIP_TO) || "home").trim();
-    const isGift = (ship === "gift");
-
-    const a = {
-      name: (el("name").value || "").trim(),
-      phone: (el("phone").value || "").trim(),
-      postal: (el("postal").value || "").trim(),
-      prefecture: (el("prefecture").value || "").trim(),
-      city: (el("city").value || "").trim(),
-      address1: (el("address1").value || "").trim(),
-      address2: (el("address2").value || "").trim(),
-      label: (el("label").value || "").trim(),
-      is_gift: isGift
-    };
-
+    // 必須（最低限）
     if(!a.postal || !a.prefecture || !a.city || !a.address1){
       alert("郵便番号/都道府県/市区町村/番地 は必須です。");
       return;
@@ -436,11 +311,21 @@
 
     saveBtn.disabled = true;
     saveBtn.textContent = "保存中…";
+
     try{
-      await postJson("/api/address/set", { userId: uid, address: a });
+      // ★ 自宅住所なので is_gift は必ず false
+      await postJson("/api/address/set", {
+        userId: uid,
+        address: {
+          id: currentAddr?.id || null, // 編集時は上書き
+          ...a,
+          is_gift: false
+        }
+      });
+
       goNext();
     }catch(e){
-      alert("住所の保存に失敗しました: " + (e?.message||e));
+      alert("住所の保存に失敗しました: " + (e?.message || e));
       saveBtn.disabled = false;
       saveBtn.textContent = "この住所を保存して進む";
     }
@@ -454,11 +339,43 @@
       return;
     }
 
-    const addrs = await loadAddresses(uid);
-    renderAddressList(addrs, uid);
+    currentAddr = await loadHomeAddress(uid);
 
-    if(saveBtn) saveBtn.onclick = ()=>saveNewAddress(uid);
-    if(clearBtn) clearBtn.onclick = ()=>clearForm();
+    if(!currentAddr){
+      status.textContent = "自宅住所を登録してください。";
+      isEditing = true;
+      fillForm(null);
+      showForm("自宅住所を入力");
+      if(cancelBtn) cancelBtn.style.display = "none"; // 未登録時はキャンセル不要（戻るは下にある）
+    }else{
+      status.textContent = "自宅住所は登録済みです。";
+      viewAddr.textContent = toAddrText(currentAddr);
+      showView();
+      if(cancelBtn) cancelBtn.style.display = ""; // 以後編集時に使う
+    }
+
+    if(useBtn) useBtn.onclick = ()=>goNext();
+
+    if(editBtn) editBtn.onclick = ()=>{
+      isEditing = true;
+      fillForm(currentAddr);
+      showForm("自宅住所を編集");
+    };
+
+    if(cancelBtn) cancelBtn.onclick = ()=>{
+      // 編集キャンセル：表示に戻す
+      isEditing = false;
+      if(currentAddr){
+        viewAddr.textContent = toAddrText(currentAddr);
+        showView();
+      }else{
+        // 基本来ないけど念のため
+        showForm("自宅住所を入力");
+      }
+    };
+
+    if(saveBtn) saveBtn.onclick = ()=>saveHomeAddress(uid);
+
     if(backBtn) backBtn.onclick = ()=>location.replace(backTo);
 
   }catch(e){

@@ -95,15 +95,6 @@
       background:#fff;border:1px solid var(--line);color:#111827;
       margin-top:0;
     }
-
-    /* 追加：デバッグ操作ボタン */
-    .debugRow{
-      display:flex;gap:8px;flex-wrap:wrap;margin-top:8px
-    }
-    .debugMiniBtn{
-      background:#fff;border:1px solid var(--line);color:#111827;
-      padding:10px 12px;border-radius:12px;font-weight:900;cursor:pointer
-    }
   </style>
 </head>
 
@@ -112,20 +103,11 @@
     <h1>注文内容の確認</h1>
     <div class="muted" id="status">読み込み中…</div>
 
-    <!-- ✅ 追加：贈り先判定ログを画面に出す（LIFF内で原因切り分け） -->
-    <div class="muted" id="debugPay" style="margin-top:6px"></div>
-
-    <!-- ✅ 追加：LIFF内だけで home/gift を強制できる -->
-    <div class="debugRow">
-      <button id="forceHomeBtn" class="debugMiniBtn" type="button">自宅として開く（代引OK）</button>
-      <button id="forceGiftBtn" class="debugMiniBtn" type="button">贈り先として開く（代引NG）</button>
-    </div>
-
     <div class="card">
       <div class="muted">お届け先</div>
       <div id="addrText" style="margin-top:6px;font-weight:900">—</div>
       <div class="muted" style="margin-top:8px">
-        ※住所を修正したい場合は「戻る」で住所入力へ戻ってください。
+        ※お届け先を修正したい場合は「戻る」で住所入力へ戻ってください。
       </div>
     </div>
 
@@ -176,9 +158,9 @@
             代引きで注文確定
           </button>
 
-          <!-- ✅ 贈り先のときだけ表示（代引不可の注意） -->
+          <!-- ✅「別の住所」のときだけ表示（代引不可の注意） -->
           <div id="codDisabledNote" class="muted" style="margin-top:8px;display:none">
-            ※贈り先への配送では、代引きはご利用いただけません（クレジットのみ）
+            ※別の住所へのお届けでは、代引きはご利用いただけません（クレジットのみ）
           </div>
         </div>
 
@@ -199,6 +181,19 @@
 <script>
 (async function(){
   "use strict";
+
+  // =========================
+  // ✅ ログを完全に無効化（console.log等を潰す）
+  // =========================
+  try{
+    const noop = ()=>{};
+    window.console = window.console || {};
+    console.log = noop;
+    console.debug = noop;
+    console.info = noop;
+    console.warn = noop;
+    console.error = noop; // エラーも出したくない要望ならここも潰す
+  }catch{}
 
   const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
   const KEY_UID ="isoya_userId";
@@ -223,7 +218,6 @@
   : "/confirm.html";
 
   const status=document.getElementById("status");
-  const debugPay=document.getElementById("debugPay");
   const addrText=document.getElementById("addrText");
   const itemsEl=document.getElementById("items");
 
@@ -246,22 +240,8 @@
   const cardBtn=document.getElementById("cardBtn");
   const codBtn=document.getElementById("codBtn");
 
-  // ✅ 追加：LIFF内で ship を強制するボタン
-  const forceHomeBtn = document.getElementById("forceHomeBtn");
-  const forceGiftBtn = document.getElementById("forceGiftBtn");
-
   const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
   const loadJson=k=>{try{return JSON.parse(localStorage.getItem(k)||"");}catch{return null;}};
-
-  const dbg = (s)=>{ if(debugPay) debugPay.textContent = s; };
-
-  function reloadWithShip(v){
-    const u = new URL(location.href);
-    u.searchParams.set("ship", v); // home / gift
-    location.replace(u.toString());
-  }
-  if(forceHomeBtn) forceHomeBtn.onclick = ()=>reloadWithShip("home");
-  if(forceGiftBtn) forceGiftBtn.onclick = ()=>reloadWithShip("gift");
 
   // ✅ 押したボタンだけ busy（もう片方は触らない）
   function setBtnBusy(btn, busy, busyText, normalText){
@@ -366,14 +346,14 @@
     safeSetText(totalCodEl, yen(quote.totalCod));
   }
 
-  // ✅ 贈り先のときは代引きを無効化
-  function applyCodAvailability(isGift){
+  // ✅ 「別の住所」のときは代引きを無効化（内部判定は現状維持）
+  function applyCodAvailability(isOtherAddress){
     const note = document.getElementById("codDisabledNote");
     if(!codBtn) return;
 
-    if(isGift){
+    if(isOtherAddress){
       codBtn.disabled = true;
-      codBtn.textContent = "贈り先では代引き不可";
+      codBtn.textContent = "別の住所では代引き不可";
       codBtn.style.opacity = ".55";
       if(note) note.style.display = "block";
     }else{
@@ -410,9 +390,12 @@
       return;
     }
 
-    // ✅ 贈り先判定（home/gift 明示を最優先にする版）
-    const shipQS = (qs.get("ship") || "").trim(); // "home" / "gift"
+    // ✅ ここは“内部ロジックは維持”しつつ、表示だけ「別の住所」扱いに寄せる
+    const shipQS = (qs.get("ship") || "").trim(); // "home" / "gift"（既存）想定
     const shipLS = (localStorage.getItem("isoya_ship_to") || "").trim(); // "home" / "gift"
+
+    const forceHome = (shipQS === "home") || (shipLS === "home");
+    const forceGift = (shipQS === "gift") || (qs.get("gift") === "1") || (shipLS === "gift");
 
     const label = (addr.label || "").trim();
     const kind  = (addr.kind  || "").trim();
@@ -422,15 +405,11 @@
       /贈り|贈り先|ギフト|gift/i.test(label) ||
       /贈り|贈り先|ギフト|gift/i.test(kind);
 
-    // ★ ship の明示が最優先。無い時だけ label/kind で推測
-    let isGift;
-    if (shipQS === "home" || shipLS === "home") isGift = false;
-    else if (shipQS === "gift" || shipLS === "gift" || (qs.get("gift")==="1")) isGift = true;
-    else isGift = looksGift;
+    // ★「自宅を選んだ」が明示されてるなら必ず代引OK
+    // ※内部判定はそのまま（変えない）
+    const isOtherAddress = forceHome ? false : (forceGift || looksGift);
 
-    dbg(`shipQS=${shipQS||"-"} shipLS=${shipLS||"-"} looksGift=${looksGift} => isGift=${isGift}`);
-
-    applyCodAvailability(isGift);
+    applyCodAvailability(isOtherAddress);
 
     const nameLine = addr.name ? `${addr.name} 様\n` : "";
     addrText.textContent =
@@ -469,15 +448,14 @@
           if(!data?.url) throw new Error("stripe url missing");
           location.href = data.url;
         }catch(e){
-          console.error(e);
-          alert("クレジット決済の開始に失敗しました: " + (e?.message||e));
+          alert("クレジット決済の開始に失敗しました。");
           setBtnBusy(cardBtn, false, "移動中…", "クレジットで支払う");
         }
       };
     }
 
-    // ✅ 代引き：確定（贈り先のときは onclick 自体を付けない）
-    if(codBtn && !isGift){
+    // ✅ 代引き：確定（別の住所のときは onclick 自体を付けない）
+    if(codBtn && !isOtherAddress){
       codBtn.onclick = async ()=>{
         setBtnBusy(codBtn, true, "確定中…", "代引きで注文確定");
         try{
@@ -488,15 +466,13 @@
 
           location.href = `/complete.html?method=cod&orderId=${encodeURIComponent(data.orderId||"")}`;
         }catch(e){
-          console.error(e);
-          alert("代引き確定に失敗しました: " + (e?.message||e));
+          alert("代引き確定に失敗しました。");
           setBtnBusy(codBtn, false, "確定中…", "代引きで注文確定");
         }
       };
     }
 
   }catch(e){
-    console.error(e);
     status.innerHTML='<span class="err">読み込みに失敗しました（住所API/商品API/DBを確認）</span>';
   }
 })();

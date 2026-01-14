@@ -85,12 +85,12 @@
 
         <label class="pill" id="pillGift">
           <input type="radio" name="shipTo" id="shipGift" value="gift">
-          <div>贈り先<div class="sub">代引きNG（クレジットのみ）</div></div>
+          <div>贈答用として送る<div class="sub">代引きNG（クレジットのみ）</div></div>
         </label>
       </div>
 
       <div class="muted" style="margin-top:8px">
-        ※贈り先を選ぶと、注文確認で代引きが自動で無効になります。
+       ※「贈答用として送る」を選ぶと、注文確認で代引きが自動で無効になります。
       </div>
     </div>
 
@@ -370,7 +370,8 @@
         const t=document.createElement("span"); t.className="tag"; t.textContent=a.label; tagRow.appendChild(t);
       }
       if(a.is_gift){
-        const t=document.createElement("span"); t.className="tag gift"; t.textContent="贈り先"; tagRow.appendChild(t);
+      const t=document.createElement("span"); t.className="tag gift"; t.textContent="贈答用"; tagRow.appendChild(t);
+
       }
       if(a.is_default){
         const t=document.createElement("span"); t.className="tag"; t.textContent="既定"; tagRow.appendChild(t);

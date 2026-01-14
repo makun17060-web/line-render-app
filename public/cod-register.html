@@ -321,7 +321,6 @@
     safeSetText(totalCodEl, yen(quote.totalCod));
   }
 
-  // ✅ radioでボタン制御（ここが肝）
   function applyPayMethodUI(method){
     const isCard = (method === "card");
 
@@ -331,12 +330,10 @@
     if(cardPanel) cardPanel.classList.toggle("inactive", !isCard);
     if(codPanel)  codPanel.classList.toggle("inactive", isCard);
 
-    // ボタン有効/無効
     if(cardBtn) cardBtn.disabled = !isCard;
     if(codBtn)  codBtn.disabled  = isCard;
   }
 
-  // ✅ 贈り先ロック（shipLSは使わない：古いgift残り対策）
   function lockCodIfGift(isGift){
     const note = document.getElementById("codDisabledNote");
 
@@ -382,6 +379,25 @@
       return;
     }
 
+    /* =========================================================
+       ✅ 追加：confirm 直行を防ぎ、必ず一度 cod-register を通す
+       - addr_step=1 が無い場合は cod-register に飛ばす
+       - returnTo は confirm + addr_step=1 を付けて戻す
+    ========================================================= */
+    const stepped = (qs.get("addr_step") || "").trim();
+    if (stepped !== "1") {
+      const returnUrl = new URL(location.origin + RETURN_TO_THIS);
+      returnUrl.searchParams.set("addr_step", "1");
+      if (mode) returnUrl.searchParams.set("mode", mode);
+
+      const returnPath = returnUrl.pathname + returnUrl.search;
+      location.replace(
+        `/cod-register.html?returnTo=${encodeURIComponent(returnPath)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`
+      );
+      return;
+    }
+    /* ========================================================= */
+
     const addr=await getAddress(uid).catch(()=>null);
     if(!addr){
       location.replace(`/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`);
@@ -413,15 +429,11 @@
     quote.subtotal = quote.subtotal ?? subtotal;
     applyQuoteToUI(quote);
 
-    // ✅ 初期：クレジット
     applyPayMethodUI("card");
-
-    // ✅ 贈り先なら代引きをロック
     lockCodIfGift(isGift);
 
-    // ✅ LIFFで change が落ちることがあるので「pillクリックでも強制切替」
     if(pillCard){
-      pillCard.addEventListener("click", (e)=>{
+      pillCard.addEventListener("click", ()=>{
         if(payCard && !payCard.disabled){
           payCard.checked = true;
           applyPayMethodUI("card");
@@ -429,7 +441,7 @@
       });
     }
     if(pillCod){
-      pillCod.addEventListener("click", (e)=>{
+      pillCod.addEventListener("click", ()=>{
         if(payCod && !payCod.disabled){
           payCod.checked = true;
           applyPayMethodUI("cod");
@@ -446,6 +458,7 @@
 
     if(backBtn){
       backBtn.onclick = ()=>{
+        // ✅ 戻るは addr_step を付けない（次回また必ず住所画面を通す）
         location.href = `/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`;
       };
     }

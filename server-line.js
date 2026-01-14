@@ -15,6 +15,12 @@
  * - label/is_default の ALTER が重複していたので 1回に整理
  * - /api/address/set /api/liff/address で id を受け取ったら更新できるように対応（upsertAddress の能力を活かす）
  * - upsertAddress のSQLが関数外に飛び出していた「構文崩壊」を修正（←これが致命的）
+ *
+ * ✅ A案（今回だけギフト）最短対応（サーバ側）
+ * - 注文系APIで addressId（送付先住所ID）を受け取れるようにし、送料計算/注文保存/通知の住所をその住所にする
+ *
+ * ✅ ログ抑制（必要ならENVでON）
+ * - HTTP_LOG=1 のときだけ [REQ]/[RES] を出す（未設定なら出さない）
  */
 
 "use strict";
@@ -88,6 +94,9 @@ const FUKUBAKO_TEST_ALLOW_USER_IDS = (env.FUKUBAKO_TEST_ALLOW_USER_IDS || "")
 const ENABLE_REORDER_BUTTONS = String(env.ENABLE_REORDER_BUTTONS || "1").trim() === "1";
 // ✅ 定期案内のデフォルト文言（管理API送信時）
 const REORDER_MESSAGE_TEMPLATE = String(env.REORDER_MESSAGE_TEMPLATE || "").trim(); // 任意
+
+// ✅ HTTPログのON/OFF（未設定ならOFF）
+const HTTP_LOG = String(env.HTTP_LOG || "0").trim() === "1";
 
 function isFukubakoTestAllowedUser(userId) {
   const uid = String(userId || "").trim();
@@ -1045,6 +1054,24 @@ async function getAddressByUserId(userId) {
   return r.rows[0] || null;
 }
 
+// ✅ A案用：指定住所IDで取得（必ず同一 user_id で縛る）
+async function getAddressByIdForUser(userId, addressId) {
+  const uid = String(userId || "").trim();
+  const id = Number(addressId);
+  if (!uid || !Number.isInteger(id) || id <= 0) return null;
+
+  const r = await pool.query(
+    `
+    SELECT id, label, is_default, member_code, user_id, name, phone, postal, prefecture, city, address1, address2, updated_at, address_key, created_at
+    FROM addresses
+    WHERE user_id=$1 AND id=$2
+    LIMIT 1
+    `,
+    [uid, id]
+  );
+  return r.rows[0] || null;
+}
+
 async function listAddressesByUserId(userId) {
   const r = await pool.query(
     `
@@ -1217,11 +1244,25 @@ async function buildOrderFromCheckout(uid, checkout, opts = {}) {
 
   const requireAddress = (opts.requireAddress !== false);
 
-  const addr = requireAddress ? await getAddressByUserId(userId) : null;
-  if (requireAddress && !addr) {
-    const err = new Error("address not found");
-    err.code = "NO_ADDRESS";
-    throw err;
+  // ✅ A案：addressId が来たら、その住所で見積もり・注文確定する
+  let addr = null;
+  if (requireAddress) {
+    if (opts.addressId) {
+      addr = await getAddressByIdForUser(userId, opts.addressId);
+      if (!addr) {
+        const err = new Error("address not found");
+        err.code = "NO_ADDRESS";
+        err.detail = "addressId invalid";
+        throw err;
+      }
+    } else {
+      addr = await getAddressByUserId(userId);
+      if (!addr) {
+        const err = new Error("address not found");
+        err.code = "NO_ADDRESS";
+        throw err;
+      }
+    }
   }
 
   const products = await loadProducts();
@@ -1282,7 +1323,7 @@ async function buildOrderFromCheckout(uid, checkout, opts = {}) {
 }
 
 /**
- * orders挿入（住所は userId 住所があれば自動でセット）
+ * orders挿入（住所は “選択された住所” を優先して保存）
  */
 async function insertOrderToDb({
   userId,
@@ -1299,18 +1340,19 @@ async function insertOrderToDb({
   addressOverride = "",
   phoneOverride = "",
   memberCodeOverride = "",
+  addrOverride = null, // ✅ A案：ここがあれば必ずそれを保存
 }) {
-  const addr = await getAddressByUserId(userId).catch(()=>null);
+  const baseAddr = addrOverride || (await getAddressByUserId(userId).catch(()=>null));
 
   const fullAddr =
     addressOverride ||
-    (addr ? `${addr.prefecture || ""}${addr.city || ""}${addr.address1 || ""} ${addr.address2 || ""}`.trim() : "");
+    (baseAddr ? `${baseAddr.prefecture || ""}${baseAddr.city || ""}${baseAddr.address1 || ""} ${baseAddr.address2 || ""}`.trim() : "");
 
-  const name = (nameOverride || addr?.name || "").trim();
-  const zip  = (zipOverride  || addr?.postal || "").trim();
-  const pref = (prefOverride || addr?.prefecture || "").trim();
-  const phone = (phoneOverride || addr?.phone || "").trim();
-  const memberCode = (memberCodeOverride || addr?.member_code || "").trim();
+  const name = (nameOverride || baseAddr?.name || "").trim();
+  const zip  = (zipOverride  || baseAddr?.postal || "").trim();
+  const pref = (prefOverride || baseAddr?.prefecture || "").trim();
+  const phone = (phoneOverride || baseAddr?.phone || "").trim();
+  const memberCode = (memberCodeOverride || baseAddr?.member_code || "").trim();
 
   const r = await pool.query(
     `
@@ -1426,7 +1468,6 @@ async function markOrderNotified(orderId, patch = {}) {
   try {
     const kind = patch.kind ? String(patch.kind) : null;
 
-    // SQL文字列に直接埋めるのは避けたいが、ここは固定値（now()/列）だけなので安全に組み立てる
     const userAtExpr  = patch.userNotified  ? "now()" : "notified_user_at";
     const adminAtExpr = patch.adminNotified ? "now()" : "notified_admin_at";
 
@@ -1484,7 +1525,6 @@ async function notifyOrderCompleted({
   const row = await getOrderRow(orderId);
 
   // ✅ 修正：notified_at では止めない（card_pending でも入るため）
-  // 「completed を既に送った」場合だけスキップ
   if (!skipMarkNotified && row?.notified_kind === "completed") {
     logInfo("notify skipped (already completed):", orderId);
     return { ok: true, skipped: true };
@@ -1546,7 +1586,6 @@ async function notifyOrderCompleted({
     ) +
     `このあと担当よりご連絡する場合があります。`;
 
-  // ユーザー通知
   await pushTextSafe(userId, msgForUser);
 
   // ✅ 購入者に「次回案内」ボタン
@@ -1614,7 +1653,6 @@ async function notifyCardPending({ orderId, userId, items, shippingFee, total, s
     await pushTextSafe(ADMIN_USER_ID, msgForAdmin);
   }
 
-  // ここも記録（notified_at は後続の確定通知で上書きしないよう COALESCE）
   await markOrderNotified(orderId, { kind: "card_pending", userNotified: true, adminNotified: !!ADMIN_USER_ID });
 }
 
@@ -1743,8 +1781,9 @@ app.post("/webhook", line.middleware(lineConfig), async (req, res) => {
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
-// ログ
+// ログ（HTTP_LOG=1 の時だけ）
 app.use((req, res, next) => {
+  if (!HTTP_LOG) return next();
   const t0 = Date.now();
   console.log(`[REQ] ${req.method} ${req.originalUrl}`);
   res.on("finish", () => {
@@ -2631,9 +2670,16 @@ app.post("/api/store-order", async (req, res) => {
     const customerName = String(b.name || pickup?.name || "").trim();
     const customerPhone = String(pickup?.phone || b.phone || "").trim();
 
+    // ✅ A案：addressId が来たらこの注文だけその住所に送る
+    const addressId = mustInt(b.addressId || b.address_id || (b.ship && (b.ship.addressId || b.ship.address_id)));
+
     await touchUser(uid, "seen", null, "store_order");
 
-    const built = await buildOrderFromCheckout(uid, { items: itemsRaw }, { requireAddress: (deliveryMethod !== "pickup") });
+    const built = await buildOrderFromCheckout(
+      uid,
+      { items: itemsRaw },
+      { requireAddress: (deliveryMethod !== "pickup"), addressId: (deliveryMethod !== "pickup" ? addressId : null) }
+    );
 
     const codFee = (paymentMethod === "cod") ? Number(COD_FEE || 330) : 0;
     const shippingFee = (deliveryMethod === "pickup") ? 0 : Number(built.shippingFee || 0);
@@ -2649,6 +2695,7 @@ app.post("/api/store-order", async (req, res) => {
       source: String(b.source || "liff"),
       paymentMethod,
       deliveryMethod,
+      addressId: addressId || null,
       line_display_name: String(b.line_display_name || ""),
       pickup: (deliveryMethod === "pickup")
         ? { name: customerName, phone: customerPhone, shopName: String(pickup?.shopName || "磯屋"), shopNote: String(pickup?.shopNote || "") }
@@ -2671,6 +2718,7 @@ app.post("/api/store-order", async (req, res) => {
       source: (deliveryMethod === "pickup") ? "store_liff" : "liff",
       nameOverride,
       phoneOverride,
+      addrOverride: (deliveryMethod === "pickup") ? null : built.addr, // ✅ 選択住所で保存
     });
 
     await markUserOrdered(built.userId, Number(orderId)).catch(()=>{});
@@ -2710,7 +2758,7 @@ app.post("/api/store-order", async (req, res) => {
         paymentMethod: "cod",
         codFee,
         size,
-        addr: built.addr,
+        addr: built.addr, // ✅ 選択住所で通知
         title: "新規注文（代引）",
         isPaid: false,
         deliveryMethod,
@@ -2727,6 +2775,7 @@ app.post("/api/store-order", async (req, res) => {
       codFee,
       total,
       size,
+      addressId: addressId || null,
     });
   } catch (e) {
     const code = e?.code || "";
@@ -2751,8 +2800,11 @@ app.post("/api/pay/stripe/create", async (req, res) => {
     const uid = String(req.body?.uid || "").trim();
     const checkout = req.body?.checkout || null;
 
+    // ✅ A案：addressId
+    const addressId = mustInt(req.body?.addressId || req.body?.address_id || (checkout && (checkout.addressId || checkout.address_id)));
+
     await touchUser(uid, "seen", null, "stripe_create");
-    const built = await buildOrderFromCheckout(uid, checkout, { requireAddress: true });
+    const built = await buildOrderFromCheckout(uid, checkout, { requireAddress: true, addressId });
 
     const lineItems = built.items.map(it => ({
       price_data: {
@@ -2781,8 +2833,9 @@ app.post("/api/pay/stripe/create", async (req, res) => {
       shippingFee: built.shippingFee,
       paymentMethod: "card",
       status: "new",
-      rawEvent: { type: "checkout_create_v2" },
+      rawEvent: { type: "checkout_create_v2", addressId: addressId || null },
       source: "liff",
+      addrOverride: built.addr, // ✅ 選択住所で保存
     });
 
     const session = await stripe.checkout.sessions.create({
@@ -2809,6 +2862,7 @@ app.post("/api/pay/stripe/create", async (req, res) => {
       subtotal: built.subtotal,
       shippingFee: built.shippingFee,
       size: built.size,
+      addressId: addressId || null,
     });
   } catch (e) {
     const code = e?.code || "";
@@ -2831,8 +2885,10 @@ app.post("/api/order/quote", async (req, res) => {
     const uid = String(req.body?.uid || "").trim();
     const checkout = req.body?.checkout || null;
 
+    const addressId = mustInt(req.body?.addressId || req.body?.address_id || (checkout && (checkout.addressId || checkout.address_id)));
+
     await touchUser(uid, "seen", null, "quote");
-    const built = await buildOrderFromCheckout(uid, checkout, { requireAddress: true });
+    const built = await buildOrderFromCheckout(uid, checkout, { requireAddress: true, addressId });
 
     const codFee = Number(COD_FEE || 330);
     const totalCod = built.subtotal + built.shippingFee + codFee;
@@ -2844,6 +2900,7 @@ app.post("/api/order/quote", async (req, res) => {
       codFee,
       totalCod,
       size: built.size,
+      addressId: addressId || null,
     });
   } catch (e) {
     const code = e?.code || "";
@@ -2866,8 +2923,10 @@ app.post("/api/order/cod/create", async (req, res) => {
     const uid = String(req.body?.uid || "").trim();
     const checkout = req.body?.checkout || null;
 
+    const addressId = mustInt(req.body?.addressId || req.body?.address_id || (checkout && (checkout.addressId || checkout.address_id)));
+
     await touchUser(uid, "seen", null, "cod_create");
-    const built = await buildOrderFromCheckout(uid, checkout, { requireAddress: true });
+    const built = await buildOrderFromCheckout(uid, checkout, { requireAddress: true, addressId });
 
     const codFee = Number(COD_FEE || 330);
     const totalCod = built.subtotal + built.shippingFee + codFee;
@@ -2879,8 +2938,9 @@ app.post("/api/order/cod/create", async (req, res) => {
       shippingFee: built.shippingFee,
       paymentMethod: "cod",
       status: "confirmed",
-      rawEvent: { type: "cod_create_v2" },
+      rawEvent: { type: "cod_create_v2", addressId: addressId || null },
       source: "liff",
+      addrOverride: built.addr, // ✅ 選択住所で保存
     });
 
     await markUserOrdered(built.userId, Number(orderId)).catch(()=>{});
@@ -2894,7 +2954,7 @@ app.post("/api/order/cod/create", async (req, res) => {
       paymentMethod: "cod",
       codFee,
       size: built.size,
-      addr: built.addr,
+      addr: built.addr, // ✅ 選択住所で通知
       title: "新規注文（代引）",
       isPaid: false,
       deliveryMethod: "delivery",
@@ -2908,6 +2968,7 @@ app.post("/api/order/cod/create", async (req, res) => {
       codFee,
       totalCod,
       size: built.size,
+      addressId: addressId || null,
       message: `代引き注文を受け付けました（注文ID: ${orderId}）`,
     });
   } catch (e) {
@@ -2933,6 +2994,8 @@ app.post("/api/orders/original", async (req, res) => {
     if (!uid) return res.status(400).json({ ok:false, error:"uid required" });
     if (!cart || !Array.isArray(cart.items)) return res.status(400).json({ ok:false, error:"cart.items required" });
 
+    const addressId = mustInt(req.body?.addressId || req.body?.address_id || (cart && (cart.addressId || cart.address_id)));
+
     await touchUser(uid, "seen", null, "original_cod");
 
     const items = cart.items.filter(x => x && x.id && Number(x.qty) > 0);
@@ -2945,7 +3008,7 @@ app.post("/api/orders/original", async (req, res) => {
     if (id !== ORIGINAL_SET_PRODUCT_ID) return res.status(409).json({ ok:false, error:"NOT_ORIGINAL_SET" });
     if (qty > 9999) return res.status(400).json({ ok:false, error:"QTY_TOO_LARGE" });
 
-    const built = await buildOrderFromCheckout(uid, { items: [{ id, qty }] }, { requireAddress: true });
+    const built = await buildOrderFromCheckout(uid, { items: [{ id, qty }] }, { requireAddress: true, addressId });
 
     const codFee = Number(COD_FEE || 330);
     const totalCod = built.subtotal + built.shippingFee + codFee;
@@ -2957,8 +3020,9 @@ app.post("/api/orders/original", async (req, res) => {
       shippingFee: built.shippingFee,
       paymentMethod: "cod",
       status: "confirmed",
-      rawEvent: { type: "original_set_cod" },
+      rawEvent: { type: "original_set_cod", addressId: addressId || null },
       source: "liff",
+      addrOverride: built.addr, // ✅ 選択住所で保存
     });
 
     await markUserOrdered(built.userId, Number(orderId)).catch(()=>{});
@@ -2972,13 +3036,13 @@ app.post("/api/orders/original", async (req, res) => {
       paymentMethod: "cod",
       codFee,
       size: built.size,
-      addr: built.addr,
+      addr: built.addr, // ✅ 選択住所で通知
       title: "新規注文（オリジナルセット/代引）",
       isPaid: false,
       deliveryMethod: "delivery",
     });
 
-    res.json({ ok: true, orderId, subtotal: built.subtotal, shippingFee: built.shippingFee, codFee, totalCod, size: built.size });
+    res.json({ ok: true, orderId, subtotal: built.subtotal, shippingFee: built.shippingFee, codFee, totalCod, size: built.size, addressId: addressId || null });
   } catch (e) {
     const code = e?.code || "";
     logErr("POST /api/orders/original", code, e?.stack || e);
@@ -3363,14 +3427,13 @@ async function finalizeKusukeOrder(replyToken, userId, qty) {
       status: "confirmed",
       rawEvent: { type: "kusuke_keyword_cod" },
       source: "line_keyword",
+      addrOverride: built.addr,
     });
 
     await markUserOrdered(built.userId, Number(orderId)).catch(()=>{});
 
-    // まず返信は短く
     await replyTextSafe(replyToken, `久助のご注文を受け付けました。\n注文ID：${orderId}`);
 
-    // 詳細はpushで送る
     await notifyOrderCompleted({
       orderId,
       userId: built.userId,
@@ -3384,7 +3447,6 @@ async function finalizeKusukeOrder(replyToken, userId, qty) {
       title: "新規注文（久助/代引）",
       isPaid: false,
       deliveryMethod: "delivery",
-      // keyword注文のときはボタン送らない方がよければ↓を 0 にする（今は通常通り）
     });
 
   } catch (e) {
@@ -3413,7 +3475,6 @@ async function boot() {
   await loadSessions();
   await ensureDb();
 
-  // キャッシュを軽く温める（失敗してもOK）
   reloadShippingCacheIfNeeded().catch(()=>{});
   reloadSizeRulesIfNeeded().catch(()=>{});
 
@@ -3422,6 +3483,7 @@ async function boot() {
     logInfo(`server started on :${port}`);
     logInfo(`BASE_URL=${BASE_URL || "(auto)"}`);
     logInfo(`LIFF_BASE=${LIFF_BASE || "(auto)"}`);
+    logInfo(`HTTP_LOG=${HTTP_LOG ? "1" : "0"}`);
   });
 }
 

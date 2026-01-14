@@ -37,61 +37,45 @@
     .item .price{grid-column:2 / 3;grid-row:1 / 3;align-self:center;font-weight:900;white-space:nowrap}
 
     .row{display:flex;justify-content:space-between;gap:10px;margin:0;padding:6px 0;font-size:14px}
-    .row strong{font-weight:900}
 
-    /* ✅ 支払い方法ラジオ */
-    .paySelect{
-      display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;
-    }
+    /* 支払い方法ラジオ */
+    .paySelect{ display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
     .payPill{
-      display:flex;align-items:center;gap:8px;
-      padding:10px 12px;border-radius:999px;
-      background:#fff;border:1px solid var(--line);
+      display:flex; align-items:center; gap:8px;
+      padding:10px 12px; border-radius:999px;
+      background:#fff; border:1px solid var(--line);
       box-shadow:var(--shadow);
-      cursor:pointer;
-      user-select:none;
-      font-size:13px;
-      font-weight:900;
+      cursor:pointer; user-select:none;
+      font-size:13px; font-weight:900;
     }
     .payPill input{ transform:scale(1.1); }
     .payPill[aria-disabled="true"]{ opacity:.55; cursor:not-allowed; }
     .payPill .sub{ font-weight:700; color:var(--muted); font-size:12px; }
 
-    /* ✅ 支払いカード */
-    .payGrid{
-      display:grid;
-      grid-template-columns: 1fr;
-      gap:12px;
-      margin-top:10px;
-    }
+    .payGrid{ display:grid; grid-template-columns:1fr; gap:12px; margin-top:10px; }
     @media (min-width:760px){
-      .payGrid{
-        grid-template-columns: 1fr 1fr;
-        align-items:stretch;
-      }
-      .backWrap{ grid-column: 1 / -1; }
+      .payGrid{ grid-template-columns:1fr 1fr; align-items:stretch; }
+      .backWrap{ grid-column:1 / -1; }
     }
 
     .payCardTitle{ font-weight:1000; font-size:14px; margin:0 0 6px; }
     .payHint{ color:var(--muted); font-size:12px; line-height:1.5; margin-bottom:10px; }
 
     .miniRow{
-      display:flex;justify-content:space-between;gap:10px;
-      padding:6px 0;font-size:13px;border-top:1px dashed var(--line);
+      display:flex; justify-content:space-between; gap:10px;
+      padding:6px 0; font-size:13px; border-top:1px dashed var(--line);
     }
     .miniRow:first-of-type{border-top:1px solid var(--line)}
     .payTotal{
-      margin-top:10px;
-      padding-top:10px;
-      border-top:2px solid var(--line);
-      display:flex;justify-content:space-between;align-items:baseline;gap:10px;
+      margin-top:10px; padding-top:10px; border-top:2px solid var(--line);
+      display:flex; justify-content:space-between; align-items:baseline; gap:10px;
     }
     .payTotal .label{font-weight:900;font-size:13px;color:var(--muted)}
     .payTotal .price{font-weight:1000;font-size:18px;white-space:nowrap}
 
     .payBtn{
       width:100%;
-      border:none;border-radius:14px;
+      border:none; border-radius:14px;
       padding:12px 14px;
       font-weight:1000;
       cursor:pointer;
@@ -99,16 +83,9 @@
     }
     .payBtn:disabled{opacity:.55;cursor:not-allowed}
 
-    .backWrap .payBtn{
-      background:#fff;border:1px solid var(--line);color:#111827;
-      margin-top:0;
-    }
+    .backWrap .payBtn{ background:#fff;border:1px solid var(--line);color:#111827; margin-top:0; }
 
-    /* ✅ ラジオで選ばれてない側を少し薄く */
-    .inactive{
-      opacity:.55;
-      filter:saturate(.85);
-    }
+    .inactive{ opacity:.55; filter:saturate(.85); }
   </style>
 </head>
 
@@ -129,32 +106,23 @@
       <div class="muted">ご注文商品</div>
       <div class="items" id="items"></div>
 
-      <!-- 共通（参考表示） -->
       <div class="row"><div>小計</div><div id="subtotal">0円</div></div>
       <div class="row"><div>送料（見積）</div><div id="shipping">—</div></div>
 
-      <!-- ✅ 支払い方法ラジオ -->
+      <!-- 支払い方法ラジオ -->
       <div class="paySelect" role="radiogroup" aria-label="支払い方法">
         <label class="payPill" id="pillCard">
-          <input type="radio" name="payMethod" id="payCard" value="card" />
-          <div>
-            クレジット
-            <div class="sub">Stripe決済へ</div>
-          </div>
+          <input type="radio" name="payMethod" id="payCard" value="card">
+          <div>クレジット<div class="sub">Stripe決済へ</div></div>
         </label>
 
         <label class="payPill" id="pillCod">
-          <input type="radio" name="payMethod" id="payCod" value="cod" />
-          <div>
-            代引き
-            <div class="sub">配達員へ現金</div>
-          </div>
+          <input type="radio" name="payMethod" id="payCod" value="cod">
+          <div>代引き<div class="sub">配達員へ現金</div></div>
         </label>
       </div>
 
-      <!-- ✅ 支払い方法ごとに分ける -->
       <div class="payGrid">
-
         <!-- クレジット -->
         <div class="card" id="cardPanel" style="margin-top:0">
           <div class="payCardTitle">クレジットでのお支払い</div>
@@ -198,14 +166,11 @@
 
         <!-- 戻る -->
         <div class="backWrap">
-          <button id="backBtn" class="payBtn" type="button">
-            戻る（住所入力へ）
-          </button>
+          <button id="backBtn" class="payBtn" type="button">戻る（住所入力へ）</button>
           <div class="muted" style="margin-top:8px">
             ※送料は見積り表示です（確定時に再計算されます）。
           </div>
         </div>
-
       </div>
     </div>
   </div>
@@ -217,7 +182,6 @@
   const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
   const KEY_UID ="isoya_userId";
 
-  // ✅ modeでカート切替（福箱は専用カート）
   const qs = new URLSearchParams(location.search);
   const mode = (qs.get("mode") || "").trim();
 
@@ -240,16 +204,13 @@
   const addrText=document.getElementById("addrText");
   const itemsEl=document.getElementById("items");
 
-  // 共通
   const subtotalEl=document.getElementById("subtotal");
   const shippingEl=document.getElementById("shipping");
 
-  // クレジット
   const subtotal2El=document.getElementById("subtotal2");
   const shipping2El=document.getElementById("shipping2");
   const totalCardEl=document.getElementById("totalCard");
 
-  // 代引
   const subtotal3El=document.getElementById("subtotal3");
   const shipping3El=document.getElementById("shipping3");
   const codFeeEl=document.getElementById("codFee");
@@ -259,9 +220,9 @@
   const cardBtn=document.getElementById("cardBtn");
   const codBtn=document.getElementById("codBtn");
 
-  // ✅ ラジオ
   const payCard=document.getElementById("payCard");
   const payCod=document.getElementById("payCod");
+  const pillCard=document.getElementById("pillCard");
   const pillCod=document.getElementById("pillCod");
   const cardPanel=document.getElementById("cardPanel");
   const codPanel=document.getElementById("codPanel");
@@ -269,17 +230,13 @@
   const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
   const loadJson=k=>{try{return JSON.parse(localStorage.getItem(k)||"");}catch{return null;}};
 
-  // ✅ 押したボタンだけ busy（もう片方は触らない）
   function setBtnBusy(btn, busy, busyText, normalText){
     if(!btn) return;
     btn.disabled = !!busy;
     btn.style.pointerEvents = busy ? "none" : "auto";
     if (busyText && normalText) btn.textContent = busy ? busyText : normalText;
   }
-
-  function safeSetText(el, txt){
-    if(el) el.textContent = txt;
-  }
+  function safeSetText(el, txt){ if(el) el.textContent = txt; }
 
   async function postJson(url, body){
     const r=await fetch(url,{
@@ -314,7 +271,6 @@
     for(const it of cartItems){
       const p=byId[it.id];
       if(!p) continue;
-
       const qty = Number(it.qty||0);
       const line=Number(p.price||0) * qty;
       subtotal += line;
@@ -332,14 +288,12 @@
     safeSetText(subtotalEl, yen(subtotal));
     safeSetText(subtotal2El, yen(subtotal));
     safeSetText(subtotal3El, yen(subtotal));
-
     return subtotal;
   }
 
   async function ensureUserSoft(){
     const cached = (localStorage.getItem(KEY_UID) || "").trim();
     if(cached) return cached;
-
     try{
       await liff.init({ liffId: LIFF_ID_ORDER });
       if(liff.isLoggedIn()){
@@ -356,7 +310,6 @@
 
   function applyQuoteToUI(quote){
     const shippingText = `${yen(quote.shippingFee)}（ヤマト ${quote.size}サイズ）`;
-
     safeSetText(shippingEl, shippingText);
 
     safeSetText(shipping2El, shippingText);
@@ -368,20 +321,22 @@
     safeSetText(totalCodEl, yen(quote.totalCod));
   }
 
-  // ✅ ラジオでボタン2個を制御
+  // ✅ radioでボタン制御（ここが肝）
   function applyPayMethodUI(method){
     const isCard = (method === "card");
-    if(cardBtn) cardBtn.disabled = !isCard;
-    if(codBtn) codBtn.disabled = isCard;
+
+    if(payCard) payCard.checked = isCard;
+    if(payCod)  payCod.checked  = !isCard;
 
     if(cardPanel) cardPanel.classList.toggle("inactive", !isCard);
     if(codPanel)  codPanel.classList.toggle("inactive", isCard);
 
-    if(payCard) payCard.checked = isCard;
-    if(payCod)  payCod.checked = !isCard;
+    // ボタン有効/無効
+    if(cardBtn) cardBtn.disabled = !isCard;
+    if(codBtn)  codBtn.disabled  = isCard;
   }
 
-  // ✅ 贈り先のときは代引きを「選べない」＋注意表示
+  // ✅ 贈り先ロック（shipLSは使わない：古いgift残り対策）
   function lockCodIfGift(isGift){
     const note = document.getElementById("codDisabledNote");
 
@@ -421,7 +376,6 @@
 
     const cart=loadJson(KEY_CART) || {items:[]};
     const items=(cart.items||[]).filter(x=>x?.id && Number(x.qty||0)>0);
-
     if(items.length===0){
       status.innerHTML='<span class="err">カートが空です。商品選択に戻ります。</span>';
       setTimeout(()=>location.replace(backTo), 700);
@@ -434,18 +388,12 @@
       return;
     }
 
-    // ✅ 贈り先判定（誤判定しない “明示優先＋is_giftのみ” 版）
+    // ✅ 贈り先判定：明示(shipQS/gift=1)が無ければ「DBの is_gift のみ」
     const shipQS = (qs.get("ship") || "").trim(); // "home" / "gift"
-    const shipLS = (localStorage.getItem("isoya_ship_to") || "").trim(); // "home" / "gift"
-
     let isGift;
-    if (shipQS === "home" || shipLS === "home") {
-      isGift = false;
-    } else if (shipQS === "gift" || shipLS === "gift" || (qs.get("gift") === "1")) {
-      isGift = true;
-    } else {
-      isGift = (addr.is_gift === true);
-    }
+    if (shipQS === "home") isGift = false;
+    else if (shipQS === "gift" || (qs.get("gift") === "1")) isGift = true;
+    else isGift = (addr.is_gift === true);
 
     const nameLine = addr.name ? `${addr.name} 様\n` : "";
     addrText.textContent =
@@ -463,16 +411,31 @@
 
     const quote = await postJson("/api/order/quote", { uid, checkout:{ items } });
     quote.subtotal = quote.subtotal ?? subtotal;
-
     applyQuoteToUI(quote);
 
-    // ✅ 初期はクレジット
+    // ✅ 初期：クレジット
     applyPayMethodUI("card");
 
-    // ✅ 贈り先なら代引ロック
+    // ✅ 贈り先なら代引きをロック
     lockCodIfGift(isGift);
 
-    // ✅ ラジオ変更で切替
+    // ✅ LIFFで change が落ちることがあるので「pillクリックでも強制切替」
+    if(pillCard){
+      pillCard.addEventListener("click", (e)=>{
+        if(payCard && !payCard.disabled){
+          payCard.checked = true;
+          applyPayMethodUI("card");
+        }
+      });
+    }
+    if(pillCod){
+      pillCod.addEventListener("click", (e)=>{
+        if(payCod && !payCod.disabled){
+          payCod.checked = true;
+          applyPayMethodUI("cod");
+        }
+      });
+    }
     if(payCard) payCard.addEventListener("change", ()=>applyPayMethodUI("card"));
     if(payCod)  payCod.addEventListener("change", ()=>{
       if(payCod.disabled) return;
@@ -490,7 +453,6 @@
     if(cardBtn){
       cardBtn.onclick = async ()=>{
         if(!(payCard && payCard.checked)) return;
-
         setBtnBusy(cardBtn, true, "移動中…", "クレジットで支払う");
         try{
           const data = await postJson("/api/pay/stripe/create", { uid, checkout:{ items } });
@@ -512,9 +474,7 @@
         setBtnBusy(codBtn, true, "確定中…", "代引きで注文確定");
         try{
           const data = await postJson("/api/order/cod/create", { uid, checkout:{ items } });
-
           localStorage.setItem(KEY_CART, JSON.stringify({ items: [] }));
-
           location.href = `/complete.html?method=cod&orderId=${encodeURIComponent(data.orderId||"")}`;
         }catch(e){
           console.error(e);

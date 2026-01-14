@@ -39,34 +39,6 @@
     .row{display:flex;justify-content:space-between;gap:10px;margin:0;padding:6px 0;font-size:14px}
     .row strong{font-weight:900}
 
-    /* ✅ 支払い方法の選択（ラジオ） */
-    .paySelect{
-      margin-top:10px;
-      padding-top:10px;
-      border-top:1px solid var(--line);
-      display:flex;
-      flex-direction:column;
-      gap:10px;
-    }
-    .payOpt{
-      display:flex;
-      align-items:flex-start;
-      gap:10px;
-      padding:10px;
-      border:1px solid var(--line);
-      border-radius:12px;
-      background:#fff;
-    }
-    .payOpt:hover{ background:#fafafa; }
-    .payOpt input{
-      width:18px;height:18px;margin-top:2px;
-      cursor:pointer;
-      flex:0 0 auto;
-    }
-    .payOpt .meta{ flex:1 1 auto; }
-    .payOpt .title{ font-weight:1000; font-size:14px; margin:0 0 4px; }
-    .payOpt .desc{ color:var(--muted); font-size:12px; line-height:1.5; margin:0; }
-
     /* ✅ 支払い方法を「別カード」にして見やすく */
     .payGrid{
       display:grid;
@@ -123,6 +95,15 @@
       background:#fff;border:1px solid var(--line);color:#111827;
       margin-top:0;
     }
+
+    /* 追加：デバッグ操作ボタン */
+    .debugRow{
+      display:flex;gap:8px;flex-wrap:wrap;margin-top:8px
+    }
+    .debugMiniBtn{
+      background:#fff;border:1px solid var(--line);color:#111827;
+      padding:10px 12px;border-radius:12px;font-weight:900;cursor:pointer
+    }
   </style>
 </head>
 
@@ -130,6 +111,15 @@
   <div class="wrap">
     <h1>注文内容の確認</h1>
     <div class="muted" id="status">読み込み中…</div>
+
+    <!-- ✅ 追加：贈り先判定ログを画面に出す（LIFF内で原因切り分け） -->
+    <div class="muted" id="debugPay" style="margin-top:6px"></div>
+
+    <!-- ✅ 追加：LIFF内だけで home/gift を強制できる -->
+    <div class="debugRow">
+      <button id="forceHomeBtn" class="debugMiniBtn" type="button">自宅として開く（代引OK）</button>
+      <button id="forceGiftBtn" class="debugMiniBtn" type="button">贈り先として開く（代引NG）</button>
+    </div>
 
     <div class="card">
       <div class="muted">お届け先</div>
@@ -147,29 +137,7 @@
       <div class="row"><div>小計</div><div id="subtotal">0円</div></div>
       <div class="row"><div>送料（見積）</div><div id="shipping">—</div></div>
 
-      <!-- ✅ ここで支払い方法を選ぶ（これだけが真実） -->
-      <div class="paySelect" id="paySelect">
-        <label class="payOpt">
-          <input type="radio" name="pay" id="payCard" value="card" checked>
-          <div class="meta">
-            <div class="title">クレジットで支払う</div>
-            <p class="desc">※代引手数料はかかりません。Stripe決済画面へ進みます。</p>
-          </div>
-        </label>
-
-        <label class="payOpt">
-          <input type="radio" name="pay" id="payCod" value="cod">
-          <div class="meta">
-            <div class="title">代引きで支払う</div>
-            <p class="desc">※代引手数料がかかります。配達員へ現金でお支払いください。</p>
-            <div id="codDisabledNote" class="muted" style="margin-top:6px;display:none">
-              ※贈り先への配送では、代引きはご利用いただけません（クレジットのみ）
-            </div>
-          </div>
-        </label>
-      </div>
-
-      <!-- ✅ 支払い方法ごとに分ける（ボタン2個は維持） -->
+      <!-- ✅ 支払い方法ごとに分ける -->
       <div class="payGrid">
 
         <!-- クレジット -->
@@ -207,6 +175,11 @@
           <button id="codBtn" class="payBtn" style="background:var(--pri);color:#fff" type="button">
             代引きで注文確定
           </button>
+
+          <!-- ✅ 贈り先のときだけ表示（代引不可の注意） -->
+          <div id="codDisabledNote" class="muted" style="margin-top:8px;display:none">
+            ※贈り先への配送では、代引きはご利用いただけません（クレジットのみ）
+          </div>
         </div>
 
         <!-- 戻る（最後にまとめる） -->
@@ -250,6 +223,7 @@
   : "/confirm.html";
 
   const status=document.getElementById("status");
+  const debugPay=document.getElementById("debugPay");
   const addrText=document.getElementById("addrText");
   const itemsEl=document.getElementById("items");
 
@@ -272,13 +246,22 @@
   const cardBtn=document.getElementById("cardBtn");
   const codBtn=document.getElementById("codBtn");
 
-  // ✅ 支払いラジオ
-  const payCardRadio = document.getElementById("payCard");
-  const payCodRadio  = document.getElementById("payCod");
-  const codDisabledNote = document.getElementById("codDisabledNote");
+  // ✅ 追加：LIFF内で ship を強制するボタン
+  const forceHomeBtn = document.getElementById("forceHomeBtn");
+  const forceGiftBtn = document.getElementById("forceGiftBtn");
 
   const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
   const loadJson=k=>{try{return JSON.parse(localStorage.getItem(k)||"");}catch{return null;}};
+
+  const dbg = (s)=>{ if(debugPay) debugPay.textContent = s; };
+
+  function reloadWithShip(v){
+    const u = new URL(location.href);
+    u.searchParams.set("ship", v); // home / gift
+    location.replace(u.toString());
+  }
+  if(forceHomeBtn) forceHomeBtn.onclick = ()=>reloadWithShip("home");
+  if(forceGiftBtn) forceGiftBtn.onclick = ()=>reloadWithShip("gift");
 
   // ✅ 押したボタンだけ busy（もう片方は触らない）
   function setBtnBusy(btn, busy, busyText, normalText){
@@ -347,7 +330,7 @@
     return subtotal;
   }
 
-  // ✅ confirmは LIFF失敗しても止めない
+  // ✅ confirmは LIFF失敗しても止めない（住所LIFF内でも動かす）
   async function ensureUserSoft(){
     const cached = (localStorage.getItem(KEY_UID) || "").trim();
     if(cached) return cached;
@@ -383,27 +366,22 @@
     safeSetText(totalCodEl, yen(quote.totalCod));
   }
 
-  // ✅ 支払い方法ラジオで「ボタン有効/無効」を制御（最小変更）
-  function applyPaySelection(){
-    const pay = payCodRadio?.checked ? "cod" : "card";
-    if(cardBtn) cardBtn.disabled = (pay !== "card");
-    if(codBtn)  codBtn.disabled  = (pay !== "cod");
-  }
-
-  // ✅ 贈り先のときだけ「代引ラジオ」を無効化（押せない原因はこれ）
+  // ✅ 贈り先のときは代引きを無効化
   function applyCodAvailability(isGift){
+    const note = document.getElementById("codDisabledNote");
+    if(!codBtn) return;
+
     if(isGift){
-      if(payCodRadio){
-        payCodRadio.disabled = true;
-        // もし代引が選ばれてたらクレジットに戻す
-        if(payCodRadio.checked && payCardRadio) payCardRadio.checked = true;
-      }
-      if(codDisabledNote) codDisabledNote.style.display = "block";
+      codBtn.disabled = true;
+      codBtn.textContent = "贈り先では代引き不可";
+      codBtn.style.opacity = ".55";
+      if(note) note.style.display = "block";
     }else{
-      if(payCodRadio) payCodRadio.disabled = false;
-      if(codDisabledNote) codDisabledNote.style.display = "none";
+      codBtn.disabled = false;
+      codBtn.textContent = "代引きで注文確定";
+      codBtn.style.opacity = "1";
+      if(note) note.style.display = "none";
     }
-    applyPaySelection();
   }
 
   try{
@@ -432,29 +410,27 @@
       return;
     }
 
-    // ✅ 贈り先判定（従来互換：URL/LS/住所ラベル）
+    // ✅ 贈り先判定（home/gift 明示を最優先にする版）
     const shipQS = (qs.get("ship") || "").trim(); // "home" / "gift"
     const shipLS = (localStorage.getItem("isoya_ship_to") || "").trim(); // "home" / "gift"
-    const forceHome = (shipQS === "home") || (shipLS === "home");
-    const forceGift = (shipQS === "gift") || (qs.get("gift") === "1") || (shipLS === "gift");
 
     const label = (addr.label || "").trim();
     const kind  = (addr.kind  || "").trim();
+
     const looksGift =
       addr.is_gift === true ||
       /贈り|贈り先|ギフト|gift/i.test(label) ||
       /贈り|贈り先|ギフト|gift/i.test(kind);
 
-    // ★「自宅を選んだ」が明示なら gift を打ち消す
-    const isGift = forceHome ? false : (forceGift || looksGift);
+    // ★ ship の明示が最優先。無い時だけ label/kind で推測
+    let isGift;
+    if (shipQS === "home" || shipLS === "home") isGift = false;
+    else if (shipQS === "gift" || shipLS === "gift" || (qs.get("gift")==="1")) isGift = true;
+    else isGift = looksGift;
 
-    // ✅ ここで “代引ラジオ” を止める/許可する
+    dbg(`shipQS=${shipQS||"-"} shipLS=${shipLS||"-"} looksGift=${looksGift} => isGift=${isGift}`);
+
     applyCodAvailability(isGift);
-
-    // ✅ ラジオ変更でボタンを切り替え
-    if(payCardRadio) payCardRadio.addEventListener("change", applyPaySelection);
-    if(payCodRadio)  payCodRadio.addEventListener("change", applyPaySelection);
-    applyPaySelection();
 
     const nameLine = addr.name ? `${addr.name} 様\n` : "";
     addrText.textContent =
@@ -472,7 +448,7 @@
     safeSetText(totalCardEl, "計算中…");
 
     const quote = await postJson("/api/order/quote", { uid, checkout:{ items } });
-    quote.subtotal = quote.subtotal ?? subtotal;
+    quote.subtotal = quote.subtotal ?? subtotal; // 念のため補完
 
     applyQuoteToUI(quote);
     status.textContent="内容をご確認ください。";
@@ -484,10 +460,9 @@
       };
     }
 
-    // クレジット：Stripeへ（cardBtn だけbusy）
+    // ✅ クレジット：Stripeへ（cardBtn だけbusy）
     if(cardBtn){
       cardBtn.onclick = async ()=>{
-        if(cardBtn.disabled) return; // ラジオ未選択なら何もしない
         setBtnBusy(cardBtn, true, "移動中…", "クレジットで支払う");
         try{
           const data = await postJson("/api/pay/stripe/create", { uid, checkout:{ items } });
@@ -497,15 +472,13 @@
           console.error(e);
           alert("クレジット決済の開始に失敗しました: " + (e?.message||e));
           setBtnBusy(cardBtn, false, "移動中…", "クレジットで支払う");
-          applyPaySelection();
         }
       };
     }
 
-    // 代引き：確定
-    if(codBtn){
+    // ✅ 代引き：確定（贈り先のときは onclick 自体を付けない）
+    if(codBtn && !isGift){
       codBtn.onclick = async ()=>{
-        if(codBtn.disabled) return; // ラジオ未選択/贈り先なら何もしない
         setBtnBusy(codBtn, true, "確定中…", "代引きで注文確定");
         try{
           const data = await postJson("/api/order/cod/create", { uid, checkout:{ items } });
@@ -518,7 +491,6 @@
           console.error(e);
           alert("代引き確定に失敗しました: " + (e?.message||e));
           setBtnBusy(codBtn, false, "確定中…", "代引きで注文確定");
-          applyPaySelection();
         }
       };
     }

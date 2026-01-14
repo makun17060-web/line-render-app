@@ -90,18 +90,20 @@
       </div>
 
       <div class="muted" style="margin-top:8px">
-       ※「贈答用として送る」を選ぶと、注文確認で代引きが自動で無効になります。
+        ※「贈答用として送る」を選ぶと、注文確認で代引きが自動で無効になります。
       </div>
     </div>
 
+    <!-- ✅ 一覧は「あるときだけ表示」 -->
     <div class="card" id="listCard" style="display:none">
       <div class="muted">登録済みの住所</div>
       <div class="addrList" id="addrList"></div>
       <div class="muted" style="margin-top:8px">※住所を選んで「この住所で進む」を押してください。</div>
-      <button class="btn btnSub" id="showFormBtn" type="button">新しい住所を入力する</button>
+      <div class="muted" style="margin-top:8px">※下のフォームから新しい住所も追加できます。</div>
     </div>
 
-    <div class="card" id="formCard" style="display:none">
+    <!-- ✅ フォームは常に使える（ボタンで表示切替しない） -->
+    <div class="card" id="formCard" style="display:block">
       <div class="muted">住所を入力</div>
 
       <div class="grid">
@@ -147,7 +149,7 @@
 
       <div class="rowBtns">
         <button class="btn" id="saveBtn" type="button">この住所を保存して進む</button>
-        <button class="btn btnSub" id="cancelBtn" type="button">キャンセル（一覧へ）</button>
+        <button class="btn btnSub" id="clearBtn" type="button">入力をクリア</button>
       </div>
     </div>
 
@@ -158,16 +160,13 @@
   </div>
 
 <script>
-  /* ★一時対処：古いUIDを強制リセット（確認できたら削除） */
-localStorage.removeItem("isoya_userId");
 (async function(){
   "use strict";
 
-  // ★あなたの cod-register 用 LIFF ID に置換（confirm と同じでも動きます）
+  // ★このページの LIFF ID（このHTMLを紐付けているLIFF IDに合わせる）
   const LIFF_ID_COD  = "2008406620-G5j1gjzM";
-  const KEY_UID      = "isoya_userId";
 
-  // confirm が見ている想定（あなたの confirm と合わせる）
+  const KEY_UID      = "isoya_userId";
   const KEY_SHIP_TO  = "isoya_ship_to"; // "home" / "gift"
 
   const qs = new URLSearchParams(location.search);
@@ -191,12 +190,9 @@ localStorage.removeItem("isoya_userId");
 
   const listCard = document.getElementById("listCard");
   const addrListEl = document.getElementById("addrList");
-  const showFormBtn = document.getElementById("showFormBtn");
 
-  const formCard = document.getElementById("formCard");
   const saveBtn = document.getElementById("saveBtn");
-  const cancelBtn = document.getElementById("cancelBtn");
-
+  const clearBtn = document.getElementById("clearBtn");
   const backBtn = document.getElementById("backBtn");
 
   const el = (id)=>document.getElementById(id);
@@ -210,7 +206,9 @@ localStorage.removeItem("isoya_userId");
   // 初期 ship_to
   const shipLS = (localStorage.getItem(KEY_SHIP_TO) || "").trim();
   const shipQS = (qs.get("ship") || "").trim(); // もし来てたらそれ優先
-  const initialShip = (shipQS === "home" || shipQS === "gift") ? shipQS : (shipLS === "gift" ? "gift" : "home");
+  const initialShip =
+    (shipQS === "home" || shipQS === "gift") ? shipQS
+    : (shipLS === "gift" ? "gift" : "home");
   setShipTo(initialShip);
 
   // pill クリックでも切替（LIFFでchangeが拾えない対策）
@@ -222,8 +220,6 @@ localStorage.removeItem("isoya_userId");
   });
   if(shipHome) shipHome.addEventListener("change", ()=>setShipTo("home"));
   if(shipGift) shipGift.addEventListener("change", ()=>setShipTo("gift"));
-
-  const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
 
   async function postJson(url, body){
     const r=await fetch(url,{
@@ -272,7 +268,6 @@ localStorage.removeItem("isoya_userId");
   }
 
   function normalizeAddr(a){
-    // list API / get API どっちでも同じように扱えるように整形
     return {
       id: a?.id ?? a?.address_id ?? a?.addressId ?? null,
       name: a?.name ?? "",
@@ -290,12 +285,9 @@ localStorage.removeItem("isoya_userId");
   }
 
   function buildReturnUrl(){
-    // returnToRaw は "/confirm.html?mode=..." のようなパス想定
-    // ship=home/gift を付ける。addr_step=1 は confirm 側が必要なら残す。
     const u = new URL(returnToRaw, location.origin);
     const ship = (localStorage.getItem(KEY_SHIP_TO) || "home").trim();
     u.searchParams.set("ship", ship);
-    // confirm のゲートに合わせて残す（無いとconfirmがcod-registerへ戻す）
     u.searchParams.set("addr_step", "1");
     if (mode) u.searchParams.set("mode", mode);
     return u.pathname + u.search;
@@ -305,18 +297,7 @@ localStorage.removeItem("isoya_userId");
     location.replace(buildReturnUrl());
   }
 
-  function showList(){
-    if(listCard) listCard.style.display = "block";
-    if(formCard) formCard.style.display = "none";
-  }
-
-  function showForm(){
-    if(listCard) listCard.style.display = "none";
-    if(formCard) formCard.style.display = "block";
-  }
-
   async function loadAddresses(uid){
-    // 1) list があれば使う（複数住所）
     try{
       const d = await getJson(`/api/address/list?userId=${encodeURIComponent(uid)}`);
       const rows = Array.isArray(d?.addresses) ? d.addresses : (Array.isArray(d?.list) ? d.list : []);
@@ -325,7 +306,6 @@ localStorage.removeItem("isoya_userId");
       // list 無しなら fallback
     }
 
-    // 2) get だけでも動く（単一住所）
     try{
       const d = await getJson(`/api/address/get?userId=${encodeURIComponent(uid)}`);
       if(d?.address) return [ normalizeAddr(d.address) ];
@@ -340,13 +320,13 @@ localStorage.removeItem("isoya_userId");
 
     if(!addrs || addrs.length === 0){
       status.innerHTML = '<span class="muted">住所が未登録です。下のフォームから入力してください。</span>';
-      showForm();
+      if(listCard) listCard.style.display = "none";
       return;
     }
 
-    status.textContent = "住所を選んでください。";
+    status.textContent = "住所を選ぶか、下のフォームで新しい住所を追加できます。";
+    if(listCard) listCard.style.display = "block";
 
-    // デフォルト候補：is_default > 先頭
     let selectedId = (addrs.find(a=>a.is_default)?.id ?? addrs[0].id) ?? null;
 
     addrs.forEach((a, idx)=>{
@@ -372,8 +352,7 @@ localStorage.removeItem("isoya_userId");
         const t=document.createElement("span"); t.className="tag"; t.textContent=a.label; tagRow.appendChild(t);
       }
       if(a.is_gift){
-      const t=document.createElement("span"); t.className="tag gift"; t.textContent="贈答用"; tagRow.appendChild(t);
-
+        const t=document.createElement("span"); t.className="tag gift"; t.textContent="贈答用"; tagRow.appendChild(t);
       }
       if(a.is_default){
         const t=document.createElement("span"); t.className="tag"; t.textContent="既定"; tagRow.appendChild(t);
@@ -384,11 +363,9 @@ localStorage.removeItem("isoya_userId");
       useBtn.className = "btn";
       useBtn.textContent = "この住所で進む";
       useBtn.addEventListener("click", async ()=>{
-        // 住所選択をサーバへ反映（既存APIに合わせて set を叩く）
         const chosen = addrs.find(x=>String(x.id)===String(selectedId)) || addrs[0];
         if(!chosen) return;
 
-        // ship_to の選択が gift なら is_gift を true にして保存（confirm が DB の is_gift を見れる）
         const ship = (localStorage.getItem(KEY_SHIP_TO) || "home").trim();
         const isGift = (ship === "gift");
 
@@ -428,8 +405,12 @@ localStorage.removeItem("isoya_userId");
       wrap.appendChild(box);
       addrListEl.appendChild(wrap);
     });
+  }
 
-    showList();
+  function clearForm(){
+    ["name","phone","postal","prefecture","city","address1","address2","label"].forEach(id=>{
+      const x = el(id); if(x) x.value = "";
+    });
   }
 
   async function saveNewAddress(uid){
@@ -448,7 +429,6 @@ localStorage.removeItem("isoya_userId");
       is_gift: isGift
     };
 
-    // 最低限チェック
     if(!a.postal || !a.prefecture || !a.city || !a.address1){
       alert("郵便番号/都道府県/市区町村/番地 は必須です。");
       return;
@@ -474,15 +454,11 @@ localStorage.removeItem("isoya_userId");
       return;
     }
 
-    // 住所一覧ロード
     const addrs = await loadAddresses(uid);
     renderAddressList(addrs, uid);
 
-    // ボタン類
-    if(showFormBtn) showFormBtn.onclick = ()=>showForm();
-    if(cancelBtn) cancelBtn.onclick = ()=>showList();
     if(saveBtn) saveBtn.onclick = ()=>saveNewAddress(uid);
-
+    if(clearBtn) clearBtn.onclick = ()=>clearForm();
     if(backBtn) backBtn.onclick = ()=>location.replace(backTo);
 
   }catch(e){

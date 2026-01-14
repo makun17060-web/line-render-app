@@ -380,11 +380,11 @@
     }
 
     /* =========================================================
-       ✅ 追加：住所入力を必ず一度通す（confirm直行を防ぐ）
-       - addr_step=1 が無ければ cod-register へ飛ばす
-       - cod-register の returnTo に addr_step=1 を付けて戻す
+       ✅ 追加：confirm 直行を防ぎ、必ず一度 cod-register を通す
+       - addr_step=1 が無い場合は cod-register に飛ばす
+       - returnTo は confirm + addr_step=1 を付けて戻す
     ========================================================= */
-    const stepped = (qs.get("addr_step") || "").trim(); // "1" なら住所入力から戻ってきた
+    const stepped = (qs.get("addr_step") || "").trim();
     if (stepped !== "1") {
       const returnUrl = new URL(location.origin + RETURN_TO_THIS);
       returnUrl.searchParams.set("addr_step", "1");
@@ -400,7 +400,6 @@
 
     const addr=await getAddress(uid).catch(()=>null);
     if(!addr){
-      // 住所が無い（保存されてない）場合は通常通り住所入力へ
       location.replace(`/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`);
       return;
     }
@@ -430,13 +429,9 @@
     quote.subtotal = quote.subtotal ?? subtotal;
     applyQuoteToUI(quote);
 
-    // ✅ 初期：クレジット
     applyPayMethodUI("card");
-
-    // ✅ 贈り先なら代引きをロック
     lockCodIfGift(isGift);
 
-    // ✅ LIFFで change が落ちることがあるので「pillクリックでも強制切替」
     if(pillCard){
       pillCard.addEventListener("click", ()=>{
         if(payCard && !payCard.disabled){
@@ -463,7 +458,7 @@
 
     if(backBtn){
       backBtn.onclick = ()=>{
-        // 戻る時は addr_step を付けずに戻す（次回また必ず住所画面を通す）
+        // ✅ 戻るは addr_step を付けない（次回また必ず住所画面を通す）
         location.href = `/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`;
       };
     }

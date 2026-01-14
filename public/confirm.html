@@ -86,6 +86,41 @@
     .backWrap .payBtn{ background:#fff;border:1px solid var(--line);color:#111827; margin-top:0; }
 
     .inactive{ opacity:.55; filter:saturate(.85); }
+
+    /* =========================
+       🎁 ギフトUI（追加）
+    ========================= */
+    .giftCard{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:12px; margin-top:12px; box-shadow:var(--shadow); }
+    .giftTop{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .giftTitle{ font-weight:1000; font-size:14px; display:flex; align-items:center; gap:8px; }
+    .giftNote{ font-size:12px; color:var(--muted); margin-top:6px; line-height:1.45; }
+    .giftBody{ margin-top:10px; display:none; }
+    .giftBody.show{ display:block; }
+    .giftGrid{ display:grid; grid-template-columns:1fr; gap:10px; margin-top:8px; }
+    .giftRow{ display:grid; grid-template-columns:1fr; gap:6px; }
+    .giftRow label{ font-size:12px; color:var(--muted); }
+    .giftRow input, .giftRow textarea{
+      width:100%;
+      font-size:14px;
+      padding:10px 10px;
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:#fff;
+      box-sizing:border-box;
+    }
+    .giftRow textarea{ min-height:88px; resize:vertical; }
+    .pill{
+      display:inline-flex; align-items:center; gap:6px;
+      font-size:12px; padding:6px 10px; border-radius:999px;
+      background:#f3f4f6; color:#374151; border:1px solid var(--line);
+      margin-right:6px; margin-top:6px;
+    }
+    .pillStrong{ background:#eef2ff; border-color:#c7d2fe; color:#3730a3; }
+    .req{ color:var(--danger); font-weight:1000; margin-left:4px; }
+    .giftHint{ font-size:12px; color:var(--muted); margin-top:4px; }
+    .giftError{ display:none; margin-top:8px; font-size:12px; color:var(--danger); font-weight:900; }
+    .twoCols{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    @media (max-width:520px){ .twoCols{ grid-template-columns:1fr; } }
   </style>
 </head>
 
@@ -101,6 +136,72 @@
         ※住所を修正したい場合は「戻る」で住所入力へ戻ってください。
       </div>
     </div>
+
+    <!-- =========================
+       🎁 ギフト設定（追加）
+       - チェックONで贈り先入力が展開
+       - 贈り先時は代引きを自動で無効化（クレジットのみ）
+       - 送信payloadに is_gift / ship_* / gift_message を混ぜる
+    ========================= -->
+    <div class="giftCard" id="giftCard">
+      <div class="giftTop">
+        <div class="giftTitle">🎁 ギフトとして送る</div>
+
+        <label style="display:flex; align-items:center; gap:8px; user-select:none;">
+          <input type="checkbox" id="giftToggle" />
+          <span style="font-size:13px;font-weight:1000">ギフト</span>
+        </label>
+      </div>
+
+      <div class="giftNote">
+        <span class="pill pillStrong">商品代金はご注文者様のご負担です</span>
+        <span class="pill">金額のわかる書類は同梱しません</span>
+      </div>
+
+      <div class="giftBody" id="giftBody">
+        <div class="giftHint">お届け先（贈り先）を入力してください。※この注文のみに使用します</div>
+
+        <div class="giftGrid">
+          <div class="giftRow">
+            <label for="giftName">お届け先氏名<span class="req">必須</span></label>
+            <input id="giftName" type="text" inputmode="text" autocomplete="name" placeholder="例）山田 太郎" />
+          </div>
+
+          <div class="twoCols">
+            <div class="giftRow">
+              <label for="giftZip">郵便番号<span class="req">必須</span></label>
+              <input id="giftZip" type="text" inputmode="numeric" autocomplete="postal-code" placeholder="例）123-4567" />
+              <div class="giftHint">ハイフンあり/なしどちらでもOK</div>
+            </div>
+
+            <div class="giftRow">
+              <label for="giftTel">電話番号<span class="req">必須</span></label>
+              <input id="giftTel" type="text" inputmode="tel" autocomplete="tel" placeholder="例）09012345678" />
+              <div class="giftHint">配送伝票に使います</div>
+            </div>
+          </div>
+
+          <div class="giftRow">
+            <label for="giftAddr1">住所（都道府県・市区町村・番地）<span class="req">必須</span></label>
+            <input id="giftAddr1" type="text" autocomplete="street-address" placeholder="例）愛知県〇〇市〇〇町1-2-3" />
+          </div>
+
+          <div class="giftRow">
+            <label for="giftAddr2">建物名・部屋番号（任意）</label>
+            <input id="giftAddr2" type="text" autocomplete="address-line2" placeholder="例）〇〇マンション 101" />
+          </div>
+
+          <div class="giftRow">
+            <label for="giftMsg">メッセージ（任意）</label>
+            <textarea id="giftMsg" maxlength="120" placeholder="例）お誕生日おめでとう！"></textarea>
+            <div class="giftHint"><span id="giftMsgCount">0</span>/120</div>
+          </div>
+        </div>
+
+        <div class="giftError" id="giftError"></div>
+      </div>
+    </div>
+    <!-- ========================= -->
 
     <div class="card">
       <div class="muted">ご注文商品</div>
@@ -226,6 +327,13 @@
   const pillCod=document.getElementById("pillCod");
   const cardPanel=document.getElementById("cardPanel");
   const codPanel=document.getElementById("codPanel");
+
+  // 🎁
+  const giftToggle = document.getElementById("giftToggle");
+  const giftBody   = document.getElementById("giftBody");
+  const giftError  = document.getElementById("giftError");
+  const giftMsg    = document.getElementById("giftMsg");
+  const giftMsgCount = document.getElementById("giftMsgCount");
 
   const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
   const loadJson=k=>{try{return JSON.parse(localStorage.getItem(k)||"");}catch{return null;}};
@@ -361,6 +469,65 @@
     }
   }
 
+  // =========================
+  // 🎁 ギフト：UIとpayload
+  // =========================
+  function showGiftError(text){
+    if(!giftError) return;
+    if(!text){
+      giftError.style.display="none";
+      giftError.textContent="";
+      return;
+    }
+    giftError.style.display="block";
+    giftError.textContent=text;
+  }
+
+  function setGiftUI(on){
+    if(giftBody) giftBody.classList.toggle("show", !!on);
+    showGiftError("");
+  }
+
+  function getGiftFields(){
+    const $ = (id)=>document.getElementById(id);
+    return {
+      name:  ($("giftName")?.value || "").trim(),
+      zip:   ($("giftZip")?.value || "").trim(),
+      tel:   ($("giftTel")?.value || "").trim(),
+      addr1: ($("giftAddr1")?.value || "").trim(),
+      addr2: ($("giftAddr2")?.value || "").trim(),
+      msg:   ($("giftMsg")?.value || "").trim(),
+    };
+  }
+
+  function buildGiftPayloadOrThrow(){
+    const isGift = !!giftToggle?.checked;
+    if(!isGift) return { is_gift:false };
+
+    const f = getGiftFields();
+    const zip = f.zip.replace(/[^\d]/g,"");
+    const tel = f.tel.replace(/[^\d]/g,"");
+
+    if(!f.name){ showGiftError("お届け先氏名を入力してください"); throw new Error("GIFT_VALIDATE_NAME"); }
+    if(zip.length < 7){ showGiftError("郵便番号を正しく入力してください（7桁）"); throw new Error("GIFT_VALIDATE_ZIP"); }
+    if(tel.length < 10){ showGiftError("電話番号を正しく入力してください"); throw new Error("GIFT_VALIDATE_TEL"); }
+    if(!f.addr1){ showGiftError("住所を入力してください"); throw new Error("GIFT_VALIDATE_ADDR"); }
+
+    showGiftError("");
+
+    return {
+      is_gift:true,
+      gift_message: f.msg || null,
+      ship_name: f.name,
+      ship_zip: zip,
+      ship_tel: tel,
+      ship_addr1: f.addr1,
+      ship_addr2: f.addr2 || null,
+    };
+  }
+
+  // =========================
+
   try{
     status.textContent="確認中…";
 
@@ -380,7 +547,7 @@
     }
 
     /* =========================================================
-       ✅ 追加：confirm 直行を防ぎ、必ず一度 cod-register を通す
+       ✅ confirm 直行を防ぎ、必ず一度 cod-register を通す
        - addr_step=1 が無い場合は cod-register に飛ばす
        - returnTo は confirm + addr_step=1 を付けて戻す
     ========================================================= */
@@ -404,7 +571,7 @@
       return;
     }
 
-    // ✅ 贈り先判定：明示(shipQS/gift=1)が無ければ「DBの is_gift のみ」
+    // ✅ 旧ロジック（DB/クエリ）を初期値に使う：ギフトUIの初期チェックに反映
     const shipQS = (qs.get("ship") || "").trim(); // "home" / "gift"
     let isGift;
     if (shipQS === "home") isGift = false;
@@ -414,6 +581,53 @@
     const nameLine = addr.name ? `${addr.name} 様\n` : "";
     addrText.textContent =
       `${nameLine}〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim();
+
+    // 🎁 ギフトUI初期化
+    if(giftToggle){
+      giftToggle.checked = !!isGift;
+      setGiftUI(!!isGift);
+      lockCodIfGift(!!isGift);
+
+      giftToggle.addEventListener("change", ()=>{
+        const on = !!giftToggle.checked;
+        setGiftUI(on);
+        lockCodIfGift(on);
+
+        // 贈り先にしたら、見た目上の「お届け先」も注釈を付ける（入力が空なら注意はしない）
+        if(on){
+          // 表示はそのまま（DBの住所）でOK。ギフト入力が埋まれば下で置き換える
+        }else{
+          // OFFならDB住所表示に戻す
+          addrText.textContent =
+            `${nameLine}〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim();
+        }
+      });
+    }
+
+    // メッセージ文字数
+    if(giftMsg && giftMsgCount){
+      giftMsg.addEventListener("input", ()=>giftMsgCount.textContent=String((giftMsg.value||"").length));
+      giftMsgCount.textContent = String((giftMsg.value||"").length);
+    }
+
+    // ギフト入力が埋まったら上の「お届け先表示」を贈り先に差し替え（見た目だけ）
+    const giftFieldsIds = ["giftName","giftZip","giftTel","giftAddr1","giftAddr2"];
+    giftFieldsIds.forEach(id=>{
+      const el=document.getElementById(id);
+      if(el){
+        el.addEventListener("blur", ()=>{
+          if(!(giftToggle && giftToggle.checked)) return;
+          const f = getGiftFields();
+          const zip = f.zip.replace(/[^\d]/g,"");
+          const name = f.name ? `${f.name} 様\n` : "";
+          // 最低限 addr1 がある時だけ表示を差し替え
+          if(f.addr1){
+            addrText.textContent =
+              `${name}〒${zip || ""} ${f.addr1} ${f.addr2 || ""}`.trim();
+          }
+        });
+      }
+    });
 
     const products=await getProducts();
     const subtotal = renderItems(items, products);
@@ -425,12 +639,14 @@
     safeSetText(totalCodEl, "計算中…");
     safeSetText(totalCardEl, "計算中…");
 
+    // ✅ 送料見積は「通常住所」でOK（最小実装）
+    // 将来：ギフトONで ship_* をquoteに渡して再計算も可能
     const quote = await postJson("/api/order/quote", { uid, checkout:{ items } });
     quote.subtotal = quote.subtotal ?? subtotal;
     applyQuoteToUI(quote);
 
     applyPayMethodUI("card");
-    lockCodIfGift(isGift);
+    lockCodIfGift(!!(giftToggle && giftToggle.checked));
 
     if(pillCard){
       pillCard.addEventListener("click", ()=>{
@@ -466,9 +682,23 @@
     if(cardBtn){
       cardBtn.onclick = async ()=>{
         if(!(payCard && payCard.checked)) return;
+
+        // 🎁 ギフトの場合は入力チェックしてpayloadに混ぜる
+        let giftPayload = { is_gift:false };
+        try{
+          giftPayload = buildGiftPayloadOrThrow();
+        }catch(e){
+          // エラー表示は buildGiftPayloadOrThrow がやる
+          return;
+        }
+
         setBtnBusy(cardBtn, true, "移動中…", "クレジットで支払う");
         try{
-          const data = await postJson("/api/pay/stripe/create", { uid, checkout:{ items } });
+          const data = await postJson("/api/pay/stripe/create", {
+            uid,
+            checkout:{ items },
+            ...giftPayload
+          });
           if(!data?.url) throw new Error("stripe url missing");
           location.href = data.url;
         }catch(e){
@@ -482,7 +712,8 @@
     if(codBtn){
       codBtn.onclick = async ()=>{
         if(!(payCod && payCod.checked)) return;
-        if(isGift) return;
+        const isGiftNow = !!(giftToggle && giftToggle.checked);
+        if(isGiftNow) return;
 
         setBtnBusy(codBtn, true, "確定中…", "代引きで注文確定");
         try{

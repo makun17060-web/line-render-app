@@ -1,10 +1,17 @@
 // send_blast_once.js — （名簿自動追加 + 未送信 + 未購入 + 「一生1回のみ」全キー横断で永久除外）Text/Flex 切替版
+// + ✅ FORCE_USER_ID（自分テスト用）対応版
+//
 // Run:
 //   SEGMENT_KEY=... MESSAGE_FILE=... FUKUBAKO_ID=fukubako-2026 node send_blast_once.js
 // Optional:
 //   DRY_RUN=1  (送信せず対象件数だけ表示)
 //   AUTO_ROSTER_3D=1 FIRST_SEEN_DAYS=3  (3日経過した友だちを名簿に入れる)
 //   ONCE_ONLY=1  (デフォルト1。segment_blastで sent_at が1回でもあれば “全キー横断” で永久除外)
+//
+// ✅ 自分テスト用（強制1ユーザー送信）
+//   FORCE_USER_ID=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//   - 名簿 / 購入済み / ever_sent / sent_at などのフィルタを無視して、その userId にだけ送る
+//   - 送信結果は segment_blast に記録（存在しなければ作る）
 //
 // Requires: DATABASE_URL, LINE_CHANNEL_ACCESS_TOKEN
 //
@@ -39,6 +46,9 @@ const FUKUBAKO_URL  = (process.env.FUKUBAKO_URL || "").trim();
 // ✅ 一生1回のみ（全キー横断）
 // - デフォルトON（ONCE_ONLY=1）
 const ONCE_ONLY = String(process.env.ONCE_ONLY || "1").trim() !== "0";
+
+// ✅ 自分テスト用：強制ターゲット
+const FORCE_USER_ID = (process.env.FORCE_USER_ID || "").trim();
 
 if (!TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
 if (!DBURL) throw new Error("DATABASE_URL is required");
@@ -196,6 +206,45 @@ async function autoRosterByFirstSeen(days) {
   return r.rowCount || 0;
 }
 
+// ✅ FORCE_USER_ID 用：送信記録を必ず segment_blast に残す（なければ作る）
+async function markSentForForceUser(userId, ok, errMsg) {
+  const msg = errMsg ? String(errMsg).slice(0, 500) : null;
+
+  // 1) 行が無ければ作る（created_at）
+  await pool.query(
+    `
+    INSERT INTO segment_blast (segment_key, user_id, created_at)
+    VALUES ($1, $2, NOW())
+    ON CONFLICT (segment_key, user_id) DO NOTHING
+    `,
+    [SEGMENT_KEY, userId]
+  );
+
+  // 2) 成否で更新
+  if (ok) {
+    await pool.query(
+      `
+      UPDATE segment_blast
+         SET sent_at = NOW(),
+             last_error = NULL
+       WHERE segment_key = $1
+         AND user_id = $2
+      `,
+      [SEGMENT_KEY, userId]
+    );
+  } else {
+    await pool.query(
+      `
+      UPDATE segment_blast
+         SET last_error = $3
+       WHERE segment_key = $1
+         AND user_id = $2
+      `,
+      [SEGMENT_KEY, userId, msg || "FORCE_SEND_FAILED"]
+    );
+  }
+}
+
 (async () => {
   const messages = loadMessages();
 
@@ -206,9 +255,40 @@ async function autoRosterByFirstSeen(days) {
   console.log(`DRY_RUN=${DRY_RUN ? "1" : "0"}`);
 
   console.log(`AUTO_ROSTER_3D=${AUTO_ROSTER_3D ? "1" : "0"} FIRST_SEEN_DAYS=${FIRST_SEEN_DAYS}`);
-  console.log(`ONCE_ONLY=${ONCE_ONLY ? "1" : "0"} (global)`); // ✅ 全キー横断
+  console.log(`ONCE_ONLY=${ONCE_ONLY ? "1" : "0"} (global)`);
+  console.log(`FORCE_USER_ID=${FORCE_USER_ID || "(none)"}`);
 
   console.log(`messages_count=${messages.length}, first_type=${messages[0]?.type}`);
+
+  // ✅ 先に FORCE_USER_ID を処理（フィルタ全部無視でこの人だけ）
+  if (FORCE_USER_ID) {
+    if (!isValidLineUserId(FORCE_USER_ID)) {
+      throw new Error(`FORCE_USER_ID invalid: ${FORCE_USER_ID}`);
+    }
+
+    console.log("=== FORCE MODE ===");
+    console.log(`force_targets=1 (${FORCE_USER_ID})`);
+
+    if (DRY_RUN) {
+      console.log("DRY_RUN=1 so not sending (FORCE MODE).");
+      await pool.end();
+      return;
+    }
+
+    try {
+      await lineMulticast([FORCE_USER_ID], messages);
+      await markSentForForceUser(FORCE_USER_ID, true, null);
+      console.log("OK force send: 1");
+    } catch (e) {
+      await markSentForForceUser(FORCE_USER_ID, false, e?.message || e);
+      console.error("NG force send:", e?.message || e);
+      // ここは落として気づけるようにする
+      throw e;
+    }
+
+    await pool.end();
+    return;
+  }
 
   // 0) AUTO_ROSTER（N日経過を名簿へ）
   if (AUTO_ROSTER_3D) {

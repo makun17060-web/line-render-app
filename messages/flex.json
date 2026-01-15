@@ -1,7 +1,7 @@
 [
   {
     "type": "flex",
-    "altText": "【数量限定】磯屋の福箱のご案内",
+    "altText": "【初回限定】磯屋のお試しセットのご案内",
     "contents": {
       "type": "bubble",
       "hero": {
@@ -25,7 +25,7 @@
           },
           {
             "type": "text",
-            "text": "数量限定・特別価格の\\n「福箱」をご用意しました。",
+            "text": "初めての方向け特別価格の\\n「お試しセット」をご用意しました。",
             "size": "sm",
             "wrap": true
           },
@@ -37,19 +37,19 @@
             "contents": [
               {
                 "type": "text",
-                "text": "✔ 人気のえびせんべいを詰め合わせ",
+                "text": "✔ 人気のえびせんべいを少量でお試し",
                 "size": "sm",
                 "wrap": true
               },
               {
                 "type": "text",
-                "text": "✔ 何が入るかは届いてからのお楽しみ",
+                "text": "✔ まずは味や食感をチェックしたい方に",
                 "size": "sm",
                 "wrap": true
               },
               {
                 "type": "text",
-                "text": "✔ お一人様1回限り",
+                "text": "✔ お一人様1回限り（ご自宅配送のみ）",
                 "size": "sm",
                 "color": "#b91c1c",
                 "weight": "bold",
@@ -69,13 +69,13 @@
             "style": "primary",
             "action": {
               "type": "uri",
-              "label": "福箱を見てみる",
-              "uri": "https://liff.line.me/2008406620-yQFRswAu"
+              "label": "お試しセットを見てみる",
+              "uri": "https://liff.line.me/2008406620-yQFRswAu?mode=trial"
             }
           },
           {
             "type": "text",
-            "text": "※ 数量限定・なくなり次第終了",
+            "text": "※ 初回限定・なくなり次第終了",
             "size": "xs",
             "color": "#6b7280",
             "wrap": true

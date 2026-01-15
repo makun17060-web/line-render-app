@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>福箱（数量限定）</title>
+  <title>お試しセット</title>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
@@ -28,7 +28,7 @@
     .muted{ color:var(--muted); font-size:13px; line-height:1.6; margin-top:8px; }
     .danger{ color:var(--danger); font-weight:900; }
 
-    /* ✅ 追加：注意ボックス */
+    /* ✅ 注意ボックス */
     .notice{
       margin-top:10px;
       padding:10px 12px;
@@ -150,13 +150,13 @@
 <body>
 <div class="wrap">
   <div class="topTitle">
-    <h1>福箱（数量限定）</h1>
-    <span class="pill">🎁 ここからだけ購入できます</span>
+    <h1>お試しセット</h1>
+    <span class="pill">🧺 はじめての方向け</span>
   </div>
 
-  <!-- ✅ 追加：2回目不可の注意（最上部） -->
+  <!-- ✅ 文言変更：お試しセット（1回限りの注意は維持） -->
   <div class="notice" id="onceNotice">
-    ⚠️ 福箱は <b>お一人様1回限り</b> の商品です（2回目以降はご購入できません）
+    ⚠️ お試しセットは <b>お一人様1回限り</b> の商品です（2回目以降はご購入できません）
   </div>
 
   <div class="muted" id="status">読み込み中…</div>
@@ -188,10 +188,12 @@
   // 設定
   // =========================
   const LIFF_ID_ORDER = "2008406620-yQFRswAu";
+
+  // ✅ 表示名は「お試しセット」に変更するが、DB/判定IDはそのまま（必要なら後で変更OK）
   const FUKUBAKO_ID = "fukubako-2026";
 
   const KEY_UID  = "isoya_userId";
-  const KEY_CART = "isoya_cart_fukubako"; // ✅ 福箱専用カート
+  const KEY_CART = "isoya_cart_fukubako"; // ✅ 専用カート（名称はそのまま）
 
   const MODE = "fukubako";
   const RETURN_TO = "/confirm.html?mode=fukubako";
@@ -277,10 +279,7 @@
   }
 
   // =========================
-  // ✅ 追加：2回目購入チェック（サーバ判定）
-  // 期待レスポンス例:
-  //   { ok:true, allowed:true }
-  //   { ok:true, allowed:false, reason:"already_ordered" }
+  // ✅ 2回目購入チェック（サーバ判定）
   // =========================
   async function checkAlreadyOrdered(uid){
     try{
@@ -328,7 +327,7 @@
   saveCart(cart);
 
   let product = null;
-  let allowedByServer = true; // ✅ サーバチェック結果
+  let allowedByServer = true;
   let alreadyReason = "";
 
   function updateFukubakoUiLock(){
@@ -357,7 +356,6 @@
         addBtn.disabled = true;
         addBtn.textContent = "購入済み（2回目は不可）";
       }
-      // カートも空にしておく（誤操作防止）
       cart = { items: [] };
       saveCart(cart);
       renderSum();
@@ -374,7 +372,7 @@
         addBtn.textContent = "在庫なし";
       }else if(inCart >= 1){
         addBtn.disabled = true;
-        addBtn.textContent = "福箱は1人1つまで";
+        addBtn.textContent = "お試しセットは1人1つまで";
       }else{
         addBtn.disabled = false;
         addBtn.textContent = "カートに追加";
@@ -402,11 +400,11 @@
   function addToCart(){
     if(!product) return;
     if(!allowedByServer){
-      alert("すでに福箱をご購入済みのため、今回はご注文できません。");
+      alert("すでにお試しセットをご購入済みのため、今回はご注文できません。");
       return;
     }
     const id = String(product.id||"").trim();
-    cart.items = [{ id, qty: 1 }]; // ✅ 必ず1個固定
+    cart.items = [{ id, qty: 1 }];
     saveCart(cart);
     renderSum();
     updateFukubakoUiLock();
@@ -423,11 +421,11 @@
       <div class="imgbox">${img ? `<img src="${escapeHtml(img)}" alt="">` : ""}</div>
       <div class="body">
         <div class="row">
-          <div class="name">${escapeHtml(p.name || "福箱")}</div>
-          <span class="badge badgeHot">数量限定</span>
+          <div class="name">${escapeHtml(p.name || "お試しセット")}</div>
+          <span class="badge badgeHot">はじめて向け</span>
         </div>
 
-        <div class="desc">${escapeHtml(p.desc || "福箱の内容はお楽しみ。なくなり次第終了です。")}</div>
+        <div class="desc">${escapeHtml(p.desc || "まずは味見に。内容はお楽しみのセットです。")}</div>
 
         ${metaDetailsHtml(p)}
 
@@ -449,8 +447,8 @@
         </div>
 
         <div class="muted" style="margin-top:10px;">
-          ※このページは「福箱専用カート」です（通常商品とは混ざりません）<br>
-          ※福箱は <b>お一人様1回限り</b>（2回目以降はご購入できません）
+          ※このページは「お試しセット専用カート」です（通常商品とは混ざりません）<br>
+          ※お試しセットは <b>お一人様1回限り</b>（2回目以降はご購入できません）
         </div>
       </div>
     `;
@@ -475,7 +473,7 @@
     const addBtn = el.querySelector(".add");
     addBtn.onclick = ()=>{
       addToCart();
-      showToast("福箱をカートに入れました（1つのみ）");
+      showToast("お試しセットをカートに入れました（1つのみ）");
     };
 
     return el;
@@ -483,7 +481,7 @@
 
   function goAddress(){
     if(!allowedByServer){
-      alert("すでに福箱をご購入済みのため、今回はご注文できません。");
+      alert("すでにお試しセットをご購入済みのため、今回はご注文できません。");
       return;
     }
     const ret = encodeURIComponent(RETURN_TO);
@@ -506,37 +504,32 @@
     return;
   }
 
-// ✅ 追加：サーバ側の「購入済み」チェック
-const st = await checkAlreadyOrdered(uid);
-if(st && st.ok && st.allowed === false){
-  allowedByServer = false;
-  alreadyReason = st.reason || "already_ordered";
+  // ✅ サーバ側の「購入済み」チェック（文言変更）
+  const st = await checkAlreadyOrdered(uid);
+  if(st && st.ok && st.allowed === false){
+    allowedByServer = false;
+    alreadyReason = st.reason || "already_ordered";
 
-  statusEl.innerHTML = '<span class="danger">すでに福箱をご購入済みです（2回目は購入できません）</span>';
-  if(onceNotice) onceNotice.innerHTML = '⚠️ <b>ご購入済みのため</b>、今回は福箱をご注文いただけません（2回目不可）';
+    statusEl.innerHTML = '<span class="danger">すでにお試しセットをご購入済みです（2回目は購入できません）</span>';
+    if(onceNotice) onceNotice.innerHTML = '⚠️ <b>ご購入済みのため</b>、今回はお試しセットをご注文いただけません（2回目不可）';
 
-  // ✅ ここが追加：住所入力ボタンも無効化
-  if(addrBtn){
-    addrBtn.disabled = true;
-    addrBtn.classList.add("btnDisabled"); // 見た目も無効化（pointer-events:none）
-    addrBtn.textContent = "住所入力（購入済みのため不可）";
+    if(addrBtn){
+      addrBtn.disabled = true;
+      addrBtn.classList.add("btnDisabled");
+      addrBtn.textContent = "住所入力（購入済みのため不可）";
+    }
+
+    if(nextBtn){
+      nextBtn.classList.add("btnDisabled");
+    }
+  }else{
+    allowedByServer = true;
+    if(addrBtn){
+      addrBtn.disabled = false;
+      addrBtn.classList.remove("btnDisabled");
+      addrBtn.textContent = "住所入力（登録／変更）";
+    }
   }
-
-  // ✅ 次へも念のため無効化（あなたの renderSum でも止まるけど二重で安全）
-  if(nextBtn){
-    nextBtn.classList.add("btnDisabled");
-  }
-}else{
-  allowedByServer = true;
-
-  // （念のため）通常時は戻す
-  if(addrBtn){
-    addrBtn.disabled = false;
-    addrBtn.classList.remove("btnDisabled");
-    addrBtn.textContent = "住所入力（登録／変更）";
-  }
-}
-
 
   syncBarHeight();
   window.addEventListener("resize", syncBarHeight);
@@ -551,7 +544,7 @@ if(st && st.ok && st.allowed === false){
   };
 
   clearBtn.onclick = ()=>{
-    if(!confirm("福箱カートを空にしますか？")) return;
+    if(!confirm("お試しセットのカートを空にしますか？")) return;
     cart = { items: [] };
     saveCart(cart);
     renderSum();
@@ -569,7 +562,7 @@ if(st && st.ok && st.allowed === false){
     product = raw.find(p => String(p?.id||"").trim() === FUKUBAKO_ID) || null;
 
     if(!product){
-      statusEl.innerHTML = `<span class="danger">福箱（${escapeHtml(FUKUBAKO_ID)}）が products に見つかりません</span>`;
+      statusEl.innerHTML = `<span class="danger">お試しセット（${escapeHtml(FUKUBAKO_ID)}）が products に見つかりません</span>`;
       mountEl.innerHTML = "";
       renderSum();
       syncBarHeight();

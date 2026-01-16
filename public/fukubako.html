@@ -60,6 +60,31 @@
     .badge{ font-size:12px; border:1px solid var(--line); background:#fafafa; border-radius:999px; padding:2px 8px; white-space:nowrap; }
     .badgeHot{ border-color:rgba(180,83,9,.25); background:rgba(180,83,9,.08); color:var(--accent); font-weight:900; }
 
+    /* ✅ セット内容（set_items） */
+    .setItems{
+      margin-top:10px;
+      padding:10px 12px;
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:#fafafa;
+    }
+    .setItemsTitle{
+      font-size:12px;
+      font-weight:900;
+      color:var(--pri);
+      display:flex;
+      align-items:center;
+      gap:6px;
+    }
+    .setItemsList{
+      margin:8px 0 0 0;
+      padding-left:18px;
+      color:#374151;
+      font-size:12px;
+      line-height:1.7;
+    }
+    .setItemsList li{ margin:2px 0; }
+
     .metaBox{ margin-top:10px; }
     .metaDetails{ border:1px solid var(--line); border-radius:12px; background:#fafafa; padding:8px 10px; }
     .metaDetails > summary{
@@ -238,6 +263,24 @@
           <summary>${hasAny ? "原材料・賞味期限を見る" : "商品情報を見る"}</summary>
           <div class="metaText">${lines.join("")}</div>
         </details>
+      </div>
+    `;
+  }
+
+  // ✅ set_items をHTMLにする（配列があれば表示）
+  function getSetItemsArray(p){
+    const a = p?.set_items ?? p?.setItems ?? p?.set_items_list ?? null;
+    if(Array.isArray(a)) return a.map(x => String(x||"").trim()).filter(Boolean);
+    return [];
+  }
+  function setItemsHtml(p){
+    const items = getSetItemsArray(p);
+    if(items.length === 0) return "";
+    const lis = items.map(t => `<li>${escapeHtml(t)}</li>`).join("");
+    return `
+      <div class="setItems" aria-label="セット内容">
+        <div class="setItemsTitle">📦 セット内容</div>
+        <ul class="setItemsList">${lis}</ul>
       </div>
     `;
   }
@@ -426,6 +469,9 @@
 
         <div class="desc">${escapeHtml(p.desc || "まずは味見に。内容はお楽しみのセットです。")}</div>
 
+        <!-- ✅ セット内容（set_items）を表示 -->
+        ${setItemsHtml(p)}
+
         ${metaDetailsHtml(p)}
 
         <div class="row">
@@ -568,16 +614,20 @@
       return;
     }
 
+    // ✅ 読み込み中表示を消す（あると見栄えが良い）
+    statusEl.textContent = "";
+
     mountEl.innerHTML = "";
     mountEl.appendChild(renderCard(product));
     renderSum();
     updateFukubakoUiLock();
     syncBarHeight();
-  }catch{
+  }catch(e){
     statusEl.innerHTML = '<span class="danger">読み込み失敗：/api/products を確認してください</span>';
     mountEl.innerHTML = "";
     renderSum();
     syncBarHeight();
+    console.error(e);
   }
 })();
 </script>

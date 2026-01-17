@@ -341,6 +341,9 @@ async function markSentForForceUser(userId, ok, errMsg) {
 
   console.log(`eligible_targets (exclude bought${ONCE_ONLY ? " + ever_sent(global)" : ""})=${ids.length}`);
   console.log(`valid_targets=${valid.length} invalid_targets=${invalid.length}`);
+  console.log("would_send_batches=" + Math.ceil(valid.length / 500) + " (batch_size=500)");
+  console.log();
+  console.log();
 
   if (invalid.length) {
     console.log(`invalid_sample=${invalid.slice(0, 5).join(",")}`);

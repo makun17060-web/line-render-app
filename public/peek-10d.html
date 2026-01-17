@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>磯屋をのぞいてみる</title>
+
+  <!-- LIFF（使わなくても動きます） -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
+  <style>
+    :root{
+      --bg:#f6f7f9;
+      --card:#ffffff;
+      --text:#111827;
+      --muted:#6b7280;
+      --line:#e5e7eb;
+      --pri:#0b3a53;
+      --radius:16px;
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family:system-ui,-apple-system,"Segoe UI","Noto Sans JP",sans-serif;
+      background:var(--bg);
+      color:var(--text);
+    }
+    .wrap{
+      max-width:720px;
+      margin:0 auto;
+      padding:14px 14px 28px;
+    }
+    .card{
+      background:var(--card);
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      padding:14px;
+    }
+    .img{
+      width:100%;
+      border-radius:14px;
+      display:block;
+    }
+    .p{
+      margin:12px 0 0;
+      font-size:14px;
+      line-height:1.85;
+    }
+    .muted{ color:var(--muted); }
+    .btn{
+      appearance:none;
+      border:0;
+      width:100%;
+      margin-top:14px;
+      padding:13px 14px;
+      border-radius:14px;
+      background:var(--pri);
+      color:#fff;
+      font-weight:800;
+      font-size:14px;
+      cursor:pointer;
+    }
+    .foot{
+      margin-top:14px;
+      text-align:center;
+      font-size:12px;
+      color:var(--muted);
+      line-height:1.7;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <div class="card">
+
+      <!-- ▼ 画像はこれ1枚だけ -->
+      <img
+        src="https://line-render-app-1.onrender.com/uploads/shop-products.jpeg"
+        alt="磯屋のえびせんべいができるまで"
+        class="img"
+      />
+
+      <p class="p">
+        今日は売り込みではなく、<br>
+        <b>どんなふうに作っているか</b>だけ、<br>
+        のぞいてもらえたら嬉しいです。
+      </p>
+
+      <p class="p muted">
+        材料選びから焼き上げ、配送まで、<br>
+        店主の目の届く範囲で作っています。
+      </p>
+
+      <button class="btn" id="btnGo">
+        公式サイトでお店紹介を見る
+      </button>
+    </div>
+
+    <div class="foot">
+      ※今日は買わなくて大丈夫です。<br>
+      気になったときに、また戻ってきてください。
+    </div>
+  </div>
+
+  <script>
+    // ▼ お店紹介（会社概要）ページ
+    const COMPANY_URL = "https://www.isoya-shop.com/html/company.html";
+
+    // LIFF内で開く場合は true（通常ブラウザでも問題なし）
+    const USE_LIFF = true;
+    const LIFF_ID = ""; // 使うなら設定（空でもOK）
+
+    async function openUrl(url){
+      if (USE_LIFF && window.liff) {
+        try{
+          if (LIFF_ID) await liff.init({ liffId: LIFF_ID });
+          liff.openWindow({ url, external: true });
+          return;
+        }catch(e){}
+      }
+      window.location.href = url;
+    }
+
+    document.getElementById("btnGo").addEventListener("click", () => {
+      openUrl(COMPANY_URL);
+    });
+  </script>
+</body>
+</html>

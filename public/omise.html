@@ -6,111 +6,88 @@
   <title>磯屋について</title>
 
   <style>
-    :root{
-      --bg:#f6f4ef;
-      --card:#ffffff;
-      --text:#111827;
-      --muted:#6b7280;
-      --shadow:0 8px 24px rgba(0,0,0,.10);
-      --radius:18px;
-      --max:760px;
-      --accent:#0b3a53;
-      --line:rgba(17,24,39,.10);
-    }
-    *{ box-sizing:border-box; }
-    html,body{
-      margin:0; padding:0;
-      background:var(--bg); color:var(--text);
+    body{
+      margin:0;
+      background:#f6f4ef;
       font-family:system-ui,-apple-system,"Segoe UI","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
-      line-height:1.75;
+      color:#111827;
     }
 
+    /* 文章エリア */
     .wrap{
-      width:min(var(--max), calc(100vw - 24px));
-      margin: 14px auto 22px;
+      max-width:760px;
+      margin:16px auto 12px;
+      padding:0 12px;
     }
     .card{
-      background:var(--card);
-      border-radius:var(--radius);
-      box-shadow:var(--shadow);
-      padding:16px 16px 14px;
-      margin:12px 0;
-      border:1px solid rgba(17,24,39,.04);
+      background:#fff;
+      border-radius:18px;
+      box-shadow:0 8px 24px rgba(0,0,0,.10);
+      padding:16px;
     }
-
     .titleRow{
       display:flex;
-      align-items:flex-start;
       justify-content:space-between;
+      align-items:flex-start;
       gap:12px;
       margin-bottom:8px;
     }
-    .pageTitle{
+    h1{
       margin:0;
       font-size:20px;
       font-weight:900;
-      letter-spacing:.04em;
     }
     .tag{
-      display:inline-flex;
-      align-items:center;
+      font-size:12px;
       padding:6px 10px;
       border-radius:999px;
-      font-size:12px;
-      font-weight:700;
-      color:var(--accent);
-      background: rgba(11,58,83,.08);
-      border:1px solid rgba(11,58,83,.15);
+      background:#eef3f6;
+      border:1px solid #dbe4ea;
       white-space:nowrap;
     }
     p{ margin:0; font-size:14px; }
-    .muted{ color:var(--muted); font-size:12px; margin-top:8px; }
+    .note{
+      font-size:12px;
+      color:#6b7280;
+      margin-top:6px;
+    }
 
-    /* ✅ ここが本体：工程4枚を「切らずに」縦に並べる */
+    /* 画像4枚：ここが最重要 */
     .steps{
-      margin-top:14px;
-      border-radius:var(--radius);
-      overflow:hidden;
-      box-shadow:var(--shadow);
-      border:1px solid rgba(17,24,39,.06);
-      background:#fff;
+      margin-top:12px;
     }
     .steps img{
-      width:100vw;      /* LINE内でも画面幅いっぱい */
-      max-width:100%;
-      height:auto;
       display:block;
+      width:100vw;     /* 画面幅いっぱい */
+      height:auto;     /* 絶対に切らない */
     }
-    /* 画像の区切り線（1枚ずつ見やすく） */
     .steps img + img{
-      border-top:1px solid rgba(17,24,39,.10);
+      margin-top:0;    /* 余白なしで連続 */
     }
 
     .footer{
       text-align:center;
       font-size:12px;
-      color:var(--muted);
-      margin:18px 0 18px;
+      color:#6b7280;
+      margin:16px 0 20px;
     }
   </style>
 </head>
 <body>
 
-  <main class="wrap">
-
-    <!-- ✅ 上は最小限（不要ならこの card を丸ごと消してOK） -->
-    <section class="card">
+  <!-- 文章 -->
+  <div class="wrap">
+    <div class="card">
       <div class="titleRow">
-        <h1 class="pageTitle">磯屋について</h1>
+        <h1>磯屋について</h1>
         <div class="tag">見るだけOK</div>
       </div>
       <p>素材の味を大切に、手造りで焼き上げる えびせんべい。</p>
-      <div class="muted">※ 下の画像はスクロールして見るだけでOKです。</div>
-    </section>
+      <div class="note">※ 下の画像はスクロールして見るだけでOKです。</div>
+    </div>
+  </div>
 
-  </main>
-
-  <!-- ✅ 工程4枚：ここが「あなたが言っていた4枚」 -->
+  <!-- 工程4枚（切れない・縮まない） -->
   <section class="steps">
     <img src="https://line-render-app-1.onrender.com/uploads/omise_1_zairyo.png" alt="① 材料">
     <img src="https://line-render-app-1.onrender.com/uploads/omise_2_yaki.png" alt="② 焼き">

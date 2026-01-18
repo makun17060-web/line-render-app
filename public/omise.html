@@ -6,96 +6,130 @@
   <title>磯屋について</title>
 
   <style>
+    /* isoya-shop.com/smartphone/ 風：白ベース＋薄いグレー背景、シンプル枠 */
+    :root{
+      --bg:#f6f4ef;
+      --page:#ffffff;
+      --text:#111827;
+      --muted:#6b7280;
+      --line:rgba(17,24,39,.12);
+      --accent:#0b3a53;
+      --max:760px;
+    }
+    *{ box-sizing:border-box; }
+    html,body{ margin:0; padding:0; }
     body{
-      margin:0;
-      background:#f6f4ef;
+      background:var(--bg);
+      color:var(--text);
       font-family:system-ui,-apple-system,"Segoe UI","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
-      color:#111827;
+      line-height:1.75;
     }
 
-    /* 文章エリア */
-    .wrap{
-      max-width:760px;
-      margin:16px auto 12px;
-      padding:0 12px;
+    /* 上部：スマホサイト風のシンプルな見出し */
+    header{
+      background:var(--page);
+      border-bottom:1px solid var(--line);
     }
-    .card{
-      background:#fff;
-      border-radius:18px;
-      box-shadow:0 8px 24px rgba(0,0,0,.10);
-      padding:16px;
-    }
-    .titleRow{
+    .headInner{
+      max-width:var(--max);
+      margin:0 auto;
+      padding:14px 12px;
       display:flex;
+      align-items:center;
       justify-content:space-between;
-      align-items:flex-start;
-      gap:12px;
-      margin-bottom:8px;
+      gap:10px;
     }
-    h1{
+    .headTitle{
       margin:0;
-      font-size:20px;
-      font-weight:900;
+      font-size:18px;
+      font-weight:800;
+      letter-spacing:.04em;
     }
-    .tag{
+    .badge{
       font-size:12px;
       padding:6px 10px;
       border-radius:999px;
-      background:#eef3f6;
-      border:1px solid #dbe4ea;
+      color:var(--accent);
+      background: rgba(11,58,83,.08);
+      border:1px solid rgba(11,58,83,.18);
       white-space:nowrap;
     }
-    p{ margin:0; font-size:14px; }
+
+    /* 本文枠（説明は最小） */
+    .container{
+      max-width:var(--max);
+      margin:0 auto;
+      padding:12px;
+    }
+    .noteBox{
+      background:var(--page);
+      border:1px solid rgba(17,24,39,.08);
+      border-radius:14px;
+      padding:14px 14px 12px;
+    }
+    .lead{
+      margin:0;
+      font-size:14px;
+    }
     .note{
+      margin:6px 0 0;
       font-size:12px;
-      color:#6b7280;
-      margin-top:6px;
+      color:var(--muted);
     }
 
-    /* 画像4枚：ここが最重要 */
+    /* ✅ 工程画像：切らない・縮まない・途中からにならない */
     .steps{
       margin-top:12px;
-    }
-    .steps img{
-      display:block;
-      width:100vw;     /* 画面幅いっぱい */
-      height:auto;     /* 絶対に切らない */
-    }
-    .steps img + img{
-      margin-top:0;    /* 余白なしで連続 */
+      background:var(--page);
+      border-top:1px solid var(--line);
+      border-bottom:1px solid var(--line);
     }
 
-    .footer{
+    /* 重要：100vwを使わない（PCで横スクロール/欠けの原因になりやすい） */
+    .steps img{
+      width:100%;
+      height:auto;
+      display:block;
+    }
+
+    /* 1枚ごとの区切り（見やすい） */
+    .steps img + img{
+      border-top:1px solid var(--line);
+    }
+
+    footer{
       text-align:center;
       font-size:12px;
-      color:#6b7280;
-      margin:16px 0 20px;
+      color:var(--muted);
+      padding:16px 0 18px;
     }
   </style>
 </head>
 <body>
 
-  <!-- 文章 -->
-  <div class="wrap">
-    <div class="card">
-      <div class="titleRow">
-        <h1>磯屋について</h1>
-        <div class="tag">見るだけOK</div>
-      </div>
-      <p>素材の味を大切に、手造りで焼き上げる えびせんべい。</p>
-      <div class="note">※ 下の画像はスクロールして見るだけでOKです。</div>
+  <header>
+    <div class="headInner">
+      <h1 class="headTitle">磯屋について</h1>
+      <div class="badge">見るだけOK</div>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="noteBox">
+      <p class="lead">素材の味を大切に、手造りで焼き上げる えびせんべい。</p>
+      <p class="note">※ 下の画像はスクロールして見るだけでOKです。</p>
     </div>
   </div>
 
-  <!-- 工程4枚（切れない・縮まない） -->
-  <section class="steps">
+  <!-- ✅ 工程4枚（縦に並べるだけ） -->
+  <section class="steps" aria-label="磯屋のえびせんべいができるまで">
     <img src="https://line-render-app-1.onrender.com/uploads/omise_1_zairyo.png" alt="① 材料">
     <img src="https://line-render-app-1.onrender.com/uploads/omise_2_yaki.png" alt="② 焼き">
     <img src="https://line-render-app-1.onrender.com/uploads/omise_3_kansei.png" alt="③ 完成">
     <img src="https://line-render-app-1.onrender.com/uploads/omise_4_haisou.png" alt="④ 配送">
   </section>
 
-  <div class="footer">© 磯屋</div>
+  <footer>© 磯屋</footer>
 
 </body>
 </html>

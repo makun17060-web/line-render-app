@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -x
+
 
 echo "[omise_10d] start: $(date -Is)"
 

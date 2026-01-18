@@ -12,7 +12,7 @@
       --text:#111827;
       --muted:#6b7280;
       --line:rgba(17,24,39,.12);
-      --accent:#9b3b2e; /* 朱っぽい */
+      --accent:#9b3b2e;
       --max:820px;
       --shadow:0 10px 28px rgba(0,0,0,.10);
       --radius:16px;
@@ -65,7 +65,6 @@
       margin:14px 0;
     }
 
-    /* 画像：スマホ幅いっぱいで表示 */
     .step img{
       width:100%;
       height:auto;
@@ -92,7 +91,6 @@
       background:rgba(155,59,46,.12);
       color:var(--accent);
       font-weight:900;
-      flex:0 0 auto;
     }
     .stepTitle{
       margin:0;
@@ -103,14 +101,36 @@
     .stepText{
       margin:0;
       font-size:14px;
-      color:var(--text);
     }
 
     .note{
-      margin:10px 2px 0;
+      margin:12px 2px 0;
       font-size:12px;
       color:var(--muted);
       text-align:center;
+    }
+
+    /* ===== ボタン ===== */
+    .ctaWrap{
+      margin:22px 0 10px;
+      text-align:center;
+    }
+    .ctaBtn{
+      display:inline-block;
+      min-width:220px;
+      padding:14px 18px;
+      border-radius:999px;
+      background:var(--accent);
+      color:#fff;
+      text-decoration:none;
+      font-size:15px;
+      font-weight:900;
+      box-shadow:0 6px 18px rgba(0,0,0,.18);
+    }
+    .ctaSub{
+      margin-top:8px;
+      font-size:12px;
+      color:var(--muted);
     }
 
     footer{
@@ -192,6 +212,13 @@
         </p>
       </div>
     </section>
+
+    <!-- ★ ボタン -->
+    <div class="ctaWrap">
+      <!-- ▼ URLはここを差し替え -->
+      <a href="/products.html" class="ctaBtn">商品を見る</a>
+      <div class="ctaSub">※ 見るだけでも大丈夫です</div>
+    </div>
 
     <div class="note">※ 画像が表示されない場合は、uploads のファイル名が一致しているか確認してください。</div>
 

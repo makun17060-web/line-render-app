@@ -25,31 +25,16 @@
       line-height:1.75;
     }
 
-    /* ✅ ヒーロー：PCでデカすぎない高さに。スマホは気持ち高めでもOK */
-    .hero{
-      width:100vw;
-      overflow:hidden;
-      background:#ddd;
-      height: min(38vh, 300px); /* ← ここ重要（寄りすぎ対策） */
-    }
-    @media (max-width: 480px){
-      .hero{ height: min(42vh, 320px); }
-    }
-
-    /* ✅ 画像は “拡大しない”。寄り写真なので scale は逆効果 */
+    /* ✅ 画像は「切らずにそのまま表示」 */
     .hero img{
-      width:100%;
-      height:100%;
-      object-fit:cover;
-      object-position:center; /* 必要なら 50% 35% などに調整可 */
+      width:100vw;
+      height:auto;
       display:block;
-      transform:none;         /* ← scale削除 */
     }
 
-    /* ✅ 被せ量を弱めて自然に（-22px → -10px） */
     .wrap{
       width:min(var(--max), calc(100vw - 24px));
-      margin: -10px auto 28px;
+      margin: 12px auto 28px;
     }
 
     .card{
@@ -77,7 +62,6 @@
     .tag{
       display:inline-flex;
       align-items:center;
-      gap:6px;
       padding:6px 10px;
       border-radius:999px;
       font-size:12px;
@@ -88,40 +72,11 @@
       white-space:nowrap;
     }
 
-    h2{
-      margin:0 0 6px;
-      font-size:16px;
-      font-weight:900;
-    }
-    p{
-      margin:0;
-      font-size:14px;
-      color:var(--text);
-    }
-    .muted{
-      color:var(--muted);
-      font-size:12px;
-      margin-top:8px;
-    }
-    .divider{
-      height:1px;
-      background:var(--line);
-      margin:12px 0;
-    }
+    h2{ margin:0 0 6px; font-size:16px; font-weight:900; }
+    p{ margin:0; font-size:14px; }
+    .muted{ color:var(--muted); font-size:12px; margin-top:8px; }
 
-    /* ✅ 工程4枚（必要なら ON） */
-    .imgOnly{
-      margin-top:10px;
-      border-radius:var(--radius);
-      overflow:hidden;
-      border:1px solid rgba(17,24,39,.06);
-    }
-    .imgOnly img{
-      width:100vw;      /* LINE内でも最大幅 */
-      max-width:100%;
-      height:auto;
-      display:block;
-    }
+    .divider{ height:1px; background:var(--line); margin:12px 0; }
 
     .footer{
       text-align:center;
@@ -129,30 +84,16 @@
       color:var(--muted);
       margin:22px 0 18px;
     }
-
-    /* 任意：控えめ導線 */
-    .linkRow{ display:flex; justify-content:center; margin-top:10px; }
-    .linkBtn{
-      display:inline-block;
-      padding:10px 14px;
-      border-radius:999px;
-      background:var(--accent);
-      color:#fff;
-      text-decoration:none;
-      font-size:13px;
-      font-weight:800;
-    }
   </style>
 </head>
 <body>
 
-  <!-- ✅ メイン画像：開けない事故が少ない JPEG 推奨 -->
+  <!-- ✅ 切らない・盛らない・そのまま -->
   <section class="hero">
     <img src="https://line-render-app-1.onrender.com/uploads/pc_lp1_7.jpg" alt="磯屋のえびせんべい">
   </section>
 
   <main class="wrap">
-
     <section class="card">
       <div class="titleRow">
         <h1 class="pageTitle">磯屋について</h1>
@@ -178,29 +119,7 @@
         「素材」「焼き」「香り」「食感」——
         ひとつひとつを丁寧に仕上げて、できたてをお届けします。
       </p>
-
-      <!-- ✅ 工程4枚を表示するなら、下のコメントを外す -->
-      <!--
-      <div class="divider"></div>
-      <div class="imgOnly">
-        <img src="https://line-render-app-1.onrender.com/uploads/omise_1_zairyo.png" alt="材料">
-        <img src="https://line-render-app-1.onrender.com/uploads/omise_2_yaki.png" alt="焼き">
-        <img src="https://line-render-app-1.onrender.com/uploads/omise_3_kansei.png" alt="完成">
-        <img src="https://line-render-app-1.onrender.com/uploads/omise_4_haisou.png" alt="配送">
-      </div>
-      -->
     </section>
-
-    <!-- 任意：商品導線（不要なら丸ごと削除OK） -->
-    <!--
-    <section class="card">
-      <h2>商品を見る</h2>
-      <p>気になる方だけ、こちらからご覧いただけます。</p>
-      <div class="linkRow">
-        <a class="linkBtn" href="/products.html">商品一覧へ →</a>
-      </div>
-    </section>
-    -->
 
     <div class="footer">© 磯屋</div>
   </main>

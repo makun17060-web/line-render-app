@@ -35,24 +35,9 @@
             "margin": "md",
             "spacing": "sm",
             "contents": [
-              {
-                "type": "text",
-                "text": "✔ 無理な購入案内はありません",
-                "size": "sm",
-                "wrap": true
-              },
-              {
-                "type": "text",
-                "text": "✔ 商品を眺めるだけでもOK",
-                "size": "sm",
-                "wrap": true
-              },
-              {
-                "type": "text",
-                "text": "✔ 気になったら、そのまま注文もできます",
-                "size": "sm",
-                "wrap": true
-              }
+              { "type": "text", "text": "✔ 無理な購入案内はありません", "size": "sm", "wrap": true },
+              { "type": "text", "text": "✔ 商品を眺めるだけでもOK", "size": "sm", "wrap": true },
+              { "type": "text", "text": "✔ 気になったら、そのまま注文もできます", "size": "sm", "wrap": true }
             ]
           }
         ]
@@ -68,7 +53,7 @@
             "action": {
               "type": "uri",
               "label": "ちょっと覗いてみる",
-              "uri": "https://line-render-app-1.onrender.com/public/omise.html"
+              "uri": "https://liff.line.me/2008406620-t04YThmO"
             }
           },
           {

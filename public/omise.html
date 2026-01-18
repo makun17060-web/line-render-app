@@ -25,29 +25,31 @@
       line-height:1.75;
     }
 
-    /* ✅ ヒーローは「画像だけ」にして、重さをなくす */
+    /* ✅ ヒーロー：PCでデカすぎない高さに。スマホは気持ち高めでもOK */
     .hero{
       width:100vw;
       overflow:hidden;
       background:#ddd;
-      /* PCでもデカすぎない高さに */
-      height: min(46vh, 360px);
+      height: min(38vh, 300px); /* ← ここ重要（寄りすぎ対策） */
     }
     @media (max-width: 480px){
       .hero{ height: min(42vh, 320px); }
     }
+
+    /* ✅ 画像は “拡大しない”。寄り写真なので scale は逆効果 */
     .hero img{
       width:100%;
       height:100%;
       object-fit:cover;
+      object-position:center; /* 必要なら 50% 35% などに調整可 */
       display:block;
-      /* ほんの少しだけ寄って“面”を作る（不要なら 1.0 に） */
-      transform: scale(1.02);
+      transform:none;         /* ← scale削除 */
     }
 
+    /* ✅ 被せ量を弱めて自然に（-22px → -10px） */
     .wrap{
       width:min(var(--max), calc(100vw - 24px));
-      margin: -22px auto 28px; /* ✅ ヒーローに少し被せて“締まる” */
+      margin: -10px auto 28px;
     }
 
     .card{
@@ -144,23 +146,20 @@
 </head>
 <body>
 
-  <!-- ✅ メイン画像：まずは「JPEG推奨」(開けない事故が最少) -->
+  <!-- ✅ メイン画像：開けない事故が少ない JPEG 推奨 -->
   <section class="hero">
     <img src="https://line-render-app-1.onrender.com/uploads/pc_lp1_7.jpg" alt="磯屋のえびせんべい">
   </section>
 
   <main class="wrap">
 
-    <!-- ✅ タイトルはカード側に集約（ヒーローに文字を乗せない） -->
     <section class="card">
       <div class="titleRow">
         <h1 class="pageTitle">磯屋について</h1>
         <div class="tag">見るだけOK</div>
       </div>
 
-      <p>
-        素材の味を大切に、手造りで焼き上げる えびせんべい。
-      </p>
+      <p>素材の味を大切に、手造りで焼き上げる えびせんべい。</p>
 
       <div class="divider"></div>
 
@@ -180,7 +179,7 @@
         ひとつひとつを丁寧に仕上げて、できたてをお届けします。
       </p>
 
-      <!-- ✅ 工程4枚を“使う”なら、下のコメントを外す -->
+      <!-- ✅ 工程4枚を表示するなら、下のコメントを外す -->
       <!--
       <div class="divider"></div>
       <div class="imgOnly">

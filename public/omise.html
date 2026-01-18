@@ -3,18 +3,19 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>磯屋について</title>
+  <title>磯屋のえびせんべいができるまで</title>
 
   <style>
-    /* isoya-shop.com/smartphone/ 風：白ベース＋薄いグレー背景、シンプル枠 */
     :root{
       --bg:#f6f4ef;
-      --page:#ffffff;
+      --card:#ffffff;
       --text:#111827;
       --muted:#6b7280;
       --line:rgba(17,24,39,.12);
-      --accent:#0b3a53;
-      --max:760px;
+      --accent:#9b3b2e; /* 朱っぽい */
+      --max:820px;
+      --shadow:0 10px 28px rgba(0,0,0,.10);
+      --radius:16px;
     }
     *{ box-sizing:border-box; }
     html,body{ margin:0; padding:0; }
@@ -22,86 +23,101 @@
       background:var(--bg);
       color:var(--text);
       font-family:system-ui,-apple-system,"Segoe UI","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
-      line-height:1.75;
+      line-height:1.8;
     }
 
-    /* 上部：スマホサイト風のシンプルな見出し */
     header{
-      background:var(--page);
+      background:var(--card);
       border-bottom:1px solid var(--line);
     }
     .headInner{
       max-width:var(--max);
       margin:0 auto;
-      padding:14px 12px;
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:10px;
+      padding:16px 14px;
+      text-align:center;
     }
-    .headTitle{
+    .title{
       margin:0;
       font-size:18px;
-      font-weight:800;
-      letter-spacing:.04em;
+      font-weight:900;
+      letter-spacing:.06em;
     }
-    .badge{
-      font-size:12px;
-      padding:6px 10px;
+    .subline{
+      width:72px;
+      height:3px;
+      margin:10px auto 0;
+      background:rgba(17,24,39,.18);
       border-radius:999px;
-      color:var(--accent);
-      background: rgba(11,58,83,.08);
-      border:1px solid rgba(11,58,83,.18);
-      white-space:nowrap;
     }
 
-    /* 本文枠（説明は最小） */
-    .container{
+    .wrap{
       max-width:var(--max);
       margin:0 auto;
-      padding:12px;
+      padding:14px;
     }
-    .noteBox{
-      background:var(--page);
+
+    .step{
+      background:var(--card);
       border:1px solid rgba(17,24,39,.08);
-      border-radius:14px;
-      padding:14px 14px 12px;
-    }
-    .lead{
-      margin:0;
-      font-size:14px;
-    }
-    .note{
-      margin:6px 0 0;
-      font-size:12px;
-      color:var(--muted);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      overflow:hidden;
+      margin:14px 0;
     }
 
-    /* ✅ 工程画像：切らない・縮まない・途中からにならない */
-    .steps{
-      margin-top:12px;
-      background:var(--page);
-      border-top:1px solid var(--line);
-      border-bottom:1px solid var(--line);
-    }
-
-    /* 重要：100vwを使わない（PCで横スクロール/欠けの原因になりやすい） */
-    .steps img{
+    /* 画像：スマホ幅いっぱいで表示 */
+    .step img{
       width:100%;
       height:auto;
       display:block;
+      background:#ddd;
     }
 
-    /* 1枚ごとの区切り（見やすい） */
-    .steps img + img{
-      border-top:1px solid var(--line);
+    .stepBody{
+      padding:14px 14px 16px;
+    }
+
+    .stepHead{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      margin-bottom:8px;
+    }
+    .badge{
+      width:34px;
+      height:34px;
+      display:grid;
+      place-items:center;
+      border-radius:10px;
+      background:rgba(155,59,46,.12);
+      color:var(--accent);
+      font-weight:900;
+      flex:0 0 auto;
+    }
+    .stepTitle{
+      margin:0;
+      font-size:16px;
+      font-weight:900;
+      letter-spacing:.04em;
+    }
+    .stepText{
+      margin:0;
+      font-size:14px;
+      color:var(--text);
+    }
+
+    .note{
+      margin:10px 2px 0;
+      font-size:12px;
+      color:var(--muted);
+      text-align:center;
     }
 
     footer{
       text-align:center;
       font-size:12px;
       color:var(--muted);
-      padding:16px 0 18px;
+      padding:18px 0 22px;
     }
   </style>
 </head>
@@ -109,25 +125,77 @@
 
   <header>
     <div class="headInner">
-      <h1 class="headTitle">磯屋について</h1>
-      <div class="badge">見るだけOK</div>
+      <h1 class="title">磯屋のえびせんべいができるまで</h1>
+      <div class="subline"></div>
     </div>
   </header>
 
-  <div class="container">
-    <div class="noteBox">
-      <p class="lead">素材の味を大切に、手造りで焼き上げる えびせんべい。</p>
-      <p class="note">※ 下の画像はスクロールして見るだけでOKです。</p>
-    </div>
-  </div>
+  <main class="wrap">
 
-  <!-- ✅ 工程4枚（縦に並べるだけ） -->
-  <section class="steps" aria-label="磯屋のえびせんべいができるまで">
-    <img src="https://line-render-app-1.onrender.com/uploads/omise_1_zairyo.png" alt="① 材料">
-    <img src="https://line-render-app-1.onrender.com/uploads/omise_2_yaki.png" alt="② 焼き">
-    <img src="https://line-render-app-1.onrender.com/uploads/omise_3_kansei.png" alt="③ 完成">
-    <img src="https://line-render-app-1.onrender.com/uploads/omise_4_haisou.png" alt="④ 配送">
-  </section>
+    <!-- ① 材料 -->
+    <section class="step">
+      <img src="https://line-render-app-1.onrender.com/uploads/omise_1_zairyo.png" alt="材料">
+      <div class="stepBody">
+        <div class="stepHead">
+          <div class="badge">1</div>
+          <h2 class="stepTitle">材料</h2>
+        </div>
+        <p class="stepText">
+          愛知県知多郡で獲れた、その年の赤えびをふんだんに使用して作っております。
+          来年度には来年度の赤えびを使用し、赤えびの鮮度にこだわって製造しています。
+        </p>
+      </div>
+    </section>
+
+    <!-- ② 焼き -->
+    <section class="step">
+      <img src="https://line-render-app-1.onrender.com/uploads/omise_2_yaki.png" alt="焼き">
+      <div class="stepBody">
+        <div class="stepHead">
+          <div class="badge">2</div>
+          <h2 class="stepTitle">焼き</h2>
+        </div>
+        <p class="stepText">
+          製品が出来上がるまでに、2回焼きの工程があります。
+          風味もよく、長期保存（未開封で4か月程度）でも味の劣化がほとんどなく、
+          来客用のお茶菓子の常備品として最適です。
+        </p>
+      </div>
+    </section>
+
+    <!-- ③ 完成 -->
+    <section class="step">
+      <img src="https://line-render-app-1.onrender.com/uploads/omise_3_kansei.png" alt="完成">
+      <div class="stepBody">
+        <div class="stepHead">
+          <div class="badge">3</div>
+          <h2 class="stepTitle">完成</h2>
+        </div>
+        <p class="stepText">
+          ノンフライ製法（油を使わず）で製造していますので、
+          おじいちゃん・おばあちゃんからお孫さんまで、
+          幅広い年齢層の方々に召し上がっていただけます。
+        </p>
+      </div>
+    </section>
+
+    <!-- ④ 配送 -->
+    <section class="step">
+      <img src="https://line-render-app-1.onrender.com/uploads/omise_4_haisou.png" alt="配送">
+      <div class="stepBody">
+        <div class="stepHead">
+          <div class="badge">4</div>
+          <h2 class="stepTitle">配送</h2>
+        </div>
+        <p class="stepText">
+          磯屋の手造りえびせんべいを、工場出来たての状態で配送します。
+        </p>
+      </div>
+    </section>
+
+    <div class="note">※ 画像が表示されない場合は、uploads のファイル名が一致しているか確認してください。</div>
+
+  </main>
 
   <footer>© 磯屋</footer>
 

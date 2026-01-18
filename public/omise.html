@@ -25,18 +25,10 @@
       line-height:1.75;
     }
 
-    /* ✅ 画像は「切らずにそのまま表示」 */
-    .hero img{
-      width:100vw;
-      height:auto;
-      display:block;
-    }
-
     .wrap{
       width:min(var(--max), calc(100vw - 24px));
-      margin: 12px auto 28px;
+      margin: 14px auto 22px;
     }
-
     .card{
       background:var(--card);
       border-radius:var(--radius);
@@ -71,58 +63,62 @@
       border:1px solid rgba(11,58,83,.15);
       white-space:nowrap;
     }
-
-    h2{ margin:0 0 6px; font-size:16px; font-weight:900; }
     p{ margin:0; font-size:14px; }
     .muted{ color:var(--muted); font-size:12px; margin-top:8px; }
 
-    .divider{ height:1px; background:var(--line); margin:12px 0; }
+    /* ✅ ここが本体：工程4枚を「切らずに」縦に並べる */
+    .steps{
+      margin-top:14px;
+      border-radius:var(--radius);
+      overflow:hidden;
+      box-shadow:var(--shadow);
+      border:1px solid rgba(17,24,39,.06);
+      background:#fff;
+    }
+    .steps img{
+      width:100vw;      /* LINE内でも画面幅いっぱい */
+      max-width:100%;
+      height:auto;
+      display:block;
+    }
+    /* 画像の区切り線（1枚ずつ見やすく） */
+    .steps img + img{
+      border-top:1px solid rgba(17,24,39,.10);
+    }
 
     .footer{
       text-align:center;
       font-size:12px;
       color:var(--muted);
-      margin:22px 0 18px;
+      margin:18px 0 18px;
     }
   </style>
 </head>
 <body>
 
-  <!-- ✅ 切らない・盛らない・そのまま -->
-  <section class="hero">
-    <img src="https://line-render-app-1.onrender.com/uploads/pc_lp1_7.jpg" alt="磯屋のえびせんべい">
-  </section>
-
   <main class="wrap">
+
+    <!-- ✅ 上は最小限（不要ならこの card を丸ごと消してOK） -->
     <section class="card">
       <div class="titleRow">
         <h1 class="pageTitle">磯屋について</h1>
         <div class="tag">見るだけOK</div>
       </div>
-
       <p>素材の味を大切に、手造りで焼き上げる えびせんべい。</p>
-
-      <div class="divider"></div>
-
-      <h2>手造りえびせんべい</h2>
-      <p>
-        磯屋は、えびの旨みをそのまま味わっていただくため、
-        余計なことはせず、昔ながらの製法を大切にしています。
-      </p>
-
-      <div class="muted">※ 見るだけで大丈夫です。気軽に覗いてください。</div>
+      <div class="muted">※ 下の画像はスクロールして見るだけでOKです。</div>
     </section>
 
-    <section class="card">
-      <h2>大切にしていること</h2>
-      <p>
-        「素材」「焼き」「香り」「食感」——
-        ひとつひとつを丁寧に仕上げて、できたてをお届けします。
-      </p>
-    </section>
-
-    <div class="footer">© 磯屋</div>
   </main>
+
+  <!-- ✅ 工程4枚：ここが「あなたが言っていた4枚」 -->
+  <section class="steps">
+    <img src="https://line-render-app-1.onrender.com/uploads/omise_1_zairyo.png" alt="① 材料">
+    <img src="https://line-render-app-1.onrender.com/uploads/omise_2_yaki.png" alt="② 焼き">
+    <img src="https://line-render-app-1.onrender.com/uploads/omise_3_kansei.png" alt="③ 完成">
+    <img src="https://line-render-app-1.onrender.com/uploads/omise_4_haisou.png" alt="④ 配送">
+  </section>
+
+  <div class="footer">© 磯屋</div>
 
 </body>
 </html>

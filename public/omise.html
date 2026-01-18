@@ -2,36 +2,181 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1, viewport-fit=cover"
-  />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>磯屋について</title>
 
   <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      background: #f6f4ef;
+    :root{
+      --bg:#f6f4ef;
+      --card:#ffffff;
+      --text:#111827;
+      --muted:#6b7280;
+      --shadow:0 8px 24px rgba(0,0,0,.10);
+      --radius:18px;
+      --max:760px;
+    }
+    *{ box-sizing:border-box; }
+    html,body{ margin:0; padding:0; background:var(--bg); color:var(--text);
+      font-family:system-ui,-apple-system,"Segoe UI","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
+      line-height:1.75;
     }
 
-    img {
-      display: block;
-      width: 100vw;      /* ★ここが決定打 */
-      max-width: 100%;
-      height: auto;
-      margin: 0;
-      padding: 0;
+    /* 画面いっぱいのヒーロー（画像） */
+    .hero{
+      position:relative;
+      width:100vw;
+      height: min(72vh, 560px);
+      overflow:hidden;
+      background:#ddd;
+    }
+    .hero img{
+      width:100%;
+      height:100%;
+      object-fit:cover;
+      display:block;
+      transform: scale(1.02);
+    }
+    .hero::after{
+      content:"";
+      position:absolute; inset:0;
+      background: linear-gradient(to bottom, rgba(0,0,0,.35), rgba(0,0,0,.05) 45%, rgba(0,0,0,.55));
+      pointer-events:none;
+    }
+
+    .heroText{
+      position:absolute;
+      left:50%;
+      bottom:18px;
+      transform:translateX(-50%);
+      width:min(var(--max), calc(100vw - 24px));
+      color:#fff;
+      padding:14px 14px 16px;
+      border-radius:var(--radius);
+      background: rgba(0,0,0,.30);
+      backdrop-filter: blur(6px);
+    }
+    .heroTitle{
+      margin:0;
+      font-size:20px;
+      letter-spacing:.04em;
+      font-weight:800;
+    }
+    .heroLead{
+      margin:6px 0 0;
+      font-size:13px;
+      opacity:.95;
+    }
+
+    .wrap{
+      width:min(var(--max), calc(100vw - 24px));
+      margin: -16px auto 26px;
+    }
+
+    .card{
+      background:var(--card);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      padding:16px 16px 14px;
+      margin:12px 0;
+    }
+    .card h2{
+      margin:0 0 6px;
+      font-size:16px;
+      font-weight:800;
+    }
+    .card p{
+      margin:0;
+      font-size:14px;
+      color:var(--text);
+    }
+    .muted{ color:var(--muted); font-size:12px; margin-top:6px; }
+
+    /* 画像だけ縦並び（工程画像を後で追加できる枠） */
+    .imgOnly img{
+      width:100vw;
+      max-width:100%;
+      height:auto;
+      display:block;
+    }
+
+    .footer{
+      text-align:center;
+      font-size:12px;
+      color:var(--muted);
+      margin:22px 0 18px;
+    }
+
+    /* 小さなCTA（押し売りしない） */
+    .linkRow{
+      display:flex;
+      justify-content:center;
+      margin-top:10px;
+    }
+    .linkBtn{
+      display:inline-block;
+      padding:10px 14px;
+      border-radius:999px;
+      background:#0b3a53;
+      color:#fff;
+      text-decoration:none;
+      font-size:13px;
+      font-weight:700;
     }
   </style>
 </head>
 <body>
 
-  <img src="https://line-render-app-1.onrender.com/uploads/omise_1_zairyo.png" alt="材料">
-  <img src="https://line-render-app-1.onrender.com/uploads/omise_2_yaki.png" alt="焼き">
-  <img src="https://line-render-app-1.onrender.com/uploads/omise_3_kansei.png" alt="完成">
-  <img src="https://line-render-app-1.onrender.com/uploads/omise_4_haisou.png" alt="配送">
+  <!-- ✅ メイン画像（差し替え：/uploads/あなたのファイル名） -->
+  <section class="hero">
+    <img src="https://line-render-app-1.onrender.com/uploads/pc_lp1_8.webp" alt="磯屋のえびせんべい">
+    <div class="heroText">
+      <h1 class="heroTitle">磯屋について</h1>
+      <p class="heroLead">素材の味を大切に、手造りで焼き上げる えびせんべい。</p>
+    </div>
+  </section>
+
+  <main class="wrap">
+
+    <section class="card">
+      <h2>手造りえびせんべい</h2>
+      <p>
+        磯屋は、えびの旨みをそのまま味わっていただくため、
+        余計なことはせず、昔ながらの製法を大切にしています。
+      </p>
+      <div class="muted">※ 見るだけで大丈夫です。気軽に覗いてください。</div>
+    </section>
+
+    <section class="card">
+      <h2>大切にしていること</h2>
+      <p>
+        「素材」「焼き」「香り」「食感」——
+        ひとつひとつを丁寧に仕上げて、できたてをお届けします。
+      </p>
+    </section>
+
+    <!-- 任意：ここに“工程4枚画像”を追加してもOK（テキスト無し運用にも対応） -->
+    <!--
+    <section class="imgOnly">
+      <img src="https://line-render-app-1.onrender.com/uploads/akasha-ebi.png" alt="材料">
+      <img src="https://line-render-app-1.onrender.com/uploads/pc_lp1_7.jpg" alt="焼き">
+      <img src="https://line-render-app-1.onrender.com/uploads/pc_lp1_8.webp" alt="完成">
+      <img src="https://line-render-app-1.onrender.com/uploads/omise_hero.jpg" alt="配送">
+    </section>
+    -->
+
+    <!-- 任意：商品ページへの控えめ導線（不要なら丸ごと削除OK） -->
+    <!--
+    <section class="card">
+      <h2>商品を見る</h2>
+      <p>気になる方だけ、こちらからご覧いただけます。</p>
+      <div class="linkRow">
+        <a class="linkBtn" href="/products.html">商品一覧へ →</a>
+      </div>
+    </section>
+    -->
+
+    <div class="footer">© 磯屋</div>
+  </main>
 
 </body>
 </html>

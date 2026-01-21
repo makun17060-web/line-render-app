@@ -1629,14 +1629,17 @@ async function notifyOrderCompleted({
 
 async function notifyCardPending({ orderId, userId, items, shippingFee, total, size }) {
   const itemLines = buildItemLines(items || []);
-  const msgForUser =
-    `ご注文の仮受付をしました。\n` +
-    `【注文ID】${orderId}\n` +
-    `【支払い】クレジット（決済待ち）\n\n` +
-    `【内容】\n${itemLines}\n\n` +
-    `【送料】${yen(shippingFee)}${size ? `（${size}）` : ""}\n` +
-    `【合計（予定）】${yen(total)}\n\n` +
-    `このあと決済が完了すると、確定メッセージをお送りします。`;
+ const msgForUser =
+  `決済手続きの途中です（まだ確定していません）\n\n` +
+  `【注文ID】${orderId}\n` +
+  `【お支払い】クレジット（決済待ち）\n\n` +
+  `【ご注文内容】\n${itemLines}\n\n` +
+  `【送料】${yen(shippingFee)}${size ? `（${size}）` : ""}\n` +
+  `【合計（予定）】${yen(total)}\n\n` +
+  `このあとクレジット決済が完了すると、\n` +
+  `「注文確定」のメッセージをお送りします。\n\n` +
+  `※この時点では請求は発生していません。\n` +
+  `※決済を完了しなかった場合、この注文は自動的に無効になります。`;
 
   await pushTextSafe(userId, msgForUser);
 

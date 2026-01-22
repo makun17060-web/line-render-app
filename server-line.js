@@ -1002,8 +1002,11 @@ async function logLiffOpen(userId, source = null) {
       `INSERT INTO liff_open_logs (user_id, source) VALUES ($1, $2)`,
       [uid, source ? String(source) : null]
     );
-  } catch {}
+  } catch (e) {
+    logErr("logLiffOpen failed", uid, source, e?.message || e);
+  }
 }
+
 
 async function markUserOrdered(userId, orderId = null) {
   const uid = String(userId || "").trim();

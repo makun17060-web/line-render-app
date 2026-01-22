@@ -3208,263 +3208,337 @@ async function onFollow(ev) {
 
   try { await notifyAdminFriendAdded({ userId, displayName, day }); } catch {}
 
-  await lineClient.pushMessage(userId, {
-    type: "text",
+      type: "text",
     text:
       "友だち追加ありがとうございます！\n\n" +
-      "このLINEからご注文いただけます。\n\n" +
-      "下のメニューをタップしてご利用ください。"
+      "磯屋のえびせんべいは、ミニアプリからすぐご覧いただけます。\n" +
+      (LIFF_ID_ORDER
+        ? `\n▼商品を見る / 注文する\nhttps://liff.line.me/${LIFF_ID_ORDER}\n`
+        : (LIFF_BASE ? `\n▼商品を見る / 注文する\n${LIFF_BASE}/products.html\n` : "")
+      ) +
+      "\n※住所登録だけ先に済ませたい場合は「住所登録」と送ってください。"
   });
+
+  return;
 }
 
 async function onUnfollow(ev) {
   const userId = ev?.source?.userId || "";
+  if (!userId) return;
+
   const day = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
 
-  await pool.query(
-    `
-    INSERT INTO friend_logs (day, added_count, blocked_count)
-    VALUES ($1, 0, 1)
-    ON CONFLICT (day) DO UPDATE SET
-      blocked_count = friend_logs.blocked_count + 1,
-      updated_at = now()
-    `,
-    [day]
-  );
+  try {
+    await pool.query(
+      `
+      INSERT INTO friend_logs (day, added_count, blocked_count)
+      VALUES ($1, 0, 1)
+      ON CONFLICT (day) DO UPDATE SET
+        blocked_count = friend_logs.blocked_count + 1,
+        updated_at = now()
+      `,
+      [day]
+    );
+  } catch {}
 
-  if (userId) {
-    let displayName = null;
-    try {
-      const r = await pool.query(`SELECT display_name FROM users WHERE user_id=$1`, [userId]);
-      displayName = r.rows?.[0]?.display_name || null;
-    } catch {}
-    try { await notifyAdminFriendBlocked({ userId, displayName, day }); } catch {}
-  }
+  let displayName = null;
+  try {
+    const r = await pool.query(`SELECT display_name FROM users WHERE user_id=$1`, [userId]);
+    displayName = r.rows?.[0]?.display_name || null;
+  } catch {}
+
+  try { await notifyAdminFriendBlocked({ userId, displayName, day }); } catch {}
 }
 
-async function onPostback(ev) {
-  const userId = ev?.source?.userId || "";
-  const data = String(ev?.postback?.data || "");
-  const replyToken = ev?.replyToken;
+/* =========================
+ * Text message（キーワード / 直接注文 / 住所誘導）
+ * ========================= */
+function buildOrderEntryUrl(reqForFallback = null) {
+  if (LIFF_ID_ORDER) return `https://liff.line.me/${LIFF_ID_ORDER}`;
+  if (LIFF_BASE) return `${LIFF_BASE}/products.html`;
+  if (reqForFallback) return `${originFromReq(reqForFallback)}/products.html`;
+  return "";
+}
+function buildAddressEntryUrl() {
+  const id = (LIFF_ID_ADDRESS || LIFF_ID_ADD || LIFF_ID_DEFAULT || "").trim();
+  if (id) return `https://liff.line.me/${id}`;
+  if (LIFF_BASE) return `${LIFF_BASE}/address.html`;
+  return "";
+}
 
-  // ✅ 定期案内 postback: reorder:sub:30:ORDERID / reorder:unsub::ORDERID
-  if (data.startsWith("reorder:")) {
-    const parts = data.split(":");
-    const kind = parts[1] || "";
-    const daysStr = parts[2] || "";
-    const orderIdStr = parts[3] || "";
-    const orderId = mustInt(orderIdStr);
+function parseDirectOrderText(text) {
+  // 例:
+  // "久助 3"
+  // "久助×2"
+  // "kusuke-250 1"
+  const t = String(text || "").trim();
+  if (!t) return null;
 
-    if (!userId) return;
+  const m = t.match(/^(.+?)[\s　x×\*:-]+(\d{1,4})$/i);
+  if (!m) return null;
 
-    if (kind === "sub") {
-      const days = mustInt(daysStr);
-      if (![30, 45, 60].includes(days)) {
-        await replyTextSafe(replyToken, "設定に失敗しました（間隔が不正です）。");
-        return;
-      }
+  const key = m[1].trim();
+  const qty = Math.max(1, Math.floor(Number(m[2] || 0)));
+  if (!qty) return null;
 
-      try {
-        const intervalStr = `${days} days`;
+  return { key, qty };
+}
 
-        await pool.query(
-          `
-          INSERT INTO reorder_reminders
-            (user_id, cycle_days, next_remind_at, last_order_id, active, updated_at)
-          VALUES
-            ($1, $2, now() + $3::interval, $4, true, now())
-          ON CONFLICT (user_id)
-          DO UPDATE SET
-            cycle_days     = EXCLUDED.cycle_days,
-            next_remind_at = EXCLUDED.next_remind_at,
-            last_order_id  = COALESCE(EXCLUDED.last_order_id, reorder_reminders.last_order_id),
-            active         = true,
-            updated_at     = now()
-          `,
-          [userId, days, intervalStr, orderId]
-        );
+function findProductByKey(products, key) {
+  const k = String(key || "").trim().toLowerCase();
+  if (!k) return null;
 
-        await replyTextSafe(replyToken, `${days}日ごとのご案内を設定しました。\n（いつでも解除できます）`);
-      } catch (e) {
-        logErr("reorder subscribe failed", e?.message || e);
-        await replyTextSafe(replyToken, "設定に失敗しました。時間をおいてお試しください。");
-      }
-      return;
-    }
+  // id一致
+  let p = products.find(x => String(x.id || "").toLowerCase() === k);
+  if (p) return p;
 
-    if (kind === "unsub") {
-      try {
-        await pool.query(
-          `UPDATE reorder_reminders SET active=false, updated_at=now() WHERE user_id=$1`,
-          [userId]
-        );
+  // 部分一致（id）
+  p = products.find(x => String(x.id || "").toLowerCase().includes(k));
+  if (p) return p;
 
-        await replyTextSafe(replyToken, "次回のご案内を停止しました。");
-      } catch (e) {
-        logErr("reorder unsubscribe failed", e?.message || e);
-        await replyTextSafe(replyToken, "解除に失敗しました。時間をおいてお試しください。");
-      }
-      return;
-    }
+  // 名称の部分一致（日本語も）
+  p = products.find(x => String(x.name || "").toLowerCase().includes(k));
+  if (p) return p;
+
+  // 久助/あかしゃなど代表語
+  if (k.includes("久助") || k.includes("kusuke")) {
+    p = products.find(x => String(x.id || "").toLowerCase().includes("kusuke") || String(x.name || "").includes("久助"));
+    if (p) return p;
   }
+  if (k.includes("あかしゃ") || k.includes("akasha")) {
+    p = products.find(x => String(x.id || "").toLowerCase().includes("akasha") || String(x.name || "").includes("あかしゃ"));
+    if (p) return p;
+  }
+
+  return null;
 }
 
 async function onTextMessage(ev) {
   const userId = ev?.source?.userId || "";
-  const text = (ev.message?.text || "").trim();
+  const replyToken = ev?.replyToken || "";
+  const text = String(ev?.message?.text || "").trim();
+
   if (!userId || !text) return;
 
-  try { await touchUser(userId, "chat", null, "chat"); } catch {}
-
-  const sess = getSession(userId);
-  if (sess) {
-    await handleSessionInput(userId, text, ev);
-    return;
-  }
-
-  // ✅ 修正：direct はセッションに残さない（残すと次入力が拾えない）
-  if (text === KEYWORD_DIRECT) {
-    await replyDirectStart(ev.replyToken, ev);
-    return;
-  }
-
-  if (text.startsWith(KEYWORD_KUSUKE)) {
-    const m = text.match(/^久助\s*([0-9]+)?/);
-    const qty = m && m[1] ? Number(m[1]) : null;
-
-    setSession(userId, { kind: "kusuke", step: "ask_qty", presetQty: qty || null });
-    await replyKusukeStart(ev.replyToken, userId, qty);
-    return;
-  }
-}
-
-async function replyDirectStart(replyToken, reqLike) {
-  const orderLiffId   = (LIFF_ID_ORDER || LIFF_ID_DEFAULT || "").trim();
-  const addressLiffId = (LIFF_ID_ADDRESS || LIFF_ID_ADD || LIFF_ID_DEFAULT || "").trim();
-
-  const urlProducts = orderLiffId ? `https://liff.line.me/${orderLiffId}` : liffUrl("/products.html", reqLike || null);
-  const urlAddress  = addressLiffId ? `https://liff.line.me/${addressLiffId}` : liffUrl("/address.html", reqLike || null);
-
-  await lineClient.replyMessage(replyToken, {
-    type: "text",
-    text: `ミニアプリで注文できます：\n${urlProducts}\n\n住所登録：\n${urlAddress}`
-  });
-}
-
-async function replyKusukeStart(replyToken, userId, qtyPreset) {
-  const addr = await getAddressByUserId(userId);
-  if (!addr) {
-    const url = liffUrl("/cod-register.html");
-    await lineClient.replyMessage(replyToken, {
-      type: "text",
-      text:
-        "久助の注文を始めます。\n\n" +
-        "先に住所登録が必要です。\n" +
-        `住所登録はこちら：\n${url}`,
-    });
+  // 会話系の最短キャンセル
+  if (text === "キャンセル" || text.toLowerCase() === "cancel") {
     clearSession(userId);
+    await replyTextSafe(replyToken, "キャンセルしました。");
     return;
   }
 
-  if (qtyPreset && qtyPreset > 0) {
-    await finalizeKusukeOrder(replyToken, userId, qtyPreset);
-    clearSession(userId);
-    return;
-  }
-
-  await lineClient.replyMessage(replyToken, { type:"text", text:"久助の個数を数字で送ってください。\n例：3" });
-  setSession(userId, { kind: "kusuke", step: "wait_qty" });
-}
-
-async function handleSessionInput(userId, text, ev) {
-  const sess = getSession(userId);
-  if (!sess) return;
-
-  // direct が残っていた場合の保険（今回から基本残らない）
-  if (sess.kind === "direct") {
-    clearSession(userId);
-    return;
-  }
-
-  if (sess.kind === "kusuke" && sess.step === "wait_qty") {
-    const qty = Number(text);
-    if (!Number.isFinite(qty) || qty <= 0) {
-      await lineClient.replyMessage(ev.replyToken, { type:"text", text:"数字（例：3）で送ってください。" });
-      return;
-    }
-    await finalizeKusukeOrder(ev.replyToken, userId, Math.floor(qty));
-    clearSession(userId);
-    return;
-  }
-}
-
-/**
- * ✅ 久助キーワード注文（代引き確定）
- */
-async function finalizeKusukeOrder(replyToken, userId, qty) {
-  try {
-    const products = await loadProducts();
-    const kusuke = products.find(p => (p.name || "").includes("久助") || (p.id || "").includes("kusuke"));
-    if (!kusuke) {
-      await replyTextSafe(replyToken, "久助の商品が見つかりませんでした（products.jsonを確認してください）。");
-      return;
-    }
-
-    await touchUser(userId, "seen", null, "kusuke_keyword");
-
-    const built = await buildOrderFromCheckout(
-      userId,
-      { items: [{ id: kusuke.id, qty }] },
-      { requireAddress: true }
+  // 住所誘導
+  if (text.includes("住所") || text.toLowerCase().includes("address")) {
+    const url = buildAddressEntryUrl();
+    await replyTextSafe(
+      replyToken,
+      url
+        ? `住所登録はこちらです。\n${url}\n\n（複数住所の追加・編集もできます）`
+        : "住所登録URLが未設定です（LIFF_ID_ADDRESS / LIFF_ID_ADD を設定してください）"
     );
+    return;
+  }
 
-    const codFee = Number(COD_FEE || 330);
-    const totalCod = built.subtotal + built.shippingFee + codFee;
+  // ✅ 直接注文フロー（セッションが残って次を拾えない不具合を回避：完了時に必ず clear）
+  const sess = getSession(userId);
 
-    const orderId = await insertOrderToDb({
-      userId: built.userId,
-      items: built.items,
-      total: totalCod,
-      shippingFee: built.shippingFee,
-      paymentMethod: "cod",
-      status: "confirmed",
-      rawEvent: { type: "kusuke_keyword_cod" },
-      source: "line_keyword",
-      addrOverride: built.addr,
-    });
+  if (sess?.kind === "direct" && sess?.step === "await_line") {
+    // ここで 1回だけ受け取って即処理 → 成功/失敗どちらでも “direct を残さない”
+    try {
+      const products = await loadProducts();
+      const parsed = parseDirectOrderText(text);
+      if (!parsed) {
+        clearSession(userId); // ✅ 直接注文を残さない
+        await replyTextSafe(
+          replyToken,
+          "書き方が分かりませんでした。\n例：\n・久助 2\n・のりあかしゃ×3\n\nもう一度「直接注文」と送ってください。"
+        );
+        return;
+      }
 
-    await markUserOrdered(built.userId, Number(orderId)).catch(()=>{});
+      const p = findProductByKey(products, parsed.key);
+      if (!p) {
+        clearSession(userId); // ✅
+        await replyTextSafe(
+          replyToken,
+          `商品が見つかりませんでした：「${parsed.key}」\n\nもう一度「直接注文」と送ってください。`
+        );
+        return;
+      }
 
-    await replyTextSafe(replyToken, `久助のご注文を受け付けました。\n注文ID：${orderId}`);
+      // 住所必須
+      const addr = await getAddressByUserId(userId);
+      if (!addr) {
+        clearSession(userId); // ✅
+        const url = buildAddressEntryUrl();
+        await replyTextSafe(
+          replyToken,
+          url
+            ? `まず住所登録が必要です。\n${url}\n\n登録後、もう一度「直接注文」と送ってください。`
+            : "まず住所登録が必要です（住所LIFF未設定）。"
+        );
+        return;
+      }
 
-    await notifyOrderCompleted({
-      orderId,
-      userId: built.userId,
-      items: built.items,
-      shippingFee: built.shippingFee,
-      total: totalCod,
-      paymentMethod: "cod",
-      codFee,
-      size: built.size,
-      addr: built.addr,
-      title: "新規注文（久助/代引）",
-      isPaid: false,
-      deliveryMethod: "delivery",
-    });
+      // 在庫チェック（buildOrderFromCheckout でもやるが、ここで先に親切に）
+      const qty = parsed.qty;
+      if (Number.isFinite(p.stock) && Number(p.stock) < qty) {
+        clearSession(userId); // ✅
+        await replyTextSafe(replyToken, `在庫不足です：${p.name}\n在庫：${p.stock}\n希望：${qty}`);
+        return;
+      }
 
-  } catch (e) {
-    const code = e?.code || "";
-    logErr("finalizeKusukeOrder failed", code, e?.stack || e);
+      // 代引き前提（直接注文は最短の“代引き確定”）
+      const built = await buildOrderFromCheckout(
+        userId,
+        { items: [{ id: p.id, qty }] },
+        { requireAddress: true }
+      );
 
-    if (code === "NO_ADDRESS") {
-      await replyTextSafe(replyToken, "住所が未登録です。先に住所登録をお願いします：\n" + liffUrl("/cod-register.html"));
+      const codFee = Number(COD_FEE || 330);
+      const totalCod = built.subtotal + built.shippingFee + codFee;
+
+      const orderId = await insertOrderToDb({
+        userId: built.userId,
+        items: built.items,
+        total: totalCod,
+        shippingFee: built.shippingFee,
+        paymentMethod: "cod",
+        status: "confirmed",
+        rawEvent: { type: "direct_text_cod", key: parsed.key, qty },
+        source: "line_text",
+        addrOverride: built.addr,
+      });
+
+      await markUserOrdered(built.userId, Number(orderId)).catch(()=>{});
+
+      await notifyOrderCompleted({
+        orderId,
+        userId: built.userId,
+        items: built.items,
+        shippingFee: built.shippingFee,
+        total: totalCod,
+        paymentMethod: "cod",
+        codFee,
+        size: built.size,
+        addr: built.addr,
+        title: "新規注文（直接注文/代引）",
+        isPaid: false,
+        deliveryMethod: "delivery",
+      });
+
+      clearSession(userId); // ✅ ここが本命：direct を残さない
+
+      // 念のため返信（pushとは別に）
+      await replyTextSafe(replyToken, `直接注文を受け付けました！\n注文ID：${orderId}`);
+      return;
+
+    } catch (e) {
+      clearSession(userId); // ✅ 失敗時も必ず消す
+      logErr("direct order failed", e?.message || e);
+      await replyTextSafe(replyToken, "エラーが発生しました。もう一度「直接注文」と送ってください。");
       return;
     }
-    if (code === "OUT_OF_STOCK") {
-      await replyTextSafe(replyToken, `在庫不足のため受付できませんでした（${e.productId || "unknown"}）。`);
+  }
+
+  // キーワード：直接注文（開始）
+  if (text === KEYWORD_DIRECT || text.includes(KEYWORD_DIRECT)) {
+    setSession(userId, { kind: "direct", step: "await_line" });
+    await replyTextSafe(
+      replyToken,
+      "「直接注文」を開始します。\n\n" +
+      "次に、欲しい商品と個数を送ってください。\n" +
+      "例：\n・久助 2\n・のりあかしゃ×3\n\n" +
+      "※住所登録がまだの場合は「住所」と送ってください。\n" +
+      "※キャンセルは「キャンセル」"
+    );
+    return;
+  }
+
+  // キーワード：久助（誘導だけ）
+  if (text === KEYWORD_KUSUKE || text.includes(KEYWORD_KUSUKE)) {
+    const url = buildOrderEntryUrl();
+    await replyTextSafe(
+      replyToken,
+      url
+        ? `久助のご注文はこちらからできます。\n${url}\n\n（「直接注文」でもOKです）`
+        : "注文URLが未設定です（LIFF_ID_ORDER もしくは LIFF_BASE_URL を設定してください）"
+    );
+    return;
+  }
+
+  // その他：軽い案内
+  const url = buildOrderEntryUrl();
+  await replyTextSafe(
+    replyToken,
+    url
+      ? `メッセージありがとうございます。\n\n▼商品を見る / 注文する\n${url}\n\n「直接注文」も使えます。`
+      : "注文URLが未設定です（LIFF_ID_ORDER もしくは LIFF_BASE_URL を設定してください）"
+  );
+}
+
+/* =========================
+ * Postback（定期案内：30/45/60日）
+ * ========================= */
+async function onPostback(ev) {
+  const userId = ev?.source?.userId || "";
+  const replyToken = ev?.replyToken || "";
+  const data = String(ev?.postback?.data || "").trim();
+
+  if (!userId || !data) return;
+
+  // reorder:sub:30:ORDERID
+  if (data.startsWith("reorder:sub:")) {
+    const parts = data.split(":");
+    const days = Number(parts?.[2]);
+    const orderId = Number(parts?.[3] || 0) || null;
+
+    if (![30,45,60].includes(days)) {
+      await replyTextSafe(replyToken, "設定に失敗しました（days不正）");
       return;
     }
-    await replyTextSafe(replyToken, "注文処理に失敗しました。時間をおいてお試しください。");
+
+    try {
+      await pool.query(
+        `
+        INSERT INTO reorder_reminders
+          (user_id, cycle_days, next_remind_at, last_order_id, active, updated_at)
+        VALUES
+          ($1, $2, now() + ($2::text || ' days')::interval, $3, true, now())
+        ON CONFLICT (user_id)
+        DO UPDATE SET
+          cycle_days     = EXCLUDED.cycle_days,
+          next_remind_at = EXCLUDED.next_remind_at,
+          last_order_id  = COALESCE(EXCLUDED.last_order_id, reorder_reminders.last_order_id),
+          active         = true,
+          updated_at     = now()
+        `,
+        [userId, days, orderId]
+      );
+
+      await replyTextSafe(replyToken, `次回のご案内を「${days}日ごと」に設定しました。`);
+      return;
+    } catch (e) {
+      logErr("reorder sub failed", e?.message || e);
+      await replyTextSafe(replyToken, "設定に失敗しました（server_error）");
+      return;
+    }
+  }
+
+  // reorder:unsub::ORDERID
+  if (data.startsWith("reorder:unsub")) {
+    try {
+      await pool.query(
+        `UPDATE reorder_reminders SET active=false, updated_at=now() WHERE user_id=$1`,
+        [userId]
+      );
+      await replyTextSafe(replyToken, "次回のご案内を停止しました。");
+      return;
+    } catch (e) {
+      logErr("reorder unsub failed", e?.message || e);
+      await replyTextSafe(replyToken, "停止に失敗しました（server_error）");
+      return;
+    }
   }
 }
 
@@ -3474,18 +3548,16 @@ async function finalizeKusukeOrder(replyToken, userId, qty) {
 async function boot() {
   await ensureDir(DATA_DIR);
   await ensureDir(UPLOAD_DIR);
-  await ensureProductsFile();
-  await loadSessions();
-  await ensureDb();
+  await loadSessions().catch(()=>{});
+  await ensureProductsFile().catch(()=>{});
 
-  reloadShippingCacheIfNeeded().catch(()=>{});
-  reloadSizeRulesIfNeeded().catch(()=>{});
+  await ensureDb();
 
   const port = Number(env.PORT || 3000);
   app.listen(port, () => {
     logInfo(`server started on :${port}`);
-    logInfo(`BASE_URL=${BASE_URL || "(auto)"}`);
-    logInfo(`LIFF_BASE=${LIFF_BASE || "(auto)"}`);
+    logInfo(`DATA_DIR=${DATA_DIR}`);
+    logInfo(`UPLOAD_DIR=${UPLOAD_DIR}`);
     logInfo(`HTTP_LOG=${HTTP_LOG ? "1" : "0"}`);
   });
 }
@@ -3493,14 +3565,4 @@ async function boot() {
 boot().catch((e) => {
   logErr("boot failed", e?.stack || e);
   process.exit(1);
-});
-
-// graceful
-process.on("SIGTERM", () => {
-  logInfo("SIGTERM received, exiting.");
-  process.exit(0);
-});
-process.on("SIGINT", () => {
-  logInfo("SIGINT received, exiting.");
-  process.exit(0);
 });

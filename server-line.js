@@ -3208,17 +3208,15 @@ async function onFollow(ev) {
 
   try { await notifyAdminFriendAdded({ userId, displayName, day }); } catch {}
 
-      type: "text",
-    text:
-      "友だち追加ありがとうございます！\n\n" +
-      "磯屋のえびせんべいは、ミニアプリからすぐご覧いただけます。\n" +
-      (LIFF_ID_ORDER
-        ? `\n▼商品を見る / 注文する\nhttps://liff.line.me/${LIFF_ID_ORDER}\n`
-        : (LIFF_BASE ? `\n▼商品を見る / 注文する\n${LIFF_BASE}/products.html\n` : "")
-      ) +
-      "\n※住所登録だけ先に済ませたい場合は「住所登録」と送ってください。"
-  });
-
+  await lineClient.pushMessage(userId, {
+  type: "text",
+  text: (
+    "友だち追加ありがとうございます！\n\n" +
+    "このLINEからご注文いただけます。\n\n" +
+    "下のメニューをタップしてご利用ください。"
+  )
+});
+ 
   return;
 }
 

@@ -1,5 +1,5 @@
 /**
- * server.js — “完全・全部入り” 丸ごと版（統合・最終修正版 + 常連候補 + 定期リマインド）
+ * server-line.js — “完全・全部入り” 丸ごと版（統合・最終修正版）
  *
  * ✅ 今回の「追加修正」
  * - 「直接注文」をセッションに残さない（sess.kind="direct" が残って次の入力を拾えない不具合を解消）
@@ -11,16 +11,19 @@
  * - addresses テーブルに label / is_default 列が無いのに参照していたので ALTER で追従（既存DBもOK）
  *
  * ✅ さらに今回ここも修正（実害が出る箇所）
- * - 「複数住所対応」を潰してしまう UNIQUE INDEX addresses_user_id_uidx を作らない（1ユーザー1件縛りが復活してた）
+ * - 「複数住所対応」を潰す UNIQUE INDEX addresses_user_id_uidx を作らない（1ユーザー1件縛りが復活してた）
  * - label/is_default の ALTER が重複していたので 1回に整理
  * - /api/address/set /api/liff/address で id を受け取ったら更新できるように対応（upsertAddress の能力を活かす）
- * - upsertAddress のSQLが関数外に飛び出していた「構文崩壊」を修正（←これが致命的）
+ * - upsertAddress のSQLが関数外に飛び出していた「構文崩壊」を修正
  *
  * ✅ A案（今回だけギフト）最短対応（サーバ側）
  * - 注文系APIで addressId（送付先住所ID）を受け取れるようにし、送料計算/注文保存/通知の住所をその住所にする
  *
  * ✅ ログ抑制（必要ならENVでON）
  * - HTTP_LOG=1 のときだけ [REQ]/[RES] を出す（未設定なら出さない）
+ *
+ * ✅ liff_open_logs の ON CONFLICT エラー対策
+ * - 起動ログは “履歴” なので毎回 INSERT（ON CONFLICT 不要・ユニーク制約不要）
  */
 
 "use strict";
@@ -78,9 +81,7 @@ const KEYWORD_DIRECT = env.KEYWORD_DIRECT || "直接注文";
 const KEYWORD_KUSUKE = env.KEYWORD_KUSUKE || "久助";
 
 const ORIGINAL_SET_PRODUCT_ID = (env.ORIGINAL_SET_PRODUCT_ID || "original-set-2000").trim();
-
-// ✅ 福箱（1人1個限定・混載不可）— ENV対応
-const FUKUBAKO_PRODUCT_ID = (env.FUKUBAKO_PRODUCT_ID || "fukubako-2026").trim();
+const FUKUBAKO_PRODUCT_ID     = (env.FUKUBAKO_PRODUCT_ID || "fukubako-2026").trim();
 
 /** ✅ 福箱テスト許可（この userId は何度でも買える。過去購入NGだけスキップ）
  * ENV: FUKUBAKO_TEST_ALLOW_USER_IDS=Uxxxx,Uyyyy
@@ -138,7 +139,6 @@ const SHIPPING_REGION_BY_PREF = {
   "沖縄県": "okinawa",
 };
 
-// フォールバック送料（税込の例）
 const SHIPPING_YAMATO = {
   hokkaido: { 60: 1300, 80: 1550, 100: 1800, 120: 2050, 140: 2300, 160: 2550 },
   tohoku:   { 60:  900, 80: 1100, 100: 1300, 120: 1500, 140: 1700, 160: 1900 },
@@ -153,23 +153,19 @@ const SHIPPING_YAMATO = {
   okinawa:  { 60: 1350, 80: 1700, 100: 2100, 120: 2600, 140: 3100, 160: 3600 },
 };
 
-// フォールバック：サイズルール（DBが空の時だけ）
 const FALLBACK_SIZE_RULES = [
-  // akasha6
   { shipping_group: "akasha6", qty_min: 1,  qty_max: 4,    size: "60"  },
   { shipping_group: "akasha6", qty_min: 5,  qty_max: 8,    size: "80"  },
   { shipping_group: "akasha6", qty_min: 9,  qty_max: 13,   size: "100" },
   { shipping_group: "akasha6", qty_min: 14, qty_max: 18,   size: "120" },
   { shipping_group: "akasha6", qty_min: 19, qty_max: 9999, size: "140" },
 
-  // original_set
   { shipping_group: "original_set", qty_min: 1, qty_max: 1,    size: "80"  },
   { shipping_group: "original_set", qty_min: 2, qty_max: 2,    size: "100" },
   { shipping_group: "original_set", qty_min: 3, qty_max: 4,    size: "120" },
   { shipping_group: "original_set", qty_min: 5, qty_max: 6,    size: "140" },
   { shipping_group: "original_set", qty_min: 7, qty_max: 9999, size: "160" },
 
-  // default
   { shipping_group: "default", qty_min: 1, qty_max: 1,    size: "60"  },
   { shipping_group: "default", qty_min: 2, qty_max: 2,    size: "80"  },
   { shipping_group: "default", qty_min: 3, qty_max: 3,    size: "100" },
@@ -248,7 +244,7 @@ async function ensureProductsFile() {
     {
       id: "kusuke-250",
       name: "久助（われせん）",
-      price: 250, // ←管理単価
+      price: 250, // ←管理単価（あなたのメモ通り）
       stock: 30,
       volume: "100g",
       desc: "お得な割れせん。価格は管理画面で自由に変更できます。",
@@ -389,7 +385,6 @@ async function reloadShippingCacheIfNeeded() {
   }
 }
 
-// ★ DB列：shipping_group / qty_min / qty_max / size(text)
 async function reloadSizeRulesIfNeeded() {
   const now = Date.now();
   if (sizeRuleCache.loadedAt && (now - sizeRuleCache.loadedAt) < SIZE_RULE_CACHE_TTL_MS) return;
@@ -405,7 +400,7 @@ async function reloadSizeRulesIfNeeded() {
       shipping_group: String(x.shipping_group || "").trim(),
       qty_min: Number(x.qty_min),
       qty_max: Number(x.qty_max),
-      size: String(x.size || "").trim(), // text
+      size: String(x.size || "").trim(),
     })).filter(x =>
       x.shipping_group &&
       Number.isFinite(x.qty_min) &&
@@ -480,13 +475,6 @@ async function calcShippingFee(prefecture, size) {
   return Number(table[s] || table[80] || 0);
 }
 
-/**
- * ✅ サイズ計算（DB shipping_size_rules を使用）
- * - original_set：オリジナルセット個数でDBルール
- * - akasha6：あかしゃ系（久助含む）だけの個数でDBルール
- * - default：その他の個数でDBルール
- * - 混載時：それぞれのサイズを計算し「大きい方」を採用し、混載ペナルティで 1段階 bump
- */
 async function calcPackageSizeFromItems_DB(items, productsById) {
   let originalQty = 0;
   let akashaQty = 0;
@@ -592,7 +580,6 @@ async function enforceFukubakoRulesOrThrow({ userId, items }) {
  * ensureDb（テーブル作成＆seed）
  * ========================= */
 async function ensureDb() {
-  // users
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       user_id TEXT PRIMARY KEY,
@@ -604,9 +591,6 @@ async function ensureDb() {
     );
   `);
 
-  // =========================
-  // addresses（複数住所 + default 1件 + 同一住所は上書き）
-  // =========================
   await pool.query(`
     CREATE TABLE IF NOT EXISTS addresses (
       id BIGSERIAL PRIMARY KEY,
@@ -627,29 +611,23 @@ async function ensureDb() {
     );
   `);
 
-  // 既存DB追従（古いテーブル定義でも落ちないように）
   try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS label TEXT;`); } catch {}
   try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT false;`); } catch {}
   try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS address_key TEXT;`); } catch {}
   try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();`); } catch {}
 
-  // ✅ 1ユーザー1件縛り（過去に作ってしまっていたら削除）
   try { await pool.query(`DROP INDEX IF EXISTS addresses_user_id_uidx;`); } catch {}
 
-  // ✅ 既に出ているエラー原因になりがちな「label系ユニーク」を消す（環境差で index/constraint 両方ケア）
   try { await pool.query(`ALTER TABLE addresses DROP CONSTRAINT IF EXISTS ux_addresses_user_label;`); } catch {}
   try { await pool.query(`DROP INDEX IF EXISTS ux_addresses_user_label;`); } catch {}
   try { await pool.query(`DROP INDEX IF EXISTS addresses_user_label_uidx;`); } catch {}
 
-  // ✅ address_key の “全体ユニーク” が残ってると地雷なので消す（user_id+address_key にする）
   try { await pool.query(`ALTER TABLE addresses DROP CONSTRAINT IF EXISTS ux_addresses_address_key;`); } catch {}
   try { await pool.query(`DROP INDEX IF EXISTS ux_addresses_address_key;`); } catch {}
   try { await pool.query(`DROP INDEX IF EXISTS addresses_address_key_uidx;`); } catch {}
 
-  // ✅ user_id は通常INDEX（ユニークにしない）
   try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_addresses_user_id ON addresses(user_id);`); } catch {}
 
-  // ✅ member_code はユニーク（NULLは除外）
   try {
     await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS addresses_member_code_uidx
@@ -658,7 +636,6 @@ async function ensureDb() {
     `);
   } catch {}
 
-  // ✅ default は user_id ごとに 1件だけ（部分ユニーク）
   try {
     await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS addresses_default_uidx
@@ -667,7 +644,6 @@ async function ensureDb() {
     `);
   } catch {}
 
-  // ✅ 同一住所の再保存で500にならないため： user_id + address_key の複合ユニーク（部分）
   try {
     await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS addresses_user_address_key_uidx
@@ -676,7 +652,6 @@ async function ensureDb() {
     `);
   } catch {}
 
-  // orders
   await pool.query(`
     CREATE TABLE IF NOT EXISTS orders (
       id BIGSERIAL PRIMARY KEY,
@@ -698,17 +673,15 @@ async function ensureDb() {
     );
   `);
 
-  // 既存DB追従（列が無くても落ちない）
   try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS member_code TEXT;`); } catch {}
   try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS phone TEXT;`); } catch {}
 
-  // ✅ 通知系（今回追加：既存DBでもALTERで追従）
+  // 通知系
   try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;`); } catch {}
   try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS notified_user_at TIMESTAMPTZ;`); } catch {}
   try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS notified_admin_at TIMESTAMPTZ;`); } catch {}
   try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS notified_kind TEXT;`); } catch {}
 
-  // follow_events（follow+3d配信の基礎）
   await pool.query(`
     CREATE TABLE IF NOT EXISTS follow_events (
       id BIGSERIAL PRIMARY KEY,
@@ -719,7 +692,6 @@ async function ensureDb() {
   `);
   try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_follow_events_user ON follow_events(user_id, followed_at DESC);`); } catch {}
 
-  // segment_users（拡張）
   await pool.query(`
     CREATE TABLE IF NOT EXISTS segment_users (
       user_id TEXT PRIMARY KEY,
@@ -728,7 +700,6 @@ async function ensureDb() {
     );
   `);
 
-  // 追加カラム
   const alterCols = [
     `ALTER TABLE segment_users ADD COLUMN IF NOT EXISTS first_seen TIMESTAMPTZ`,
     `ALTER TABLE segment_users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ`,
@@ -744,7 +715,6 @@ async function ensureDb() {
     try { await pool.query(q); } catch {}
   }
 
-  // user_segments（常連候補）
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_segments (
       segment_key TEXT NOT NULL,
@@ -761,7 +731,6 @@ async function ensureDb() {
   `);
   try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_segments_seg ON user_segments(segment_key, updated_at DESC);`); } catch {}
 
-  // segment_blast（配信済み抑止）
   await pool.query(`
     CREATE TABLE IF NOT EXISTS segment_blast (
       segment_key TEXT NOT NULL,
@@ -771,7 +740,6 @@ async function ensureDb() {
     );
   `);
 
-  // friend logs
   await pool.query(`
     CREATE TABLE IF NOT EXISTS friend_logs (
       id BIGSERIAL PRIMARY KEY,
@@ -783,7 +751,6 @@ async function ensureDb() {
     );
   `);
 
-  // ✅ 送料
   await pool.query(`
     CREATE TABLE IF NOT EXISTS shipping_yamato_taxed (
       region TEXT NOT NULL,
@@ -794,7 +761,6 @@ async function ensureDb() {
     );
   `);
 
-  // ✅ サイズルール
   await pool.query(`
     CREATE TABLE IF NOT EXISTS shipping_size_rules (
       shipping_group TEXT NOT NULL,
@@ -806,7 +772,7 @@ async function ensureDb() {
     );
   `);
 
-  // ✅ LIFF起動ログ
+  // ✅ LIFF起動ログ：履歴なので毎回INSERT（ユニーク不要）
   await pool.query(`
     CREATE TABLE IF NOT EXISTS liff_open_logs (
       id BIGSERIAL PRIMARY KEY,
@@ -817,7 +783,6 @@ async function ensureDb() {
   `);
   try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_liff_open_logs_user ON liff_open_logs(user_id, opened_at DESC);`); } catch {}
 
-  // ✅ 定期案内
   await pool.query(`
     CREATE TABLE IF NOT EXISTS reorder_reminders (
       user_id text PRIMARY KEY,
@@ -927,7 +892,6 @@ async function touchUser(userId, kind, displayName = null, source = null) {
     [userId, displayName, k]
   );
 
-  // segment_users を更新
   await pool.query(
     `
     INSERT INTO segment_users (
@@ -995,6 +959,7 @@ async function upsertUserSegment(segmentKey, userId, patch = {}) {
 }
 
 async function logLiffOpen(userId, source = null) {
+  // ✅ 履歴ログなので毎回 INSERT（ON CONFLICT 不要）
   const uid = String(userId || "").trim();
   if (!uid) return;
   try {
@@ -1006,7 +971,6 @@ async function logLiffOpen(userId, source = null) {
     logErr("logLiffOpen failed", uid, source, e?.message || e);
   }
 }
-
 
 async function markUserOrdered(userId, orderId = null) {
   const uid = String(userId || "").trim();
@@ -1057,7 +1021,6 @@ async function getAddressByUserId(userId) {
   return r.rows[0] || null;
 }
 
-// ✅ A案用：指定住所IDで取得（必ず同一 user_id で縛る）
 async function getAddressByIdForUser(userId, addressId) {
   const uid = String(userId || "").trim();
   const id = Number(addressId);
@@ -1117,7 +1080,6 @@ function norm(s) {
   return String(s || "").replace(/\s+/g, " ").trim();
 }
 
-// ✅ address_key は “住所要素だけ” で作る（名前/電話を含めない）
 function makeAddressKey(a) {
   const s = [
     normalizeZip(a?.postal),
@@ -1131,14 +1093,6 @@ function makeAddressKey(a) {
   return crypto.createHash("sha1").update(base).digest("hex").slice(0, 20);
 }
 
-/**
- * ✅ upsertAddress（完全版）
- * - addr.id があれば「そのidを更新」
- * - addr.id が無ければ「INSERT」
- * - ただし INSERT は (user_id,address_key) で衝突したら UPDATE（同一住所の再保存を許可）
- * - member_code は同一住所の再保存で変えない（既存優先）
- * - is_default=true の時は、先に同一 user の default を全部 false にしてユニーク違反回避
- */
 async function upsertAddress(userId, addr) {
   const uid = String(userId || "").trim();
   if (!uid) throw new Error("userId required");
@@ -1151,13 +1105,11 @@ async function upsertAddress(userId, addr) {
   const memberCodeIn = String(addr?.member_code || "").trim() || null;
   const addressKey = (addr?.address_key ? String(addr.address_key).trim() : null) || makeAddressKey(addr);
 
-  // default を立てるなら、先に全部 false にする（ユニーク制約対策）
   if (isDefault) {
     await pool.query(`UPDATE addresses SET is_default=false WHERE user_id=$1`, [uid]);
   }
 
   if (addressId) {
-    // 既存更新（id指定）
     const r = await pool.query(
       `
       UPDATE addresses
@@ -1189,11 +1141,9 @@ async function upsertAddress(userId, addr) {
     return r.rows[0];
   }
 
-  // 新規追加：member_code が無ければ発行
   let memberCode = memberCodeIn;
   if (!memberCode) memberCode = await issueUniqueMemberCode();
 
-  // 新規追加（ただし同一 user_id + address_key が既にあれば UPDATE 扱いにする）
   const r = await pool.query(
     `
     INSERT INTO addresses
@@ -1205,7 +1155,6 @@ async function upsertAddress(userId, addr) {
     DO UPDATE SET
       label       = EXCLUDED.label,
       is_default  = EXCLUDED.is_default,
-      -- ✅ 同じ住所を再保存しても member_code は変えない（既存優先）
       member_code = COALESCE(addresses.member_code, EXCLUDED.member_code),
       name        = EXCLUDED.name,
       phone       = EXCLUDED.phone,
@@ -1247,7 +1196,6 @@ async function buildOrderFromCheckout(uid, checkout, opts = {}) {
 
   const requireAddress = (opts.requireAddress !== false);
 
-  // ✅ A案：addressId が来たら、その住所で見積もり・注文確定する
   let addr = null;
   if (requireAddress) {
     if (opts.addressId) {
@@ -1325,9 +1273,6 @@ async function buildOrderFromCheckout(uid, checkout, opts = {}) {
   return { userId, addr, items, subtotal, shippingFee, size, productsById };
 }
 
-/**
- * orders挿入（住所は “選択された住所” を優先して保存）
- */
 async function insertOrderToDb({
   userId,
   items,
@@ -1343,7 +1288,7 @@ async function insertOrderToDb({
   addressOverride = "",
   phoneOverride = "",
   memberCodeOverride = "",
-  addrOverride = null, // ✅ A案：ここがあれば必ずそれを保存
+  addrOverride = null,
 }) {
   const baseAddr = addrOverride || (await getAddressByUserId(userId).catch(()=>null));
 
@@ -1415,15 +1360,9 @@ function stripeCancelUrl(req) {
   const base = BASE_URL || originFromReq(req);
   return `${base}/stripe-cancel.html`;
 }
-function liffUrl(pathname, reqForFallback = null) {
-  const base = LIFF_BASE || (reqForFallback ? originFromReq(reqForFallback) : "");
-  if (!base) return pathname;
-  if (!pathname.startsWith("/")) pathname = "/" + pathname;
-  return base + pathname;
-}
 
 /* =========================
- * 注文完了通知（統一）
+ * 通知（統一）
  * ========================= */
 function yen(n) {
   const x = Number(n || 0);
@@ -1527,7 +1466,7 @@ async function notifyOrderCompleted({
 }) {
   const row = await getOrderRow(orderId);
 
-  // ✅ 修正：notified_at では止めない（card_pending でも入るため）
+  // ✅ completed 二重送信防止（pending は止めない）
   if (!skipMarkNotified && row?.notified_kind === "completed") {
     logInfo("notify skipped (already completed):", orderId);
     return { ok: true, skipped: true };
@@ -1591,7 +1530,6 @@ async function notifyOrderCompleted({
 
   await pushTextSafe(userId, msgForUser);
 
-  // ✅ 購入者に「次回案内」ボタン
   if (ENABLE_REORDER_BUTTONS) {
     try {
       await lineClient.pushMessage(userId, buildReorderButtonsMessage(orderId));
@@ -1600,7 +1538,6 @@ async function notifyOrderCompleted({
     }
   }
 
-  // 管理者通知
   if (ADMIN_USER_ID) {
     const msgForAdmin =
       `【${title}】\n` +
@@ -1632,17 +1569,17 @@ async function notifyOrderCompleted({
 
 async function notifyCardPending({ orderId, userId, items, shippingFee, total, size }) {
   const itemLines = buildItemLines(items || []);
- const msgForUser =
-  `決済手続きの途中です（まだ確定していません）\n\n` +
-  `【注文ID】${orderId}\n` +
-  `【お支払い】クレジット（決済待ち）\n\n` +
-  `【ご注文内容】\n${itemLines}\n\n` +
-  `【送料】${yen(shippingFee)}${size ? `（${size}）` : ""}\n` +
-  `【合計（予定）】${yen(total)}\n\n` +
-  `このあとクレジット決済が完了すると、\n` +
-  `「注文確定」のメッセージをお送りします。\n\n` +
-  `※この時点では請求は発生していません。\n` +
-  `※決済を完了しなかった場合、この注文は自動的に無効になります。`;
+  const msgForUser =
+    `決済手続きの途中です（まだ確定していません）\n\n` +
+    `【注文ID】${orderId}\n` +
+    `【お支払い】クレジット（決済待ち）\n\n` +
+    `【ご注文内容】\n${itemLines}\n\n` +
+    `【送料】${yen(shippingFee)}${size ? `（${size}）` : ""}\n` +
+    `【合計（予定）】${yen(total)}\n\n` +
+    `このあとクレジット決済が完了すると、\n` +
+    `「注文確定」のメッセージをお送りします。\n\n` +
+    `※この時点では請求は発生していません。\n` +
+    `※決済を完了しなかった場合、この注文は自動的に無効になります。`;
 
   await pushTextSafe(userId, msgForUser);
 
@@ -1787,7 +1724,6 @@ app.post("/webhook", line.middleware(lineConfig), async (req, res) => {
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
-// ログ（HTTP_LOG=1 の時だけ）
 app.use((req, res, next) => {
   if (!HTTP_LOG) return next();
   const t0 = Date.now();
@@ -1798,7 +1734,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// favicon
 app.get("/favicon.ico", (req, res) => res.status(204).end());
 
 // address.html 強制200（publicより先）
@@ -1861,7 +1796,7 @@ app.get("/health/db", async (req, res) => {
 });
 
 /* =========================
- * Admin auth（1個だけ）
+ * Admin auth
  * ========================= */
 const ADMIN_TOKEN = (ADMIN_API_TOKEN || ADMIN_CODE || "").trim();
 
@@ -1879,7 +1814,7 @@ function requireAdmin(req, res, next) {
 }
 
 /* =========================
- * Admin：orders（subtotal修正済）
+ * Admin：orders
  * ========================= */
 const REGION_LABEL = {
   hokkaido: "北海道",
@@ -1943,8 +1878,6 @@ app.get("/api/admin/orders", requireAdmin, async (req, res) => {
       const regionKey = detectRegionFromPref(pref);
 
       const codFee = (row.payment_method === "cod") ? Number(COD_FEE || 330) : 0;
-
-      // ✅ 小計（商品合計）＝ total - shipping - codFee
       const subtotal = (Number(row.total || 0) - Number(row.shipping_fee || 0) - Number(codFee || 0));
 
       return {
@@ -1985,7 +1918,7 @@ app.post("/api/admin/orders/notify-shipped", requireAdmin, async (req, res) => {
 });
 
 /* =========================
- * Admin：常連候補（prospect_regular）表示
+ * Admin：常連候補（prospect_regular）
  * ========================= */
 app.get("/api/admin/segments/prospect_regular", requireAdmin, async (req, res) => {
   try {
@@ -2050,17 +1983,21 @@ app.get("/api/admin/liff/opens", requireAdmin, async (req, res) => {
 });
 
 /* =========================
- * Admin：定期案内 期限到来分を送信（手動/cron用）
+ * Admin：定期案内 期限到来分送信
  * ========================= */
 function buildReorderText(cycleDays) {
   if (REORDER_MESSAGE_TEMPLATE) {
     return REORDER_MESSAGE_TEMPLATE.replace(/\{cycle_days\}/g, String(cycleDays));
   }
+  const orderUrl =
+    (LIFF_ID_ORDER ? `https://liff.line.me/${LIFF_ID_ORDER}` :
+     (LIFF_BASE ? `${LIFF_BASE}/products.html` : "（注文URL未設定）"));
+
   return (
     `いつもありがとうございます。\n` +
     `前回のご注文からそろそろ ${cycleDays}日 ほど経ちました。\n\n` +
     `よろしければ、ミニアプリからご注文いただけます。\n` +
-    `${LIFF_ID_ORDER ? `https://liff.line.me/${LIFF_ID_ORDER}` : (LIFF_BASE ? `${LIFF_BASE}/products.html` : "（注文URL未設定）")}\n\n` +
+    `${orderUrl}\n\n` +
     `※ご案内が不要な場合は「次回のご案内」ボタンから解除できます。`
   );
 }
@@ -2114,136 +2051,6 @@ app.post("/api/admin/reorder/send-due", requireAdmin, async (req, res) => {
 });
 
 /* =========================
- * Admin：友だち追加（follow）3日後に福箱案内を配信
- * ========================= */
-function chunk(arr, size) {
-  const out = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
-
-function buildFukubakoIntroMessage() {
-  const orderUrl =
-    (LIFF_ID_ORDER ? `https://liff.line.me/${LIFF_ID_ORDER}` :
-     (LIFF_BASE ? `${LIFF_BASE}/products.html` : ""));
-
-  return (
-    "【福箱のご案内】\n" +
-    "友だち追加ありがとうございます！\n\n" +
-    "数量限定の福箱をご用意しています。\n" +
-    "よろしければ下からご覧ください。\n\n" +
-    (orderUrl ? `${orderUrl}\n\n` : "") +
-    "※在庫がなくなり次第終了です。"
-  );
-}
-
-async function detectFollowEventsTimestampColumn() {
-  const r = await pool.query(`
-    SELECT column_name
-    FROM information_schema.columns
-    WHERE table_schema='public'
-      AND table_name='follow_events'
-  `);
-  const cols = r.rows.map(x => String(x.column_name));
-  if (cols.includes("followed_at")) return "followed_at";
-  if (cols.includes("created_at"))  return "created_at";
-  if (cols.includes("event_time"))  return "event_time";
-  return "followed_at";
-}
-
-app.post("/api/admin/fukubako/send-follow-plus-3d", requireAdmin, async (req, res) => {
-  try {
-    const limit = Math.min(2000, Math.max(1, Number(req.body?.limit || 200)));
-    const dryRun = String(req.body?.dry_run || req.body?.dryRun || "0") === "1" || req.body?.dry_run === true;
-
-    const windowHours = Math.min(72, Math.max(1, Number(req.body?.window_hours || 24)));
-    const tsCol = await detectFollowEventsTimestampColumn();
-
-    const keyDate = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" }).replace(/-/g, "");
-    const segmentKey = String(req.body?.segment_key || `fukubako_follow_plus3d_${keyDate}`).trim();
-
-    const r = await pool.query(
-      `
-      WITH targets AS (
-        SELECT DISTINCT fe.user_id
-        FROM follow_events fe
-        WHERE fe.user_id IS NOT NULL AND fe.user_id <> ''
-          AND fe.${tsCol} <= now() - interval '3 days'
-          AND fe.${tsCol} >  now() - interval '3 days' - ($1::text || ' hours')::interval
-      ),
-      unsent AS (
-        SELECT t.user_id
-        FROM targets t
-        LEFT JOIN segment_blast sb
-          ON sb.segment_key = $2 AND sb.user_id = t.user_id
-        WHERE sb.user_id IS NULL
-      )
-      SELECT user_id
-      FROM unsent
-      LIMIT $3
-      `,
-      [String(windowHours), segmentKey, limit]
-    );
-
-    const userIds = (r.rows || []).map(x => x.user_id).filter(Boolean);
-
-    if (dryRun) {
-      return res.json({
-        ok: true,
-        kind: "fukubako_follow_plus3d",
-        segment_key: segmentKey,
-        window_hours: windowHours,
-        due: userIds.length,
-        sent: 0,
-        dry_run: true,
-        sample: userIds.slice(0, 10),
-      });
-    }
-
-    const messageText = buildFukubakoIntroMessage();
-    let sent = 0;
-
-    const batches = chunk(userIds, 500);
-
-    for (const batch of batches) {
-      if (!batch.length) continue;
-
-      await lineClient.multicast(batch, [{ type: "text", text: messageText }]);
-      sent += batch.length;
-
-      const values = [];
-      const params = [];
-      let i = 1;
-      for (const uid of batch) {
-        values.push(`($${i++}, $${i++})`);
-        params.push(segmentKey, uid);
-      }
-      await pool.query(
-        `
-        INSERT INTO segment_blast (segment_key, user_id)
-        VALUES ${values.join(",")}
-        ON CONFLICT (segment_key, user_id) DO NOTHING
-        `,
-        params
-      );
-    }
-
-    res.json({
-      ok: true,
-      kind: "fukubako_follow_plus3d",
-      segment_key: segmentKey,
-      window_hours: windowHours,
-      due: userIds.length,
-      sent,
-      dry_run: false,
-    });
-  } catch (e) {
-    logErr("[api/admin/fukubako/send-follow-plus-3d] failed", e?.message || e);
-    res.status(500).json({ ok: false, error: e?.message || String(e) });
-  }
-});
-
-/* =========================
  * 送料見積り（住所未登録でもOK）
  * ========================= */
 app.post("/api/shipping/quote", async (req, res) => {
@@ -2256,17 +2063,6 @@ app.post("/api/shipping/quote", async (req, res) => {
 
     const products = await loadProducts();
     const byId = Object.fromEntries(products.map(p => [p.id, p]));
-
-    const kusukeReal = products.find(p => (p.id || "").includes("kusuke") || (p.name || "").includes("久助"));
-    const akashaReal = products.find(p => (p.id || "").includes("akasha") || (p.name || "").includes("あかしゃ"));
-
-    byId["original-set"] = {
-      id: ORIGINAL_SET_PRODUCT_ID,
-      name: "磯屋オリジナルセット（見積り）",
-      price: Number(products.find(p => p.id === ORIGINAL_SET_PRODUCT_ID)?.price || 2100),
-    };
-    byId["akasha"] = { id: "akasha-series", name: "あかしゃシリーズ（見積り）", price: Number(akashaReal?.price || 0) };
-    byId["kusuke"] = { id: "kusuke-series", name: "久助（見積り）", price: Number(kusukeReal?.price || 250) };
 
     const mapped = [];
     for (const it of inItems) {
@@ -2339,7 +2135,6 @@ app.get("/api/address/get", async (req, res) => {
   }
 });
 
-// ✅ GET /api/address/list  ← cod-register 用（これ1個に統一）
 app.get("/api/address/list", async (req, res) => {
   try {
     const userId = String(req.query.userId || "").trim();
@@ -2353,7 +2148,6 @@ app.get("/api/address/list", async (req, res) => {
   }
 });
 
-// POST /api/address/set
 app.post("/api/address/set", async (req, res) => {
   try {
     const b = req.body || {};
@@ -2361,7 +2155,7 @@ app.post("/api/address/set", async (req, res) => {
     if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
 
     const saved = await upsertAddress(userId, {
-      id: b.id, // ✅ id が来たら更新
+      id: b.id,
       member_code: b.member_code,
       name: b.name,
       phone: b.phone,
@@ -2382,7 +2176,6 @@ app.post("/api/address/set", async (req, res) => {
   }
 });
 
-// 互換：cod-register.html 用
 app.get("/api/liff/address/me", async (req, res) => {
   try {
     const userId = String(req.query.userId || "").trim();
@@ -2405,7 +2198,7 @@ app.post("/api/liff/address", async (req, res) => {
     if (!address) return res.status(400).json({ ok:false, error:"address required" });
 
     const saved = await upsertAddress(userId, {
-      id: address.id, // ✅ id が来たら更新
+      id: address.id,
       member_code: address.member_code,
       name: address.name,
       phone: address.phone,
@@ -2427,7 +2220,7 @@ app.post("/api/liff/address", async (req, res) => {
 });
 
 /* =========================
- * LIFF 起動ログ（DB保存 + 常連候補へ自動追加）
+ * LIFF 起動ログ + 常連候補
  * ========================= */
 async function onLiffOpened(userId, source = "liff") {
   await touchUser(userId, "liff", null, source);
@@ -2498,7 +2291,7 @@ app.get("/api/products", async (req, res) => {
 });
 
 /* =========================
- * Admin products / images
+ * Admin products/images
  * ========================= */
 app.get("/api/admin/products", requireAdmin, async (req, res) => {
   try {
@@ -2645,9 +2438,6 @@ function respondFukubakoErrors(res, code) {
   return null;
 }
 
-/**
- * ★ /api/store-order（互換対応版）
- */
 app.post("/api/store-order", async (req, res) => {
   try {
     const b = req.body || {};
@@ -2676,7 +2466,6 @@ app.post("/api/store-order", async (req, res) => {
     const customerName = String(b.name || pickup?.name || "").trim();
     const customerPhone = String(pickup?.phone || b.phone || "").trim();
 
-    // ✅ A案：addressId が来たらこの注文だけその住所に送る
     const addressId = mustInt(b.addressId || b.address_id || (b.ship && (b.ship.addressId || b.ship.address_id)));
 
     await touchUser(uid, "seen", null, "store_order");
@@ -2724,7 +2513,7 @@ app.post("/api/store-order", async (req, res) => {
       source: (deliveryMethod === "pickup") ? "store_liff" : "liff",
       nameOverride,
       phoneOverride,
-      addrOverride: (deliveryMethod === "pickup") ? null : built.addr, // ✅ 選択住所で保存
+      addrOverride: (deliveryMethod === "pickup") ? null : built.addr,
     });
 
     await markUserOrdered(built.userId, Number(orderId)).catch(()=>{});
@@ -2764,7 +2553,7 @@ app.post("/api/store-order", async (req, res) => {
         paymentMethod: "cod",
         codFee,
         size,
-        addr: built.addr, // ✅ 選択住所で通知
+        addr: built.addr,
         title: "新規注文（代引）",
         isPaid: false,
         deliveryMethod,
@@ -2798,7 +2587,6 @@ app.post("/api/store-order", async (req, res) => {
   }
 });
 
-// Stripe: create checkout session
 app.post("/api/pay/stripe/create", async (req, res) => {
   try {
     if (!stripe) return res.status(400).json({ ok:false, error:"stripe_not_configured" });
@@ -2806,7 +2594,6 @@ app.post("/api/pay/stripe/create", async (req, res) => {
     const uid = String(req.body?.uid || "").trim();
     const checkout = req.body?.checkout || null;
 
-    // ✅ A案：addressId
     const addressId = mustInt(req.body?.addressId || req.body?.address_id || (checkout && (checkout.addressId || checkout.address_id)));
 
     await touchUser(uid, "seen", null, "stripe_create");
@@ -2841,7 +2628,7 @@ app.post("/api/pay/stripe/create", async (req, res) => {
       status: "new",
       rawEvent: { type: "checkout_create_v2", addressId: addressId || null },
       source: "liff",
-      addrOverride: built.addr, // ✅ 選択住所で保存
+      addrOverride: built.addr,
     });
 
     const session = await stripe.checkout.sessions.create({
@@ -2885,7 +2672,6 @@ app.post("/api/pay/stripe/create", async (req, res) => {
   }
 });
 
-// 見積り（confirmで送料表示用）
 app.post("/api/order/quote", async (req, res) => {
   try {
     const uid = String(req.body?.uid || "").trim();
@@ -2923,7 +2709,6 @@ app.post("/api/order/quote", async (req, res) => {
   }
 });
 
-// 代引き：作成
 app.post("/api/order/cod/create", async (req, res) => {
   try {
     const uid = String(req.body?.uid || "").trim();
@@ -2946,7 +2731,7 @@ app.post("/api/order/cod/create", async (req, res) => {
       status: "confirmed",
       rawEvent: { type: "cod_create_v2", addressId: addressId || null },
       source: "liff",
-      addrOverride: built.addr, // ✅ 選択住所で保存
+      addrOverride: built.addr,
     });
 
     await markUserOrdered(built.userId, Number(orderId)).catch(()=>{});
@@ -2960,7 +2745,7 @@ app.post("/api/order/cod/create", async (req, res) => {
       paymentMethod: "cod",
       codFee,
       size: built.size,
-      addr: built.addr, // ✅ 選択住所で通知
+      addr: built.addr,
       title: "新規注文（代引）",
       isPaid: false,
       deliveryMethod: "delivery",
@@ -2992,79 +2777,6 @@ app.post("/api/order/cod/create", async (req, res) => {
   }
 });
 
-// オリジナルセット専用（混載不可）代引き注文
-app.post("/api/orders/original", async (req, res) => {
-  try {
-    const uid = String(req.body?.uid || req.body?.userId || "").trim();
-    const cart = req.body?.cart || null;
-    if (!uid) return res.status(400).json({ ok:false, error:"uid required" });
-    if (!cart || !Array.isArray(cart.items)) return res.status(400).json({ ok:false, error:"cart.items required" });
-
-    const addressId = mustInt(req.body?.addressId || req.body?.address_id || (cart && (cart.addressId || cart.address_id)));
-
-    await touchUser(uid, "seen", null, "original_cod");
-
-    const items = cart.items.filter(x => x && x.id && Number(x.qty) > 0);
-    if (items.length !== 1) return res.status(409).json({ ok:false, error:"MIX_NOT_ALLOWED" });
-
-    const it = items[0];
-    const id = String(it.id || "").trim();
-    const qty = Math.max(1, Math.floor(Number(it.qty || 1)));
-
-    if (id !== ORIGINAL_SET_PRODUCT_ID) return res.status(409).json({ ok:false, error:"NOT_ORIGINAL_SET" });
-    if (qty > 9999) return res.status(400).json({ ok:false, error:"QTY_TOO_LARGE" });
-
-    const built = await buildOrderFromCheckout(uid, { items: [{ id, qty }] }, { requireAddress: true, addressId });
-
-    const codFee = Number(COD_FEE || 330);
-    const totalCod = built.subtotal + built.shippingFee + codFee;
-
-    const orderId = await insertOrderToDb({
-      userId: built.userId,
-      items: built.items,
-      total: totalCod,
-      shippingFee: built.shippingFee,
-      paymentMethod: "cod",
-      status: "confirmed",
-      rawEvent: { type: "original_set_cod", addressId: addressId || null },
-      source: "liff",
-      addrOverride: built.addr, // ✅ 選択住所で保存
-    });
-
-    await markUserOrdered(built.userId, Number(orderId)).catch(()=>{});
-
-    await notifyOrderCompleted({
-      orderId,
-      userId: built.userId,
-      items: built.items,
-      shippingFee: built.shippingFee,
-      total: totalCod,
-      paymentMethod: "cod",
-      codFee,
-      size: built.size,
-      addr: built.addr, // ✅ 選択住所で通知
-      title: "新規注文（オリジナルセット/代引）",
-      isPaid: false,
-      deliveryMethod: "delivery",
-    });
-
-    res.json({ ok: true, orderId, subtotal: built.subtotal, shippingFee: built.shippingFee, codFee, totalCod, size: built.size, addressId: addressId || null });
-  } catch (e) {
-    const code = e?.code || "";
-    logErr("POST /api/orders/original", code, e?.stack || e);
-
-    const handled = respondFukubakoErrors(res, code);
-    if (handled) return;
-
-    if (code === "NO_ADDRESS") return res.status(409).json({ ok:false, error:"NO_ADDRESS" });
-    if (code === "OUT_OF_STOCK") return res.status(409).json({ ok:false, error:"OUT_OF_STOCK", productId: e.productId });
-    if (code === "EMPTY_ITEMS") return res.status(400).json({ ok:false, error:"EMPTY_ITEMS" });
-
-    res.status(500).json({ ok:false, error:"server_error" });
-  }
-});
-
-// 注文ステータス確認
 app.get("/api/order/status", async (req, res) => {
   try {
     const orderId = String(req.query.orderId || "").trim();
@@ -3086,7 +2798,7 @@ app.get("/api/order/status", async (req, res) => {
 });
 
 /* =========================
- * Reorder reminder APIs（外部/LIFFから使う場合用）
+ * Reorder reminder APIs
  * ========================= */
 app.post("/api/reorder/subscribe", async (req, res) => {
   try {
@@ -3139,24 +2851,6 @@ app.post("/api/reorder/unsubscribe", async (req, res) => {
   }
 });
 
-app.get("/api/reorder/status", async (req, res) => {
-  try {
-    const userId = String(req.query.userId || req.query.user_id || "").trim();
-    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
-
-    const r = await pool.query(
-      `SELECT user_id, cycle_days, next_remind_at, active, created_at, updated_at, last_sent_at
-       FROM reorder_reminders
-       WHERE user_id=$1`,
-      [userId]
-    );
-    res.json({ ok: true, reminder: r.rows[0] || null });
-  } catch (e) {
-    logErr("[reorder/status] failed", e?.message || e);
-    res.status(500).json({ ok: false, error: e.message || String(e) });
-  }
-});
-
 /* =========================
  * LINE Event handlers
  * ========================= */
@@ -3192,7 +2886,6 @@ async function onFollow(ev) {
     [day]
   );
 
-  // ✅ follow_events に記録（follow+3d配信に必要）
   try {
     await pool.query(
       `INSERT INTO follow_events (user_id, followed_at, raw_event) VALUES ($1, now(), $2)`,
@@ -3212,14 +2905,14 @@ async function onFollow(ev) {
   try { await notifyAdminFriendAdded({ userId, displayName, day }); } catch {}
 
   await lineClient.pushMessage(userId, {
-  type: "text",
-  text: (
-    "友だち追加ありがとうございます！\n\n" +
-    "このLINEからご注文いただけます。\n\n" +
-    "下のメニューをタップしてご利用ください。"
-  )
-});
- 
+    type: "text",
+    text: (
+      "友だち追加ありがとうございます！\n\n" +
+      "このLINEからご注文いただけます。\n\n" +
+      "下のメニューをタップしてご利用ください。"
+    )
+  });
+
   return;
 }
 
@@ -3252,12 +2945,73 @@ async function onUnfollow(ev) {
 }
 
 /* =========================
+ * Postback handlers（reorder）
+ * ========================= */
+async function onPostback(ev) {
+  const userId = ev?.source?.userId || "";
+  const replyToken = ev?.replyToken || "";
+  const data = String(ev?.postback?.data || "").trim();
+  if (!userId || !data) return;
+
+  // reorder:sub:30:orderId
+  // reorder:unsub::orderId
+  if (data.startsWith("reorder:")) {
+    const parts = data.split(":");
+    const action = parts[1] || "";
+    const daysStr = parts[2] || "";
+    const orderIdStr = parts[3] || "";
+
+    if (action === "sub") {
+      const days = Number(daysStr);
+      if (![30,45,60].includes(days)) {
+        await replyTextSafe(replyToken, "設定に失敗しました（30/45/60日のみ対応）");
+        return;
+      }
+      const intervalStr = `${days} days`;
+      try {
+        await pool.query(
+          `
+          INSERT INTO reorder_reminders (user_id, cycle_days, next_remind_at, active, updated_at)
+          VALUES ($1, $2, now() + $3::interval, true, now())
+          ON CONFLICT (user_id)
+          DO UPDATE SET
+            cycle_days = EXCLUDED.cycle_days,
+            next_remind_at = EXCLUDED.next_remind_at,
+            active = true,
+            updated_at = now()
+          `,
+          [userId, days, intervalStr]
+        );
+        await replyTextSafe(replyToken, `次回のご案内を「${days}日ごと」で設定しました。`);
+      } catch (e) {
+        logErr("reorder postback subscribe failed", e?.message || e);
+        await replyTextSafe(replyToken, "設定に失敗しました（サーバ側）");
+      }
+      return;
+    }
+
+    if (action === "unsub") {
+      try {
+        await pool.query(`UPDATE reorder_reminders SET active=false, updated_at=now() WHERE user_id=$1`, [userId]);
+        await replyTextSafe(replyToken, "次回のご案内を停止しました。");
+      } catch (e) {
+        logErr("reorder postback unsubscribe failed", e?.message || e);
+        await replyTextSafe(replyToken, "停止に失敗しました（サーバ側）");
+      }
+      return;
+    }
+
+    // それ以外は無視
+    return;
+  }
+}
+
+/* =========================
  * Text message（キーワード / 直接注文 / 住所誘導）
  * ========================= */
-function buildOrderEntryUrl(reqForFallback = null) {
+function buildOrderEntryUrl() {
   if (LIFF_ID_ORDER) return `https://liff.line.me/${LIFF_ID_ORDER}`;
   if (LIFF_BASE) return `${LIFF_BASE}/products.html`;
-  if (reqForFallback) return `${originFromReq(reqForFallback)}/products.html`;
   return "";
 }
 function buildAddressEntryUrl() {
@@ -3268,10 +3022,6 @@ function buildAddressEntryUrl() {
 }
 
 function parseDirectOrderText(text) {
-  // 例:
-  // "久助 3"
-  // "久助×2"
-  // "kusuke-250 1"
   const t = String(text || "").trim();
   if (!t) return null;
 
@@ -3289,19 +3039,15 @@ function findProductByKey(products, key) {
   const k = String(key || "").trim().toLowerCase();
   if (!k) return null;
 
-  // id一致
   let p = products.find(x => String(x.id || "").toLowerCase() === k);
   if (p) return p;
 
-  // 部分一致（id）
   p = products.find(x => String(x.id || "").toLowerCase().includes(k));
   if (p) return p;
 
-  // 名称の部分一致（日本語も）
   p = products.find(x => String(x.name || "").toLowerCase().includes(k));
   if (p) return p;
 
-  // 久助/あかしゃなど代表語
   if (k.includes("久助") || k.includes("kusuke")) {
     p = products.find(x => String(x.id || "").toLowerCase().includes("kusuke") || String(x.name || "").includes("久助"));
     if (p) return p;
@@ -3321,7 +3067,7 @@ async function onTextMessage(ev) {
 
   if (!userId || !text) return;
 
-  // 会話系の最短キャンセル
+  // キャンセル
   if (text === "キャンセル" || text.toLowerCase() === "cancel") {
     clearSession(userId);
     await replyTextSafe(replyToken, "キャンセルしました。");
@@ -3340,16 +3086,26 @@ async function onTextMessage(ev) {
     return;
   }
 
-  // ✅ 直接注文フロー（セッションが残って次を拾えない不具合を回避：完了時に必ず clear）
-  const sess = getSession(userId);
+  // 直接注文の開始
+  if (text === KEYWORD_DIRECT) {
+    setSession(userId, { kind: "direct", step: "await_line" });
+    await replyTextSafe(
+      replyToken,
+      `直接注文ですね。\n\n例）\n・久助 2\n・のりあかしゃ×3\n\nこの形式で送ってください。\n（やめる時は「キャンセル」）`
+    );
+    return;
+  }
 
+  // セッション処理（direct）
+  const sess = getSession(userId);
   if (sess?.kind === "direct" && sess?.step === "await_line") {
-    // ここで 1回だけ受け取って即処理 → 成功/失敗どちらでも “direct を残さない”
+    // ✅ ここで必ず direct セッションを消す（成功/失敗どちらでも残さない）
+    clearSession(userId);
+
     try {
       const products = await loadProducts();
       const parsed = parseDirectOrderText(text);
       if (!parsed) {
-        clearSession(userId); // ✅ 直接注文を残さない
         await replyTextSafe(
           replyToken,
           "書き方が分かりませんでした。\n例：\n・久助 2\n・のりあかしゃ×3\n\nもう一度「直接注文」と送ってください。"
@@ -3359,7 +3115,6 @@ async function onTextMessage(ev) {
 
       const p = findProductByKey(products, parsed.key);
       if (!p) {
-        clearSession(userId); // ✅
         await replyTextSafe(
           replyToken,
           `商品が見つかりませんでした：「${parsed.key}」\n\nもう一度「直接注文」と送ってください。`
@@ -3367,34 +3122,22 @@ async function onTextMessage(ev) {
         return;
       }
 
-      // 住所必須
+      // 住所が無いなら住所登録へ誘導
       const addr = await getAddressByUserId(userId);
       if (!addr) {
-        clearSession(userId); // ✅
-        const url = buildAddressEntryUrl();
+        const aurl = buildAddressEntryUrl();
         await replyTextSafe(
           replyToken,
-          url
-            ? `まず住所登録が必要です。\n${url}\n\n登録後、もう一度「直接注文」と送ってください。`
-            : "まず住所登録が必要です（住所LIFF未設定）。"
+          aurl
+            ? `先に住所登録が必要です。\nこちらから登録してください：\n${aurl}\n\n登録後にもう一度「直接注文」と送ってください。`
+            : "先に住所登録が必要です（住所LIFF未設定）。"
         );
         return;
       }
 
-      // 在庫チェック（buildOrderFromCheckout でもやるが、ここで先に親切に）
-      const qty = parsed.qty;
-      if (Number.isFinite(p.stock) && Number(p.stock) < qty) {
-        clearSession(userId); // ✅
-        await replyTextSafe(replyToken, `在庫不足です：${p.name}\n在庫：${p.stock}\n希望：${qty}`);
-        return;
-      }
-
-      // 代引き前提（直接注文は最短の“代引き確定”）
-      const built = await buildOrderFromCheckout(
-        userId,
-        { items: [{ id: p.id, qty }] },
-        { requireAddress: true }
-      );
+      // ✅ ここで「代引注文」を作って通知まで出す（完全に直注文を成立させる）
+      const checkout = { items: [{ id: p.id, qty: parsed.qty }] };
+      const built = await buildOrderFromCheckout(userId, checkout, { requireAddress: true });
 
       const codFee = Number(COD_FEE || 330);
       const totalCod = built.subtotal + built.shippingFee + codFee;
@@ -3406,7 +3149,7 @@ async function onTextMessage(ev) {
         shippingFee: built.shippingFee,
         paymentMethod: "cod",
         status: "confirmed",
-        rawEvent: { type: "direct_text_cod", key: parsed.key, qty },
+        rawEvent: { type: "direct_text_order" },
         source: "line_text",
         addrOverride: built.addr,
       });
@@ -3428,142 +3171,54 @@ async function onTextMessage(ev) {
         deliveryMethod: "delivery",
       });
 
-      clearSession(userId); // ✅ ここが本命：direct を残さない
-
-      // 念のため返信（pushとは別に）
-      await replyTextSafe(replyToken, `直接注文を受け付けました！\n注文ID：${orderId}`);
+      await replyTextSafe(replyToken, `直接注文を受け付けました！\n注文ID: ${orderId}\n（このまま発送準備に入れます）`);
       return;
 
     } catch (e) {
-      clearSession(userId); // ✅ 失敗時も必ず消す
-      logErr("direct order failed", e?.message || e);
-      await replyTextSafe(replyToken, "エラーが発生しました。もう一度「直接注文」と送ってください。");
+      const code = e?.code || "";
+      logErr("direct order failed", code, e?.message || e);
+
+      if (code === "OUT_OF_STOCK") {
+        await replyTextSafe(replyToken, `在庫不足のため受付できませんでした。\n商品: ${e.productId || ""}\n\nもう一度「直接注文」と送ってください。`);
+        return;
+      }
+      if (code === "FUKUBAKO_MIX_NOT_ALLOWED" || code === "FUKUBAKO_QTY_MUST_BE_ONE" || code === "FUKUBAKO_ALREADY_ORDERED") {
+        await replyTextSafe(replyToken, `受付できませんでした（福箱の条件）。\n\nもう一度「直接注文」と送ってください。`);
+        return;
+      }
+      await replyTextSafe(replyToken, "受付できませんでした。\nもう一度「直接注文」と送ってください。");
       return;
     }
   }
 
-  // キーワード：直接注文（開始）
-  if (text === KEYWORD_DIRECT || text.includes(KEYWORD_DIRECT)) {
-    setSession(userId, { kind: "direct", step: "await_line" });
-    await replyTextSafe(
-      replyToken,
-      "「直接注文」を開始します。\n\n" +
-      "次に、欲しい商品と個数を送ってください。\n" +
-      "例：\n・久助 2\n・のりあかしゃ×3\n\n" +
-      "※住所登録がまだの場合は「住所」と送ってください。\n" +
-      "※キャンセルは「キャンセル」"
-    );
-    return;
-  }
-
-  // キーワード：久助（誘導だけ）
-  if (text === KEYWORD_KUSUKE || text.includes(KEYWORD_KUSUKE)) {
+  // ちょいヘルプ：久助だけ送られた場合
+  if (text === KEYWORD_KUSUKE) {
     const url = buildOrderEntryUrl();
-    await replyTextSafe(
-      replyToken,
-      url
-        ? `久助のご注文はこちらからできます。\n${url}\n\n（「直接注文」でもOKです）`
-        : "注文URLが未設定です（LIFF_ID_ORDER もしくは LIFF_BASE_URL を設定してください）"
-    );
+    await replyTextSafe(replyToken, url ? `久助のご注文はこちらからどうぞ：\n${url}` : "注文URLが未設定です。");
     return;
   }
 
-  // その他：軽い案内
-  const url = buildOrderEntryUrl();
-  await replyTextSafe(
-    replyToken,
-    url
-      ? `メッセージありがとうございます。\n\n▼商品を見る / 注文する\n${url}\n\n「直接注文」も使えます。`
-      : "注文URLが未設定です（LIFF_ID_ORDER もしくは LIFF_BASE_URL を設定してください）"
-  );
+  // デフォ：注文URL案内（うるさくしない）
+  return;
 }
 
 /* =========================
- * Postback（定期案内：30/45/60日）
+ * 起動
  * ========================= */
-async function onPostback(ev) {
-  const userId = ev?.source?.userId || "";
-  const replyToken = ev?.replyToken || "";
-  const data = String(ev?.postback?.data || "").trim();
-
-  if (!userId || !data) return;
-
-  // reorder:sub:30:ORDERID
-  if (data.startsWith("reorder:sub:")) {
-    const parts = data.split(":");
-    const days = Number(parts?.[2]);
-    const orderId = Number(parts?.[3] || 0) || null;
-
-    if (![30,45,60].includes(days)) {
-      await replyTextSafe(replyToken, "設定に失敗しました（days不正）");
-      return;
-    }
-
-    try {
-      await pool.query(
-        `
-        INSERT INTO reorder_reminders
-          (user_id, cycle_days, next_remind_at, last_order_id, active, updated_at)
-        VALUES
-          ($1, $2, now() + ($2::text || ' days')::interval, $3, true, now())
-        ON CONFLICT (user_id)
-        DO UPDATE SET
-          cycle_days     = EXCLUDED.cycle_days,
-          next_remind_at = EXCLUDED.next_remind_at,
-          last_order_id  = COALESCE(EXCLUDED.last_order_id, reorder_reminders.last_order_id),
-          active         = true,
-          updated_at     = now()
-        `,
-        [userId, days, orderId]
-      );
-
-      await replyTextSafe(replyToken, `次回のご案内を「${days}日ごと」に設定しました。`);
-      return;
-    } catch (e) {
-      logErr("reorder sub failed", e?.message || e);
-      await replyTextSafe(replyToken, "設定に失敗しました（server_error）");
-      return;
-    }
-  }
-
-  // reorder:unsub::ORDERID
-  if (data.startsWith("reorder:unsub")) {
-    try {
-      await pool.query(
-        `UPDATE reorder_reminders SET active=false, updated_at=now() WHERE user_id=$1`,
-        [userId]
-      );
-      await replyTextSafe(replyToken, "次回のご案内を停止しました。");
-      return;
-    } catch (e) {
-      logErr("reorder unsub failed", e?.message || e);
-      await replyTextSafe(replyToken, "停止に失敗しました（server_error）");
-      return;
-    }
-  }
-}
-
-/* =========================
- * Boot
- * ========================= */
-async function boot() {
+async function main() {
   await ensureDir(DATA_DIR);
   await ensureDir(UPLOAD_DIR);
-  await loadSessions().catch(()=>{});
-  await ensureProductsFile().catch(()=>{});
 
   await ensureDb();
+  await loadSessions();
 
-  const port = Number(env.PORT || 3000);
+  const port = Number(env.PORT || 10000);
   app.listen(port, () => {
-    logInfo(`server started on :${port}`);
-    logInfo(`DATA_DIR=${DATA_DIR}`);
-    logInfo(`UPLOAD_DIR=${UPLOAD_DIR}`);
-    logInfo(`HTTP_LOG=${HTTP_LOG ? "1" : "0"}`);
+    logInfo(`server-line.js listening on :${port}`);
   });
 }
 
-boot().catch((e) => {
+main().catch((e) => {
   logErr("boot failed", e?.stack || e);
   process.exit(1);
 });

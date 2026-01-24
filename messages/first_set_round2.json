@@ -1,0 +1,121 @@
+[
+  {
+    "type": "flex",
+    "altText": "【もう一度だけ】初めてセットのご案内（磯屋）",
+    "contents": {
+      "type": "bubble",
+      "hero": {
+        "type": "image",
+        "url": "https://line-render-app-1.onrender.com/uploads/fukubako-2026.jpg",
+        "size": "full",
+        "aspectRatio": "1:1",
+        "aspectMode": "cover"
+      },
+      "body": {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "md",
+        "contents": [
+          {
+            "type": "text",
+            "text": "手造りえびせんべい 磯屋",
+            "weight": "bold",
+            "size": "lg",
+            "wrap": true
+          },
+          {
+            "type": "text",
+            "text": "【もう一度だけ】初めてセットのご案内です",
+            "weight": "bold",
+            "size": "md",
+            "wrap": true
+          },
+          {
+            "type": "text",
+            "text": "前回のメッセージ、忙しくて見れなかった方も多いと思うので…\n念のため、もう1回だけお送りします。",
+            "size": "sm",
+            "wrap": true,
+            "color": "#555555"
+          },
+          {
+            "type": "separator",
+            "margin": "md"
+          },
+          {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "margin": "md",
+            "contents": [
+              {
+                "type": "text",
+                "text": "初めてセットはこんな感じです👇",
+                "weight": "bold",
+                "size": "sm",
+                "wrap": true
+              },
+              {
+                "type": "text",
+                "text": "・人気のえびせんを少量ずつ\n・味の雰囲気が分かる組み合わせ\n・「まずは試したい」に合わせた内容",
+                "size": "sm",
+                "wrap": true,
+                "color": "#555555"
+              },
+              {
+                "type": "text",
+                "text": "※無理に買わなくて大丈夫です。\n気になるときに、ちらっと覗くだけでもOKです。",
+                "size": "xs",
+                "wrap": true,
+                "color": "#777777"
+              }
+            ]
+          },
+          {
+            "type": "separator",
+            "margin": "md"
+          },
+          {
+            "type": "text",
+            "text": "「送料いくら？」「どれが好み？」など、分からないことがあればこのLINEでそのまま聞いてください。",
+            "size": "xs",
+            "wrap": true,
+            "color": "#777777",
+            "margin": "md"
+          }
+        ]
+      },
+      "footer": {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "sm",
+        "contents": [
+          {
+            "type": "button",
+            "style": "primary",
+            "action": {
+              "type": "uri",
+              "label": "初めてセットを見る",
+              "uri": "https://line-render-app-1.onrender.com/liff/products?focus=fukubako-2026"
+            }
+          },
+          {
+            "type": "button",
+            "style": "secondary",
+            "action": {
+              "type": "uri",
+              "label": "お店をちょっと覗く",
+              "uri": "https://line-render-app-1.onrender.com/omise"
+            }
+          },
+          {
+            "type": "text",
+            "text": "※在庫や内容は時期で少し変わることがあります",
+            "size": "xxs",
+            "wrap": true,
+            "color": "#999999"
+          }
+        ]
+      }
+    }
+  }
+]

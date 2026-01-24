@@ -1,44 +1,47 @@
 #!/usr/bin/env bash
 set -x
 
-echo "[omise_10d] start: $(date -Is)"
+echo "[after_sent_14d] start: $(date -Is)"
 
-# 1) 友だち追加（first_seen）から10日経過した「未購入者」を名簿に入れる
+# 1) 最後に送信された配信（全segment横断）から14日経過した未購入者を名簿に入れる
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
 INSERT INTO segment_blast (segment_key, user_id, created_at)
 SELECT
-  'omise_10d',
+  'after_sent_14d',
   su.user_id,
   NOW()
 FROM segment_users su
-LEFT JOIN segment_blast sb
-  ON sb.segment_key = 'omise_10d'
- AND sb.user_id = su.user_id
 WHERE su.user_id IS NOT NULL
   AND su.user_id <> ''
   AND su.user_id ~* '^U[0-9a-f]{32}$'
 
-  -- ✅ 10日以上経過（漏れない方式）
-  AND su.first_seen IS NOT NULL
-  AND su.first_seen <= NOW() - INTERVAL '10 days'
-
-  -- ✅ まだ名簿に入っていない人だけ
-  AND sb.user_id IS NULL
-
-  -- ✅ 購入者は最初から除外
+  -- 未購入者のみ
   AND NOT EXISTS (
-    SELECT 1
-    FROM orders o
+    SELECT 1 FROM orders o
     WHERE o.user_id = su.user_id
   )
-ON CONFLICT (segment_key, user_id) DO NOTHING;
+
+  -- 最後に送信された配信から14日経過
+  AND (
+    SELECT MAX(sb.sent_at)
+    FROM segment_blast sb
+    WHERE sb.user_id = su.user_id
+      AND sb.sent_at IS NOT NULL
+  ) <= NOW() - INTERVAL '14 days'
+
+  -- すでに after_sent_14d に入っていない人だけ
+  AND NOT EXISTS (
+    SELECT 1 FROM segment_blast sb2
+    WHERE sb2.segment_key = 'after_sent_14d'
+      AND sb2.user_id = su.user_id
+  );
 SQL
 
-# 2) Flex を送信（未送信のみ）
-SEGMENT_KEY=omise_10d \
-MESSAGE_FILE=./messages/omise_10d.json \
+# 2) 配信（未送信のみ）
+SEGMENT_KEY=after_sent_14d \
+MESSAGE_FILE=./messages/flex.json \
 ONCE_ONLY=${ONCE_ONLY:-0} \
-DRY_RUN=${DRY_RUN:-0} \
+DRY_RUN=${DRY_RUN:-1} \
 node send_blast_once.js
 
-echo "[omise_10d] done: $(date -Is)"
+echo "[after_sent_14d] done: $(date -Is)"

@@ -126,10 +126,7 @@
       <div class="col">
         <label>商品</label>
         <select id="productId">
-          <option value="">選択してください</option>
-          <option value="original-set">磯屋オリジナルセット</option>
-          <option value="akasha">あかしゃシリーズ</option>
-          <option value="kusuke">久助（われせん）</option>
+          <option value="">読み込み中…</option>
         </select>
       </div>
 
@@ -173,7 +170,62 @@
   }
 
   function showErr(msg){
-    result.innerHTML = `<span class="err">${msg}</span>`;
+    result.innerHTML = `<span class="err">${escapeHtml(msg)}</span>`;
+  }
+
+  function escapeHtml(s){
+    return String(s)
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#39;");
+  }
+
+  async function loadProducts(){
+    try{
+      productEl.innerHTML = `<option value="">読み込み中…</option>`;
+
+      // DBが正：/api/products から取得して select を生成（IDハードコード禁止）
+      const res = await fetch(location.origin + "/api/products", { method:"GET" });
+      const d = await res.json();
+
+      if(!res.ok || !d.ok || !Array.isArray(d.products)){
+        throw new Error("products_api_error");
+      }
+
+      // 表示順：オリジナルセット→あかしゃ→久助（ざっくり優先）
+      const priority = (id)=>{
+        if(id === "original-set-2000") return 0;
+        if(id.includes("akasha")) return 1;
+        if(id.includes("kusuke")) return 2;
+        return 9;
+      };
+
+      const products = d.products
+        .filter(p => p && p.id && (p.is_active === undefined || p.is_active === true))
+        .sort((a,b)=>{
+          const pa = priority(String(a.id));
+          const pb = priority(String(b.id));
+          if(pa !== pb) return pa - pb;
+          return String(a.id).localeCompare(String(b.id), "ja");
+        });
+
+      const opts = [`<option value="">選択してください</option>`];
+      for(const p of products){
+        const id = String(p.id);
+        const name = String(p.name || p.id);
+
+        // 今回の対象だけに絞りたい場合はここでフィルタ可能
+        // if(!(id.includes("akasha") || id.includes("kusuke") || id.includes("original-set"))) continue;
+
+        opts.push(`<option value="${escapeHtml(id)}">${escapeHtml(name)}</option>`);
+      }
+
+      productEl.innerHTML = opts.join("");
+    }catch(e){
+      productEl.innerHTML = `<option value="">商品を取得できませんでした</option>`;
+    }
   }
 
   async function calc(){
@@ -187,18 +239,18 @@
       return;
     }
 
-    const apiProductId = (productId === "kusuke") ? "kusuke" : productId;
-
     setBusy(true);
     result.textContent = "計算中…";
 
     try{
-      const res = await fetch("/api/shipping/quote", {
+      const res = await fetch(location.origin + "/api/shipping/quote", {
         method:"POST",
         headers:{ "Content-Type":"application/json" },
         body: JSON.stringify({
           pref,
-          items:[{ product_id: apiProductId, qty }],
+          // DBの product_id をそのまま送る（変換禁止）
+          items:[{ product_id: productId, qty }],
+          // strict=true：ルール未設定はエラー（100に逃げない）
           strict:true
         })
       });
@@ -206,13 +258,15 @@
       const d = await res.json();
 
       if(!res.ok || !d.ok){
-        showErr("送料を計算できませんでした。内容を変更してお試しください。");
+        // サーバが詳細を返す場合に備えて表示（無ければ汎用）
+        const msg = d && (d.message || d.error) ? String(d.message || d.error) : "送料を計算できませんでした。内容を変更してお試しください。";
+        showErr(msg);
         return;
       }
 
       result.innerHTML =
-        `お届け先：<b>${d.region}</b><br>` +
-        `配送サイズ：<b>${d.size}サイズ</b><br>` +
+        `お届け先：<b>${escapeHtml(d.region)}</b><br>` +
+        `配送サイズ：<b>${escapeHtml(d.size)}サイズ</b><br>` +
         `<div class="hr"></div>` +
         `商品合計：<b>${yen(d.subtotal)}</b><br>` +
         `送料：<b>${yen(d.shipping_fee)}</b><br>` +
@@ -224,6 +278,9 @@
       setBusy(false);
     }
   }
+
+  // 初期ロード
+  loadProducts();
 
   btn.addEventListener("click", calc);
 })();

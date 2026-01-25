@@ -2255,6 +2255,13 @@ app.post("/api/liff/opened", async (req, res) => {
     res.status(500).json({ ok: false, error: "server_error" });
   }
 });
+
+
+// === DEBUG: ping endpoint (no userId) ===
+app.get("/api/ping", (req, res) => {
+  try{ console.log("[ping]", new Date().toISOString(), req.query); }catch(e){}
+  res.json({ok:true});
+});
 app.post("/api/liff/open", async (req, res) => {
   try {
     const userId = String(req.body?.userId || "").trim();

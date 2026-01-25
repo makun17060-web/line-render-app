@@ -126,30 +126,55 @@
 (function(){
   "use strict";
 
-  // ===== LIFF URL =====
+  /**
+   * ✅ 追記：起動ログを /api/liff/opened に送る
+   * - LIFF内で開かれた時だけ送る（通常ブラウザは送らない）
+   * - userId は token.sub → profile.userId の順で取得
+   * - source に pathname + mode + liffId を入れる
+   * - sessionStorage で同一画面中の二重送信を抑止
+   */
+
+  // ▼あなたの LIFF URL（確定）
   const LIFF_URL_ORIGINAL = "https://liff.line.me/2008406620-Bd9Zo9od";
   const LIFF_URL_AKASHA   = "https://liff.line.me/2008406620-G5j1gjzM";
+
+  // ▼店舗受取用の LIFF URL（確定に差し替え済み）
   const LIFF_URL_STORE    = "https://liff.line.me/2008406620-7tSkOcqd";
 
-  // ===== LIFF ID =====
+  /**
+   * ▼判定に使う LIFF_ID 群（「どれで開かれているか」を特定する）
+   * ※ LIFF_ID_STORE は実IDに差し替えてください
+   */
   const LIFF_ID_ORIGINAL = "2008406620-Bd9Zo9od";
   const LIFF_ID_AKASHA   = "2008406620-G5j1gjzM";
-  const LIFF_ID_STORE    = "2008406620-STORE_LIFF_ID_HERE"; // ← 店舗受取の実IDに差し替え可
+  const LIFF_ID_STORE    = "2008406620-STORE_LIFF_ID_HERE"; // ★ここだけ要修正
 
-  // UI
+  // UI要素
   const modeBadge = document.getElementById("modeBadge");
   const leadText  = document.getElementById("leadText");
   const cardStore = document.getElementById("cardStore");
 
+  // ボタン
   const btnOriginal = document.getElementById("goOriginal");
   const btnAkasha   = document.getElementById("goAkasha");
   const btnStore    = document.getElementById("goStore");
 
-  btnOriginal.onclick = e => { e.preventDefault(); location.href = LIFF_URL_ORIGINAL; };
-  btnAkasha.onclick   = e => { e.preventDefault(); location.href = LIFF_URL_AKASHA; };
-  btnStore.onclick    = e => { e.preventDefault(); location.href = LIFF_URL_STORE; };
+  // クリック遷移（固定）
+  btnOriginal.addEventListener("click", function(e){
+    e.preventDefault();
+    location.href = LIFF_URL_ORIGINAL;
+  });
+  btnAkasha.addEventListener("click", function(e){
+    e.preventDefault();
+    location.href = LIFF_URL_AKASHA;
+  });
+  btnStore.addEventListener("click", function(e){
+    e.preventDefault();
+    location.href = LIFF_URL_STORE;
+  });
 
   function setModeUI(mode){
+    // mode: "delivery" | "store" | "unknown"
     if(mode === "store"){
       cardStore.classList.remove("hidden");
       modeBadge.classList.remove("hidden");
@@ -166,62 +191,96 @@
     }
   }
 
-  // ===== LIFF判定 =====
+  // ✅ LIFFで起動されているか & どの LIFF か を判定
   async function detectModeByLiff(){
-    if(typeof liff === "undefined" || !liff.init){
-      return { mode:"unknown", liffId:null };
-    }
+    if(typeof liff === "undefined" || !liff.init) return { mode:"unknown", liffId:null, inClient:false };
 
     const tryIds = [
-      { id: LIFF_ID_STORE,    mode:"store" },
-      { id: LIFF_ID_ORIGINAL, mode:"delivery" },
-      { id: LIFF_ID_AKASHA,   mode:"delivery" }
+      { id: LIFF_ID_STORE,    mode: "store" },
+      { id: LIFF_ID_ORIGINAL, mode: "delivery" },
+      { id: LIFF_ID_AKASHA,   mode: "delivery" },
     ];
 
     for(const x of tryIds){
       try{
-        await liff.init({ liffId:x.id });
-        return { mode:x.mode, liffId:x.id };
-      }catch(e){}
+        await liff.init({ liffId: x.id });
+        // init成功＝LIFFコンテキスト内の可能性が高い
+        const inClient = !!(liff.isInClient && liff.isInClient());
+        return { mode: x.mode, liffId: x.id, inClient };
+      }catch(e){
+        // 次を試す
+      }
     }
-    return { mode:"unknown", liffId:null };
+    return { mode:"unknown", liffId:null, inClient:false };
   }
 
-  // ===== 起動ログ送信（1セッション1回）=====
-  async function postLiffOpenedOnce(extra){
+  // ✅ 追記：起動ログを送る（LIFF内のみ）
+  async function postLiffOpenedOnce(meta){
     try{
-      if(typeof liff === "undefined" || !liff.getProfile) return;
+      // 二重送信抑止（同一画面中）
+      const key = "liff_opened_sent:" + (meta?.liffId || "unknown") + ":" + location.pathname;
+      if(sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, "1");
 
-      const key = "opened_sent_v1";
-      if(sessionStorage.getItem(key) === "1") return;
+      // userId 取得（token.sub → profile.userId）
+      let userId = null;
+      try{
+        userId = liff.getDecodedIDToken?.()?.sub || null;
+      }catch(_e){}
 
-      const p = await liff.getProfile().catch(()=>null);
-      const userId = (p && p.userId) ? p.userId : "";
-      if(!userId) return; // DB user_id NOT NULL 対策
+      if(!userId){
+        try{
+          const prof = await liff.getProfile();
+          userId = prof?.userId || null;
+        }catch(_e){}
+      }
 
-      await fetch("https://line-render-app-1.onrender.com/api/liff/opened", {
+      // LIFF外だったら送らない（誤爆防止）
+      const inClient = !!meta?.inClient;
+      if(!inClient) return;
+
+      const payload = {
+        userId: userId,
+        source: [
+          location.pathname,
+          "mode=" + (meta?.mode || "unknown"),
+          "liffId=" + (meta?.liffId || "unknown"),
+        ].join("|"),
+        debug: "index_open",
+        ts: Date.now()
+      };
+
+      // 同一ドメインにPOST（URLズレ事故を減らす）
+      const res = await fetch("/api/liff/opened", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          userId,
-          ts: Date.now(),
-          debug: "auto_opened",
-          page: location.pathname,
-          ...extra
-        })
-      }).catch(()=>{});
+        body: JSON.stringify(payload)
+      });
 
-      sessionStorage.setItem(key, "1");
-    }catch(e){}
+      // 失敗時だけログ（普段は静か）
+      if(!res.ok){
+        const txt = await res.text().catch(()=> "");
+        console.error("postLiffOpenedOnce failed", res.status, txt);
+      }
+    }catch(e){
+      console.error("postLiffOpenedOnce error", e);
+    }
   }
 
   (async()=>{
-    const { mode, liffId } = await detectModeByLiff();
-    setModeUI(mode);
+    const meta = await detectModeByLiff();
+    setModeUI(meta.mode);
 
-    // ★ ここで起動ログ送信
-    if(mode !== "unknown"){
-      postLiffOpenedOnce({ mode, liffId });
+    // ✅ 追記：ここで「起動ログ」を送る
+    // （inClient=false の場合は送らない）
+    if(typeof liff !== "undefined" && liff && liff.init){
+      await postLiffOpenedOnce(meta);
+    }
+
+    // 店舗受取モードならUI調整などはここで
+    if(meta.mode === "store"){
+      // document.getElementById("cardOriginal")?.classList.add("hidden");
+      // document.getElementById("cardAkasha")?.classList.add("hidden");
     }
   })();
 

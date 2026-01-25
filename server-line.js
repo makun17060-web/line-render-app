@@ -892,34 +892,45 @@ async function touchUser(userId, kind, displayName = null, source = null) {
     [userId, displayName, k]
   );
 
-  await pool.query(
-      `
-      INSERT INTO segment_users (
-        user_id, segment_id,
-        last_seen_at, last_liff_at, first_seen, last_seen, last_chat_at, last_source, last_liff_open_at, updated_at
-      )
-      VALUES (
-        , ,
-        CASE WHEN ='seen' THEN now() ELSE NULL END,
-        CASE WHEN ='liff' THEN now() ELSE NULL END,
-        now(),
-        CASE WHEN ='seen' THEN now() ELSE NULL END,
-        CASE WHEN ='chat' THEN now() ELSE NULL END,
-        ,
-        CASE WHEN ='liff' THEN now() ELSE NULL END,
-        now()
-      )
-      ON CONFLICT (user_id) DO UPDATE SET
-        last_seen_at = CASE WHEN ='seen' THEN now() ELSE segment_users.last_seen_at END,
-        last_liff_at = CASE WHEN ='liff' THEN now() ELSE segment_users.last_liff_at END,
-        last_seen = CASE WHEN ='seen' THEN now() ELSE segment_users.last_seen END,
-        last_chat_at = CASE WHEN ='chat' THEN now() ELSE segment_users.last_chat_at END,
-        last_source = COALESCE(, segment_users.last_source),
-        last_liff_open_at = CASE WHEN ='liff' THEN now() ELSE segment_users.last_liff_open_at END,
-        updated_at = now()
-      `,
-      [userId, k, src, "profile"]
-    );
+await pool.query(
+  `
+  INSERT INTO segment_users (
+    user_id,
+    segment_id,
+    last_seen_at,
+    last_liff_at,
+    first_seen,
+    last_seen,
+    last_chat_at,
+    last_source,
+    last_liff_open_at,
+    updated_at
+  )
+  VALUES (
+    $1,
+    $4,
+    CASE WHEN $2='seen' THEN now() ELSE NULL END,
+    CASE WHEN $2='liff' THEN now() ELSE NULL END,
+    now(),
+    CASE WHEN $2='seen' THEN now() ELSE NULL END,
+    CASE WHEN $2='chat' THEN now() ELSE NULL END,
+    $3,
+    CASE WHEN $2='liff' THEN now() ELSE NULL END,
+    now()
+  )
+  ON CONFLICT (user_id) DO UPDATE SET
+    segment_id       = COALESCE(segment_users.segment_id, EXCLUDED.segment_id),
+    last_seen_at      = CASE WHEN $2='seen' THEN now() ELSE segment_users.last_seen_at END,
+    last_liff_at      = CASE WHEN $2='liff' THEN now() ELSE segment_users.last_liff_at END,
+    last_seen         = CASE WHEN $2='seen' THEN now() ELSE segment_users.last_seen END,
+    last_chat_at      = CASE WHEN $2='chat' THEN now() ELSE segment_users.last_chat_at END,
+    last_source       = COALESCE($3, segment_users.last_source),
+    last_liff_open_at = CASE WHEN $2='liff' THEN now() ELSE segment_users.last_liff_open_at END,
+    updated_at        = now()
+  `,
+  [userId, k, src, "profile"]
+);
+
 }
 
 async function upsertUserSegment(segmentKey, userId, patch = {}) {

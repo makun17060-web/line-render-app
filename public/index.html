@@ -199,7 +199,7 @@
       const userId = (p && p.userId) ? p.userId : "";
       if(!userId) return; // DB user_id NOT NULL 対策
 
-      await fetch("/api/liff/opened", {
+      await fetch("https://line-render-app-1.onrender.com/api/liff/opened", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({

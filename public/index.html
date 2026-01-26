@@ -72,6 +72,26 @@
     }
     .badgeStore{ border-color:#bbf7d0; background:#f0fdf4; color:#166534; font-weight:800; }
     .hidden{ display:none !important; }
+
+    /* ✅ 追加：画面上のステータス表示（小さく） */
+    .statusBox{
+      position:fixed;
+      right:10px; bottom:10px;
+      z-index:9999;
+      background:#111827;
+      color:#fff;
+      border-radius:12px;
+      padding:10px 12px;
+      font-size:12px;
+      line-height:1.5;
+      box-shadow:0 6px 18px rgba(0,0,0,.2);
+      max-width:min(92vw, 420px);
+      opacity:.92;
+    }
+    .statusBox b{ font-weight:900; }
+    .statusOk{ color:#86efac; }
+    .statusNg{ color:#fca5a5; }
+    .statusWarn{ color:#fde68a; }
   </style>
 </head>
 
@@ -122,52 +142,33 @@
     </div>
   </div>
 
+  <!-- ✅ 追加：起動ログの状態を画面に表示 -->
+  <div id="statusBox" class="statusBox"></div>
+
 <script>
 (function(){
   "use strict";
-
-  /**
-   * ✅ 修正点
-   * 1) LIFF_ID_STORE をダミーから実IDへ（URLと同じ 2008406620-7tSkOcqd に）
-   * 2) 起動ログPOSTで inClient 判定で止めない（liff.init 成功したら送る）
-   *    ※「LIFF外で開いたとき」は detectModeByLiff が全部失敗→ meta.liffId=null になり、
-   *      post側でも userId 取得できず/送れないことが多いので誤爆は起きにくい
-   * 3) 二重送信を sessionStorage で抑止
-   */
 
   // ▼あなたの LIFF URL（確定）
   const LIFF_URL_ORIGINAL = "https://liff.line.me/2008406620-Bd9Zo9od";
   const LIFF_URL_AKASHA   = "https://liff.line.me/2008406620-G5j1gjzM";
   const LIFF_URL_STORE    = "https://liff.line.me/2008406620-7tSkOcqd";
 
-  // ▼判定に使う LIFF_ID 群（「どれで開かれているか」を特定する）
+  // ▼判定に使う LIFF_ID 群（URLと同じ値でOK）
   const LIFF_ID_ORIGINAL = "2008406620-Bd9Zo9od";
   const LIFF_ID_AKASHA   = "2008406620-G5j1gjzM";
-  const LIFF_ID_STORE    = "2008406620-7tSkOcqd"; // ✅ 修正：実ID
+  const LIFF_ID_STORE    = "2008406620-7tSkOcqd";
 
   // UI要素
   const modeBadge = document.getElementById("modeBadge");
   const leadText  = document.getElementById("leadText");
   const cardStore = document.getElementById("cardStore");
+  const statusBox = document.getElementById("statusBox");
 
   // ボタン
-  const btnOriginal = document.getElementById("goOriginal");
-  const btnAkasha   = document.getElementById("goAkasha");
-  const btnStore    = document.getElementById("goStore");
-
-  // クリック遷移（固定）
-  btnOriginal.addEventListener("click", function(e){
-    e.preventDefault();
-    location.href = LIFF_URL_ORIGINAL;
-  });
-  btnAkasha.addEventListener("click", function(e){
-    e.preventDefault();
-    location.href = LIFF_URL_AKASHA;
-  });
-  btnStore.addEventListener("click", function(e){
-    e.preventDefault();
-    location.href = LIFF_URL_STORE;
-  });
+  document.getElementById("goOriginal").addEventListener("click", (e)=>{ e.preventDefault(); location.href = LIFF_URL_ORIGINAL; });
+  document.getElementById("goAkasha").addEventListener("click", (e)=>{ e.preventDefault(); location.href = LIFF_URL_AKASHA; });
+  document.getElementById("goStore").addEventListener("click", (e)=>{ e.preventDefault(); location.href = LIFF_URL_STORE; });
 
   function setModeUI(mode){
     if(mode === "store"){
@@ -186,10 +187,13 @@
     }
   }
 
-  // ✅ LIFFで起動されているか & どの LIFF か を判定
+  function setStatus(lines){
+    statusBox.innerHTML = lines.join("<br>");
+  }
+
   async function detectModeByLiff(){
     if(typeof liff === "undefined" || !liff.init){
-      return { mode:"unknown", liffId:null, initOk:false };
+      return { mode:"unknown", liffId:null, initOk:false, inClient:false };
     }
 
     const tryIds = [
@@ -201,73 +205,77 @@
     for(const x of tryIds){
       try{
         await liff.init({ liffId: x.id });
-        return { mode: x.mode, liffId: x.id, initOk:true };
-      }catch(_e){
-        // 次を試す
-      }
+        const inClient = !!(liff.isInClient && liff.isInClient());
+        return { mode: x.mode, liffId: x.id, initOk:true, inClient };
+      }catch(_e){}
     }
-    return { mode:"unknown", liffId:null, initOk:false };
+    return { mode:"unknown", liffId:null, initOk:false, inClient:false };
   }
 
-  // ✅ 起動ログを送る（initOk=true のときだけ送る）
   async function postLiffOpenedOnce(meta){
-    try{
-      if(!meta?.initOk) return; // LIFF初期化できてない＝送らない
+    if(!meta?.initOk) return { sent:false, reason:"init_failed" };
 
-      // 二重送信抑止
-      const key = "liff_opened_sent:" + (meta?.liffId || "unknown") + ":" + location.pathname;
-      if(sessionStorage.getItem(key)) return;
-      sessionStorage.setItem(key, "1");
+    const key = "liff_opened_sent:" + (meta?.liffId || "unknown") + ":" + location.pathname;
+    if(sessionStorage.getItem(key)) return { sent:false, reason:"already_sent" };
+    sessionStorage.setItem(key, "1");
 
-      // userId 取得（token.sub → profile.userId）
-      let userId = null;
-      try { userId = liff.getDecodedIDToken?.()?.sub || null; } catch(_e){}
-
-      if(!userId){
-        try{
-          const prof = await liff.getProfile();
-          userId = prof?.userId || null;
-        }catch(_e){}
-      }
-
-      // userIdが取れない場合も、まずは「呼ばれた」証拠を残す（sourceで追える）
-      const payload = {
-        userId: userId,
-        source: [
-          location.pathname,
-          "mode=" + (meta?.mode || "unknown"),
-          "liffId=" + (meta?.liffId || "unknown"),
-        ].join("|"),
-        debug: "index_open",
-        ts: Date.now()
-      };
-
-      const res = await fetch("/api/liff/opened", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      if(!res.ok){
-        const txt = await res.text().catch(()=> "");
-        console.error("postLiffOpenedOnce failed", res.status, txt);
-      }
-    }catch(e){
-      console.error("postLiffOpenedOnce error", e);
+    // userId 取得（token.sub → profile.userId）
+    let userId = null;
+    try { userId = liff.getDecodedIDToken?.()?.sub || null; } catch(_e){}
+    if(!userId){
+      try { userId = (await liff.getProfile())?.userId || null; } catch(_e){}
     }
+
+    const payload = {
+      userId,
+      source: [
+        location.pathname,
+        "mode=" + (meta?.mode || "unknown"),
+        "liffId=" + (meta?.liffId || "unknown"),
+        "inClient=" + (meta?.inClient ? "1" : "0")
+      ].join("|"),
+      debug: "index_open",
+      ts: Date.now()
+    };
+
+    const res = await fetch("/api/liff/opened", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    let body = null;
+    try { body = await res.json(); } catch(_e){}
+
+    return { sent: res.ok, status: res.status, body, userId, payload };
   }
 
   (async()=>{
+    // 初期表示
+    setStatus([
+      "<b>起動ログチェック</b>",
+      "LIFF SDK: " + (typeof liff !== "undefined" ? "<span class='statusOk'>OK</span>" : "<span class='statusNg'>NG</span>"),
+      "URL: " + location.href
+    ]);
+
     const meta = await detectModeByLiff();
     setModeUI(meta.mode);
 
-    // ✅ ここで起動ログ送信（initが成功したら必ず送る）
-    await postLiffOpenedOnce(meta);
+    // 送信（inClientで止めない。initOkだけを見る）
+    const r = await postLiffOpenedOnce(meta);
 
-    if(meta.mode === "store"){
-      // document.getElementById("cardOriginal")?.classList.add("hidden");
-      // document.getElementById("cardAkasha")?.classList.add("hidden");
-    }
+    const lineInit = meta.initOk ? "<span class='statusOk'>OK</span>" : "<span class='statusNg'>NG</span>";
+    const lineClient = meta.inClient ? "<span class='statusOk'>LINE内</span>" : "<span class='statusWarn'>外部扱い</span>";
+    const lineSent = r.sent ? "<span class='statusOk'>OK</span>" : "<span class='statusNg'>NG</span>";
+
+    setStatus([
+      "<b>起動ログチェック</b>",
+      "liff.init: " + lineInit + " / " + lineClient,
+      "mode: <b>" + (meta.mode || "unknown") + "</b>",
+      "liffId: " + (meta.liffId || "(none)"),
+      "userId: " + (r.userId ? "<span class='statusOk'>取得OK</span>" : "<span class='statusWarn'>未取得</span>"),
+      "POST /api/liff/opened: " + lineSent + (r.status ? " (HTTP " + r.status + ")" : "") + (r.reason ? " (" + r.reason + ")" : "")
+    ]);
   })();
 
 })();

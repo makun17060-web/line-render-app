@@ -873,56 +873,72 @@ async function ensureDb() {
  * User / Address helpers
  * ========================= */
 async function touchUser(userId, kind, displayName = null, source = null) {
-  const k = String(kind || "seen");
+  const uid = String(userId || "").trim();
+  if (!uid) return;
+
+  const k = String(kind || "seen").trim();     // 'seen' | 'liff' | 'chat' 想定
   const src = source ? String(source) : null;
 
+  // users（表示名など）も一応更新しておく（任意）
+  try {
+    await pool.query(
+      `
+      INSERT INTO users (user_id, display_name, last_seen_at, last_liff_at, updated_at)
+      VALUES (
+        $1,
+        $2,
+        CASE WHEN $3='seen' THEN now() ELSE NULL END,
+        CASE WHEN $3='liff' THEN now() ELSE NULL END,
+        now()
+      )
+      ON CONFLICT (user_id) DO UPDATE SET
+        display_name = COALESCE(EXCLUDED.display_name, users.display_name),
+        last_seen_at = CASE WHEN $3='seen' THEN now() ELSE users.last_seen_at END,
+        last_liff_at = CASE WHEN $3='liff' THEN now() ELSE users.last_liff_at END,
+        updated_at   = now()
+      `,
+      [uid, displayName ? String(displayName) : null, k]
+    );
+  } catch {}
+
+  // ✅ segment_users（user_id 1行のサマリ）を upsert
   await pool.query(
- 
-  
-  INSERT INTO segment_users (
-    segment_id,
-    user_id,
-    last_seen_at,
-    last_liff_at,
-    first_seen,
-    last_seen,
-    last_chat_at,
-    last_source,
-    last_liff_open_at,
-    updated_at
-  )
-  VALUES (
-    $4,
-    $1,
-    CASE WHEN $2='seen' THEN now() ELSE NULL END,
-    CASE WHEN $2='liff' THEN now() ELSE NULL END,
-    now(),
-    CASE WHEN $2='seen' THEN now() ELSE NULL END,
-    CASE WHEN $2='chat' THEN now() ELSE NULL END,
-    $3,
-    CASE WHEN $2='liff' THEN now() ELSE NULL END,
-    now()
-  )
-  ON CONFLICT ON CONSTRAINT segment_users_pkey
-  DO UPDATE SET
-    -- ※ segment_id は主キーの一部なので更新不要（更新すると逆に危険）
-    last_seen_at      = CASE WHEN $2='seen' THEN now() ELSE segment_users.last_seen_at END,
-    last_liff_at      = CASE WHEN $2='liff' THEN now() ELSE segment_users.last_liff_at END,
-    last_seen         = CASE WHEN $2='seen' THEN now() ELSE segment_users.last_seen END,
-    last_chat_at      = CASE WHEN $2='chat' THEN now() ELSE segment_users.last_chat_at END,
-    last_source       = COALESCE($3, segment_users.last_source),
-    last_liff_open_at = CASE WHEN $2='liff' THEN now() ELSE segment_users.last_liff_open_at END,
-    updated_at        = now()
-  `,
-  // ここはあなたの実引数に合わせてください：
-  // $1=userId, $2=kind, $3=source, $4=segmentId
-  [userId, k, source, segmentId]
- );
-
-  [userId, k, src, "profile"]
-);
-
+    `
+    INSERT INTO segment_users (
+      user_id,
+      last_seen_at,
+      last_liff_at,
+      first_seen,
+      last_seen,
+      last_chat_at,
+      last_source,
+      last_liff_open_at,
+      updated_at
+    )
+    VALUES (
+      $1,
+      CASE WHEN $2='seen' THEN now() ELSE NULL END,
+      CASE WHEN $2='liff' THEN now() ELSE NULL END,
+      now(),
+      CASE WHEN $2='seen' THEN now() ELSE NULL END,
+      CASE WHEN $2='chat' THEN now() ELSE NULL END,
+      $3,
+      CASE WHEN $2='liff' THEN now() ELSE NULL END,
+      now()
+    )
+    ON CONFLICT (user_id) DO UPDATE SET
+      last_seen_at      = CASE WHEN $2='seen' THEN now() ELSE segment_users.last_seen_at END,
+      last_liff_at      = CASE WHEN $2='liff' THEN now() ELSE segment_users.last_liff_at END,
+      last_seen         = CASE WHEN $2='seen' THEN now() ELSE segment_users.last_seen END,
+      last_chat_at      = CASE WHEN $2='chat' THEN now() ELSE segment_users.last_chat_at END,
+      last_source       = COALESCE($3, segment_users.last_source),
+      last_liff_open_at = CASE WHEN $2='liff' THEN now() ELSE segment_users.last_liff_open_at END,
+      updated_at        = now()
+    `,
+    [uid, k, src]
+  );
 }
+
 
 async function upsertUserSegment(segmentKey, userId, patch = {}) {
   const seg = String(segmentKey || "").trim();

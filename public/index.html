@@ -73,30 +73,37 @@
 
 <script>
 (async function(){
-  const qs = new URLSearchParams(location.search);
-  const DEBUG = qs.get("debug") === "1";
-  const FORCE = qs.get("force") === "1";
-  const d = (msg)=> { if (DEBUG) alert(msg); };
-
+  // ===== 設定（このページは「左上」＝ 8CWfgEKh で開く前提で固定）=====
   const LIFF_ID = "2008406620-8CWfgEKh";
-  const API_URL = location.origin + "/api/liff/opened";
-  const VERSION = "index_v_20260126_01";
+  const VERSION = "index_v_20260126_fix2";
 
+  // ===== デバッグスイッチ（普段は何も出ない）=====
+  const qs = new URLSearchParams(location.search);
+  const DEBUG = qs.get("debug") === "1";   // ?debug=1 で表示
+  const FORCE = qs.get("force") === "1";  // ?force=1 で二重送信防止を無視
+
+  // 画面に出さないのが基本。必要なときだけ alert。
+  const d = (msg) => { if (DEBUG) alert(msg); };
+
+  // API 送信先：相対パスがズレる事故を避けるため絶対URL
+  const API_URL = location.origin + "/api/liff/opened";
+
+  // ===== 1) init =====
   try {
     await liff.init({ liffId: LIFF_ID });
-    d("init OK");
   } catch (e) {
     d("init FAILED: " + (e?.message || String(e)));
     return;
   }
 
+  // ===== 2) login（未ログインならここでリダイレクト）=====
   if (!liff.isLoggedIn()) {
     d("not logged in -> login()");
     liff.login({ redirectUri: location.href });
     return;
   }
-  d("login OK");
 
+  // ===== 3) userId 取得 =====
   let userId = null;
   try { userId = liff.getDecodedIDToken()?.sub || null; } catch(e){}
   if (!userId) {
@@ -106,21 +113,20 @@
     d("userId missing");
     return;
   }
-  d("userId OK");
 
-  // 二重送信防止（force=1 の時は無視）
-  const key = "liff_opened_sent";
+  // ===== 4) 二重送信防止（force=1 で無視）=====
+  const key = "liff_opened_sent:" + LIFF_ID + ":" + location.pathname;
   if (!FORCE && sessionStorage.getItem(key)) {
-    d("already sent (sessionStorage) -> skip");
+    d("already sent -> skip");
     return;
   }
   sessionStorage.setItem(key, "1");
 
+  // ===== 5) 起動ログ送信 =====
   const payload = {
     userId,
     source: `index|order|${VERSION}|origin=${location.origin}`,
-    ts: Date.now(),
-    debug: DEBUG ? "debug=1" : ""
+    ts: Date.now()
   };
 
   try {
@@ -130,13 +136,15 @@
       body: JSON.stringify(payload)
     });
 
-    const text = await res.text().catch(()=> "");
-    d("POST " + (res.ok ? "OK" : "NG") + " HTTP=" + res.status + "\n" + text.slice(0,200));
+    // 普段は無音、debug時だけ表示
+    if (DEBUG) {
+      const text = await res.text().catch(()=> "");
+      d("POST " + (res.ok ? "OK" : "NG") + " HTTP=" + res.status + "\n" + text.slice(0,200));
+    }
   } catch (e) {
     d("POST error: " + (e?.message || String(e)));
   }
 })();
 </script>
-
 </body>
 </html>

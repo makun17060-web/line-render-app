@@ -29,7 +29,7 @@
     .card{
       background:var(--card);
       border:1px solid var(--line);
-      border-radius:var(--radius);
+      border-radius:16px;
       box-shadow:var(--shadow);
       padding:16px;
       margin-top:14px;
@@ -41,243 +41,115 @@
       font-weight:900; font-size:16px;
       text-align:center; text-decoration:none;
       border:none; cursor:pointer;
-      user-select:none;
     }
     .btnOriginal{ background:var(--original); color:#fff; }
     .btnAkasha{ background:var(--akasha); color:#fff; }
     .btnStore{ background:var(--store); color:#fff; }
 
-    .note{ margin-top:10px; font-size:13px; color:#374151; }
-    .sub{ margin-top:6px; font-size:12px; color:var(--muted); }
-    .pill{
-      display:inline-block; margin-top:8px;
-      font-size:12px; padding:2px 10px;
-      border-radius:999px;
-      border:1px solid var(--line);
-      background:#fafafa; color:#374151;
-    }
-    .warn{ color:var(--danger); font-weight:900; }
-    .small{ font-size:12px; color:var(--muted); margin-top:14px; }
-    .hr{ height:1px; background:var(--line); margin:14px 0; }
-
-    .badge{
-      display:inline-block;
-      font-size:12px;
-      padding:3px 10px;
-      border-radius:999px;
-      border:1px solid var(--line);
-      background:#fff;
-      margin-left:8px;
-      vertical-align:middle;
-    }
-    .badgeStore{ border-color:#bbf7d0; background:#f0fdf4; color:#166534; font-weight:800; }
-    .hidden{ display:none !important; }
-
-    /* ✅ 追加：画面上のステータス表示（小さく） */
-    .statusBox{
-      position:fixed;
-      right:10px; bottom:10px;
-      z-index:9999;
-      background:#111827;
-      color:#fff;
-      border-radius:12px;
-      padding:10px 12px;
-      font-size:12px;
-      line-height:1.5;
-      box-shadow:0 6px 18px rgba(0,0,0,.2);
-      max-width:min(92vw, 420px);
+    .status{
+      position:fixed; right:10px; bottom:10px;
+      background:#111827; color:#fff;
+      border-radius:12px; padding:10px 12px;
+      font-size:12px; line-height:1.5;
+      max-width:92vw;
       opacity:.92;
     }
-    .statusBox b{ font-weight:900; }
-    .statusOk{ color:#86efac; }
-    .statusNg{ color:#fca5a5; }
-    .statusWarn{ color:#fde68a; }
+    .ok{ color:#86efac; }
+    .ng{ color:#fca5a5; }
+    .warn{ color:#fde68a; }
   </style>
 </head>
 
 <body>
-  <div class="wrap">
-    <h1>
-      ご注文はこちら
-      <span id="modeBadge" class="badge hidden"></span>
-    </h1>
-    <div class="muted" id="leadText">
-      ご希望の商品カテゴリを選択してください。
-    </div>
+<div class="wrap">
+  <h1>ご注文はこちら</h1>
+  <div class="muted">ご希望の商品カテゴリを選択してください。</div>
 
-    <!-- 🎁 オリジナルセット -->
-    <div class="card" id="cardOriginal">
-      <a class="btn btnOriginal" href="#" id="goOriginal">🎁 オリジナルセットを購入</a>
-      <div class="note">詰め合わせ商品・贈答向け</div>
-      <div class="sub">
-        <span class="warn">※ 単品（あかしゃシリーズ等）との混載はできません</span>
-      </div>
-      <div class="pill">数量で送料サイズが変わります</div>
-      <div class="small">
-        送料サイズ：1個→80 / 2個→100 / 3～4個→120 / 5～6個→140
-      </div>
-    </div>
-
-    <!-- 🍘 あかしゃシリーズ -->
-    <div class="card" id="cardAkasha">
-      <a class="btn btnAkasha" href="#" id="goAkasha">🍘 あかしゃシリーズを購入</a>
-      <div class="note">単品・組み合わせ自由（混載OK）</div>
-      <div class="sub">久助もシリーズ扱いで同梱できます</div>
-      <div class="pill">カート → 住所入力 → 注文確定</div>
-    </div>
-
-    <!-- 🏠 店舗受取（現金） -->
-    <div class="card hidden" id="cardStore">
-      <a class="btn btnStore" href="#" id="goStore">🏠 店舗受取（現金）で注文する</a>
-      <div class="note">送料なし・住所入力なし・店頭で現金払い</div>
-      <div class="sub">店舗で「LINE注文です」とお伝えください</div>
-      <div class="pill">カート → 注文確定（現金）</div>
-    </div>
-
-    <div class="hr"></div>
-
-    <div class="small">
-      ※ 本画面からの遷移はすべて <b>LIFF公式URL（liff.line.me）</b> を使用できます。<br>
-      LINE仕様に準拠しているため、400エラーを避けやすくなります。
-    </div>
+  <div class="card">
+    <a class="btn btnOriginal" href="https://liff.line.me/2008406620-Bd9Zo9od">
+      🎁 オリジナルセット
+    </a>
   </div>
 
-  <!-- ✅ 追加：起動ログの状態を画面に表示 -->
-  <div id="statusBox" class="statusBox"></div>
+  <div class="card">
+    <a class="btn btnAkasha" href="https://liff.line.me/2008406620-G5j1gjzM">
+      🍘 あかしゃシリーズ
+    </a>
+  </div>
+
+  <div class="card">
+    <a class="btn btnStore" href="https://liff.line.me/2008406620-7tSkOcqd">
+      🏠 店頭受取（現金）
+    </a>
+  </div>
+</div>
+
+<div id="status" class="status"></div>
 
 <script>
-(function(){
-  "use strict";
+(async function(){
+  const status = document.getElementById("status");
+  const log = (html)=> status.innerHTML += html + "<br>";
 
-  // ▼あなたの LIFF URL（確定）
-  const LIFF_URL_ORIGINAL = "https://liff.line.me/2008406620-Bd9Zo9od";
-  const LIFF_URL_AKASHA   = "https://liff.line.me/2008406620-G5j1gjzM";
-  const LIFF_URL_STORE    = "https://liff.line.me/2008406620-7tSkOcqd";
+  log("<b>LIFF起動チェック</b>");
+  log("URL: " + location.href);
 
-  // ▼判定に使う LIFF_ID 群（URLと同じ値でOK）
-  const LIFF_ID_ORIGINAL = "2008406620-Bd9Zo9od";
-  const LIFF_ID_AKASHA   = "2008406620-G5j1gjzM";
-  const LIFF_ID_STORE    = "2008406620-7tSkOcqd";
+  // ★ 重要：このページは「左上」で開く LIFF に固定
+  const FIXED_LIFF_ID = "2008406620-8CWfgEKh";
 
-  // UI要素
-  const modeBadge = document.getElementById("modeBadge");
-  const leadText  = document.getElementById("leadText");
-  const cardStore = document.getElementById("cardStore");
-  const statusBox = document.getElementById("statusBox");
-
-  // ボタン
-  document.getElementById("goOriginal").addEventListener("click", (e)=>{ e.preventDefault(); location.href = LIFF_URL_ORIGINAL; });
-  document.getElementById("goAkasha").addEventListener("click", (e)=>{ e.preventDefault(); location.href = LIFF_URL_AKASHA; });
-  document.getElementById("goStore").addEventListener("click", (e)=>{ e.preventDefault(); location.href = LIFF_URL_STORE; });
-
-  function setModeUI(mode){
-    if(mode === "store"){
-      cardStore.classList.remove("hidden");
-      modeBadge.classList.remove("hidden");
-      modeBadge.classList.add("badgeStore");
-      modeBadge.textContent = "店舗受取モード";
-      leadText.textContent = "店舗受取（現金）での注文です。商品を選んでください。";
-    }else if(mode === "delivery"){
-      modeBadge.classList.remove("hidden");
-      modeBadge.textContent = "配送モード";
-      leadText.textContent = "ご希望の商品カテゴリを選択してください。";
-    }else{
-      modeBadge.classList.add("hidden");
-      leadText.textContent = "ご希望の商品カテゴリを選択してください。";
-    }
+  try{
+    await liff.init({ liffId: FIXED_LIFF_ID });
+    log("liff.init: <span class='ok'>OK</span>");
+  }catch(e){
+    log("liff.init: <span class='ng'>FAILED</span>");
+    log(String(e));
+    return;
   }
 
-  function setStatus(lines){
-    statusBox.innerHTML = lines.join("<br>");
+  // ログイン強制（外部扱いでも userId を取る）
+  if(!liff.isLoggedIn()){
+    log("login: <span class='warn'>未ログイン → login()</span>");
+    liff.login({ redirectUri: location.href });
+    return;
+  }else{
+    log("login: <span class='ok'>OK</span>");
   }
 
-  async function detectModeByLiff(){
-    if(typeof liff === "undefined" || !liff.init){
-      return { mode:"unknown", liffId:null, initOk:false, inClient:false };
-    }
-
-    const tryIds = [
-      { id: LIFF_ID_STORE,    mode: "store" },
-      { id: LIFF_ID_ORIGINAL, mode: "delivery" },
-      { id: LIFF_ID_AKASHA,   mode: "delivery" },
-    ];
-
-    for(const x of tryIds){
-      try{
-        await liff.init({ liffId: x.id });
-        const inClient = !!(liff.isInClient && liff.isInClient());
-        return { mode: x.mode, liffId: x.id, initOk:true, inClient };
-      }catch(_e){}
-    }
-    return { mode:"unknown", liffId:null, initOk:false, inClient:false };
+  // userId 取得
+  let userId = null;
+  try{ userId = liff.getDecodedIDToken()?.sub || null; }catch(e){}
+  if(!userId){
+    try{ userId = (await liff.getProfile())?.userId || null; }catch(e){}
   }
 
-  async function postLiffOpenedOnce(meta){
-    if(!meta?.initOk) return { sent:false, reason:"init_failed" };
+  if(userId){
+    log("userId: <span class='ok'>取得OK</span>");
+  }else{
+    log("userId: <span class='ng'>未取得</span>");
+    return;
+  }
 
-    const key = "liff_opened_sent:" + (meta?.liffId || "unknown") + ":" + location.pathname;
-    if(sessionStorage.getItem(key)) return { sent:false, reason:"already_sent" };
-    sessionStorage.setItem(key, "1");
+  // 起動ログ送信（1回だけ）
+  const key = "opened_sent";
+  if(!sessionStorage.getItem(key)){
+    sessionStorage.setItem(key,"1");
 
-    // userId 取得（token.sub → profile.userId）
-    let userId = null;
-    try { userId = liff.getDecodedIDToken?.()?.sub || null; } catch(_e){}
-    if(!userId){
-      try { userId = (await liff.getProfile())?.userId || null; } catch(_e){}
-    }
-
-    const payload = {
-      userId,
-      source: [
-        location.pathname,
-        "mode=" + (meta?.mode || "unknown"),
-        "liffId=" + (meta?.liffId || "unknown"),
-        "inClient=" + (meta?.inClient ? "1" : "0")
-      ].join("|"),
-      debug: "index_open",
-      ts: Date.now()
-    };
-
-    const res = await fetch("/api/liff/opened", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload)
+    const res = await fetch("/api/liff/opened",{
+      method:"POST",
+      headers:{ "content-type":"application/json" },
+      body: JSON.stringify({
+        userId,
+        source: "index|order",
+        ts: Date.now()
+      })
     });
 
-    let body = null;
-    try { body = await res.json(); } catch(_e){}
-
-    return { sent: res.ok, status: res.status, body, userId, payload };
+    log("POST /api/liff/opened: " +
+      (res.ok ? "<span class='ok'>OK</span>" : "<span class='ng'>NG</span>")
+    );
+  }else{
+    log("POST /api/liff/opened: skip");
   }
-
-  (async()=>{
-    // 初期表示
-    setStatus([
-      "<b>起動ログチェック</b>",
-      "LIFF SDK: " + (typeof liff !== "undefined" ? "<span class='statusOk'>OK</span>" : "<span class='statusNg'>NG</span>"),
-      "URL: " + location.href
-    ]);
-
-    const meta = await detectModeByLiff();
-    setModeUI(meta.mode);
-
-    // 送信（inClientで止めない。initOkだけを見る）
-    const r = await postLiffOpenedOnce(meta);
-
-    const lineInit = meta.initOk ? "<span class='statusOk'>OK</span>" : "<span class='statusNg'>NG</span>";
-    const lineClient = meta.inClient ? "<span class='statusOk'>LINE内</span>" : "<span class='statusWarn'>外部扱い</span>";
-    const lineSent = r.sent ? "<span class='statusOk'>OK</span>" : "<span class='statusNg'>NG</span>";
-
-    setStatus([
-      "<b>起動ログチェック</b>",
-      "liff.init: " + lineInit + " / " + lineClient,
-      "mode: <b>" + (meta.mode || "unknown") + "</b>",
-      "liffId: " + (meta.liffId || "(none)"),
-      "userId: " + (r.userId ? "<span class='statusOk'>取得OK</span>" : "<span class='statusWarn'>未取得</span>"),
-      "POST /api/liff/opened: " + lineSent + (r.status ? " (HTTP " + r.status + ")" : "") + (r.reason ? " (" + r.reason + ")" : "")
-    ]);
-  })();
-
 })();
 </script>
 </body>

@@ -877,26 +877,11 @@ async function touchUser(userId, kind, displayName = null, source = null) {
   const src = source ? String(source) : null;
 
   await pool.query(
-    `
-    INSERT INTO users (user_id, display_name, last_seen_at, last_liff_at)
-    VALUES ($1, $2,
-      CASE WHEN $3='seen' THEN now() ELSE NULL END,
-      CASE WHEN $3='liff' THEN now() ELSE NULL END
-    )
-    ON CONFLICT (user_id) DO UPDATE SET
-      display_name = COALESCE(EXCLUDED.display_name, users.display_name),
-      last_seen_at = CASE WHEN $3='seen' THEN now() ELSE users.last_seen_at END,
-      last_liff_at = CASE WHEN $3='liff' THEN now() ELSE users.last_liff_at END,
-      updated_at = now()
-    `,
-    [userId, displayName, k]
-  );
-
-await pool.query(
+ await pool.query(
   `
   INSERT INTO segment_users (
-    user_id,
     segment_id,
+    user_id,
     last_seen_at,
     last_liff_at,
     first_seen,
@@ -907,8 +892,8 @@ await pool.query(
     updated_at
   )
   VALUES (
-    $1,
     $4,
+    $1,
     CASE WHEN $2='seen' THEN now() ELSE NULL END,
     CASE WHEN $2='liff' THEN now() ELSE NULL END,
     now(),
@@ -918,8 +903,9 @@ await pool.query(
     CASE WHEN $2='liff' THEN now() ELSE NULL END,
     now()
   )
-  ON CONFLICT (user_id) DO UPDATE SET
-    segment_id       = COALESCE(segment_users.segment_id, EXCLUDED.segment_id),
+  ON CONFLICT ON CONSTRAINT segment_users_pkey
+  DO UPDATE SET
+    -- ※ segment_id は主キーの一部なので更新不要（更新すると逆に危険）
     last_seen_at      = CASE WHEN $2='seen' THEN now() ELSE segment_users.last_seen_at END,
     last_liff_at      = CASE WHEN $2='liff' THEN now() ELSE segment_users.last_liff_at END,
     last_seen         = CASE WHEN $2='seen' THEN now() ELSE segment_users.last_seen END,
@@ -928,6 +914,11 @@ await pool.query(
     last_liff_open_at = CASE WHEN $2='liff' THEN now() ELSE segment_users.last_liff_open_at END,
     updated_at        = now()
   `,
+  // ここはあなたの実引数に合わせてください：
+  // $1=userId, $2=kind, $3=source, $4=segmentId
+  [userId, k, source, segmentId]
+);
+
   [userId, k, src, "profile"]
 );
 

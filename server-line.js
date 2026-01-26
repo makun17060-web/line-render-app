@@ -877,8 +877,8 @@ async function touchUser(userId, kind, displayName = null, source = null) {
   const src = source ? String(source) : null;
 
   await pool.query(
- await pool.query(
-  `
+ 
+  ''
   INSERT INTO segment_users (
     segment_id,
     user_id,
@@ -917,7 +917,7 @@ async function touchUser(userId, kind, displayName = null, source = null) {
   // ここはあなたの実引数に合わせてください：
   // $1=userId, $2=kind, $3=source, $4=segmentId
   [userId, k, source, segmentId]
-);
+ );
 
   [userId, k, src, "profile"]
 );

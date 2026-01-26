@@ -13,7 +13,6 @@
       --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280; --line:#e5e7eb;
       --akasha:#0b3a53; --original:#7a1f1f; --store:#0a7b19;
       --shadow:0 1px 4px rgba(0,0,0,.08); --radius:16px;
-      --danger:#b91c1c;
     }
     *{ box-sizing:border-box; }
     body{
@@ -29,7 +28,7 @@
     .card{
       background:var(--card);
       border:1px solid var(--line);
-      border-radius:16px;
+      border-radius:var(--radius);
       box-shadow:var(--shadow);
       padding:16px;
       margin-top:14px;
@@ -45,110 +44,81 @@
     .btnOriginal{ background:var(--original); color:#fff; }
     .btnAkasha{ background:var(--akasha); color:#fff; }
     .btnStore{ background:var(--store); color:#fff; }
-
-    .status{
-      position:fixed; right:10px; bottom:10px;
-      background:#111827; color:#fff;
-      border-radius:12px; padding:10px 12px;
-      font-size:12px; line-height:1.5;
-      max-width:92vw;
-      opacity:.92;
-    }
-    .ok{ color:#86efac; }
-    .ng{ color:#fca5a5; }
-    .warn{ color:#fde68a; }
   </style>
 </head>
 
 <body>
-<div class="wrap">
-  <h1>ご注文はこちら</h1>
-  <div class="muted">ご希望の商品カテゴリを選択してください。</div>
+  <div class="wrap">
+    <h1>ご注文はこちら</h1>
+    <div class="muted">ご希望の商品カテゴリを選択してください。</div>
 
-  <div class="card">
-    <a class="btn btnOriginal" href="https://liff.line.me/2008406620-Bd9Zo9od">
-      🎁 オリジナルセット
-    </a>
+    <div class="card">
+      <a class="btn btnOriginal" href="https://liff.line.me/2008406620-Bd9Zo9od">
+        🎁 オリジナルセット
+      </a>
+    </div>
+
+    <div class="card">
+      <a class="btn btnAkasha" href="https://liff.line.me/2008406620-G5j1gjzM">
+        🍘 あかしゃシリーズ
+      </a>
+    </div>
+
+    <div class="card">
+      <a class="btn btnStore" href="https://liff.line.me/2008406620-7tSkOcqd">
+        🏠 店頭受取（現金）
+      </a>
+    </div>
   </div>
-
-  <div class="card">
-    <a class="btn btnAkasha" href="https://liff.line.me/2008406620-G5j1gjzM">
-      🍘 あかしゃシリーズ
-    </a>
-  </div>
-
-  <div class="card">
-    <a class="btn btnStore" href="https://liff.line.me/2008406620-7tSkOcqd">
-      🏠 店頭受取（現金）
-    </a>
-  </div>
-</div>
-
-<div id="status" class="status"></div>
 
 <script>
 (async function(){
-  const status = document.getElementById("status");
-  const log = (html)=> status.innerHTML += html + "<br>";
+  // 左上リッチメニューで開かれる LIFF ID に固定
+  const LIFF_ID = "2008406620-8CWfgEKh";
 
-  log("<b>LIFF起動チェック</b>");
-  log("URL: " + location.href);
-
-  // ★ 重要：このページは「左上」で開く LIFF に固定
-  const FIXED_LIFF_ID = "2008406620-8CWfgEKh";
-
-  try{
-    await liff.init({ liffId: FIXED_LIFF_ID });
-    log("liff.init: <span class='ok'>OK</span>");
-  }catch(e){
-    log("liff.init: <span class='ng'>FAILED</span>");
-    log(String(e));
+  try {
+    await liff.init({ liffId: LIFF_ID });
+  } catch (e) {
+    // LIFF起動できない場合は何もしない（静かに終了）
     return;
   }
 
-  // ログイン強制（外部扱いでも userId を取る）
-  if(!liff.isLoggedIn()){
-    log("login: <span class='warn'>未ログイン → login()</span>");
+  // 未ログインならログイン（外部扱いでも userId を取るため）
+  if (!liff.isLoggedIn()) {
     liff.login({ redirectUri: location.href });
     return;
-  }else{
-    log("login: <span class='ok'>OK</span>");
   }
 
   // userId 取得
   let userId = null;
-  try{ userId = liff.getDecodedIDToken()?.sub || null; }catch(e){}
-  if(!userId){
-    try{ userId = (await liff.getProfile())?.userId || null; }catch(e){}
+  try {
+    userId = liff.getDecodedIDToken()?.sub || null;
+  } catch(e){}
+  if (!userId) {
+    try {
+      userId = (await liff.getProfile())?.userId || null;
+    } catch(e){}
   }
 
-  if(userId){
-    log("userId: <span class='ok'>取得OK</span>");
-  }else{
-    log("userId: <span class='ng'>未取得</span>");
-    return;
-  }
+  if (!userId) return;
 
-  // 起動ログ送信（1回だけ）
-  const key = "opened_sent";
-  if(!sessionStorage.getItem(key)){
-    sessionStorage.setItem(key,"1");
+  // 同一画面での二重送信防止
+  if (sessionStorage.getItem("liff_opened_sent")) return;
+  sessionStorage.setItem("liff_opened_sent", "1");
 
-    const res = await fetch("/api/liff/opened",{
-      method:"POST",
-      headers:{ "content-type":"application/json" },
+  // 起動ログ送信
+  try {
+    await fetch("/api/liff/opened", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({
         userId,
         source: "index|order",
         ts: Date.now()
       })
     });
-
-    log("POST /api/liff/opened: " +
-      (res.ok ? "<span class='ok'>OK</span>" : "<span class='ng'>NG</span>")
-    );
-  }else{
-    log("POST /api/liff/opened: skip");
+  } catch(e){
+    // 失敗しても画面には影響させない
   }
 })();
 </script>

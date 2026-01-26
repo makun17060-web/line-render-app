@@ -876,39 +876,37 @@ async function touchUser(userId, kind, displayName = null, source = null) {
   const uid = String(userId || "").trim();
   if (!uid) return;
 
-  const k = String(kind || "seen").trim();     // 'seen' | 'liff' | 'chat' 想定
-  const src = source ? String(source) : null;
+  const k = String(kind || "seen");
 
-  // users（表示名など）も一応更新しておく（任意）
+  // users 表（表示名など）※必要なら
   try {
-    await pool.query(
-      `
-      INSERT INTO users (user_id, display_name, last_seen_at, last_liff_at, updated_at)
-      VALUES (
-        $1,
-        $2,
-        CASE WHEN $3='seen' THEN now() ELSE NULL END,
-        CASE WHEN $3='liff' THEN now() ELSE NULL END,
-        now()
-      )
-      ON CONFLICT (user_id) DO UPDATE SET
-        display_name = COALESCE(EXCLUDED.display_name, users.display_name),
-        last_seen_at = CASE WHEN $3='seen' THEN now() ELSE users.last_seen_at END,
-        last_liff_at = CASE WHEN $3='liff' THEN now() ELSE users.last_liff_at END,
-        updated_at   = now()
-      `,
-      [uid, displayName ? String(displayName) : null, k]
-    );
+    if (displayName) {
+      await pool.query(
+        `
+        INSERT INTO users (user_id, display_name, created_at, updated_at, last_seen_at, last_liff_at)
+        VALUES ($1, $2, now(), now(),
+          CASE WHEN $3='seen' THEN now() ELSE NULL END,
+          CASE WHEN $3='liff' THEN now() ELSE NULL END
+        )
+        ON CONFLICT (user_id) DO UPDATE SET
+          display_name = COALESCE(EXCLUDED.display_name, users.display_name),
+          last_seen_at = COALESCE(EXCLUDED.last_seen_at, users.last_seen_at),
+          last_liff_at = COALESCE(EXCLUDED.last_liff_at, users.last_liff_at),
+          updated_at = now()
+        `,
+        [uid, String(displayName), k]
+      );
+    }
   } catch {}
 
-  // ✅ segment_users（user_id 1行のサマリ）を upsert
+  // ✅ segment_users（新スキーマ）: user_id 主キーでUPSERT
   await pool.query(
     `
     INSERT INTO segment_users (
       user_id,
+      first_seen,
       last_seen_at,
       last_liff_at,
-      first_seen,
       last_seen,
       last_chat_at,
       last_source,
@@ -917,9 +915,9 @@ async function touchUser(userId, kind, displayName = null, source = null) {
     )
     VALUES (
       $1,
+      now(),
       CASE WHEN $2='seen' THEN now() ELSE NULL END,
       CASE WHEN $2='liff' THEN now() ELSE NULL END,
-      now(),
       CASE WHEN $2='seen' THEN now() ELSE NULL END,
       CASE WHEN $2='chat' THEN now() ELSE NULL END,
       $3,
@@ -927,15 +925,15 @@ async function touchUser(userId, kind, displayName = null, source = null) {
       now()
     )
     ON CONFLICT (user_id) DO UPDATE SET
-      last_seen_at      = CASE WHEN $2='seen' THEN now() ELSE segment_users.last_seen_at END,
-      last_liff_at      = CASE WHEN $2='liff' THEN now() ELSE segment_users.last_liff_at END,
-      last_seen         = CASE WHEN $2='seen' THEN now() ELSE segment_users.last_seen END,
-      last_chat_at      = CASE WHEN $2='chat' THEN now() ELSE segment_users.last_chat_at END,
-      last_source       = COALESCE($3, segment_users.last_source),
-      last_liff_open_at = CASE WHEN $2='liff' THEN now() ELSE segment_users.last_liff_open_at END,
+      last_seen_at      = COALESCE(EXCLUDED.last_seen_at, segment_users.last_seen_at),
+      last_liff_at      = COALESCE(EXCLUDED.last_liff_at, segment_users.last_liff_at),
+      last_seen         = COALESCE(EXCLUDED.last_seen, segment_users.last_seen),
+      last_chat_at      = COALESCE(EXCLUDED.last_chat_at, segment_users.last_chat_at),
+      last_source       = COALESCE(EXCLUDED.last_source, segment_users.last_source),
+      last_liff_open_at = COALESCE(EXCLUDED.last_liff_open_at, segment_users.last_liff_open_at),
       updated_at        = now()
     `,
-    [uid, k, src]
+    [uid, k, source ? String(source) : null]
   );
 }
 

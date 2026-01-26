@@ -878,7 +878,7 @@ async function touchUser(userId, kind, displayName = null, source = null) {
 
   await pool.query(
  
-  ''
+  
   INSERT INTO segment_users (
     segment_id,
     user_id,

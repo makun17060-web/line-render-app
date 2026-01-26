@@ -127,27 +127,23 @@
   "use strict";
 
   /**
-   * ✅ 追記：起動ログを /api/liff/opened に送る
-   * - LIFF内で開かれた時だけ送る（通常ブラウザは送らない）
-   * - userId は token.sub → profile.userId の順で取得
-   * - source に pathname + mode + liffId を入れる
-   * - sessionStorage で同一画面中の二重送信を抑止
+   * ✅ 修正点
+   * 1) LIFF_ID_STORE をダミーから実IDへ（URLと同じ 2008406620-7tSkOcqd に）
+   * 2) 起動ログPOSTで inClient 判定で止めない（liff.init 成功したら送る）
+   *    ※「LIFF外で開いたとき」は detectModeByLiff が全部失敗→ meta.liffId=null になり、
+   *      post側でも userId 取得できず/送れないことが多いので誤爆は起きにくい
+   * 3) 二重送信を sessionStorage で抑止
    */
 
   // ▼あなたの LIFF URL（確定）
   const LIFF_URL_ORIGINAL = "https://liff.line.me/2008406620-Bd9Zo9od";
   const LIFF_URL_AKASHA   = "https://liff.line.me/2008406620-G5j1gjzM";
-
-  // ▼店舗受取用の LIFF URL（確定に差し替え済み）
   const LIFF_URL_STORE    = "https://liff.line.me/2008406620-7tSkOcqd";
 
-  /**
-   * ▼判定に使う LIFF_ID 群（「どれで開かれているか」を特定する）
-   * ※ LIFF_ID_STORE は実IDに差し替えてください
-   */
+  // ▼判定に使う LIFF_ID 群（「どれで開かれているか」を特定する）
   const LIFF_ID_ORIGINAL = "2008406620-Bd9Zo9od";
   const LIFF_ID_AKASHA   = "2008406620-G5j1gjzM";
-  const LIFF_ID_STORE    = "2008406620-STORE_LIFF_ID_HERE"; // ★ここだけ要修正
+  const LIFF_ID_STORE    = "2008406620-7tSkOcqd"; // ✅ 修正：実ID
 
   // UI要素
   const modeBadge = document.getElementById("modeBadge");
@@ -174,7 +170,6 @@
   });
 
   function setModeUI(mode){
-    // mode: "delivery" | "store" | "unknown"
     if(mode === "store"){
       cardStore.classList.remove("hidden");
       modeBadge.classList.remove("hidden");
@@ -193,7 +188,9 @@
 
   // ✅ LIFFで起動されているか & どの LIFF か を判定
   async function detectModeByLiff(){
-    if(typeof liff === "undefined" || !liff.init) return { mode:"unknown", liffId:null, inClient:false };
+    if(typeof liff === "undefined" || !liff.init){
+      return { mode:"unknown", liffId:null, initOk:false };
+    }
 
     const tryIds = [
       { id: LIFF_ID_STORE,    mode: "store" },
@@ -204,29 +201,27 @@
     for(const x of tryIds){
       try{
         await liff.init({ liffId: x.id });
-        // init成功＝LIFFコンテキスト内の可能性が高い
-        const inClient = !!(liff.isInClient && liff.isInClient());
-        return { mode: x.mode, liffId: x.id, inClient };
-      }catch(e){
+        return { mode: x.mode, liffId: x.id, initOk:true };
+      }catch(_e){
         // 次を試す
       }
     }
-    return { mode:"unknown", liffId:null, inClient:false };
+    return { mode:"unknown", liffId:null, initOk:false };
   }
 
-  // ✅ 追記：起動ログを送る（LIFF内のみ）
+  // ✅ 起動ログを送る（initOk=true のときだけ送る）
   async function postLiffOpenedOnce(meta){
     try{
-      // 二重送信抑止（同一画面中）
+      if(!meta?.initOk) return; // LIFF初期化できてない＝送らない
+
+      // 二重送信抑止
       const key = "liff_opened_sent:" + (meta?.liffId || "unknown") + ":" + location.pathname;
       if(sessionStorage.getItem(key)) return;
       sessionStorage.setItem(key, "1");
 
       // userId 取得（token.sub → profile.userId）
       let userId = null;
-      try{
-        userId = liff.getDecodedIDToken?.()?.sub || null;
-      }catch(_e){}
+      try { userId = liff.getDecodedIDToken?.()?.sub || null; } catch(_e){}
 
       if(!userId){
         try{
@@ -235,10 +230,7 @@
         }catch(_e){}
       }
 
-      // LIFF外だったら送らない（誤爆防止）
-      const inClient = !!meta?.inClient;
-      if(!inClient) return;
-
+      // userIdが取れない場合も、まずは「呼ばれた」証拠を残す（sourceで追える）
       const payload = {
         userId: userId,
         source: [
@@ -250,14 +242,12 @@
         ts: Date.now()
       };
 
-      // 同一ドメインにPOST（URLズレ事故を減らす）
       const res = await fetch("/api/liff/opened", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload)
       });
 
-      // 失敗時だけログ（普段は静か）
       if(!res.ok){
         const txt = await res.text().catch(()=> "");
         console.error("postLiffOpenedOnce failed", res.status, txt);
@@ -271,13 +261,9 @@
     const meta = await detectModeByLiff();
     setModeUI(meta.mode);
 
-    // ✅ 追記：ここで「起動ログ」を送る
-    // （inClient=false の場合は送らない）
-    if(typeof liff !== "undefined" && liff && liff.init){
-      await postLiffOpenedOnce(meta);
-    }
+    // ✅ ここで起動ログ送信（initが成功したら必ず送る）
+    await postLiffOpenedOnce(meta);
 
-    // 店舗受取モードならUI調整などはここで
     if(meta.mode === "store"){
       // document.getElementById("cardOriginal")?.classList.add("hidden");
       // document.getElementById("cardAkasha")?.classList.add("hidden");

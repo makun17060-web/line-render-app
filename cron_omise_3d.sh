@@ -6,11 +6,11 @@ echo "[cron_omise_3d] start: $(date -Is)"
 
 APP_DIR="/opt/render/project/src"
 
-# ▼ ここで「今回送る配信キー」と「メッセージ」を固定（事故防止）
+# ▼ 今回送る配信キー（＝名簿キー）とメッセージ
 SEGMENT_KEY_FIXED="omise_3d"
 MESSAGE_FILE_FIXED="./messages/flex.json"
 
-# ▼ 除外：過去に omise_3d を送った人は外す
+# ▼ 一回配信：同じキーを除外に使う（＝二度送らない）
 EXCLUDE_SENT_KEYS_FIXED="omise_3d"
 
 : "${DRY_RUN:=1}"     # 1=送らない（確認） / 0=本番送信
@@ -21,16 +21,16 @@ cd "$APP_DIR"
 # Cron環境の pg 事故防止（node_modules保証）
 npm ci --omit=dev
 
-# 1) 友だち追加(first_seen)から3日経過した未購入者を名簿に入れる（3〜4日前の窓で日次安定）
+# 1) 友だち追加(first_seen)から3日経過した未購入者を名簿(omise_3d)に入れる（3〜4日前の窓）
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
 INSERT INTO segment_blast (segment_key, user_id, created_at)
 SELECT
-  'isoya_trial_3d_auto',
+  'omise_3d',
   su.user_id,
   NOW()
 FROM segment_users su
 LEFT JOIN segment_blast sb
-  ON sb.segment_key='isoya_trial_3d_auto'
+  ON sb.segment_key='omise_3d'
  AND sb.user_id=su.user_id
 WHERE su.user_id IS NOT NULL
   AND su.user_id <> ''
@@ -52,7 +52,7 @@ WHERE su.user_id IS NOT NULL
 ON CONFLICT (segment_key, user_id) DO NOTHING;
 SQL
 
-# 2) 送信（未送信のみ）＋「omise_3d送信済み」を除外
+# 2) 送信（未送信のみ）＋同じキー送信済みは除外（＝一回配信）
 SEGMENT_KEY="$SEGMENT_KEY_FIXED" \
 MESSAGE_FILE="$MESSAGE_FILE_FIXED" \
 EXCLUDE_SENT_KEYS="$EXCLUDE_SENT_KEYS_FIXED" \

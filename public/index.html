@@ -10,20 +10,46 @@
 
   <style>
     :root{
-      --bg:#f6f7f9; --card:#fff; --text:#111827; --muted:#6b7280; --line:#e5e7eb;
-      --akasha:#0b3a53; --original:#7a1f1f; --store:#0a7b19;
-      --shadow:0 1px 4px rgba(0,0,0,.08); --radius:16px;
+      --bg:#f6f7f9;
+      --card:#fff;
+      --text:#111827;
+      --muted:#6b7280;
+      --line:#e5e7eb;
+
+      --trial:#c2410c;     /* 初めてセット */
+      --original:#7a1f1f;  /* オリジナル */
+      --akasha:#0b3a53;    /* あかしゃ */
+      --store:#0a7b19;     /* 店頭 */
+
+      --shadow:0 1px 4px rgba(0,0,0,.08);
+      --radius:16px;
     }
+
     *{ box-sizing:border-box; }
+
     body{
       margin:0;
       font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
       background:var(--bg);
       color:var(--text);
     }
-    .wrap{ max-width:760px; margin:0 auto; padding:16px 14px 30px; }
-    h1{ margin:0 0 6px; font-size:20px; }
-    .muted{ color:var(--muted); font-size:13px; line-height:1.6; }
+
+    .wrap{
+      max-width:760px;
+      margin:0 auto;
+      padding:16px 14px 30px;
+    }
+
+    h1{
+      margin:0 0 6px;
+      font-size:20px;
+    }
+
+    .muted{
+      color:var(--muted);
+      font-size:13px;
+      line-height:1.6;
+    }
 
     .card{
       background:var(--card);
@@ -33,14 +59,21 @@
       padding:16px;
       margin-top:14px;
     }
+
     .btn{
-      display:block; width:100%;
+      display:block;
+      width:100%;
       padding:16px 14px;
       border-radius:14px;
-      font-weight:900; font-size:16px;
-      text-align:center; text-decoration:none;
-      border:none; cursor:pointer;
+      font-weight:900;
+      font-size:16px;
+      text-align:center;
+      text-decoration:none;
+      border:none;
+      cursor:pointer;
     }
+
+    .btnTrial{ background:var(--trial); color:#fff; }
     .btnOriginal{ background:var(--original); color:#fff; }
     .btnAkasha{ background:var(--akasha); color:#fff; }
     .btnStore{ background:var(--store); color:#fff; }
@@ -50,20 +83,32 @@
 <body>
   <div class="wrap">
     <h1>ご注文はこちら</h1>
-    <div class="muted">ご希望の商品カテゴリを選択してください。</div>
+    <div class="muted">
+      ご希望の商品カテゴリを選択してください。
+    </div>
 
+    <!-- 🆕 初めてセット -->
+    <div class="card">
+      <a class="btn btnTrial" href="https://liff.line.me/2008406620-yQFRswAu">
+        🆕 初めての方限定セット
+      </a>
+    </div>
+
+    <!-- オリジナルセット -->
     <div class="card">
       <a class="btn btnOriginal" href="https://liff.line.me/2008406620-Bd9Zo9od">
         🎁 オリジナルセット
       </a>
     </div>
 
+    <!-- あかしゃシリーズ -->
     <div class="card">
       <a class="btn btnAkasha" href="https://liff.line.me/2008406620-G5j1gjzM">
         🍘 あかしゃシリーズ
       </a>
     </div>
 
+    <!-- 店頭受取 -->
     <div class="card">
       <a class="btn btnStore" href="https://liff.line.me/2008406620-7tSkOcqd">
         🏠 店頭受取（現金）
@@ -73,22 +118,19 @@
 
 <script>
 (async function(){
-  // ===== 設定（このページは「左上」＝ 8CWfgEKh で開く前提で固定）=====
+  // ===== 固定設定 =====
   const LIFF_ID = "2008406620-8CWfgEKh";
-  const VERSION = "index_v_20260126_fix2";
+  const VERSION = "index_v_20260126_trial_added";
 
-  // ===== デバッグスイッチ（普段は何も出ない）=====
+  // ===== デバッグ =====
   const qs = new URLSearchParams(location.search);
-  const DEBUG = qs.get("debug") === "1";   // ?debug=1 で表示
-  const FORCE = qs.get("force") === "1";  // ?force=1 で二重送信防止を無視
-
-  // 画面に出さないのが基本。必要なときだけ alert。
+  const DEBUG = qs.get("debug") === "1";
+  const FORCE = qs.get("force") === "1";
   const d = (msg) => { if (DEBUG) alert(msg); };
 
-  // API 送信先：相対パスがズレる事故を避けるため絶対URL
   const API_URL = location.origin + "/api/liff/opened";
 
-  // ===== 1) init =====
+  // 1) init
   try {
     await liff.init({ liffId: LIFF_ID });
   } catch (e) {
@@ -96,14 +138,13 @@
     return;
   }
 
-  // ===== 2) login（未ログインならここでリダイレクト）=====
+  // 2) login
   if (!liff.isLoggedIn()) {
-    d("not logged in -> login()");
     liff.login({ redirectUri: location.href });
     return;
   }
 
-  // ===== 3) userId 取得 =====
+  // 3) userId
   let userId = null;
   try { userId = liff.getDecodedIDToken()?.sub || null; } catch(e){}
   if (!userId) {
@@ -114,15 +155,14 @@
     return;
   }
 
-  // ===== 4) 二重送信防止（force=1 で無視）=====
+  // 4) 二重送信防止
   const key = "liff_opened_sent:" + LIFF_ID + ":" + location.pathname;
   if (!FORCE && sessionStorage.getItem(key)) {
-    d("already sent -> skip");
     return;
   }
   sessionStorage.setItem(key, "1");
 
-  // ===== 5) 起動ログ送信 =====
+  // 5) 起動ログ送信
   const payload = {
     userId,
     source: `index|order|${VERSION}|origin=${location.origin}`,
@@ -136,10 +176,9 @@
       body: JSON.stringify(payload)
     });
 
-    // 普段は無音、debug時だけ表示
     if (DEBUG) {
       const text = await res.text().catch(()=> "");
-      d("POST " + (res.ok ? "OK" : "NG") + " HTTP=" + res.status + "\n" + text.slice(0,200));
+      d("POST " + res.status + "\n" + text.slice(0,200));
     }
   } catch (e) {
     d("POST error: " + (e?.message || String(e)));

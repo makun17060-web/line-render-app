@@ -2,18 +2,23 @@
 set -euo pipefail
 set -x
 
-echo "[isoya_trial_3d] start: $(date -Is)"
+echo "[cron_omise_3d] start: $(date -Is)"
 
 APP_DIR="/opt/render/project/src"
+
+# ▼ ここで「今回送る配信キー」と「メッセージ」を固定（事故防止）
 SEGMENT_KEY_FIXED="isoya_trial_3d_auto"
 MESSAGE_FILE_FIXED="./messages/flex.json"
 
+# ▼ 除外：過去に omise_3d を送った人は外す
+EXCLUDE_SENT_KEYS_FIXED="omise_3d"
+
 : "${DRY_RUN:=1}"     # 1=送らない（確認） / 0=本番送信
-: "${ONCE_ONLY:=0}"   # いまの send_blast_once.js では基本0でOK（global除外はしない運用）
+: "${ONCE_ONLY:=0}"   # 全キー永久除外は基本OFF推奨
 
 cd "$APP_DIR"
 
-# Cron環境では node_modules が保証されないので毎回入れる（pgエラー防止）
+# Cron環境の pg 事故防止（node_modules保証）
 npm ci --omit=dev
 
 # 1) 友だち追加(first_seen)から3日経過した未購入者を名簿に入れる（3〜4日前の窓で日次安定）
@@ -39,7 +44,7 @@ WHERE su.user_id IS NOT NULL
   -- ✅ まだ名簿に入ってない人だけ
   AND sb.user_id IS NULL
 
-  -- ✅ 購入者は除外（ordersが1件でもあれば除外）
+  -- ✅ 購入者は除外
   AND NOT EXISTS (
     SELECT 1 FROM orders o
     WHERE o.user_id = su.user_id
@@ -47,11 +52,12 @@ WHERE su.user_id IS NOT NULL
 ON CONFLICT (segment_key, user_id) DO NOTHING;
 SQL
 
-# 2) 送信（未送信のみ）
+# 2) 送信（未送信のみ）＋「omise_3d送信済み」を除外
 SEGMENT_KEY="$SEGMENT_KEY_FIXED" \
 MESSAGE_FILE="$MESSAGE_FILE_FIXED" \
+EXCLUDE_SENT_KEYS="$EXCLUDE_SENT_KEYS_FIXED" \
 ONCE_ONLY="$ONCE_ONLY" \
 DRY_RUN="$DRY_RUN" \
 node send_blast_once.js
 
-echo "[isoya_trial_3d] done: $(date -Is)"
+echo "[cron_omise_3d] done: $(date -Is)"

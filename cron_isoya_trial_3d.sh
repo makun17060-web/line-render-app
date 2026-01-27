@@ -51,7 +51,7 @@ WHERE su.user_id IS NOT NULL
 ON CONFLICT (segment_key, user_id) DO NOTHING;
 SQL
 
-# ===== 2) 送信（未送信のみ）=====
+# ===== 2) 送信（未送信のみ）====
 SEGMENT_KEY="$SEGMENT_KEY" \
 MESSAGE_FILE="$MESSAGE_FILE" \
 ONCE_ONLY="$ONCE_ONLY" \

@@ -1,16 +1,18 @@
-// send_blast_once.js — （名簿自動追加 + 未送信 + 未購入 + 「一生1回のみ」全キー横断で永久除外）Text/Flex 切替版
-// + ✅ FORCE_USER_ID（自分テスト用）対応版
+// send_blast_once.js —（名簿自動追加 + 未送信 + 未購入 + キー指定除外 + FORCE_USER_ID）Text/Flex 切替版
 //
 // Run:
 //   SEGMENT_KEY=... MESSAGE_FILE=... FUKUBAKO_ID=fukubako-2026 node send_blast_once.js
+//
 // Optional:
-//   DRY_RUN=1  (送信せず対象件数だけ表示)
-//   AUTO_ROSTER_3D=1 FIRST_SEEN_DAYS=3  (3日経過した友だちを名簿に入れる)
-//   ONCE_ONLY=1  (デフォルト1。segment_blastで sent_at が1回でもあれば “全キー横断” で永久除外)
+//   DRY_RUN=1                 (送信せず対象件数だけ表示)
+//   AUTO_ROSTER_3D=1          (FIRST_SEEN_DAYS 経過した友だちを名簿に入れる)
+//   FIRST_SEEN_DAYS=3
+//   ONCE_ONLY=0/1             (※従来: 全キー横断の永久除外。あなたの運用では基本0推奨)
+//   EXCLUDE_SENT_KEYS="k1,k2" (✅ これらのキーで sent_at があるユーザーを除外)
 //
 // ✅ 自分テスト用（強制1ユーザー送信）
 //   FORCE_USER_ID=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-//   - 名簿 / 購入済み / ever_sent / sent_at などのフィルタを無視して、その userId にだけ送る
+//   - 名簿 / 購入済み / 除外キー / ever_sent / sent_at などのフィルタを無視して、その userId にだけ送る
 //   - 送信結果は segment_blast に記録（存在しなければ作る）
 //
 // Requires: DATABASE_URL, LINE_CHANNEL_ACCESS_TOKEN
@@ -45,7 +47,14 @@ const FUKUBAKO_URL  = (process.env.FUKUBAKO_URL || "").trim();
 
 // ✅ 一生1回のみ（全キー横断）
 // - デフォルトON（ONCE_ONLY=1）
+// ※あなたの運用（未購入は何度でも初めてセット）なら基本OFF推奨：ONCE_ONLY=0
 const ONCE_ONLY = String(process.env.ONCE_ONLY || "1").trim() !== "0";
+
+// ✅ キー指定除外（このキー送信済みユーザーを除外）
+const EXCLUDE_SENT_KEYS = (process.env.EXCLUDE_SENT_KEYS || "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
 
 // ✅ 自分テスト用：強制ターゲット
 const FORCE_USER_ID = (process.env.FORCE_USER_ID || "").trim();
@@ -180,6 +189,23 @@ async function loadEverSentSetAll() {
   return new Set(rows.map(r => r.user_id).filter(Boolean));
 }
 
+// ✅ EXCLUDE_SENT_KEYS：指定キーで送信済み（sent_at not null）の user を除外
+async function loadSentSetForKeys(keys) {
+  if (!keys || keys.length === 0) return new Set();
+  const { rows } = await pool.query(
+    `
+    SELECT DISTINCT user_id
+      FROM segment_blast
+     WHERE segment_key = ANY($1::text[])
+       AND user_id IS NOT NULL
+       AND user_id <> ''
+       AND sent_at IS NOT NULL
+    `,
+    [keys]
+  );
+  return new Set(rows.map(r => r.user_id).filter(Boolean));
+}
+
 // ✅ 友だち追加からN日経過した人を名簿に入れる（送信は別）
 async function autoRosterByFirstSeen(days) {
   const d = Number(days);
@@ -256,6 +282,7 @@ async function markSentForForceUser(userId, ok, errMsg) {
 
   console.log(`AUTO_ROSTER_3D=${AUTO_ROSTER_3D ? "1" : "0"} FIRST_SEEN_DAYS=${FIRST_SEEN_DAYS}`);
   console.log(`ONCE_ONLY=${ONCE_ONLY ? "1" : "0"} (global)`);
+  console.log(`EXCLUDE_SENT_KEYS=${EXCLUDE_SENT_KEYS.length ? EXCLUDE_SENT_KEYS.join(",") : "(none)"}`);
   console.log(`FORCE_USER_ID=${FORCE_USER_ID || "(none)"}`);
 
   console.log(`messages_count=${messages.length}, first_type=${messages[0]?.type}`);
@@ -282,7 +309,6 @@ async function markSentForForceUser(userId, ok, errMsg) {
     } catch (e) {
       await markSentForForceUser(FORCE_USER_ID, false, e?.message || e);
       console.error("NG force send:", e?.message || e);
-      // ここは落として気づけるようにする
       throw e;
     }
 
@@ -308,14 +334,21 @@ async function markSentForForceUser(userId, ok, errMsg) {
   const boughtSet = new Set(bought.rows.map(r => r.user_id).filter(Boolean));
   console.log(`already_bought_users=${boughtSet.size}`);
 
-  // 2) 一生1回のみ：過去に “どのキーでも” 送った user を取得（永久除外）
+  // 2) EXCLUDE_SENT_KEYS：指定キー送信済みを除外
+  let excludeByKeysSet = new Set();
+  if (EXCLUDE_SENT_KEYS.length) {
+    excludeByKeysSet = await loadSentSetForKeys(EXCLUDE_SENT_KEYS);
+    console.log(`excluded_by_keys_users=${excludeByKeysSet.size} (sent_at not null)`);
+  }
+
+  // 3) 一生1回のみ：過去に “どのキーでも” 送った user を取得（永久除外）
   let everSentSet = new Set();
   if (ONCE_ONLY) {
     everSentSet = await loadEverSentSetAll();
     console.log(`ever_sent_excluded_users=${everSentSet.size} (global all keys)`);
   }
 
-  // 3) segment_blast から「未送信」を取得（最大20000）
+  // 4) segment_blast から「未送信」を取得（最大20000）
   const { rows } = await pool.query(
     `
     SELECT user_id
@@ -331,15 +364,18 @@ async function markSentForForceUser(userId, ok, errMsg) {
   const allTargets = rows.map(r => r.user_id).filter(Boolean);
   console.log(`unsent_targets=${allTargets.length}`);
 
-  // 4) 既購入者・既送信者（永久）を除外
+  // 5) 既購入者・キー指定送信済み・（任意）全キー永久除外を除外
   let ids = allTargets.filter(uid => !boughtSet.has(uid));
+  if (excludeByKeysSet.size) ids = ids.filter(uid => !excludeByKeysSet.has(uid));
   if (ONCE_ONLY) ids = ids.filter(uid => !everSentSet.has(uid));
 
-  // 5) 不正userId（TEST_USERなど）を除外
+  // 6) 不正userId（TEST_USERなど）を除外
   const invalid = ids.filter(uid => !isValidLineUserId(String(uid).trim()));
   const valid = ids.filter(uid => isValidLineUserId(String(uid).trim()));
 
-  console.log(`eligible_targets (exclude bought${ONCE_ONLY ? " + ever_sent(global)" : ""})=${ids.length}`);
+  console.log(
+    `eligible_targets (exclude bought${EXCLUDE_SENT_KEYS.length ? " + sent(keys)" : ""}${ONCE_ONLY ? " + ever_sent(global)" : ""})=${ids.length}`
+  );
   console.log(`valid_targets=${valid.length} invalid_targets=${invalid.length}`);
   console.log("would_send_batches=" + Math.ceil(valid.length / 500) + " (batch_size=500)");
   console.log();

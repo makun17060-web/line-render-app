@@ -7,7 +7,7 @@ echo "[cron_omise_3d] start: $(date -Is)"
 APP_DIR="/opt/render/project/src"
 
 # ▼ ここで「今回送る配信キー」と「メッセージ」を固定（事故防止）
-SEGMENT_KEY_FIXED="isoya_trial_3d_auto"
+SEGMENT_KEY_FIXED="omise_3d"
 MESSAGE_FILE_FIXED="./messages/flex.json"
 
 # ▼ 除外：過去に omise_3d を送った人は外す

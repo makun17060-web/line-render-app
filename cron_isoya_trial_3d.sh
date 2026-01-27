@@ -1,9 +1,26 @@
 #!/usr/bin/env bash
+set -euo pipefail
 set -x
 
 echo "[isoya_trial_3d] start: $(date -Is)"
 
-# 1) 友だち追加(first_seen)から3日経過した未購入者を名簿に入れる（漏れなく）
+# ===== 設定 =====
+APP_DIR="/opt/render/project/src"
+SEGMENT_KEY="isoya_trial_3d_auto"
+MESSAGE_FILE="./messages/flex.json"
+
+# DRY_RUN / ONCE_ONLY は外から上書き可能
+: "${DRY_RUN:=1}"
+: "${ONCE_ONLY:=1}"
+
+# ===== 作業ディレクトリ =====
+cd "$APP_DIR"
+
+# ===== 依存関係（Cron では必須）=====
+# node_modules が保証されないため、毎回入れる
+npm ci --omit=dev
+
+# ===== 1) 名簿作成（SQLで確実に）=====
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
 INSERT INTO segment_blast (segment_key, user_id, created_at)
 SELECT
@@ -18,15 +35,15 @@ WHERE su.user_id IS NOT NULL
   AND su.user_id <> ''
   AND su.user_id ~* '^U[0-9a-f]{32}$'
 
-  -- ✅ 3日経過（「ちょうど3日前〜4日前」窓にすると毎日順番で安定）
+  -- 3日経過（3〜4日前の窓で日次安定）
   AND su.first_seen IS NOT NULL
   AND su.first_seen >= NOW() - INTERVAL '4 days'
   AND su.first_seen <  NOW() - INTERVAL '3 days'
 
-  -- ✅ まだ名簿に入っていない人だけ（ここが重要）
+  -- まだ名簿に入っていない人だけ
   AND sb.user_id IS NULL
 
-  -- ✅ 購入者は除外
+  -- 購入者は除外
   AND NOT EXISTS (
     SELECT 1 FROM orders o
     WHERE o.user_id = su.user_id
@@ -34,11 +51,11 @@ WHERE su.user_id IS NOT NULL
 ON CONFLICT (segment_key, user_id) DO NOTHING;
 SQL
 
-# 2) 送信（未送信のみ）
-SEGMENT_KEY=isoya_trial_3d_auto \
-MESSAGE_FILE=./messages/flex.json \
-ONCE_ONLY=${ONCE_ONLY:-1} \
-DRY_RUN=${DRY_RUN:-1} \
+# ===== 2) 送信（未送信のみ）=====
+SEGMENT_KEY="$SEGMENT_KEY" \
+MESSAGE_FILE="$MESSAGE_FILE" \
+ONCE_ONLY="$ONCE_ONLY" \
+DRY_RUN="$DRY_RUN" \
 node send_blast_once.js
 
 echo "[isoya_trial_3d] done: $(date -Is)"

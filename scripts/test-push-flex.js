@@ -16,10 +16,11 @@ if (!process.env.LINE_CHANNEL_ACCESS_TOKEN) {
 }
 
 // ===== Flex JSON 読み込み =====
-const flexPath = path.join(__dirname, "../messages/flex.json");
+const flexFile = process.env.FLEX_FILE || "flex.json";
+const flexPath = path.join(__dirname, "../messages", flexFile);
 
 if (!fs.existsSync(flexPath)) {
-  console.error("❌ messages/flex.json が見つかりません");
+  console.error(`❌ messages/${flexFile} が見つかりません`);
   process.exit(1);
 }
 
@@ -27,7 +28,7 @@ let message;
 try {
   message = JSON.parse(fs.readFileSync(flexPath, "utf8"));
 } catch (e) {
-  console.error("❌ flex.json の JSON が壊れています");
+  console.error(`❌ ${flexFile} の JSON が壊れています`);
   console.error(e.message);
   process.exit(1);
 }

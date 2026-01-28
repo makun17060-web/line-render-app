@@ -1,14 +1,23 @@
-// send_blast_once.js —（名簿自動追加 + 未送信 + 未購入 + キー指定除外 + FORCE_USER_ID）Text/Flex 切替版
+// send_blast_once.js —（名簿自動追加 + 未送信 + 未購入 + キー指定除外 + FORCE_USER_ID + ✅購入者直抽出(BUYER_KIND)）Text/Flex 切替版
 //
 // Run:
 //   SEGMENT_KEY=... MESSAGE_FILE=... FUKUBAKO_ID=fukubako-2026 node send_blast_once.js
 //
 // Optional:
-//   DRY_RUN=1                 (送信せず対象件数だけ表示)
-//   AUTO_ROSTER_3D=1          (FIRST_SEEN_DAYS 経過した友だちを名簿に入れる)
+//   DRY_RUN=1                  (送信せず対象件数だけ表示)
+//   AUTO_ROSTER_3D=1           (FIRST_SEEN_DAYS 経過した友だちを名簿に入れる)
 //   FIRST_SEEN_DAYS=3
-//   ONCE_ONLY=0/1             (※従来: 全キー横断の永久除外。あなたの運用では基本0推奨)
-//   EXCLUDE_SENT_KEYS="k1,k2" (✅ これらのキーで sent_at があるユーザーを除外)
+//   ONCE_ONLY=0/1              (※従来: 全キー横断の永久除外。あなたの運用では基本0推奨)
+//   EXCLUDE_SENT_KEYS="k1,k2"  (✅ これらのキーで sent_at があるユーザーを除外)
+//
+// ✅ 購入者配信（名簿不要：ordersから抽出して送信台帳(segment_blast)だけ残す）
+//   BUYER_KIND=card|cod|pickup|all
+//   BUYER_DAYS=30     (任意) 直近N日だけに絞る。0/未指定なら無制限
+//
+//   - card   : status='paid'      AND payment_method IN ('card','stripe')
+//   - cod    : status='confirmed' AND payment_method='cod'
+//   - pickup : status='pickup'    AND payment_method='pickup_cash'
+//   - all    : status IN ('paid','confirmed','pickup') かつ上記のいずれか
 //
 // ✅ 自分テスト用（強制1ユーザー送信）
 //   FORCE_USER_ID=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
@@ -40,6 +49,10 @@ const DRY_RUN       = String(process.env.DRY_RUN || "").trim() === "1";
 
 const AUTO_ROSTER_3D  = String(process.env.AUTO_ROSTER_3D || "").trim() === "1";
 const FIRST_SEEN_DAYS = Number(process.env.FIRST_SEEN_DAYS || 3);
+
+// ✅ 購入者直抽出モード（名簿不要）
+const BUYER_KIND = (process.env.BUYER_KIND || "").trim(); // card | cod | pickup | all | ""
+const BUYER_DAYS = Number(process.env.BUYER_DAYS || 0);   // 0なら絞らない
 
 // ※商品IDは「変更なし」でOK（今まで通り env で指定 or 既定）
 const FUKUBAKO_ID   = (process.env.FUKUBAKO_ID || "fukubako-2026").trim();
@@ -271,6 +284,67 @@ async function markSentForForceUser(userId, ok, errMsg) {
   }
 }
 
+// ✅ BUYER_KIND 用：orders から購入者を抽出（名簿不要）
+async function loadBuyerIds(kind, days) {
+  const k = String(kind || "").trim();
+  if (!k) return [];
+
+  const d = Number(days || 0);
+  const whereDays = (Number.isFinite(d) && d > 0)
+    ? `AND created_at >= NOW() - ($2::text || ' days')::interval`
+    : ``;
+
+  // ユーザーごとの「最後の購入」を1件に絞って分類（payment_method 実態に合わせて固定）
+  const sql = `
+    WITH last_buy AS (
+      SELECT DISTINCT ON (user_id)
+        user_id, payment_method, status, created_at AS last_order_at
+      FROM orders
+      WHERE user_id IS NOT NULL
+        AND user_id <> ''
+        AND status IN ('paid','confirmed','pickup')
+        ${whereDays}
+      ORDER BY user_id, created_at DESC
+    )
+    SELECT user_id
+    FROM last_buy
+    WHERE
+      CASE
+        WHEN $1 = 'card' THEN (status='paid' AND payment_method IN ('card','stripe'))
+        WHEN $1 = 'cod'  THEN (status='confirmed' AND payment_method='cod')
+        WHEN $1 = 'pickup' THEN (status='pickup' AND payment_method='pickup_cash')
+        WHEN $1 = 'all' THEN (
+          (status='paid' AND payment_method IN ('card','stripe'))
+          OR (status='confirmed' AND payment_method='cod')
+          OR (status='pickup' AND payment_method='pickup_cash')
+        )
+        ELSE FALSE
+      END
+    ORDER BY user_id
+    LIMIT 20000
+  `;
+
+  const params = (Number.isFinite(d) && d > 0) ? [k, String(d)] : [k];
+  const { rows } = await pool.query(sql, params);
+  return rows.map(r => r.user_id).filter(Boolean);
+}
+
+// ✅ BUYER_KIND 用：送信台帳（segment_blast）に行を作る（未送信管理のため）
+async function ensureBlastRows(segmentKey, userIds) {
+  if (!userIds || userIds.length === 0) return 0;
+
+  const { rowCount } = await pool.query(
+    `
+    INSERT INTO segment_blast (segment_key, user_id, created_at)
+    SELECT $1, x, NOW()
+    FROM unnest($2::text[]) AS x
+    ON CONFLICT (segment_key, user_id) DO NOTHING
+    `,
+    [segmentKey, userIds]
+  );
+  return rowCount || 0;
+}
+
 (async () => {
   const messages = loadMessages();
 
@@ -284,6 +358,8 @@ async function markSentForForceUser(userId, ok, errMsg) {
   console.log(`ONCE_ONLY=${ONCE_ONLY ? "1" : "0"} (global)`);
   console.log(`EXCLUDE_SENT_KEYS=${EXCLUDE_SENT_KEYS.length ? EXCLUDE_SENT_KEYS.join(",") : "(none)"}`);
   console.log(`FORCE_USER_ID=${FORCE_USER_ID || "(none)"}`);
+
+  console.log(`BUYER_KIND=${BUYER_KIND || "(none)"} BUYER_DAYS=${BUYER_DAYS || "(none)"}`);
 
   console.log(`messages_count=${messages.length}, first_type=${messages[0]?.type}`);
 
@@ -316,7 +392,7 @@ async function markSentForForceUser(userId, ok, errMsg) {
     return;
   }
 
-  // 0) AUTO_ROSTER（N日経過を名簿へ）
+  // 0) AUTO_ROSTER（N日経過を名簿へ）※ BUYER_KIND 時でも動かしてOK（運用が混ざるなら）
   if (AUTO_ROSTER_3D) {
     const cand = await pool.query(
       `SELECT COUNT(*)::int AS n FROM segment_users su WHERE su.first_seen <= NOW() - ($1::text || ' days')::interval`,
@@ -328,11 +404,26 @@ async function markSentForForceUser(userId, ok, errMsg) {
     console.log(`roster_inserted=${inserted} (segment_key=${SEGMENT_KEY})`);
   }
 
-  // 1) 購入済み user を取得（除外用）
-  const boughtSql = buildAlreadyBoughtSQL();
-  const bought = await pool.query(boughtSql, [FUKUBAKO_ID]);
-  const boughtSet = new Set(bought.rows.map(r => r.user_id).filter(Boolean));
-  console.log(`already_bought_users=${boughtSet.size}`);
+  // 1) ターゲット元を決める（BUYER_KIND があれば orders から抽出して segment_blast に登録）
+  if (BUYER_KIND) {
+    console.log("=== BUYER MODE ===");
+    const buyerIds = await loadBuyerIds(BUYER_KIND, BUYER_DAYS);
+    console.log(`buyer_targets=${buyerIds.length} (kind=${BUYER_KIND}${BUYER_DAYS ? `, days=${BUYER_DAYS}` : ""})`);
+
+    const created = await ensureBlastRows(SEGMENT_KEY, buyerIds);
+    console.log(`segment_blast_rows_created=${created} (if missing)`);
+
+    console.log(`already_bought_users=(skipped in BUYER MODE)`); // BUYER配信では商品購入除外をしないのが基本
+  } else {
+    // 既存どおり：商品「購入済み」は除外用に取得
+    const boughtSql = buildAlreadyBoughtSQL();
+    const bought = await pool.query(boughtSql, [FUKUBAKO_ID]);
+    const boughtSet = new Set(bought.rows.map(r => r.user_id).filter(Boolean));
+    console.log(`already_bought_users=${boughtSet.size}`);
+
+    // 後段で使うので閉じない
+    globalThis.__boughtSet = boughtSet; // 既存構造に合わせて苦肉の策（下で参照）
+  }
 
   // 2) EXCLUDE_SENT_KEYS：指定キー送信済みを除外
   let excludeByKeysSet = new Set();
@@ -364,8 +455,16 @@ async function markSentForForceUser(userId, ok, errMsg) {
   const allTargets = rows.map(r => r.user_id).filter(Boolean);
   console.log(`unsent_targets=${allTargets.length}`);
 
-  // 5) 既購入者・キー指定送信済み・（任意）全キー永久除外を除外
-  let ids = allTargets.filter(uid => !boughtSet.has(uid));
+  // 5) フィルタ
+  let ids = allTargets;
+
+  // 未購入配信（従来）だけ：FUKUBAKO_ID 購入済み除外
+  if (!BUYER_KIND) {
+    const boughtSet = globalThis.__boughtSet || new Set();
+    ids = ids.filter(uid => !boughtSet.has(uid));
+  }
+
+  // 共通：キー指定送信済み除外・（任意）全キー永久除外
   if (excludeByKeysSet.size) ids = ids.filter(uid => !excludeByKeysSet.has(uid));
   if (ONCE_ONLY) ids = ids.filter(uid => !everSentSet.has(uid));
 
@@ -374,7 +473,7 @@ async function markSentForForceUser(userId, ok, errMsg) {
   const valid = ids.filter(uid => isValidLineUserId(String(uid).trim()));
 
   console.log(
-    `eligible_targets (exclude bought${EXCLUDE_SENT_KEYS.length ? " + sent(keys)" : ""}${ONCE_ONLY ? " + ever_sent(global)" : ""})=${ids.length}`
+    `eligible_targets (${BUYER_KIND ? "buyer_mode" : "exclude bought"}${EXCLUDE_SENT_KEYS.length ? " + sent(keys)" : ""}${ONCE_ONLY ? " + ever_sent(global)" : ""})=${ids.length}`
   );
   console.log(`valid_targets=${valid.length} invalid_targets=${invalid.length}`);
   console.log("would_send_batches=" + Math.ceil(valid.length / 500) + " (batch_size=500)");

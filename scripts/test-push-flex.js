@@ -108,11 +108,23 @@ function validateMessage(msg) {
 
 try {
   validateMessage(message);
-} catch (e) {
-  console.error(`❌ Flex JSON の形式チェックで失敗しました: ${flexPath}`);
-  console.error(e?.message || e);
+.catch((err) => {
+  console.error("❌ Flex push failed");
+  console.error("message:", err?.message || err);
+
+  // ここ追加：LINEから返ってくる詳細
+  const data =
+    err?.originalError?.response?.data ||
+    err?.response?.data ||
+    err?.data;
+
+  if (data) {
+    console.error("LINE response data:", JSON.stringify(data, null, 2));
+  }
+
   process.exit(1);
-}
+});
+
 
 // ===== LINE client =====
 const client = new Client({

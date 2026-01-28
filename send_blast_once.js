@@ -72,6 +72,13 @@ const EXCLUDE_SENT_KEYS = (process.env.EXCLUDE_SENT_KEYS || "")
 // ✅ 自分テスト用：強制ターゲット
 const FORCE_USER_ID = (process.env.FORCE_USER_ID || "").trim();
 
+// ✅【今回追加】KEYごとに「global除外(ever_sent all keys)」をスキップしたい場合
+// - buyers_thanks_3d（購入後お礼）は「過去に何か送っていてもOK」なので global除外は無効化が自然
+// - それ以外は従来どおり安全装置としてON
+const SKIP_GLOBAL_EVER_SENT_KEYS = new Set([
+  "buyers_thanks_3d",
+]);
+
 if (!TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
 if (!DBURL) throw new Error("DATABASE_URL is required");
 if (!FUKUBAKO_ID) throw new Error("FUKUBAKO_ID is required");
@@ -361,6 +368,10 @@ async function ensureBlastRows(segmentKey, userIds) {
 
   console.log(`BUYER_KIND=${BUYER_KIND || "(none)"} BUYER_DAYS=${BUYER_DAYS || "(none)"}`);
 
+  // ✅ 今回追加：このキーでは global ever_sent 除外をスキップするか
+  const skipGlobalEverSent = SKIP_GLOBAL_EVER_SENT_KEYS.has(SEGMENT_KEY);
+  console.log(`SKIP_GLOBAL_EVER_SENT=${skipGlobalEverSent ? "1" : "0"} (keys=${[...SKIP_GLOBAL_EVER_SENT_KEYS].join(",")})`);
+
   console.log(`messages_count=${messages.length}, first_type=${messages[0]?.type}`);
 
   // ✅ 先に FORCE_USER_ID を処理（フィルタ全部無視でこの人だけ）
@@ -425,7 +436,7 @@ async function ensureBlastRows(segmentKey, userIds) {
     globalThis.__boughtSet = boughtSet; // 既存構造に合わせて苦肉の策（下で参照）
   }
 
-  // 2) EXCLUDE_SENT_KEYS：指定キー送信済みを除外
+  // 2) EXCLUDE_SENT_KEYS：指定キーで送信済みを除外
   let excludeByKeysSet = new Set();
   if (EXCLUDE_SENT_KEYS.length) {
     excludeByKeysSet = await loadSentSetForKeys(EXCLUDE_SENT_KEYS);
@@ -433,10 +444,13 @@ async function ensureBlastRows(segmentKey, userIds) {
   }
 
   // 3) 一生1回のみ：過去に “どのキーでも” 送った user を取得（永久除外）
+  // ✅ 今回追加：buyers_thanks_3d のような「購入後お礼」は global 除外をスキップ
   let everSentSet = new Set();
-  if (ONCE_ONLY) {
+  if (ONCE_ONLY && !skipGlobalEverSent) {
     everSentSet = await loadEverSentSetAll();
     console.log(`ever_sent_excluded_users=${everSentSet.size} (global all keys)`);
+  } else if (ONCE_ONLY && skipGlobalEverSent) {
+    console.log(`ever_sent_excluded_users=0 (global skipped for ${SEGMENT_KEY})`);
   }
 
   // 4) segment_blast から「未送信」を取得（最大20000）
@@ -473,7 +487,7 @@ async function ensureBlastRows(segmentKey, userIds) {
   const valid = ids.filter(uid => isValidLineUserId(String(uid).trim()));
 
   console.log(
-    `eligible_targets (${BUYER_KIND ? "buyer_mode" : "exclude bought"}${EXCLUDE_SENT_KEYS.length ? " + sent(keys)" : ""}${ONCE_ONLY ? " + ever_sent(global)" : ""})=${ids.length}`
+    `eligible_targets (${BUYER_KIND ? "buyer_mode" : "exclude bought"}${EXCLUDE_SENT_KEYS.length ? " + sent(keys)" : ""}${ONCE_ONLY ? (skipGlobalEverSent ? " + ever_sent(global skipped)" : " + ever_sent(global)") : ""})=${ids.length}`
   );
   console.log(`valid_targets=${valid.length} invalid_targets=${invalid.length}`);
   console.log("would_send_batches=" + Math.ceil(valid.length / 500) + " (batch_size=500)");

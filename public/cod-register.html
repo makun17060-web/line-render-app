@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-  <title>自宅住所の登録</title>
+  <title>お届け先住所の登録</title>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
@@ -53,12 +53,12 @@
 
 <body>
   <div class="wrap">
-    <h1>自宅住所の登録</h1>
+    <h1>お届け先住所の登録</h1>
     <div class="muted" id="status">読み込み中…</div>
 
     <!-- 住所表示（登録済みの場合） -->
     <div class="card" id="viewCard" style="display:none">
-      <div class="muted">登録済みの自宅住所</div>
+      <div class="muted">登録済みのお届け先住所</div>
       <div class="addrBox" id="viewAddr" style="margin-top:10px"></div>
 
       <div class="rowBtns">
@@ -67,17 +67,17 @@
       </div>
 
       <div class="muted" style="margin-top:8px">
-        ※贈り先住所は「注文確認（confirm）」で、必要なときだけ入力します。
+        ※ ご自宅以外にもお届けできます
       </div>
     </div>
 
     <!-- 住所フォーム（未登録 or 編集時） -->
     <div class="card" id="formCard" style="display:none">
-      <div class="muted" id="formTitle">自宅住所を入力</div>
+      <div class="muted" id="formTitle">お届け先住所を入力</div>
 
       <div class="grid">
         <div>
-          <label>お名前</label>
+          <label>お名前（お届け先）</label>
           <input id="name" type="text" autocomplete="name" placeholder="例）山田 太郎">
         </div>
         <div>
@@ -111,8 +111,8 @@
         </div>
 
         <div style="grid-column:1/-1">
-          <label>ラベル（任意）</label>
-          <input id="label" type="text" placeholder="例）自宅 など">
+          <label>メモ（任意）</label>
+          <input id="label" type="text" placeholder="例）自宅 / 会社 / 実家 など">
         </div>
       </div>
 
@@ -134,7 +134,6 @@
 
   // ★あなたの LIFF ID（cod-register 用）
   const LIFF_ID_COD  = "2008406620-G5j1gjzM";
-
   const KEY_UID = "isoya_userId";
 
   // confirm に戻す先
@@ -163,8 +162,7 @@
 
   const el = (id)=>document.getElementById(id);
 
-  let currentAddr = null; // normalize した住所（登録済みなら入る）
-  let isEditing = false;
+  let currentAddr = null;
 
   function showView(){
     if(viewCard) viewCard.style.display = "block";
@@ -173,7 +171,7 @@
   function showForm(titleText){
     if(viewCard) viewCard.style.display = "none";
     if(formCard) formCard.style.display = "block";
-    if(formTitle) formTitle.textContent = titleText || "自宅住所を入力";
+    if(formTitle) formTitle.textContent = titleText || "お届け先住所を入力";
   }
 
   async function postJson(url, body){
@@ -223,20 +221,20 @@
       address1: a?.address1 ?? a?.address ?? "",
       address2: a?.address2 ?? "",
       label: a?.label ?? "",
-      is_default: a?.is_default === true,
-      is_gift: a?.is_gift === true
+      is_default: a?.is_default === true
     };
   }
 
   function toAddrText(a){
-    const nameLine = a?.name ? `${a.name} 様\n` : "";
+    const nameLine = a?.name ? `${a.name}\n` : "";
     const postal = a?.postal || "";
     const pref = a?.prefecture || "";
     const city = a?.city || "";
     const a1 = a?.address1 || "";
     const a2 = a?.address2 || "";
     const phone = a?.phone ? `\nTEL: ${a.phone}` : "";
-    return `${nameLine}〒${postal} ${pref}${city}${a1} ${a2}${phone}`.trim();
+    const memo = a?.label ? `\n（${a.label}）` : "";
+    return `${nameLine}〒${postal} ${pref}${city}${a1} ${a2}${phone}${memo}`.trim();
   }
 
   function fillForm(a){
@@ -275,7 +273,7 @@
     location.replace(buildReturnUrl());
   }
 
-  async function loadHomeAddress(uid){
+  async function loadAddress(uid){
     // 1) list があるなら：default優先、なければ先頭
     try{
       const d = await getJson(`/api/address/list?userId=${encodeURIComponent(uid)}`);
@@ -300,12 +298,12 @@
     return null;
   }
 
-  async function saveHomeAddress(uid){
+  async function saveAddress(uid){
     const a = readForm();
 
     // 必須（最低限）
-    if(!a.postal || !a.prefecture || !a.city || !a.address1){
-      alert("郵便番号/都道府県/市区町村/番地 は必須です。");
+    if(!a.name || !a.phone || !a.postal || !a.prefecture || !a.city || !a.address1){
+      alert("お名前/電話番号/郵便番号/都道府県/市区町村/番地 は必須です。");
       return;
     }
 
@@ -313,13 +311,12 @@
     saveBtn.textContent = "保存中…";
 
     try{
-      // ★ 自宅住所なので is_gift は必ず false
       await postJson("/api/address/set", {
         userId: uid,
         address: {
           id: currentAddr?.id || null, // 編集時は上書き
-          ...a,
-          is_gift: false
+          ...a
+          // ★ギフト概念は使わない（is_gift は送らない）
         }
       });
 
@@ -339,16 +336,15 @@
       return;
     }
 
-    currentAddr = await loadHomeAddress(uid);
+    currentAddr = await loadAddress(uid);
 
     if(!currentAddr){
-      status.textContent = "自宅住所を登録してください。";
-      isEditing = true;
+      status.textContent = "お届け先住所を登録してください。";
       fillForm(null);
-      showForm("自宅住所を入力");
+      showForm("お届け先住所を入力");
       if(cancelBtn) cancelBtn.style.display = "none"; // 未登録時はキャンセル不要（戻るは下にある）
     }else{
-      status.textContent = "自宅住所は登録済みです。";
+      status.textContent = "お届け先住所は登録済みです。";
       viewAddr.textContent = toAddrText(currentAddr);
       showView();
       if(cancelBtn) cancelBtn.style.display = ""; // 以後編集時に使う
@@ -357,24 +353,21 @@
     if(useBtn) useBtn.onclick = ()=>goNext();
 
     if(editBtn) editBtn.onclick = ()=>{
-      isEditing = true;
       fillForm(currentAddr);
-      showForm("自宅住所を編集");
+      showForm("お届け先住所を編集");
     };
 
     if(cancelBtn) cancelBtn.onclick = ()=>{
       // 編集キャンセル：表示に戻す
-      isEditing = false;
       if(currentAddr){
         viewAddr.textContent = toAddrText(currentAddr);
         showView();
       }else{
-        // 基本来ないけど念のため
-        showForm("自宅住所を入力");
+        showForm("お届け先住所を入力");
       }
     };
 
-    if(saveBtn) saveBtn.onclick = ()=>saveHomeAddress(uid);
+    if(saveBtn) saveBtn.onclick = ()=>saveAddress(uid);
 
     if(backBtn) backBtn.onclick = ()=>location.replace(backTo);
 

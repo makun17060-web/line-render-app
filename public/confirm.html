@@ -87,42 +87,7 @@
 
     .inactive{ opacity:.55; filter:saturate(.85); }
 
-    /* =========================
-       🎁 ギフトUI
-    ========================= */
-    .giftCard{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:12px; margin-top:12px; box-shadow:var(--shadow); }
-    .giftTop{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
-    .giftTitle{ font-weight:1000; font-size:14px; display:flex; align-items:center; gap:8px; }
-    .giftNote{ font-size:12px; color:var(--muted); margin-top:6px; line-height:1.45; }
-    .giftBody{ margin-top:10px; display:none; }
-    .giftBody.show{ display:block; }
-    .giftGrid{ display:grid; grid-template-columns:1fr; gap:10px; margin-top:8px; }
-    .giftRow{ display:grid; grid-template-columns:1fr; gap:6px; }
-    .giftRow label{ font-size:12px; color:var(--muted); }
-    .giftRow input, .giftRow textarea{
-      width:100%;
-      font-size:14px;
-      padding:10px 10px;
-      border:1px solid var(--line);
-      border-radius:12px;
-      background:#fff;
-      box-sizing:border-box;
-    }
-    .giftRow textarea{ min-height:88px; resize:vertical; }
-    .pill{
-      display:inline-flex; align-items:center; gap:6px;
-      font-size:12px; padding:6px 10px; border-radius:999px;
-      background:#f3f4f6; color:#374151; border:1px solid var(--line);
-      margin-right:6px; margin-top:6px;
-    }
-    .pillStrong{ background:#eef2ff; border-color:#c7d2fe; color:#3730a3; }
-    .req{ color:var(--danger); font-weight:1000; margin-left:4px; }
-    .giftHint{ font-size:12px; color:var(--muted); margin-top:4px; }
-    .giftError{ display:none; margin-top:8px; font-size:12px; color:var(--danger); font-weight:900; }
-    .twoCols{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-    @media (max-width:520px){ .twoCols{ grid-template-columns:1fr; } }
-
-    /* ✅ お試しセット専用：自宅のみ注意 */
+    /* （任意）お試しセット注意：ギフト概念は廃止済み */
     .trialNotice{
       margin-top:10px;
       padding:10px 12px;
@@ -143,82 +108,19 @@
     <h1 id="pageTitle">注文内容の確認</h1>
     <div class="muted" id="status">読み込み中…</div>
 
-    <!-- ✅ お試しセット：自宅のみ（ギフト不可） -->
-    <div class="trialNotice" id="trialHomeOnlyNotice">
+    <!-- （任意）お試しセット注意：残したいなら表示 -->
+    <div class="trialNotice" id="trialNotice">
       ※お試しセットは <b>ご自宅配送のみ</b> です（ギフト配送はできません）
     </div>
 
     <div class="card">
       <div class="muted" id="addrLabel">お届け先</div>
       <div id="addrText" style="margin-top:6px;font-weight:900">—</div>
+
       <div class="muted" style="margin-top:8px">
-        ※住所を修正したい場合は「戻る」で住所入力へ戻ってください。
+        ※お届け先を変更したい場合は「戻る（住所入力へ）」から変更できます。
       </div>
     </div>
-
-    <!-- =========================
-       🎁 ギフト設定
-       ※ただし「お試しセット(mode=fukubako/trial)」では非表示＆無効化
-    ========================= -->
-    <div class="giftCard" id="giftCard">
-      <div class="giftTop">
-        <div class="giftTitle">🎁 ギフトとして送る</div>
-
-        <label style="display:flex; align-items:center; gap:8px; user-select:none;">
-          <input type="checkbox" id="giftToggle" />
-          <span style="font-size:13px;font-weight:1000">ギフト</span>
-        </label>
-      </div>
-
-      <div class="giftNote">
-        <span class="pill pillStrong">商品代金はご注文者様のご負担です</span>
-        <span class="pill">金額のわかる書類は同梱しません</span>
-      </div>
-
-      <div class="giftBody" id="giftBody">
-        <div class="giftHint">お届け先（贈り先）を入力してください。※この注文のみに使用します</div>
-
-        <div class="giftGrid">
-          <div class="giftRow">
-            <label for="giftName">お届け先氏名<span class="req">必須</span></label>
-            <input id="giftName" type="text" inputmode="text" autocomplete="name" placeholder="例）山田 太郎" />
-          </div>
-
-          <div class="twoCols">
-            <div class="giftRow">
-              <label for="giftZip">郵便番号<span class="req">必須</span></label>
-              <input id="giftZip" type="text" inputmode="numeric" autocomplete="postal-code" placeholder="例）123-4567" />
-              <div class="giftHint">ハイフンあり/なしどちらでもOK</div>
-            </div>
-
-            <div class="giftRow">
-              <label for="giftTel">電話番号<span class="req">必須</span></label>
-              <input id="giftTel" type="text" inputmode="tel" autocomplete="tel" placeholder="例）09012345678" />
-              <div class="giftHint">配送伝票に使います</div>
-            </div>
-          </div>
-
-          <div class="giftRow">
-            <label for="giftAddr1">住所（都道府県・市区町村・番地）<span class="req">必須</span></label>
-            <input id="giftAddr1" type="text" autocomplete="street-address" placeholder="例）愛知県〇〇市〇〇町1-2-3" />
-          </div>
-
-          <div class="giftRow">
-            <label for="giftAddr2">建物名・部屋番号（任意）</label>
-            <input id="giftAddr2" type="text" autocomplete="address-line2" placeholder="例）〇〇マンション 101" />
-          </div>
-
-          <div class="giftRow">
-            <label for="giftMsg">メッセージ（任意）</label>
-            <textarea id="giftMsg" maxlength="120" placeholder="例）お誕生日おめでとう！"></textarea>
-            <div class="giftHint"><span id="giftMsgCount">0</span>/120</div>
-          </div>
-        </div>
-
-        <div class="giftError" id="giftError"></div>
-      </div>
-    </div>
-    <!-- ========================= -->
 
     <div class="card">
       <div class="muted">ご注文商品</div>
@@ -276,10 +178,6 @@
           <button id="codBtn" class="payBtn" style="background:var(--pri);color:#fff" type="button">
             代引きで注文確定
           </button>
-
-          <div id="codDisabledNote" class="muted" style="margin-top:8px;display:none">
-            ※贈り先への配送では、代引きはご利用いただけません（クレジットのみ）
-          </div>
         </div>
 
         <!-- 戻る -->
@@ -303,16 +201,14 @@
   const qs = new URLSearchParams(location.search);
   const mode = (qs.get("mode") || "").trim();
 
-  // ✅ お試しセット判定（あなたの運用：mode=fukubako をお試し扱い）
+  // （任意）お試しセットの見出し＆注意だけ残す：ギフト機能は無し
   const isTrial = (mode === "trial" || mode === "fukubako");
-
-  // ✅ もしURLに ship=gift などが来ても、お試しセットでは自宅に強制
-  let shipQS = (qs.get("ship") || "").trim(); // "home" / "gift" / ""
-  if (isTrial && (shipQS === "gift" || qs.get("gift") === "1")) {
-    shipQS = "home";
-    qs.set("ship", "home");
-    qs.delete("gift");
-    history.replaceState(null, "", location.pathname + "?" + qs.toString());
+  const trialNotice = document.getElementById("trialNotice");
+  const pageTitle = document.getElementById("pageTitle");
+  if(isTrial){
+    if(pageTitle) pageTitle.textContent = "お試しセット｜注文内容の確認";
+    document.title = "お試しセット｜注文内容の確認";
+    if(trialNotice) trialNotice.style.display = "block";
   }
 
   const KEY_CART =
@@ -322,9 +218,10 @@
 
   const backTo =
     (mode === "original") ? "/original-set.html"
-  : (mode === "fukubako") ? "/fukubako.html"   /* ← お試しセットページにしているならそのまま */
+  : (mode === "fukubako") ? "/fukubako.html"
   : "/products.html";
 
+  // confirm 自身（returnTo用）
   const RETURN_TO_THIS =
     (mode === "fukubako") ? "/confirm.html?mode=fukubako"
   : (mode === "original") ? "/confirm-original.html"
@@ -356,18 +253,6 @@
   const pillCod=document.getElementById("pillCod");
   const cardPanel=document.getElementById("cardPanel");
   const codPanel=document.getElementById("codPanel");
-
-  // 🎁
-  const giftCard   = document.getElementById("giftCard");
-  const giftToggle = document.getElementById("giftToggle");
-  const giftBody   = document.getElementById("giftBody");
-  const giftError  = document.getElementById("giftError");
-  const giftMsg    = document.getElementById("giftMsg");
-  const giftMsgCount = document.getElementById("giftMsgCount");
-
-  // ✅ お試し専用（自宅のみ）
-  const trialHomeOnlyNotice = document.getElementById("trialHomeOnlyNotice");
-  const pageTitle = document.getElementById("pageTitle");
 
   const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
   const loadJson=k=>{try{return JSON.parse(localStorage.getItem(k)||"");}catch{return null;}};
@@ -450,6 +335,22 @@
     }
   }
 
+  function normalizeQuote(q, fallbackSubtotal){
+    // snake_case / camelCase どっちでも受ける
+    const shippingFee = (q?.shippingFee ?? q?.shipping_fee ?? q?.shipping ?? 0);
+    const size = (q?.size ?? q?.yamato_size ?? q?.shipping_size ?? "");
+    const sub = (q?.subtotal ?? q?.sub_total ?? fallbackSubtotal ?? 0);
+    const codFee = (q?.codFee ?? q?.cod_fee ?? q?.daibiki_fee ?? 0);
+    const totalCod = (q?.totalCod ?? q?.total_cod ?? (Number(sub)+Number(shippingFee)+Number(codFee)));
+    return {
+      shippingFee: Number(shippingFee)||0,
+      size: size || "",
+      subtotal: Number(sub)||0,
+      codFee: Number(codFee)||0,
+      totalCod: Number(totalCod)||0,
+    };
+  }
+
   function applyQuoteToUI(quote){
     const shippingText = `${yen(quote.shippingFee)}（ヤマト ${quote.size}サイズ）`;
     safeSetText(shippingEl, shippingText);
@@ -476,123 +377,8 @@
     if(codBtn)  codBtn.disabled  = isCard;
   }
 
-  function lockCodIfGift(isGift){
-    const note = document.getElementById("codDisabledNote");
-
-    if(isGift){
-      if(payCod){ payCod.disabled = true; payCod.checked = false; }
-      if(pillCod){ pillCod.setAttribute("aria-disabled","true"); }
-
-      applyPayMethodUI("card");
-
-      if(codBtn){
-        codBtn.disabled = true;
-        codBtn.textContent = "贈り先では代引き不可";
-        codBtn.style.opacity = ".55";
-      }
-      if(note) note.style.display = "block";
-    }else{
-      if(payCod){ payCod.disabled = false; }
-      if(pillCod){ pillCod.removeAttribute("aria-disabled"); }
-
-      if(codBtn){
-        codBtn.textContent = "代引きで注文確定";
-        codBtn.style.opacity = "1";
-      }
-      if(note) note.style.display = "none";
-    }
-  }
-
-  // =========================
-  // 🎁 ギフト：UIとpayload
-  // =========================
-  function showGiftError(text){
-    if(!giftError) return;
-    if(!text){
-      giftError.style.display="none";
-      giftError.textContent="";
-      return;
-    }
-    giftError.style.display="block";
-    giftError.textContent=text;
-  }
-
-  function setGiftUI(on){
-    if(giftBody) giftBody.classList.toggle("show", !!on);
-    showGiftError("");
-  }
-
-  function getGiftFields(){
-    const $ = (id)=>document.getElementById(id);
-    return {
-      name:  ($("giftName")?.value || "").trim(),
-      zip:   ($("giftZip")?.value || "").trim(),
-      tel:   ($("giftTel")?.value || "").trim(),
-      addr1: ($("giftAddr1")?.value || "").trim(),
-      addr2: ($("giftAddr2")?.value || "").trim(),
-      msg:   ($("giftMsg")?.value || "").trim(),
-    };
-  }
-
-  function buildGiftPayloadOrThrow(){
-    const isGift = !!giftToggle?.checked;
-    if(!isGift) return { is_gift:false };
-
-    const f = getGiftFields();
-    const zip = f.zip.replace(/[^\d]/g,"");
-    const tel = f.tel.replace(/[^\d]/g,"");
-
-    if(!f.name){ showGiftError("お届け先氏名を入力してください"); throw new Error("GIFT_VALIDATE_NAME"); }
-    if(zip.length < 7){ showGiftError("郵便番号を正しく入力してください（7桁）"); throw new Error("GIFT_VALIDATE_ZIP"); }
-    if(tel.length < 10){ showGiftError("電話番号を正しく入力してください"); throw new Error("GIFT_VALIDATE_TEL"); }
-    if(!f.addr1){ showGiftError("住所を入力してください"); throw new Error("GIFT_VALIDATE_ADDR"); }
-
-    showGiftError("");
-
-    return {
-      is_gift:true,
-      gift_message: f.msg || null,
-      ship_name: f.name,
-      ship_zip: zip,
-      ship_tel: tel,
-      ship_addr1: f.addr1,
-      ship_addr2: f.addr2 || null,
-    };
-  }
-
-  // =========================
-  // ✅ お試しセットは「自宅のみ」強制
-  // - ギフトUIを消す
-  // - ギフト関連状態を全てOFF
-  // =========================
-  function enforceTrialHomeOnly(){
-    if(!isTrial) return;
-
-    // 見出し・タイトル
-    if(pageTitle) pageTitle.textContent = "お試しセット｜注文内容の確認";
-    document.title = "お試しセット｜注文内容の確認";
-
-    // 注意表示
-    if(trialHomeOnlyNotice) trialHomeOnlyNotice.style.display = "block";
-
-    // ギフトUIは完全に無効化・非表示
-    if(giftCard) giftCard.style.display = "none";
-    if(giftToggle){
-      giftToggle.checked = false;
-      giftToggle.disabled = true;
-    }
-    setGiftUI(false);
-    showGiftError("");
-
-    // 代引きは自宅なのでOK（ここでは何もしない）
-    // ※もし「お試しセットはクレカのみ」にしたい場合はここでCODを殺せばOK
-  }
-
   try{
     status.textContent="確認中…";
-
-    // ✅ 先に「お試し＝自宅のみ」を適用（UI側を先に固定）
-    enforceTrialHomeOnly();
 
     const uid = await ensureUserSoft();
     if(!uid){
@@ -619,8 +405,9 @@
       if (mode) returnUrl.searchParams.set("mode", mode);
 
       const returnPath = returnUrl.pathname + returnUrl.search;
+
       location.replace(
-        `/cod-register.html?returnTo=${encodeURIComponent(returnPath)}&mode=${encodeURIComponent(mode||"")}&ship=home&liff.hback=2`
+        `/cod-register.html?returnTo=${encodeURIComponent(returnPath)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`
       );
       return;
     }
@@ -628,70 +415,14 @@
 
     const addr=await getAddress(uid).catch(()=>null);
     if(!addr){
-      location.replace(`/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&ship=home&liff.hback=2`);
+      location.replace(`/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`);
       return;
     }
 
-    // ✅ ギフト判定：お試しは必ずfalse
-    let isGift = false;
-
-    if(!isTrial){
-      // 旧ロジック（通常のみ）
-      if (shipQS === "home") isGift = false;
-      else if (shipQS === "gift" || (qs.get("gift") === "1")) isGift = true;
-      else isGift = (addr.is_gift === true);
-    }
-
-    // お届け先表示（基本はDB住所＝自宅）
-    const nameLine = addr.name ? `${addr.name} 様\n` : "";
+    // お届け先表示
+    const nameLine = addr.name ? `${addr.name}\n` : "";
     addrText.textContent =
-      `${nameLine}〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim();
-
-    // 🎁 ギフトUI初期化（通常のみ）
-    if(!isTrial && giftToggle){
-      giftToggle.checked = !!isGift;
-      setGiftUI(!!isGift);
-      lockCodIfGift(!!isGift);
-
-      giftToggle.addEventListener("change", ()=>{
-        const on = !!giftToggle.checked;
-        setGiftUI(on);
-        lockCodIfGift(on);
-
-        if(!on){
-          addrText.textContent =
-            `${nameLine}〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim();
-        }
-      });
-
-      // メッセージ文字数
-      if(giftMsg && giftMsgCount){
-        giftMsg.addEventListener("input", ()=>giftMsgCount.textContent=String((giftMsg.value||"").length));
-        giftMsgCount.textContent = String((giftMsg.value||"").length);
-      }
-
-      // ギフト入力が埋まったら表示差し替え（見た目だけ）
-      const giftFieldsIds = ["giftName","giftZip","giftTel","giftAddr1","giftAddr2"];
-      giftFieldsIds.forEach(id=>{
-        const el=document.getElementById(id);
-        if(el){
-          el.addEventListener("blur", ()=>{
-            if(!(giftToggle && giftToggle.checked)) return;
-            const f = getGiftFields();
-            const zip = f.zip.replace(/[^\d]/g,"");
-            const name = f.name ? `${f.name} 様\n` : "";
-            if(f.addr1){
-              addrText.textContent =
-                `${name}〒${zip || ""} ${f.addr1} ${f.addr2 || ""}`.trim();
-            }
-          });
-        }
-      });
-    }else{
-      // お試し時は念のためCODノートは隠す（ギフトではないため）
-      const note = document.getElementById("codDisabledNote");
-      if(note) note.style.display = "none";
-    }
+      `${nameLine}〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}\nTEL: ${addr.phone||""}`.trim();
 
     const products=await getProducts();
     const subtotal = renderItems(items, products);
@@ -703,15 +434,33 @@
     safeSetText(totalCodEl, "計算中…");
     safeSetText(totalCardEl, "計算中…");
 
-    // ✅ 送料見積は「自宅住所」でOK
-    const quote = await postJson("/api/order/quote", { uid, checkout:{ items } });
-    quote.subtotal = quote.subtotal ?? subtotal;
+    // ✅ 送料見積
+    let rawQuote = null;
+    try{
+      rawQuote = await postJson("/api/order/quote", { uid, checkout:{ items } });
+    }catch(e){
+      console.error("quote failed:", e);
+      safeSetText(shippingEl, "計算に失敗しました");
+      safeSetText(shipping2El, "—");
+      safeSetText(shipping3El, "—");
+      safeSetText(codFeeEl, "—");
+      safeSetText(totalCodEl, "—");
+      safeSetText(totalCardEl, "—");
+      status.innerHTML = '<span class="err">送料計算に失敗しました（/api/order/quote）</span>';
+      return;
+    }
+
+    const quote = normalizeQuote(rawQuote, subtotal);
     applyQuoteToUI(quote);
 
     applyPayMethodUI("card");
-    // ギフトならCODロック（通常のみ）
-    if(!isTrial) lockCodIfGift(!!(giftToggle && giftToggle.checked));
-    else lockCodIfGift(false);
+    status.textContent="内容をご確認ください。";
+
+    if(backBtn){
+      backBtn.onclick = ()=>{
+        location.href = `/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`;
+      };
+    }
 
     if(pillCard){
       pillCard.addEventListener("click", ()=>{
@@ -730,41 +479,17 @@
       });
     }
     if(payCard) payCard.addEventListener("change", ()=>applyPayMethodUI("card"));
-    if(payCod)  payCod.addEventListener("change", ()=>{
-      if(payCod.disabled) return;
-      applyPayMethodUI("cod");
-    });
-
-    status.textContent="内容をご確認ください。";
-
-    if(backBtn){
-      backBtn.onclick = ()=>{
-        // ✅ 戻るは addr_step を付けない（次回また必ず住所画面を通す）
-        location.href = `/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&ship=home&liff.hback=2`;
-      };
-    }
+    if(payCod)  payCod.addEventListener("change", ()=>applyPayMethodUI("cod"));
 
     if(cardBtn){
       cardBtn.onclick = async ()=>{
         if(!(payCard && payCard.checked)) return;
 
-        // ✅ お試しセットは自宅のみ：gift payloadは必ず false
-        // ✅ 通常のみギフトチェック
-        let giftPayload = { is_gift:false };
-        if(!isTrial){
-          try{
-            giftPayload = buildGiftPayloadOrThrow();
-          }catch(e){
-            return;
-          }
-        }
-
         setBtnBusy(cardBtn, true, "移動中…", "クレジットで支払う");
         try{
           const data = await postJson("/api/pay/stripe/create", {
             uid,
-            checkout:{ items },
-            ...giftPayload
+            checkout:{ items }
           });
           if(!data?.url) throw new Error("stripe url missing");
           location.href = data.url;
@@ -779,11 +504,6 @@
     if(codBtn){
       codBtn.onclick = async ()=>{
         if(!(payCod && payCod.checked)) return;
-
-        // ✅ お試しセット：自宅のみなのでCOD可（ここは通す）
-        // ✅ 通常：ギフトONならCOD不可
-        const isGiftNow = (!isTrial) && !!(giftToggle && giftToggle.checked);
-        if(isGiftNow) return;
 
         setBtnBusy(codBtn, true, "確定中…", "代引きで注文確定");
         try{

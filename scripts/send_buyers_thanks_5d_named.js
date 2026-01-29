@@ -7,6 +7,9 @@
  * - どんな理由で rows が重複しても「同一 order_id は二度送らない」(Set ガード)
  * - 実際に読んだ MESSAGE_FILE の絶対パスをログに出す（事故防止）
  *
+ * ✅ 今回だけ「同じ user_id は1回」にするスイッチ追加
+ * - DEDUP_BY_USER=1 のときだけ、同一 user_id への送信を1回に抑制（終わったら外せば注文ごとに戻る）
+ *
  * ✔ 名前取得優先順位
  *   1) orders.name
  *   2) addresses.name（最新）
@@ -31,6 +34,9 @@ const MESSAGE_FILE =
   (process.env.MESSAGE_FILE || "./messages/buyers_thanks_5d_named.json").trim();
 
 const DRY_RUN = String(process.env.DRY_RUN || "") === "1";
+
+// ★今回だけ user_id 重複を抑えるスイッチ（1ならON）
+const DEDUP_BY_USER = String(process.env.DEDUP_BY_USER || "") === "1";
 
 const WINDOW_START_DAYS = Number(process.env.WINDOW_START_DAYS || 6);
 const WINDOW_END_DAYS = Number(process.env.WINDOW_END_DAYS || 5);
@@ -180,6 +186,7 @@ async function markOrderSent(orderId) {
 (async () => {
   console.log("NOTIFIED_KIND=", NOTIFIED_KIND);
   console.log("DRY_RUN=", DRY_RUN ? "1" : "0");
+  console.log("DEDUP_BY_USER=", DEDUP_BY_USER ? "1" : "0");
   console.log("CWD=", process.cwd());
   console.log("MESSAGE_FILE(resolved)=", path.resolve(process.cwd(), MESSAGE_FILE));
 
@@ -218,12 +225,25 @@ async function markOrderSent(orderId) {
   // ✅ 最終安全柵：同一 order_id は絶対に二度送らない
   const sentOrderIds = new Set();
 
+  // ✅ 今回だけ：同一 user_id は1回だけ（DEDUP_BY_USER=1 のとき）
+  const sentUserIds = new Set();
+
   for (const o of targets) {
+    // order_id 重複ガード
     if (sentOrderIds.has(o.order_id)) {
       console.log(`SKIP duplicate order_id=${o.order_id}`);
       continue;
     }
     sentOrderIds.add(o.order_id);
+
+    // user_id 重複ガード（今回だけ）
+    if (DEDUP_BY_USER) {
+      if (sentUserIds.has(o.user_id)) {
+        console.log(`SKIP duplicate user_id=${o.user_id} (order_id=${o.order_id})`);
+        continue;
+      }
+      sentUserIds.add(o.user_id);
+    }
 
     if (!isValidLineUserId(o.user_id)) {
       console.log(`SKIP invalid user_id order_id=${o.order_id} user_id=${o.user_id}`);
@@ -232,7 +252,7 @@ async function markOrderSent(orderId) {
 
     const messages = deepReplaceName(template, o.resolved_name);
 
-    // 送信 → 記録
+    // 送信 → 記録（※DEDUP_BY_USER=1 の場合でも「代表の1注文」だけに印が付きます）
     await linePush(o.user_id, messages);
     await markOrderSent(o.order_id);
 

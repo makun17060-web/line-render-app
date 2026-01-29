@@ -1,0 +1,121 @@
+[
+  {
+    "type": "flex",
+    "altText": "{{NAME}}様 ご注文ありがとうございました（磯屋）",
+    "contents": {
+      "type": "bubble",
+      "hero": {
+        "type": "image",
+        "url": "https://line-render-app-1.onrender.com/uploads/isoya_4grid_square_nodistort.png",
+        "size": "full",
+        "aspectRatio": "20:13",
+        "aspectMode": "cover"
+      },
+      "body": {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "md",
+        "contents": [
+          {
+            "type": "text",
+            "text": "手造りえびせんべい 磯屋",
+            "weight": "bold",
+            "size": "lg",
+            "wrap": true
+          },
+          {
+            "type": "text",
+            "text": "{{NAME}}様",
+            "weight": "bold",
+            "size": "md",
+            "wrap": true
+          },
+          {
+            "type": "text",
+            "text": "この度はご注文ありがとうございました！\nお口に合いましたでしょうか？",
+            "size": "sm",
+            "wrap": true
+          },
+          {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "margin": "md",
+            "contents": [
+              {
+                "type": "box",
+                "layout": "baseline",
+                "spacing": "sm",
+                "contents": [
+                  {
+                    "type": "text",
+                    "text": "🍤",
+                    "flex": 0
+                  },
+                  {
+                    "type": "text",
+                    "text": "「これ美味しかった！」があれば、1行だけでも教えてください😊",
+                    "size": "sm",
+                    "color": "#555555",
+                    "wrap": true
+                  }
+                ]
+              },
+              {
+                "type": "box",
+                "layout": "baseline",
+                "spacing": "sm",
+                "contents": [
+                  {
+                    "type": "text",
+                    "text": "🎁",
+                    "flex": 0
+                  },
+                  {
+                    "type": "text",
+                    "text": "ギフト用のご用意もできます（包装・お届け先指定OK）",
+                    "size": "sm",
+                    "color": "#555555",
+                    "wrap": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "footer": {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "sm",
+        "contents": [
+          {
+            "type": "button",
+            "style": "primary",
+            "action": {
+              "type": "uri",
+              "label": "お店を見る（ミニアプリ）",
+              "uri": "https://liff.line.me/2008406620-8CWfgEKh"
+            }
+          },
+          {
+            "type": "button",
+            "style": "secondary",
+            "action": {
+              "type": "message",
+              "label": "感想を送る",
+              "text": "届きました！感想です："
+            }
+          },
+          {
+            "type": "text",
+            "text": "※このトークからいつでもご注文できます",
+            "size": "xs",
+            "color": "#888888",
+            "wrap": true
+          }
+        ]
+      }
+    }
+  }
+]

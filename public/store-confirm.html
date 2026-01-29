@@ -193,6 +193,12 @@
   const BACK_URL = "/public/store-products.html";
 
   const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
+// ✅ 店頭価格上書き（久助だけ）
+function storePrice(p){
+  const id = String(p?.id || "");
+  if (id === "kusuke-250") return 250;   // ← 商品一覧と同じ条件にする
+  return Number(p.price) || 0;
+}
 
   // DOM
   const statusEl = document.getElementById("status");
@@ -317,16 +323,18 @@
   for(const it of cart.items){
     const p = byId[it.id];
     if(!p) continue;
-    const lineTotal = Number(p.price||0) * Number(it.qty||0);
-    total += lineTotal;
-    lines.push({
-      id: it.id,
-      name: p.name,
-      volume: p.volume,
-      qty: it.qty,
-      unit: p.price,
-      lineTotal
-    });
+    const unit = storePrice(p);
+const lineTotal = unit * Number(it.qty||0);
+total += lineTotal;
+lines.push({
+  id: it.id,
+  name: p.name,
+  volume: p.volume,
+  qty: it.qty,
+  unit: unit,
+  lineTotal
+});
+
   }
 
   if(!lines.length){

@@ -100,10 +100,6 @@
       line-height:1.55;
       display:none;
     }
-
-    /* ✅ デバッグ表示（原因特定用：解決したら消してOK） */
-    #debugCard{ display:none; }
-    #debugText{ white-space:pre-wrap; font-size:12px; margin:8px 0 0; }
   </style>
 </head>
 
@@ -111,12 +107,6 @@
   <div class="wrap">
     <h1 id="pageTitle">注文内容の確認</h1>
     <div class="muted" id="status">読み込み中…</div>
-
-    <!-- ✅ デバッグ（LIFFでも画面に出す） -->
-    <div class="card" id="debugCard">
-      <div class="muted">デバッグ</div>
-      <pre id="debugText"></pre>
-    </div>
 
     <!-- （任意）お試しセット注意：残したいなら表示 -->
     <div class="trialNotice" id="trialNotice">
@@ -264,17 +254,6 @@
   const cardPanel=document.getElementById("cardPanel");
   const codPanel=document.getElementById("codPanel");
 
-  // ✅ デバッグ出力（LIFFでも画面に出す）
-  const debugCard = document.getElementById("debugCard");
-  const debugText = document.getElementById("debugText");
-  function debugShow(obj){
-    try{
-      if(debugCard) debugCard.style.display="block";
-      if(debugText) debugText.textContent =
-        (typeof obj === "string") ? obj : JSON.stringify(obj, null, 2);
-    }catch{}
-  }
-
   const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
   const loadJson=k=>{try{return JSON.parse(localStorage.getItem(k)||"");}catch{return null;}};
 
@@ -369,7 +348,6 @@
       subtotal: Number(sub)||0,
       codFee: Number(codFee)||0,
       totalCod: Number(totalCod)||0,
-      _raw: q
     };
   }
 
@@ -401,26 +379,21 @@
 
   try{
     status.textContent="確認中…";
-    debugShow({ step:"boot", mode, href: location.href });
 
     const uid = await ensureUserSoft();
     if(!uid){
       status.innerHTML = '<span class="err">ユーザー情報が取得できません。いったん商品ページから開き直してください。</span>';
-      debugShow({ step:"no_uid" });
       setTimeout(()=>location.replace(backTo), 900);
       return;
     }
-    debugShow({ step:"uid_ok", uid });
 
     const cart=loadJson(KEY_CART) || {items:[]};
     const items=(cart.items||[]).filter(x=>x?.id && Number(x.qty||0)>0);
     if(items.length===0){
       status.innerHTML='<span class="err">カートが空です。商品選択に戻ります。</span>';
-      debugShow({ step:"cart_empty", KEY_CART });
       setTimeout(()=>location.replace(backTo), 700);
       return;
     }
-    debugShow({ step:"cart_ok", count: items.length, items });
 
     /* =========================================================
        ✅ confirm 直行を防ぎ、必ず一度 cod-register を通す
@@ -432,7 +405,6 @@
       if (mode) returnUrl.searchParams.set("mode", mode);
 
       const returnPath = returnUrl.pathname + returnUrl.search;
-      debugShow({ step:"redirect_to_cod_register", returnPath });
 
       location.replace(
         `/cod-register.html?returnTo=${encodeURIComponent(returnPath)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`
@@ -441,29 +413,19 @@
     }
     /* ========================================================= */
 
-    const addr=await getAddress(uid).catch((e)=>{
-      debugShow({ step:"getAddress_failed", message:String(e?.message||e) });
-      return null;
-    });
+    const addr=await getAddress(uid).catch(()=>null);
     if(!addr){
-      debugShow({ step:"no_addr_redirect" });
       location.replace(`/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`);
       return;
     }
-    debugShow({ step:"addr_ok", addr });
 
-    // お届け先表示（中立）
+    // お届け先表示
     const nameLine = addr.name ? `${addr.name}\n` : "";
     addrText.textContent =
       `${nameLine}〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}\nTEL: ${addr.phone||""}`.trim();
 
-    const products=await getProducts().catch((e)=>{
-      debugShow({ step:"getProducts_failed", message:String(e?.message||e) });
-      throw e;
-    });
-
+    const products=await getProducts();
     const subtotal = renderItems(items, products);
-    debugShow({ step:"subtotal_ok", subtotal });
 
     safeSetText(shippingEl, "計算中…");
     safeSetText(shipping2El, "計算中…");
@@ -472,15 +434,12 @@
     safeSetText(totalCodEl, "計算中…");
     safeSetText(totalCardEl, "計算中…");
 
-    // ✅ 送料見積（失敗時は画面に出す）
+    // ✅ 送料見積
     let rawQuote = null;
     try{
       rawQuote = await postJson("/api/order/quote", { uid, checkout:{ items } });
-      debugShow({ step:"quote_ok_raw", rawQuote });
     }catch(e){
       console.error("quote failed:", e);
-      debugShow({ step:"quote_failed", message:String(e?.message||e) });
-
       safeSetText(shippingEl, "計算に失敗しました");
       safeSetText(shipping2El, "—");
       safeSetText(shipping3El, "—");
@@ -492,8 +451,6 @@
     }
 
     const quote = normalizeQuote(rawQuote, subtotal);
-    debugShow({ step:"quote_normalized", quote });
-
     applyQuoteToUI(quote);
 
     applyPayMethodUI("card");
@@ -534,12 +491,10 @@
             uid,
             checkout:{ items }
           });
-          debugShow({ step:"stripe_create_ok", hasUrl: !!data?.url });
           if(!data?.url) throw new Error("stripe url missing");
           location.href = data.url;
         }catch(e){
           console.error(e);
-          debugShow({ step:"stripe_create_failed", message:String(e?.message||e) });
           alert("クレジット決済の開始に失敗しました: " + (e?.message||e));
           setBtnBusy(cardBtn, false, "移動中…", "クレジットで支払う");
         }
@@ -553,12 +508,10 @@
         setBtnBusy(codBtn, true, "確定中…", "代引きで注文確定");
         try{
           const data = await postJson("/api/order/cod/create", { uid, checkout:{ items } });
-          debugShow({ step:"cod_create_ok", orderId: data?.orderId || null });
           localStorage.setItem(KEY_CART, JSON.stringify({ items: [] }));
           location.href = `/complete.html?method=cod&orderId=${encodeURIComponent(data.orderId||"")}`;
         }catch(e){
           console.error(e);
-          debugShow({ step:"cod_create_failed", message:String(e?.message||e) });
           alert("代引き確定に失敗しました: " + (e?.message||e));
           setBtnBusy(codBtn, false, "確定中…", "代引きで注文確定");
         }
@@ -567,7 +520,6 @@
 
   }catch(e){
     console.error(e);
-    debugShow({ step:"fatal", message:String(e?.message||e) });
     status.innerHTML='<span class="err">読み込みに失敗しました（住所API/商品API/DBを確認）</span>';
   }
 })();

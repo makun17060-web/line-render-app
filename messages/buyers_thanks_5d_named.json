@@ -4,13 +4,6 @@
     "altText": "{{NAME}}様 ご注文ありがとうございました（磯屋）",
     "contents": {
       "type": "bubble",
-      "hero": {
-        "type": "image",
-        "url": "https://line-render-app-1.onrender.com/uploads/isoya_4grid_square_nodistort.png",
-        "size": "full",
-        "aspectRatio": "20:13",
-        "aspectMode": "cover"
-      },
       "body": {
         "type": "box",
         "layout": "vertical",
@@ -47,11 +40,7 @@
                 "layout": "baseline",
                 "spacing": "sm",
                 "contents": [
-                  {
-                    "type": "text",
-                    "text": "🍤",
-                    "flex": 0
-                  },
+                  { "type": "text", "text": "🍤", "flex": 0 },
                   {
                     "type": "text",
                     "text": "「これ美味しかった！」があれば、1行だけでも教えてください😊",
@@ -66,11 +55,7 @@
                 "layout": "baseline",
                 "spacing": "sm",
                 "contents": [
-                  {
-                    "type": "text",
-                    "text": "🎁",
-                    "flex": 0
-                  },
+                  { "type": "text", "text": "🎁", "flex": 0 },
                   {
                     "type": "text",
                     "text": "ギフト用のご用意もできます（包装・お届け先指定OK）",

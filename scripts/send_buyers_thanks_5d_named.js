@@ -1,20 +1,13 @@
 /**
  * scripts/send_buyers_thanks_5d_named.js
- * 購入後5日「名前付き」サンクス（注文単位 / push送信 / 安全柵入り・丸ごと版）
+ * 購入後5日「名前付き」サンクス（注文単位 / push送信 / 最終完成版）
  *
- * ✅ 今回の修正ポイント（重要）
- * - FORCE_ORDER_ID でも addresses JOIN で増殖しない（latest_addr + LIMIT 1）
- * - どんな理由で rows が重複しても「同一 order_id は二度送らない」(Set ガード)
- * - 実際に読んだ MESSAGE_FILE の絶対パスをログに出す（事故防止）
- *
- * ✅ 今回だけ「同じ user_id は1回」にするスイッチ追加
- * - DEDUP_BY_USER=1 のときだけ、同一 user_id への送信を1回に抑制（終わったら外せば注文ごとに戻る）
- *
- * ✔ 名前取得優先順位
- *   1) orders.name
- *   2) addresses.name（最新）
- *   3) users.display_name
- *   4) 'お客様'
+ * ✅ 安全柵
+ * - latest_addr + LIMIT 1（FORCE_ORDER_ID でも増殖しない）
+ * - 同一 order_id 二重送信防止
+ * - ★今回だけ user_id を1回に抑えるスイッチ（DEDUP_BY_USER=1）
+ * - ★本番で実際に送られるIDを事前確認できる [WILL_SEND] ログ
+ * - MESSAGE_FILE の実体パスを必ず表示
  */
 
 "use strict";
@@ -22,9 +15,6 @@
 const fs = require("fs");
 const path = require("path");
 const { Pool } = require("pg");
-
-// Node 18+ なら global fetch がある前提（Renderは通常OK）
-// もし環境によって fetch が無い場合は: const fetch = require("node-fetch");
 
 const TOKEN = (process.env.LINE_CHANNEL_ACCESS_TOKEN || "").trim();
 const DBURL = (process.env.DATABASE_URL || "").trim();
@@ -34,8 +24,6 @@ const MESSAGE_FILE =
   (process.env.MESSAGE_FILE || "./messages/buyers_thanks_5d_named.json").trim();
 
 const DRY_RUN = String(process.env.DRY_RUN || "") === "1";
-
-// ★今回だけ user_id 重複を抑えるスイッチ（1ならON）
 const DEDUP_BY_USER = String(process.env.DEDUP_BY_USER || "") === "1";
 
 const WINDOW_START_DAYS = Number(process.env.WINDOW_START_DAYS || 6);
@@ -44,7 +32,6 @@ const LIMIT = Number(process.env.LIMIT || 2000);
 const SLEEP_MS = Number(process.env.SLEEP_MS || 200);
 
 const FORCE_ORDER_ID = (process.env.FORCE_ORDER_ID || "").trim();
-const FORCE_USER_ID = (process.env.FORCE_USER_ID || "").trim(); // 将来用（現状未使用）
 
 if (!TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
 if (!DBURL) throw new Error("DATABASE_URL is required");
@@ -101,29 +88,28 @@ function deepReplaceName(obj, name) {
   return obj;
 }
 
-/* ===== 核心：名前を確実に拾うSQL（注文一覧） ===== */
+/* 対象注文取得 */
 async function loadTargetOrders({ startDays, endDays, limit }) {
   const sql = `
     WITH latest_addr AS (
       SELECT DISTINCT ON (user_id)
-        user_id,
-        name
+        user_id, name
       FROM addresses
       ORDER BY user_id, created_at DESC
     )
     SELECT
-      o.id            AS order_id,
+      o.id AS order_id,
       o.user_id,
       COALESCE(
         NULLIF(o.name, ''),
         NULLIF(a.name, ''),
         NULLIF(u.display_name, ''),
         'お客様'
-      )               AS resolved_name,
+      ) AS resolved_name,
       o.created_at
     FROM orders o
     LEFT JOIN latest_addr a ON a.user_id = o.user_id
-    LEFT JOIN users u       ON u.user_id = o.user_id
+    LEFT JOIN users u ON u.user_id = o.user_id
     WHERE o.user_id IS NOT NULL
       AND o.status IN ('paid','confirmed','pickup')
       AND o.created_at >= NOW() - ($1 || ' days')::interval
@@ -141,13 +127,12 @@ async function loadTargetOrders({ startDays, endDays, limit }) {
   return rows;
 }
 
-/* FORCE_ORDER_ID 用：増殖しない・必ず1件 */
+/* FORCE_ORDER_ID 用 */
 async function loadSingleOrder(orderId) {
   const sql = `
     WITH latest_addr AS (
       SELECT DISTINCT ON (user_id)
-        user_id,
-        name
+        user_id, name
       FROM addresses
       ORDER BY user_id, created_at DESC
     )
@@ -187,13 +172,11 @@ async function markOrderSent(orderId) {
   console.log("NOTIFIED_KIND=", NOTIFIED_KIND);
   console.log("DRY_RUN=", DRY_RUN ? "1" : "0");
   console.log("DEDUP_BY_USER=", DEDUP_BY_USER ? "1" : "0");
-  console.log("CWD=", process.cwd());
   console.log("MESSAGE_FILE(resolved)=", path.resolve(process.cwd(), MESSAGE_FILE));
 
   const template = loadMessageTemplate();
 
   let targets = [];
-
   if (FORCE_ORDER_ID) {
     targets = await loadSingleOrder(FORCE_ORDER_ID);
   } else {
@@ -206,37 +189,24 @@ async function markOrderSent(orderId) {
 
   console.log(`target_orders=${targets.length}`);
 
-  // DRY_RUN: 内容確認（最初の数件）
   if (DRY_RUN) {
     console.log(
       targets.slice(0, 10).map((o) => ({
         order_id: o.order_id,
         user_id: o.user_id,
         name: o.resolved_name,
-        created_at: o.created_at,
       }))
     );
-    await pool.end();
-    return;
   }
 
   let sent = 0;
-
-  // ✅ 最終安全柵：同一 order_id は絶対に二度送らない
   const sentOrderIds = new Set();
-
-  // ✅ 今回だけ：同一 user_id は1回だけ（DEDUP_BY_USER=1 のとき）
   const sentUserIds = new Set();
 
   for (const o of targets) {
-    // order_id 重複ガード
-    if (sentOrderIds.has(o.order_id)) {
-      console.log(`SKIP duplicate order_id=${o.order_id}`);
-      continue;
-    }
+    if (sentOrderIds.has(o.order_id)) continue;
     sentOrderIds.add(o.order_id);
 
-    // user_id 重複ガード（今回だけ）
     if (DEDUP_BY_USER) {
       if (sentUserIds.has(o.user_id)) {
         console.log(`SKIP duplicate user_id=${o.user_id} (order_id=${o.order_id})`);
@@ -245,21 +215,19 @@ async function markOrderSent(orderId) {
       sentUserIds.add(o.user_id);
     }
 
-    if (!isValidLineUserId(o.user_id)) {
-      console.log(`SKIP invalid user_id order_id=${o.order_id} user_id=${o.user_id}`);
-      continue;
-    }
+    if (!isValidLineUserId(o.user_id)) continue;
+
+    // ★ 本番で実際に送られるIDを確定表示
+    console.log(`[WILL_SEND] user_id=${o.user_id} order_id=${o.order_id}`);
+
+    if (DRY_RUN) continue;
 
     const messages = deepReplaceName(template, o.resolved_name);
-
-    // 送信 → 記録（※DEDUP_BY_USER=1 の場合でも「代表の1注文」だけに印が付きます）
     await linePush(o.user_id, messages);
     await markOrderSent(o.order_id);
 
     sent++;
-    console.log(`OK order_id=${o.order_id} name="${o.resolved_name}"`);
-
-    if (SLEEP_MS > 0) await sleep(SLEEP_MS);
+    await sleep(SLEEP_MS);
   }
 
   console.log(`DONE sent_orders=${sent}`);

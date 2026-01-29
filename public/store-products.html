@@ -111,6 +111,17 @@
 
   const KEY_CART = "isoya_store_cart";
   const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
+// ✅ 店頭価格上書き（久助だけ）
+function storePrice(p){
+  const id = String(p?.id || "");
+
+  // 久助のIDに合わせてここを1行だけ調整
+  if (id === "kusuke-250") return 250;
+  // 例）IDが kusuke-340 の場合は ↓
+  // if (id === "kusuke-340") return 250;
+
+  return Number(p.price) || 0;
+}
 
   // ✅ 画像URLを「products 側と同じように」幅広く許可しつつ、Disk側に寄せる
   function diskImageUrl(image){
@@ -183,7 +194,8 @@
       const p = map[it.id];
       if(!p) continue;
       count += it.qty;
-      total += p.price * it.qty;
+      total += storePrice(p) * it.qty;
+
     }
     sumEl.textContent = `カート：${count}点 / 小計 ${yen(total)}`;
     nextBtn.classList.toggle("btnDisabled", count===0);
@@ -210,7 +222,8 @@
         <div class="name">${p.name}</div>
         <div class="desc">${p.desc||""}</div>
         <div class="row">
-          <div class="price">${yen(p.price)}</div>
+<div class="price">${yen(storePrice(p))}</div>
+
           <span class="badge2">${p.volume||`在庫 ${stock}`}</span>
         </div>
         <div class="controls">

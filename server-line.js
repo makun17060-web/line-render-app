@@ -1620,11 +1620,15 @@ async function notifyCardPending({ orderId, userId, items, shippingFee, total, s
  * Friend notify（follow/unfollow）
  * ========================= */
 async function notifyAdminFriendAdded({ userId, displayName, day }) {
+  if (!FRIEND_NOTIFY) return;   // 🔕 ここで即終了
   if (!ADMIN_USER_ID) return;
 
   let todayCounts = null;
   try {
-    const r = await pool.query(`SELECT added_count, blocked_count FROM friend_logs WHERE day=$1`, [day]);
+    const r = await pool.query(
+      `SELECT added_count, blocked_count FROM friend_logs WHERE day=$1`,
+      [day]
+    );
     if (r.rowCount > 0) todayCounts = r.rows[0];
   } catch {}
 
@@ -1644,15 +1648,19 @@ async function notifyAdminFriendAdded({ userId, displayName, day }) {
 }
 
 async function notifyAdminFriendBlocked({ userId, displayName, day }) {
+  if (!FRIEND_NOTIFY) return;   // 🔕
   if (!ADMIN_USER_ID) return;
 
   let todayCounts = null;
   try {
-    const r = await pool.query(`SELECT added_count, blocked_count FROM friend_logs WHERE day=$1`, [day]);
+    const r = await pool.query(
+      `SELECT added_count, blocked_count FROM friend_logs WHERE day=$1`,
+      [day]
+    );
     if (r.rowCount > 0) todayCounts = r.rows[0];
   } catch {}
 
-  const name = displayName ? `「${displayName}」` : "（表示名不明：DB未保存の可能性）";
+  const name = displayName ? `「${displayName}」` : "（表示名不明）";
   const counts = todayCounts
     ? `\n今日の累計：追加 ${Number(todayCounts.added_count || 0)} / ブロック ${Number(todayCounts.blocked_count || 0)}`
     : "";

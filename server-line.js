@@ -79,7 +79,8 @@ const STRIPE_CANCEL_URL     = env.STRIPE_CANCEL_URL || "";
 const FRIEND_NOTIFY = String(env.FRIEND_NOTIFY || "1").trim() === "1";
 
 
-const COD_FEE = String(env.COD_FEE || "330");
+const COD_FEE = Number(env.COD_FEE || 330);
+
 
 const KEYWORD_DIRECT = env.KEYWORD_DIRECT || "直接注文";
 const KEYWORD_KUSUKE = env.KEYWORD_KUSUKE || "久助";
@@ -2924,9 +2925,14 @@ async function onFollow(ev) {
 
   try {
     await pool.query(
-      `INSERT INTO follow_events (user_id, followed_at, raw_event) VALUES ($1, now(), $2)`,
-      [userId, ev ? JSON.stringify(ev) : null]
-    );
+  `
+  INSERT INTO follow_events (user_id, followed_at, raw_event)
+  VALUES ($1, now(), $2)
+  ON CONFLICT DO NOTHING
+  `,
+  [userId, ev ? JSON.stringify(ev) : null]
+);
+
   } catch (e) {
     logErr("insert follow_events failed", e?.message || e);
   }

@@ -157,7 +157,7 @@
           </div>
 
           <button id="cardBtn" class="payBtn" style="background:var(--pri2);color:#fff" type="button">
-            クレジットで支払う
+            クレジットへ進む
           </button>
         </div>
 
@@ -176,7 +176,7 @@
           </div>
 
           <button id="codBtn" class="payBtn" style="background:var(--pri);color:#fff" type="button">
-            代引きで注文確定
+            代引きへ進む
           </button>
         </div>
 
@@ -197,6 +197,9 @@
 
   const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
   const KEY_UID ="isoya_userId";
+
+  // ✅ confirm → confirm_card / confirm_cod に渡すためのキー（見積を保存）
+  const KEY_LAST_QUOTE = "isoya_last_quote";
 
   const qs = new URLSearchParams(location.search);
   const mode = (qs.get("mode") || "").trim();
@@ -226,6 +229,10 @@
     (mode === "fukubako") ? "/confirm.html?mode=fukubako"
   : (mode === "original") ? "/confirm-original.html"
   : "/confirm.html";
+
+  // ✅ 次ページ（支払い別）
+  const nextCardPath = "/confirm_card.html";
+  const nextCodPath  = "/confirm_cod.html";
 
   const status=document.getElementById("status");
   const addrText=document.getElementById("addrText");
@@ -264,6 +271,10 @@
     if (busyText && normalText) btn.textContent = busy ? busyText : normalText;
   }
   function safeSetText(el, txt){ if(el) el.textContent = txt; }
+
+  function saveJson(k, v){
+    try{ localStorage.setItem(k, JSON.stringify(v)); }catch{}
+  }
 
   async function postJson(url, body){
     const r=await fetch(url,{
@@ -342,7 +353,9 @@
     const sub = (q?.subtotal ?? q?.sub_total ?? fallbackSubtotal ?? 0);
     const codFee = (q?.codFee ?? q?.cod_fee ?? q?.daibiki_fee ?? 0);
     const totalCod = (q?.totalCod ?? q?.total_cod ?? (Number(sub)+Number(shippingFee)+Number(codFee)));
+
     return {
+      // 表示用に整形した “共通見積”
       shippingFee: Number(shippingFee)||0,
       size: size || "",
       subtotal: Number(sub)||0,
@@ -375,6 +388,13 @@
 
     if(cardBtn) cardBtn.disabled = !isCard;
     if(codBtn)  codBtn.disabled  = isCard;
+  }
+
+  function buildNextUrl(path){
+    const u = new URL(location.origin + path);
+    if(mode) u.searchParams.set("mode", mode);
+    u.searchParams.set("addr_step", "1"); // ✅ confirm と同じ “住所通過済み”フラグ
+    return u.pathname + u.search;
   }
 
   try{
@@ -453,6 +473,9 @@
     const quote = normalizeQuote(rawQuote, subtotal);
     applyQuoteToUI(quote);
 
+    // ✅ 次ページで再利用するために保存（confirm_card / confirm_cod で表示に使える）
+    saveJson(KEY_LAST_QUOTE, quote);
+
     applyPayMethodUI("card");
     status.textContent="内容をご確認ください。";
 
@@ -481,42 +504,27 @@
     if(payCard) payCard.addEventListener("change", ()=>applyPayMethodUI("card"));
     if(payCod)  payCod.addEventListener("change", ()=>applyPayMethodUI("cod"));
 
+    /* =========================================================
+       ✅ ここが今回の本題：confirm → confirm_card / confirm_cod に遷移
+       - confirm では “確定API” を叩かない
+       - 次ページで確定（Stripe開始 / 代引確定）を行う
+    ========================================================= */
     if(cardBtn){
-      cardBtn.onclick = async ()=>{
+      cardBtn.onclick = ()=>{
         if(!(payCard && payCard.checked)) return;
-
-        setBtnBusy(cardBtn, true, "移動中…", "クレジットで支払う");
-        try{
-          const data = await postJson("/api/pay/stripe/create", {
-            uid,
-            checkout:{ items }
-          });
-          if(!data?.url) throw new Error("stripe url missing");
-          location.href = data.url;
-        }catch(e){
-          console.error(e);
-          alert("クレジット決済の開始に失敗しました: " + (e?.message||e));
-          setBtnBusy(cardBtn, false, "移動中…", "クレジットで支払う");
-        }
+        setBtnBusy(cardBtn, true, "移動中…", "クレジットへ進む");
+        location.href = buildNextUrl(nextCardPath);
       };
     }
 
     if(codBtn){
-      codBtn.onclick = async ()=>{
+      codBtn.onclick = ()=>{
         if(!(payCod && payCod.checked)) return;
-
-        setBtnBusy(codBtn, true, "確定中…", "代引きで注文確定");
-        try{
-          const data = await postJson("/api/order/cod/create", { uid, checkout:{ items } });
-          localStorage.setItem(KEY_CART, JSON.stringify({ items: [] }));
-          location.href = `/complete.html?method=cod&orderId=${encodeURIComponent(data.orderId||"")}`;
-        }catch(e){
-          console.error(e);
-          alert("代引き確定に失敗しました: " + (e?.message||e));
-          setBtnBusy(codBtn, false, "確定中…", "代引きで注文確定");
-        }
+        setBtnBusy(codBtn, true, "移動中…", "代引きへ進む");
+        location.href = buildNextUrl(nextCodPath);
       };
     }
+    /* ========================================================= */
 
   }catch(e){
     console.error(e);

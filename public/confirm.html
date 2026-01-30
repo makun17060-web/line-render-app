@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-  <title>注文内容の確認</title>
+  <title>代引き｜最終確認</title>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
   <style>
     :root{
       --bg:#f6f7f9;--card:#fff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;
-      --pri:#0b3a53;--pri2:#123b66;--danger:#b91c1c;
+      --pri:#0b3a53;--danger:#b91c1c;
       --shadow:0 1px 3px rgba(0,0,0,.06);--radius:14px;
     }
     *{box-sizing:border-box}
@@ -23,7 +23,7 @@
       background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
       padding:12px;margin-top:12px;box-shadow:var(--shadow)
     }
-    #addrText{ white-space: pre-line; }
+    #addrText{ white-space: pre-line; font-weight:900; margin-top:6px; }
 
     .items{margin-top:10px;border-top:1px solid var(--line)}
     .item{
@@ -37,156 +37,63 @@
     .item .price{grid-column:2 / 3;grid-row:1 / 3;align-self:center;font-weight:900;white-space:nowrap}
 
     .row{display:flex;justify-content:space-between;gap:10px;margin:0;padding:6px 0;font-size:14px}
-
-    /* 支払い方法ラジオ */
-    .paySelect{ display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
-    .payPill{
-      display:flex; align-items:center; gap:8px;
-      padding:10px 12px; border-radius:999px;
-      background:#fff; border:1px solid var(--line);
-      box-shadow:var(--shadow);
-      cursor:pointer; user-select:none;
-      font-size:13px; font-weight:900;
-    }
-    .payPill input{ transform:scale(1.1); }
-    .payPill[aria-disabled="true"]{ opacity:.55; cursor:not-allowed; }
-    .payPill .sub{ font-weight:700; color:var(--muted); font-size:12px; }
-
-    .payGrid{ display:grid; grid-template-columns:1fr; gap:12px; margin-top:10px; }
-    @media (min-width:760px){
-      .payGrid{ grid-template-columns:1fr 1fr; align-items:stretch; }
-      .backWrap{ grid-column:1 / -1; }
-    }
-
-    .payCardTitle{ font-weight:1000; font-size:14px; margin:0 0 6px; }
-    .payHint{ color:var(--muted); font-size:12px; line-height:1.5; margin-bottom:10px; }
-
     .miniRow{
       display:flex; justify-content:space-between; gap:10px;
       padding:6px 0; font-size:13px; border-top:1px dashed var(--line);
     }
     .miniRow:first-of-type{border-top:1px solid var(--line)}
-    .payTotal{
+
+    .total{
       margin-top:10px; padding-top:10px; border-top:2px solid var(--line);
       display:flex; justify-content:space-between; align-items:baseline; gap:10px;
     }
-    .payTotal .label{font-weight:900;font-size:13px;color:var(--muted)}
-    .payTotal .price{font-weight:1000;font-size:18px;white-space:nowrap}
+    .total .label{font-weight:900;font-size:13px;color:var(--muted)}
+    .total .price{font-weight:1000;font-size:18px;white-space:nowrap}
 
-    .payBtn{
+    .btn{
       width:100%;
       border:none; border-radius:14px;
       padding:12px 14px;
       font-weight:1000;
       cursor:pointer;
       margin-top:10px;
+      background:var(--pri); color:#fff;
     }
-    .payBtn:disabled{opacity:.55;cursor:not-allowed}
-
-    .backWrap .payBtn{ background:#fff;border:1px solid var(--line);color:#111827; margin-top:0; }
-
-    .inactive{ opacity:.55; filter:saturate(.85); }
-
-    /* （任意）お試しセット注意：ギフト概念は廃止済み */
-    .trialNotice{
-      margin-top:10px;
-      padding:10px 12px;
-      border-radius:12px;
-      border:1px solid #fecaca;
-      background:#fff5f5;
-      color:#991b1b;
-      font-weight:900;
-      font-size:13px;
-      line-height:1.55;
-      display:none;
+    .btn:disabled{opacity:.55;cursor:not-allowed}
+    .btnSecondary{
+      background:#fff; color:#111827; border:1px solid var(--line);
     }
   </style>
 </head>
 
 <body>
   <div class="wrap">
-    <h1 id="pageTitle">注文内容の確認</h1>
+    <h1 id="pageTitle">代引き｜最終確認</h1>
     <div class="muted" id="status">読み込み中…</div>
 
-    <!-- （任意）お試しセット注意：残したいなら表示 -->
-    <div class="trialNotice" id="trialNotice">
-      ※お試しセットは <b>ご自宅配送のみ</b> です（ギフト配送はできません）
-    </div>
-
     <div class="card">
-      <div class="muted" id="addrLabel">お届け先</div>
-      <div id="addrText" style="margin-top:6px;font-weight:900">—</div>
-
-      <div class="muted" style="margin-top:8px">
-        ※お届け先を変更したい場合は「戻る（住所入力へ）」から変更できます。
-      </div>
+      <div class="muted">お届け先</div>
+      <div id="addrText">—</div>
     </div>
 
     <div class="card">
       <div class="muted">ご注文商品</div>
       <div class="items" id="items"></div>
 
-      <div class="row"><div>小計</div><div id="subtotal">0円</div></div>
-      <div class="row"><div>送料（見積）</div><div id="shipping">—</div></div>
+      <div class="row"><div>小計</div><div id="subtotal">—</div></div>
+      <div class="row"><div>送料</div><div id="shipping">—</div></div>
+      <div class="row"><div>代引手数料</div><div id="codFee">—</div></div>
 
-      <!-- 支払い方法ラジオ -->
-      <div class="paySelect" role="radiogroup" aria-label="支払い方法">
-        <label class="payPill" id="pillCard">
-          <input type="radio" name="payMethod" id="payCard" value="card">
-          <div>クレジット<div class="sub">Stripe決済へ</div></div>
-        </label>
-
-        <label class="payPill" id="pillCod">
-          <input type="radio" name="payMethod" id="payCod" value="cod">
-          <div>代引き<div class="sub">配達員へ現金</div></div>
-        </label>
+      <div class="total">
+        <div class="label">合計（代引）</div>
+        <div class="price" id="totalCod">—</div>
       </div>
 
-      <div class="payGrid">
-        <!-- クレジット -->
-        <div class="card" id="cardPanel" style="margin-top:0">
-          <div class="payCardTitle">クレジットでのお支払い</div>
-          <div class="payHint">※代引手数料はかかりません。Stripe決済画面へ進みます。</div>
+      <button id="confirmBtn" class="btn" type="button">代引きで注文確定</button>
+      <button id="backBtn" class="btn btnSecondary" type="button">戻る（confirmへ）</button>
 
-          <div class="miniRow"><div>小計</div><div id="subtotal2">—</div></div>
-          <div class="miniRow"><div>送料</div><div id="shipping2">—</div></div>
-
-          <div class="payTotal">
-            <div class="label">合計（クレジット）</div>
-            <div class="price" id="totalCard">—</div>
-          </div>
-
-          <button id="cardBtn" class="payBtn" style="background:var(--pri2);color:#fff" type="button">
-            クレジットへ進む
-          </button>
-        </div>
-
-        <!-- 代引 -->
-        <div class="card" id="codPanel" style="margin-top:0">
-          <div class="payCardTitle">代引きでのお支払い</div>
-          <div class="payHint">※代引手数料がかかります。配達員へ現金でお支払いください。</div>
-
-          <div class="miniRow"><div>小計</div><div id="subtotal3">—</div></div>
-          <div class="miniRow"><div>送料</div><div id="shipping3">—</div></div>
-          <div class="miniRow"><div>代引手数料</div><div id="codFee">—</div></div>
-
-          <div class="payTotal">
-            <div class="label">合計（代引）</div>
-            <div class="price" id="totalCod">—</div>
-          </div>
-
-          <button id="codBtn" class="payBtn" style="background:var(--pri);color:#fff" type="button">
-            代引きへ進む
-          </button>
-        </div>
-
-        <!-- 戻る -->
-        <div class="backWrap">
-          <button id="backBtn" class="payBtn" type="button">戻る（住所入力へ）</button>
-          <div class="muted" style="margin-top:8px">
-            ※送料は見積り表示です（確定時に再計算されます）。
-          </div>
-        </div>
+      <div class="muted" style="margin-top:8px">
+        ※確定時に再計算される場合があります。
       </div>
     </div>
   </div>
@@ -197,69 +104,32 @@
 
   const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
   const KEY_UID ="isoya_userId";
-
-  // ✅ confirm → confirm_card / confirm_cod に渡すためのキー（見積を保存）
   const KEY_LAST_QUOTE = "isoya_last_quote";
 
   const qs = new URLSearchParams(location.search);
   const mode = (qs.get("mode") || "").trim();
-
-  // （任意）お試しセットの見出し＆注意だけ残す：ギフト機能は無し
-  const isTrial = (mode === "trial" || mode === "fukubako");
-  const trialNotice = document.getElementById("trialNotice");
-  const pageTitle = document.getElementById("pageTitle");
-  if(isTrial){
-    if(pageTitle) pageTitle.textContent = "お試しセット｜注文内容の確認";
-    document.title = "お試しセット｜注文内容の確認";
-    if(trialNotice) trialNotice.style.display = "block";
-  }
 
   const KEY_CART =
     (mode === "original") ? "isoya_cart_original"
   : (mode === "fukubako") ? "isoya_cart_fukubako"
   : "isoya_cart";
 
-  const backTo =
-    (mode === "original") ? "/original-set.html"
-  : (mode === "fukubako") ? "/fukubako.html"
-  : "/products.html";
-
-  // confirm 自身（returnTo用）
-  const RETURN_TO_THIS =
+  const RETURN_CONFIRM =
     (mode === "fukubako") ? "/confirm.html?mode=fukubako"
   : (mode === "original") ? "/confirm-original.html"
   : "/confirm.html";
 
-  // ✅ 次ページ（支払い別）
-  const nextCardPath = "/confirm_card.html";
-  const nextCodPath  = "/confirm_cod.html";
+  const status = document.getElementById("status");
+  const addrText = document.getElementById("addrText");
+  const itemsEl = document.getElementById("items");
 
-  const status=document.getElementById("status");
-  const addrText=document.getElementById("addrText");
-  const itemsEl=document.getElementById("items");
+  const subtotalEl = document.getElementById("subtotal");
+  const shippingEl = document.getElementById("shipping");
+  const codFeeEl = document.getElementById("codFee");
+  const totalCodEl = document.getElementById("totalCod");
 
-  const subtotalEl=document.getElementById("subtotal");
-  const shippingEl=document.getElementById("shipping");
-
-  const subtotal2El=document.getElementById("subtotal2");
-  const shipping2El=document.getElementById("shipping2");
-  const totalCardEl=document.getElementById("totalCard");
-
-  const subtotal3El=document.getElementById("subtotal3");
-  const shipping3El=document.getElementById("shipping3");
-  const codFeeEl=document.getElementById("codFee");
-  const totalCodEl=document.getElementById("totalCod");
-
-  const backBtn=document.getElementById("backBtn");
-  const cardBtn=document.getElementById("cardBtn");
-  const codBtn=document.getElementById("codBtn");
-
-  const payCard=document.getElementById("payCard");
-  const payCod=document.getElementById("payCod");
-  const pillCard=document.getElementById("pillCard");
-  const pillCod=document.getElementById("pillCod");
-  const cardPanel=document.getElementById("cardPanel");
-  const codPanel=document.getElementById("codPanel");
+  const confirmBtn = document.getElementById("confirmBtn");
+  const backBtn = document.getElementById("backBtn");
 
   const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
   const loadJson=k=>{try{return JSON.parse(localStorage.getItem(k)||"");}catch{return null;}};
@@ -271,10 +141,6 @@
     if (busyText && normalText) btn.textContent = busy ? busyText : normalText;
   }
   function safeSetText(el, txt){ if(el) el.textContent = txt; }
-
-  function saveJson(k, v){
-    try{ localStorage.setItem(k, JSON.stringify(v)); }catch{}
-  }
 
   async function postJson(url, body){
     const r=await fetch(url,{
@@ -324,8 +190,6 @@
     }
 
     safeSetText(subtotalEl, yen(subtotal));
-    safeSetText(subtotal2El, yen(subtotal));
-    safeSetText(subtotal3El, yen(subtotal));
     return subtotal;
   }
 
@@ -346,55 +210,16 @@
     }
   }
 
-  function normalizeQuote(q, fallbackSubtotal){
-    // snake_case / camelCase どっちでも受ける
-    const shippingFee = (q?.shippingFee ?? q?.shipping_fee ?? q?.shipping ?? 0);
-    const size = (q?.size ?? q?.yamato_size ?? q?.shipping_size ?? "");
-    const sub = (q?.subtotal ?? q?.sub_total ?? fallbackSubtotal ?? 0);
-    const codFee = (q?.codFee ?? q?.cod_fee ?? q?.daibiki_fee ?? 0);
-    const totalCod = (q?.totalCod ?? q?.total_cod ?? (Number(sub)+Number(shippingFee)+Number(codFee)));
+  function applyQuoteToUI(quote, fallbackSubtotal){
+    const sub = Number(quote?.subtotal ?? fallbackSubtotal ?? 0) || 0;
+    const shippingFee = Number(quote?.shippingFee ?? 0) || 0;
+    const size = (quote?.size || "");
+    const codFee = Number(quote?.codFee ?? 0) || 0;
 
-    return {
-      // 表示用に整形した “共通見積”
-      shippingFee: Number(shippingFee)||0,
-      size: size || "",
-      subtotal: Number(sub)||0,
-      codFee: Number(codFee)||0,
-      totalCod: Number(totalCod)||0,
-    };
-  }
-
-  function applyQuoteToUI(quote){
-    const shippingText = `${yen(quote.shippingFee)}（ヤマト ${quote.size}サイズ）`;
+    const shippingText = `${yen(shippingFee)}（ヤマト ${size}サイズ）`;
     safeSetText(shippingEl, shippingText);
-
-    safeSetText(shipping2El, shippingText);
-    const totalCard = Number(quote.subtotal||0) + Number(quote.shippingFee||0);
-    safeSetText(totalCardEl, yen(totalCard));
-
-    safeSetText(shipping3El, shippingText);
-    safeSetText(codFeeEl, yen(quote.codFee));
-    safeSetText(totalCodEl, yen(quote.totalCod));
-  }
-
-  function applyPayMethodUI(method){
-    const isCard = (method === "card");
-
-    if(payCard) payCard.checked = isCard;
-    if(payCod)  payCod.checked  = !isCard;
-
-    if(cardPanel) cardPanel.classList.toggle("inactive", !isCard);
-    if(codPanel)  codPanel.classList.toggle("inactive", isCard);
-
-    if(cardBtn) cardBtn.disabled = !isCard;
-    if(codBtn)  codBtn.disabled  = isCard;
-  }
-
-  function buildNextUrl(path){
-    const u = new URL(location.origin + path);
-    if(mode) u.searchParams.set("mode", mode);
-    u.searchParams.set("addr_step", "1"); // ✅ confirm と同じ “住所通過済み”フラグ
-    return u.pathname + u.search;
+    safeSetText(codFeeEl, yen(codFee));
+    safeSetText(totalCodEl, yen(sub + shippingFee + codFee));
   }
 
   try{
@@ -403,39 +228,22 @@
     const uid = await ensureUserSoft();
     if(!uid){
       status.innerHTML = '<span class="err">ユーザー情報が取得できません。いったん商品ページから開き直してください。</span>';
-      setTimeout(()=>location.replace(backTo), 900);
+      confirmBtn && (confirmBtn.disabled = true);
       return;
     }
 
     const cart=loadJson(KEY_CART) || {items:[]};
     const items=(cart.items||[]).filter(x=>x?.id && Number(x.qty||0)>0);
     if(items.length===0){
-      status.innerHTML='<span class="err">カートが空です。商品選択に戻ります。</span>';
-      setTimeout(()=>location.replace(backTo), 700);
+      status.innerHTML='<span class="err">カートが空です。confirmへ戻ります。</span>';
+      setTimeout(()=>location.replace(RETURN_CONFIRM), 700);
       return;
     }
-
-    /* =========================================================
-       ✅ confirm 直行を防ぎ、必ず一度 cod-register を通す
-    ========================================================= */
-    const stepped = (qs.get("addr_step") || "").trim();
-    if (stepped !== "1") {
-      const returnUrl = new URL(location.origin + RETURN_TO_THIS);
-      returnUrl.searchParams.set("addr_step", "1");
-      if (mode) returnUrl.searchParams.set("mode", mode);
-
-      const returnPath = returnUrl.pathname + returnUrl.search;
-
-      location.replace(
-        `/cod-register.html?returnTo=${encodeURIComponent(returnPath)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`
-      );
-      return;
-    }
-    /* ========================================================= */
 
     const addr=await getAddress(uid).catch(()=>null);
     if(!addr){
-      location.replace(`/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`);
+      status.innerHTML='<span class="err">住所が見つかりません。confirmへ戻ります。</span>';
+      setTimeout(()=>location.replace(RETURN_CONFIRM), 700);
       return;
     }
 
@@ -447,88 +255,35 @@
     const products=await getProducts();
     const subtotal = renderItems(items, products);
 
-    safeSetText(shippingEl, "計算中…");
-    safeSetText(shipping2El, "計算中…");
-    safeSetText(shipping3El, "計算中…");
-    safeSetText(codFeeEl, "計算中…");
-    safeSetText(totalCodEl, "計算中…");
-    safeSetText(totalCardEl, "計算中…");
+    // 見積（confirm で保存したやつ）を表示に使う
+    const quote = loadJson(KEY_LAST_QUOTE) || null;
+    applyQuoteToUI(quote, subtotal);
 
-    // ✅ 送料見積
-    let rawQuote = null;
-    try{
-      rawQuote = await postJson("/api/order/quote", { uid, checkout:{ items } });
-    }catch(e){
-      console.error("quote failed:", e);
-      safeSetText(shippingEl, "計算に失敗しました");
-      safeSetText(shipping2El, "—");
-      safeSetText(shipping3El, "—");
-      safeSetText(codFeeEl, "—");
-      safeSetText(totalCodEl, "—");
-      safeSetText(totalCardEl, "—");
-      status.innerHTML = '<span class="err">送料計算に失敗しました（/api/order/quote）</span>';
-      return;
-    }
-
-    const quote = normalizeQuote(rawQuote, subtotal);
-    applyQuoteToUI(quote);
-
-    // ✅ 次ページで再利用するために保存（confirm_card / confirm_cod で表示に使える）
-    saveJson(KEY_LAST_QUOTE, quote);
-
-    applyPayMethodUI("card");
-    status.textContent="内容をご確認ください。";
+    status.textContent="代引きで確定します。";
 
     if(backBtn){
-      backBtn.onclick = ()=>{
-        location.href = `/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`;
-      };
+      backBtn.onclick = ()=> location.href = RETURN_CONFIRM;
     }
 
-    if(pillCard){
-      pillCard.addEventListener("click", ()=>{
-        if(payCard && !payCard.disabled){
-          payCard.checked = true;
-          applyPayMethodUI("card");
+    if(confirmBtn){
+      confirmBtn.onclick = async ()=>{
+        setBtnBusy(confirmBtn, true, "確定中…", "代引きで注文確定");
+        try{
+          const data = await postJson("/api/order/cod/create", { uid, checkout:{ items } });
+          localStorage.setItem(KEY_CART, JSON.stringify({ items: [] }));
+          location.href = `/complete.html?method=cod&orderId=${encodeURIComponent(data.orderId||"")}`;
+        }catch(e){
+          console.error(e);
+          alert("代引き確定に失敗しました: " + (e?.message||e));
+          setBtnBusy(confirmBtn, false, "確定中…", "代引きで注文確定");
         }
-      });
-    }
-    if(pillCod){
-      pillCod.addEventListener("click", ()=>{
-        if(payCod && !payCod.disabled){
-          payCod.checked = true;
-          applyPayMethodUI("cod");
-        }
-      });
-    }
-    if(payCard) payCard.addEventListener("change", ()=>applyPayMethodUI("card"));
-    if(payCod)  payCod.addEventListener("change", ()=>applyPayMethodUI("cod"));
-
-    /* =========================================================
-       ✅ ここが今回の本題：confirm → confirm_card / confirm_cod に遷移
-       - confirm では “確定API” を叩かない
-       - 次ページで確定（Stripe開始 / 代引確定）を行う
-    ========================================================= */
-    if(cardBtn){
-      cardBtn.onclick = ()=>{
-        if(!(payCard && payCard.checked)) return;
-        setBtnBusy(cardBtn, true, "移動中…", "クレジットへ進む");
-        location.href = buildNextUrl(nextCardPath);
       };
     }
-
-    if(codBtn){
-      codBtn.onclick = ()=>{
-        if(!(payCod && payCod.checked)) return;
-        setBtnBusy(codBtn, true, "移動中…", "代引きへ進む");
-        location.href = buildNextUrl(nextCodPath);
-      };
-    }
-    /* ========================================================= */
 
   }catch(e){
     console.error(e);
     status.innerHTML='<span class="err">読み込みに失敗しました（住所API/商品API/DBを確認）</span>';
+    confirmBtn && (confirmBtn.disabled = true);
   }
 })();
 </script>

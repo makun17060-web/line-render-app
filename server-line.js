@@ -75,6 +75,10 @@ const STRIPE_WEBHOOK_SECRET = env.STRIPE_WEBHOOK_SECRET || "";
 const STRIPE_SUCCESS_URL    = env.STRIPE_SUCCESS_URL || "";
 const STRIPE_CANCEL_URL     = env.STRIPE_CANCEL_URL || "";
 
+// ✅ 友だち追加/ブロックの管理者通知 ON/OFF
+const FRIEND_NOTIFY = String(env.FRIEND_NOTIFY || "1").trim() === "1";
+
+
 const COD_FEE = String(env.COD_FEE || "330");
 
 const KEYWORD_DIRECT = env.KEYWORD_DIRECT || "直接注文";

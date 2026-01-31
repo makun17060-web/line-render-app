@@ -1,19 +1,18 @@
 /**
  * scripts/send_buyers_thanks_5d_named.js
  * 購入後5日「名前付き」サンクス
- * （最終購入日基準 / push送信 / ✅buyers+年号 横断除外 / 最終完成版）
+ * （最終購入日基準 / push送信 / ✅buyers_thanks系 横断除外 / 最終版）
  *
  * ✅ 仕様（重要）
- * - ユーザーごとに「最新の購入（orders.created_at 最大）」を1件だけ対象
+ * - ユーザーごとに最新の購入を1件だけ（最終購入日基準）
  * - 購入後 X〜Y日（既定: 6〜5日）
  * - orders.notified_* でこのJS自身の二重送信防止
- * - ✅ segment_blast を横断チェック
- *     ・buyers 系
- *     ・年号（2026 など）
- *   を含むキーで sent_at があれば除外（記憶に依存しない）
+ * - ✅ 横断除外（キー忘れ対策）
+ *    - segment_blast: buyers/2026などにマッチする key で sent_at があれば除外
+ *    - orders       : notified_kind が buyers/2026などにマッチする注文があれば除外（←★追加）
  *
  * ✅ 安全柵
- * - latest_addr は user_id ごとに1件
+ * - latest_addr は user_id ごとに最新1件
  * - FORCE_ORDER_ID は横断除外をかけない（調査用）
  * - DEDUP_BY_USER は保険
  * - WILL_SEND ログで本番対象を事前確認
@@ -44,10 +43,7 @@ const SLEEP_MS = Number(process.env.SLEEP_MS || 200);
 const FORCE_ORDER_ID = (process.env.FORCE_ORDER_ID || "").trim();
 
 /**
- * ✅ 横断除外用 正規表現
- * - buyers を含む
- * - 2026（将来 2027 でも拡張可）
- *
+ * ✅ 横断除外用 正規表現（Postgresの ~ で使う）
  * 例にマッチ:
  *  - buyers_thanks_20260128
  *  - buyers_2026_xxx
@@ -89,9 +85,7 @@ async function linePush(to, messages) {
 /* テンプレ読込 */
 function loadMessageTemplate() {
   const fp = path.resolve(process.cwd(), MESSAGE_FILE);
-  if (!fs.existsSync(fp)) {
-    throw new Error(`MESSAGE_FILE not found: ${fp}`);
-  }
+  if (!fs.existsSync(fp)) throw new Error(`MESSAGE_FILE not found: ${fp}`);
   const raw = fs.readFileSync(fp, "utf8");
   const json = JSON.parse(raw);
   return Array.isArray(json) ? json : json.messages;
@@ -105,9 +99,7 @@ function deepReplaceName(obj, name) {
   if (Array.isArray(obj)) return obj.map((v) => deepReplaceName(v, rep));
   if (typeof obj === "object") {
     const out = {};
-    for (const [k, v] of Object.entries(obj)) {
-      out[k] = deepReplaceName(v, rep);
-    }
+    for (const [k, v] of Object.entries(obj)) out[k] = deepReplaceName(v, rep);
     return out;
   }
   return obj;
@@ -154,6 +146,8 @@ async function loadTargetOrders({ startDays, endDays, limit }) {
     WHERE lo.created_at >= NOW() - ($1 || ' days')::interval
       AND lo.created_at <  NOW() - ($2 || ' days')::interval
       AND (lo.notified_user_at IS NULL OR lo.notified_kind IS DISTINCT FROM $3)
+
+      -- ✅ 横断除外①: segment_blast に「buyers/2026等で送信済み」があれば除外
       AND NOT EXISTS (
         SELECT 1
         FROM segment_blast sb
@@ -161,6 +155,16 @@ async function loadTargetOrders({ startDays, endDays, limit }) {
           AND sb.sent_at IS NOT NULL
           AND sb.segment_key ~ $5
       )
+
+      -- ✅ 横断除外②: orders に「buyers/2026等で通知済み」があれば除外（shell直叩きでここだけ付いてるケース対応）
+      AND NOT EXISTS (
+        SELECT 1
+        FROM orders oo
+        WHERE oo.user_id = lo.user_id
+          AND oo.notified_user_at IS NOT NULL
+          AND COALESCE(oo.notified_kind,'') ~ $5
+      )
+
     ORDER BY lo.created_at DESC
     LIMIT $4
   `;
@@ -172,7 +176,6 @@ async function loadTargetOrders({ startDays, endDays, limit }) {
     limit,
     THANKS_EXCLUDE_REGEX,
   ]);
-
   return rows;
 }
 
@@ -281,9 +284,7 @@ async function markOrderSent(orderId) {
 
     if (!isValidLineUserId(o.user_id)) continue;
 
-    console.log(
-      `[WILL_SEND] user_id=${o.user_id} order_id=${o.order_id}`
-    );
+    console.log(`[WILL_SEND] user_id=${o.user_id} order_id=${o.order_id}`);
 
     if (DRY_RUN) continue;
 

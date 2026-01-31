@@ -163,17 +163,37 @@
 
       function getToken() { return (adminTokenInput.value || "").trim(); }
 
+      // ✅ 修正点：304キャッシュ回避のため _ts を付与
+      // ✅ 修正点：壊れていた構文を完全修復
       async function apiFetch(path, options = {}) {
         const token = getToken();
-        if (!token) { alert("管理トークンを入力してください。"); throw new Error("no_admin_token"); }
-        const url = path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token);
+        if (!token) {
+          alert("管理トークンを入力してください。");
+          throw new Error("no_admin_token");
+        }
+
+        const url =
+          path +
+          (path.includes("?") ? "&" : "?") +
+          "token=" + encodeURIComponent(token) +
+          "&_ts=" + Date.now();
+
         const res = await fetch(url, options);
+
         if (!res.ok) {
           const text = await res.text().catch(() => "");
           console.error("API error:", res.status, text);
           throw new Error("API error: " + res.status);
         }
-        try { return await res.json(); } catch { return null; }
+
+        // res.json() 失敗時のログ（握りつぶさない）
+        try {
+          return await res.json();
+        } catch (e) {
+          const text = await res.text().catch(() => "");
+          console.error("JSON parse failed:", e, text);
+          return null;
+        }
       }
 
       function formatYmd(ts) {
@@ -189,7 +209,6 @@
       }
 
       function buildOrderKey(o, index) {
-        // serverが orderNumber=id を返すので安定
         if (o.orderNumber != null) return "ord:" + o.orderNumber;
         const ts = o.ts || o.created_at || "";
         const uid = o.userId || o.lineUserId || "";
@@ -198,17 +217,13 @@
         return "idx:" + index;
       }
 
-      // 明細印字用：アイテム配列を統一的に作る
       function buildItemsArray(o) {
         const src = Array.isArray(o.items) ? o.items : (Array.isArray(o.itemsJson) ? o.itemsJson : []);
         if (Array.isArray(src) && src.length > 0) {
           return src.map((it) => {
             const name = it.name || it.id || "商品";
             let unitPrice = Number(it.price || 0);
-
-            // 久助の単価補完（単価が無い場合のみ）
             if (!unitPrice && /久助/.test(name)) unitPrice = 250;
-
             return { name, unitPrice, qty: Number(it.qty || 0) || 0 };
           });
         }
@@ -221,26 +236,20 @@
         return [];
       }
 
-      // ★核心：金額を正規化（代引330円混入を絶対に起こさない）
       function normalizeTotals(o) {
         const items = buildItemsArray(o);
         const itemsCalc = items.reduce((s, it) => s + (Number(it.unitPrice || 0) * Number(it.qty || 0)), 0);
 
-        // serverが shipping_fee/total を返す想定。古い互換も見る。
         const shipping = Number(o.shipping_fee ?? o.shipping ?? 0);
         const totalDb  = Number(o.total ?? o.finalTotal ?? 0);
 
         const pm = String(o.payment_method ?? o.payment ?? "").toLowerCase();
         const codFee = (pm === "cod") ? COD_FEE : Number(o.codFee ?? 0);
 
-        // DB total は「商品+送料+代引」を想定 → 商品合計はここから逆算
         let itemsFromTotal = totalDb - shipping - codFee;
         if (!isFinite(itemsFromTotal)) itemsFromTotal = 0;
 
-        // itemsFromTotal が 0 なら itemsCalc を採用（データ欠け対策）
         let itemsTotal = itemsFromTotal > 0 ? itemsFromTotal : itemsCalc;
-
-        // 万一ズレたら警告表示（印字・通知も同じルールで作る）
         const warn = (itemsCalc !== 0 && Math.abs(itemsTotal - itemsCalc) !== 0);
 
         return {
@@ -271,7 +280,6 @@
       }
 
       function orderAddressText(o) {
-        // serverが address オブジェクトを返す想定。なければフラット列から組む
         const a = o.address || null;
         if (a) {
           const name = a.name || (a.lastName || "") + (a.firstName || "");
@@ -281,7 +289,6 @@
           const line2 = a.address2 || a.addr2 || "";
           return [zip ? `〒${zip}` : "", line1 || "", line2 || "", name ? `氏名：${name}` : "", tel ? `TEL：${tel}` : ""].filter(Boolean).join("\n");
         }
-        // フラット
         const name = o.name || "";
         const tel = o.phone || "";
         const zip = o.zip || "";
@@ -433,7 +440,7 @@
           return;
         }
 
-        const items = Array.isArray(data.items) ? data.items : [];
+        const items = Array.isArray(data && data.items) ? data.items : [];
         ordersSummaryEl.textContent = `取得件数：${items.length} 件`;
 
         const shipState = loadShipState();
@@ -461,7 +468,6 @@
 
           const tdTs = document.createElement("td");
           tdTs.textContent = formatYmd(o.ts || o.created_at);
-
           tr.appendChild(tdTs);
 
           const tdUser = document.createElement("td");
@@ -526,7 +532,7 @@
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  orderId: o.id,           // ★サーバー側で更新できる
+                  orderId: o.id,
                   userId: uidForNotify,
                   orderKey: key,
                   message: msg
@@ -592,8 +598,8 @@
             body: JSON.stringify(body),
           });
 
-          const ids = Array.isArray(res.userIds) ? res.userIds : [];
-          const total = res.total ?? ids.length;
+          const ids = Array.isArray(res && res.userIds) ? res.userIds : [];
+          const total = (res && (res.total ?? ids.length)) ?? ids.length;
 
           segmentSummaryEl.innerHTML = `<span class="${badgeClass}">${badgeLabel}</span> 対象ユーザー数：${total} 件`;
 
@@ -630,7 +636,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ userIds: last.userIds, message: msg }),
           });
-          const sent = res.sent ?? res.requested ?? 0;
+          const sent = (res && (res.sent ?? res.requested ?? 0)) ?? 0;
           alert(`セグメント配信をリクエストしました。\n送信件数（レスポンス）：${sent} 通`);
         } catch (e) {
           console.error("segment send error:", e);

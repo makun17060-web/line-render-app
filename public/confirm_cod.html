@@ -30,6 +30,17 @@
       <div class="muted" style="margin-top:6px">※代引手数料がかかります。</div>
     </div>
 
+    <!-- ✅ 追加：住所・氏名 表示カード -->
+    <div class="card" id="shipCard" style="display:none">
+      <div class="muted">お届け先</div>
+      <div id="shipName" style="margin-top:6px;font-weight:1000">—</div>
+      <div id="shipAddr" class="muted" style="margin-top:6px;white-space:pre-wrap">—</div>
+      <div id="shipTel" class="muted" style="margin-top:6px">—</div>
+      <div class="muted" style="margin-top:8px">
+        ※住所・氏名の変更は「戻る」から行えます。
+      </div>
+    </div>
+
     <div class="card">
       <div class="row"><div>小計</div><div id="subtotal">—</div></div>
       <div class="row"><div>送料</div><div id="shipping">—</div></div>
@@ -61,13 +72,21 @@
   const submit=document.getElementById("submit");
   const back=document.getElementById("back");
 
+  // ✅ 追加：配送先DOM
+  const shipCard=document.getElementById("shipCard");
+  const shipName=document.getElementById("shipName");
+  const shipAddr=document.getElementById("shipAddr");
+  const shipTel=document.getElementById("shipTel");
+
   function loadJson(k){ try{return JSON.parse(localStorage.getItem(k)||"");}catch{return null;} }
+
   async function postJson(url, body){
     const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     const d=await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(d?.error||("HTTP "+r.status));
     return d;
   }
+
   async function ensureUserSoft(){
     const cached=(localStorage.getItem(KEY_UID)||"").trim();
     if(cached) return cached;
@@ -90,6 +109,78 @@
   : (mode === "original") ? "/confirm-original.html"
   : "/confirm.html";
 
+  // ✅ 追加：住所データの正規化
+  function normalizeAddress(a){
+    if(!a) return null;
+
+    const name = (a.name || a.full_name || a.receiver_name || a.recipient || "").trim();
+    const tel  = (a.tel || a.phone || a.phone_number || "").trim();
+
+    const zip  = (a.postal || a.zip || a.postal_code || a.postcode || "").trim();
+    const pref = (a.pref || a.prefecture || "").trim();
+    const city = (a.city || "").trim();
+    const addr1= (a.addr1 || a.address1 || a.line1 || "").trim();
+    const addr2= (a.addr2 || a.address2 || a.line2 || "").trim();
+
+    const oneLine = (a.address || "").trim();
+
+    const addr =
+      oneLine
+      ? oneLine
+      : [zip ? ("〒"+zip) : "", (pref + city + addr1).trim(), addr2].filter(Boolean).join("\n");
+
+    return { name, tel, addr };
+  }
+
+  async function fetchAddressFromApi(uid){
+    // あなたの server-line.js 実装に合わせて、当たるものを順に試す
+    const candidates = [
+      { url: "/api/address/get", body: { uid } },
+      { url: "/api/address/default", body: { uid } },
+      { url: "/api/address/list", body: { uid } },
+    ];
+
+    for(const c of candidates){
+      try{
+        const d = await postJson(c.url, c.body);
+        const a = d.address || d.item || (Array.isArray(d.addresses) ? d.addresses.find(x=>x?.is_default) || d.addresses[0] : null);
+        const n = normalizeAddress(a);
+        if(n && (n.name || n.addr)) return n;
+      }catch(e){
+        // 次の候補へ
+      }
+    }
+    return null;
+  }
+
+  async function getShippingInfo(uid){
+    // ✅ localStorage 優先（confirm側で保存されている想定）
+    const lsKeys = [
+      "isoya_selected_address",
+      "isoya_address",
+      "isoya_last_address",
+      "isoya_checkout_address",
+    ];
+    for(const k of lsKeys){
+      const a = loadJson(k);
+      const n = normalizeAddress(a);
+      if(n && (n.name || n.addr)) return n;
+    }
+    // ✅ 無ければAPI
+    return await fetchAddressFromApi(uid);
+  }
+
+  function renderShippingInfo(info){
+    if(!info){
+      shipCard.style.display="none";
+      return;
+    }
+    shipCard.style.display="block";
+    shipName.textContent = info.name || "（お名前未登録）";
+    shipAddr.textContent = info.addr || "（住所未登録）";
+    shipTel.textContent  = info.tel ? ("TEL: " + info.tel) : "";
+  }
+
   try{
     const uid = await ensureUserSoft();
     if(!uid){
@@ -104,7 +195,7 @@
       return;
     }
 
-    // confirm で保存した quote を使う（なければ quote API を叩き直してもOK）
+    // confirm で保存した quote を使う
     const quote = loadJson("isoya_last_quote");
     if(!quote){
       status.innerHTML='<span class="err">見積情報がありません。確認画面へ戻ってください。</span>';
@@ -116,15 +207,27 @@
     codFeeEl.textContent = yen(quote.codFee ?? quote.cod_fee ?? 0);
     totalCodEl.textContent = yen(quote.totalCod ?? quote.total_cod ?? 0);
 
+    // ✅ 追加：住所・氏名表示
+    const ship = await getShippingInfo(uid);
+    renderShippingInfo(ship);
+
     status.textContent="最終確認をお願いします。";
 
     back.onclick = ()=> location.href = RETURN_CONFIRM;
 
-    submit.onclick = async ()=>{
+    submit.onclick = async ()=> {
       submit.disabled = true;
       submit.textContent = "確定中…";
       try{
-        const data = await postJson("/api/order/cod/create", { uid, checkout:{ items } });
+        // ✅ 追加：念のため確定時にも住所を取得して一緒に送る（サーバ側で保存できると強い）
+        const ship2 = ship || await getShippingInfo(uid);
+
+        const data = await postJson("/api/order/cod/create", {
+          uid,
+          checkout:{ items },
+          shipping: ship2 || null
+        });
+
         localStorage.setItem(KEY_CART, JSON.stringify({ items: [] }));
         location.href = `/complete.html?method=cod&orderId=${encodeURIComponent(data.orderId||"")}`;
       }catch(e){

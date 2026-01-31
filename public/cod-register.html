@@ -172,6 +172,17 @@
     if(formTitle) formTitle.textContent = titleText || "お届け先住所を入力";
   }
 
+  function toMsg(e){
+    if(e == null) return "unknown error";
+    if(typeof e === "string") return e;
+    if(e instanceof Error) return e.message || String(e);
+    try { return JSON.stringify(e); } catch { return String(e); }
+  }
+  function showErr(title, err){
+    status.classList.add("err");
+    status.textContent = `${title}\n${toMsg(err)}`;
+  }
+
   async function postJson(url, body){
     const r = await fetch(url, {
       method:"POST",
@@ -208,7 +219,7 @@
     }
   }
 
-  // ✅ 名前キー違い吸収（読み込み/表示/保存で共通に使う）
+  // ✅ 名前キー違い吸収
   function pickName(obj){
     const candidates = [
       obj?.name,
@@ -227,10 +238,7 @@
     const name = pickName(a);
     return {
       id: a?.id ?? a?.address_id ?? a?.addressId ?? null,
-
-      // ✅ ここが肝：どのキーで来ても最終的に name に入れる
-      name: name,
-
+      name,
       phone: a?.phone ?? "",
       postal: a?.postal ?? a?.zip ?? "",
       prefecture: a?.prefecture ?? a?.pref ?? "",
@@ -242,16 +250,17 @@
     };
   }
 
+  const S = v => (v == null ? "" : String(v));
   function toAddrText(a){
-    const displayName = pickName(a) || (a?.name || "");
-    const nameLine = displayName ? `${displayName}\n` : "";
-    const postal = a?.postal || "";
-    const pref = a?.prefecture || "";
-    const city = a?.city || "";
-    const a1 = a?.address1 || "";
-    const a2 = a?.address2 || "";
-    const phone = a?.phone ? `\nTEL: ${a.phone}` : "";
-    const memo = a?.label ? `\n（${a.label}）` : "";
+    const nm = pickName(a) || S(a?.name);
+    const nameLine = nm ? `${nm}\n` : "";
+    const postal = S(a?.postal);
+    const pref = S(a?.prefecture);
+    const city = S(a?.city);
+    const a1 = S(a?.address1);
+    const a2 = S(a?.address2);
+    const phone = a?.phone ? `\nTEL: ${S(a.phone)}` : "";
+    const memo = a?.label ? `\n（${S(a.label)}）` : "";
     return `${nameLine}〒${postal} ${pref}${city}${a1} ${a2}${phone}${memo}`.trim();
   }
 
@@ -267,7 +276,7 @@
   }
 
   function readForm(){
-    const name = (el("name").value || "").trim();
+    const name = (el("name").value || "").replace(/[\r\n\t]+/g," ").trim();
     return {
       name,
       phone: (el("phone").value || "").trim(),
@@ -278,9 +287,12 @@
       address2: (el("address2").value || "").trim(),
       label: (el("label").value || "").trim(),
 
-      // ✅ サーバがどのキー名を期待してても入るよう“別名”も一緒に送る
+      // 互換用：どのカラムでも入るように別名も同梱
       full_name: name,
-      recipient_name: name
+      recipient_name: name,
+      customer_name: name,
+      receiver_name: name,
+      to_name: name
     };
   }
 
@@ -323,6 +335,7 @@
   async function saveAddress(uid){
     const a = readForm();
 
+    // ✅ 名前は必須（ECとして正しい）
     if(!a.name || !a.phone || !a.postal || !a.prefecture || !a.city || !a.address1){
       alert("お名前/電話番号/郵便番号/都道府県/市区町村/番地 は必須です。");
       return;
@@ -332,17 +345,25 @@
     saveBtn.textContent = "保存中…";
 
     try{
-      await postJson("/api/address/set", {
+      // ✅ ここが修正点：サーバがどっちを読んでも良いように「直下」＋「address」の両方を送る
+      const payload = {
         userId: uid,
+
+        // 直下（サーバがreq.body.name等を読む場合に対応）
+        id: currentAddr?.id || null,
+        ...a,
+
+        // ネスト（サーバがreq.body.address.name等を読む場合に対応）
         address: {
           id: currentAddr?.id || null,
           ...a
         }
-      });
+      };
 
+      await postJson("/api/address/set", payload);
       goNext();
     }catch(e){
-      alert("住所の保存に失敗しました: " + (e?.message || e));
+      alert("住所の保存に失敗しました: " + toMsg(e));
       saveBtn.disabled = false;
       saveBtn.textContent = "この住所を保存して進む";
     }
@@ -351,7 +372,7 @@
   try{
     const uid = await ensureUserSoft();
     if(!uid){
-      status.innerHTML = '<span class="err">ユーザー情報が取得できません。いったん商品ページから開き直してください。</span>';
+      showErr("ユーザー情報が取得できません。", "いったん商品ページから開き直してください。");
       setTimeout(()=>location.replace(backTo), 900);
       return;
     }
@@ -387,11 +408,10 @@
     };
 
     if(saveBtn) saveBtn.onclick = ()=>saveAddress(uid);
-
     if(backBtn) backBtn.onclick = ()=>location.replace(backTo);
 
   }catch(e){
-    status.innerHTML = '<span class="err">読み込みに失敗しました（住所API/DBを確認）</span>';
+    showErr("読み込みに失敗しました（住所API/DBを確認）", e);
   }
 })();
 </script>

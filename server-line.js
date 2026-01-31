@@ -1915,6 +1915,8 @@ app.get("/api/admin/orders", requireAdmin, async (req, res) => {
         orderNumber: row.id,
         userId: row.user_id,
         lineUserId: row.user_id,
+         name: row.name || "",
+          addr_name: row.name || "",  
         items: itemsArr,
         subtotal,
         shipping: Number(row.shipping_fee || 0),

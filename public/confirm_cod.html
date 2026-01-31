@@ -12,11 +12,15 @@
     .wrap{max-width:860px;margin:0 auto;padding:14px 14px 26px}
     h1{margin:0 0 6px;font-size:18px}
     .muted{color:var(--muted);font-size:13px;line-height:1.5}
-    .err{color:var(--danger);font-weight:900}
+    .err{color:var(--danger);font-weight:900;white-space:pre-line}
     .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:12px;margin-top:12px;box-shadow:var(--shadow)}
     .row{display:flex;justify-content:space-between;gap:10px;margin:0;padding:6px 0;font-size:14px}
     .btn{width:100%;border:none;border-radius:14px;padding:12px 14px;font-weight:1000;cursor:pointer;margin-top:10px;background:var(--pri);color:#fff}
     .btn:disabled{opacity:.55;cursor:not-allowed}
+    .kv{display:flex;justify-content:space-between;gap:10px;padding:6px 0}
+    .kv .k{color:var(--muted);font-size:13px}
+    .kv .v{font-weight:1000;font-size:14px;text-align:right}
+    #shipAddr{white-space:pre-line}
   </style>
 </head>
 <body>
@@ -30,14 +34,20 @@
       <div class="muted" style="margin-top:6px">※代引手数料がかかります。</div>
     </div>
 
-    <!-- ✅ 追加：住所・氏名 表示カード -->
+    <!-- ✅ お届け先（confirm と同じ API で取得して表示） -->
     <div class="card" id="shipCard" style="display:none">
       <div class="muted">お届け先</div>
-      <div id="shipName" style="margin-top:6px;font-weight:1000">—</div>
-      <div id="shipAddr" class="muted" style="margin-top:6px;white-space:pre-wrap">—</div>
-      <div id="shipTel" class="muted" style="margin-top:6px">—</div>
+
+      <div class="kv" style="margin-top:6px;border-top:1px solid var(--line);padding-top:10px">
+        <div class="k">お届け先氏名</div>
+        <div class="v" id="shipName">—</div>
+      </div>
+
+      <div id="shipAddr" style="font-weight:900;margin-top:6px">—</div>
+      <div class="muted" id="shipTel" style="margin-top:6px">—</div>
+
       <div class="muted" style="margin-top:8px">
-        ※住所・氏名の変更は「戻る」から行えます。
+        ※住所・氏名の変更は「戻る（内容確認へ）」から行えます。
       </div>
     </div>
 
@@ -60,6 +70,8 @@
   "use strict";
   const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
   const KEY_UID ="isoya_userId";
+  const KEY_LAST_QUOTE = "isoya_last_quote";
+
   const qs = new URLSearchParams(location.search);
   const mode = (qs.get("mode")||"").trim();
 
@@ -72,19 +84,56 @@
   const submit=document.getElementById("submit");
   const back=document.getElementById("back");
 
-  // ✅ 追加：配送先DOM
   const shipCard=document.getElementById("shipCard");
-  const shipName=document.getElementById("shipName");
-  const shipAddr=document.getElementById("shipAddr");
-  const shipTel=document.getElementById("shipTel");
+  const shipNameEl=document.getElementById("shipName");
+  const shipAddrEl=document.getElementById("shipAddr");
+  const shipTelEl=document.getElementById("shipTel");
 
   function loadJson(k){ try{return JSON.parse(localStorage.getItem(k)||"");}catch{return null;} }
 
-  async function postJson(url, body){
-    const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok) throw new Error(d?.error||("HTTP "+r.status));
-    return d;
+  function showErr(title, err){
+    const msg = (err && err.message) ? err.message : String(err);
+    status.classList.remove("muted");
+    status.classList.add("err");
+    status.textContent = `${title}\n${msg}`;
+  }
+
+  async function fetchJson(url){
+    const r = await fetch(url, { cache: "no-store" });
+    const text = await r.text();
+    let d = null;
+    try { d = JSON.parse(text); } catch { /* ignore */ }
+    if(!r.ok){
+      const detail = d?.error || d?.message || text || ("HTTP " + r.status);
+      throw new Error(`URL: ${url}\nHTTP ${r.status}\n${detail}`);
+    }
+    return d ?? {};
+  }
+
+  function pickName(addr){
+    const candidates = [
+      addr?.name,
+      addr?.full_name,
+      addr?.fullName,
+      addr?.recipient_name,
+      addr?.recipientName,
+      addr?.customer_name,
+      addr?.customerName,
+      addr?.receiver_name,
+      addr?.receiverName,
+      addr?.to_name,
+      addr?.toName,
+      addr?.addressee,
+      addr?.display_name,
+      addr?.displayName,
+    ];
+    const s = candidates.find(v => typeof v === "string" && v.trim());
+    return (s || "").trim();
+  }
+
+  async function getAddress(userId){
+    const d = await fetchJson(`/api/address/get?userId=${encodeURIComponent(userId)}`);
+    return d?.address || d?.addr || d?.data?.address || null;
   }
 
   async function ensureUserSoft(){
@@ -98,7 +147,6 @@
     return uid||null;
   }
 
-  // cart key は confirm と合わせる
   const KEY_CART =
     (mode === "original") ? "isoya_cart_original"
   : (mode === "fukubako") ? "isoya_cart_fukubako"
@@ -109,96 +157,16 @@
   : (mode === "original") ? "/confirm-original.html"
   : "/confirm.html";
 
-  // ✅ 追加：住所データの正規化
-  function normalizeAddress(a){
-    if(!a) return null;
-
-    const name = (a.name || a.full_name || a.receiver_name || a.recipient || "").trim();
-    const tel  = (a.tel || a.phone || a.phone_number || "").trim();
-
-    const zip  = (a.postal || a.zip || a.postal_code || a.postcode || "").trim();
-    const pref = (a.pref || a.prefecture || "").trim();
-    const city = (a.city || "").trim();
-    const addr1= (a.addr1 || a.address1 || a.line1 || "").trim();
-    const addr2= (a.addr2 || a.address2 || a.line2 || "").trim();
-
-    const oneLine = (a.address || "").trim();
-
-    const addr =
-      oneLine
-      ? oneLine
-      : [zip ? ("〒"+zip) : "", (pref + city + addr1).trim(), addr2].filter(Boolean).join("\n");
-
-    return { name, tel, addr };
-  }
-
-  async function fetchAddressFromApi(uid){
-    // あなたの server-line.js 実装に合わせて、当たるものを順に試す
-    const candidates = [
-      { url: "/api/address/get", body: { uid } },
-      { url: "/api/address/default", body: { uid } },
-      { url: "/api/address/list", body: { uid } },
-    ];
-
-    for(const c of candidates){
-      try{
-        const d = await postJson(c.url, c.body);
-        const a = d.address || d.item || (Array.isArray(d.addresses) ? d.addresses.find(x=>x?.is_default) || d.addresses[0] : null);
-        const n = normalizeAddress(a);
-        if(n && (n.name || n.addr)) return n;
-      }catch(e){
-        // 次の候補へ
-      }
-    }
-    return null;
-  }
-
-  async function getShippingInfo(uid){
-    // ✅ localStorage 優先（confirm側で保存されている想定）
-    const lsKeys = [
-      "isoya_selected_address",
-      "isoya_address",
-      "isoya_last_address",
-      "isoya_checkout_address",
-    ];
-    for(const k of lsKeys){
-      const a = loadJson(k);
-      const n = normalizeAddress(a);
-      if(n && (n.name || n.addr)) return n;
-    }
-    // ✅ 無ければAPI
-    return await fetchAddressFromApi(uid);
-  }
-
-  function renderShippingInfo(info){
-    if(!info){
-      shipCard.style.display="none";
-      return;
-    }
-    shipCard.style.display="block";
-    shipName.textContent = info.name || "（お名前未登録）";
-    shipAddr.textContent = info.addr || "（住所未登録）";
-    shipTel.textContent  = info.tel ? ("TEL: " + info.tel) : "";
-  }
-
   try{
     const uid = await ensureUserSoft();
     if(!uid){
-      status.innerHTML='<span class="err">ユーザー情報が取得できません。</span>';
+      showErr("ユーザー情報が取得できません。", "商品ページから開き直してください。");
       return;
     }
 
-    const cart=loadJson(KEY_CART) || {items:[]};
-    const items=(cart.items||[]).filter(x=>x?.id && Number(x.qty||0)>0);
-    if(items.length===0){
-      status.innerHTML='<span class="err">カートが空です。</span>';
-      return;
-    }
-
-    // confirm で保存した quote を使う
-    const quote = loadJson("isoya_last_quote");
+    const quote = loadJson(KEY_LAST_QUOTE);
     if(!quote){
-      status.innerHTML='<span class="err">見積情報がありません。確認画面へ戻ってください。</span>';
+      showErr("見積情報がありません。", "確認画面へ戻ってください。");
       return;
     }
 
@@ -207,10 +175,25 @@
     codFeeEl.textContent = yen(quote.codFee ?? quote.cod_fee ?? 0);
     totalCodEl.textContent = yen(quote.totalCod ?? quote.total_cod ?? 0);
 
-    // ✅ 追加：住所・氏名表示
-    const ship = await getShippingInfo(uid);
-    renderShippingInfo(ship);
+    // ✅ 住所表示
+    let addr = null;
+    try { addr = await getAddress(uid); } catch(e){ /* 続行 */ }
+    if(addr){
+      const name = pickName(addr);
+      const body =
+        `〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim();
+      const tel = (addr.phone || addr.tel || "").trim();
 
+      shipCard.style.display = "block";
+      shipNameEl.textContent = name || "（未入力）";
+      shipAddrEl.textContent = body || "（住所未入力）";
+      shipTelEl.textContent  = tel ? ("TEL: " + tel) : "";
+    }else{
+      shipCard.style.display = "none";
+    }
+
+    status.classList.remove("err");
+    status.classList.add("muted");
     status.textContent="最終確認をお願いします。";
 
     back.onclick = ()=> location.href = RETURN_CONFIRM;
@@ -219,17 +202,23 @@
       submit.disabled = true;
       submit.textContent = "確定中…";
       try{
-        // ✅ 追加：念のため確定時にも住所を取得して一緒に送る（サーバ側で保存できると強い）
-        const ship2 = ship || await getShippingInfo(uid);
+        const cart = loadJson(KEY_CART) || {items:[]};
+        const items=(cart.items||[]).filter(x=>x?.id && Number(x.qty||0)>0);
+        if(items.length===0) throw new Error("カートが空です。");
 
-        const data = await postJson("/api/order/cod/create", {
-          uid,
-          checkout:{ items },
-          shipping: ship2 || null
+        const r = await fetch("/api/order/cod/create",{
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ uid, checkout:{ items } })
         });
+        const text = await r.text();
+        let d = {};
+        try{ d = JSON.parse(text); }catch{ d = {}; }
+        if(!r.ok) throw new Error(d?.error || d?.message || text || ("HTTP "+r.status));
 
+        // ✅ カート空にして完了へ
         localStorage.setItem(KEY_CART, JSON.stringify({ items: [] }));
-        location.href = `/complete.html?method=cod&orderId=${encodeURIComponent(data.orderId||"")}`;
+        location.href = `/complete.html?method=cod&orderId=${encodeURIComponent(d.orderId||"")}`;
       }catch(e){
         alert("代引き確定に失敗しました: " + (e?.message||e));
         submit.disabled = false;
@@ -239,7 +228,7 @@
 
   }catch(e){
     console.error(e);
-    status.innerHTML='<span class="err">読み込みに失敗しました。</span>';
+    showErr("読み込みに失敗しました。", e);
   }
 })();
 </script>

@@ -157,7 +157,7 @@
           </div>
 
           <button id="cardBtn" class="payBtn" style="background:var(--pri2);color:#fff" type="button">
-            クレジットで支払う
+            クレジットへ進む
           </button>
         </div>
 
@@ -176,7 +176,7 @@
           </div>
 
           <button id="codBtn" class="payBtn" style="background:var(--pri);color:#fff" type="button">
-            代引きで注文確定
+            代引きへ進む
           </button>
         </div>
 
@@ -197,6 +197,7 @@
 
   const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
   const KEY_UID ="isoya_userId";
+  const KEY_LAST_QUOTE = "isoya_last_quote"; // ✅ confirm→confirm_cod/confirm_card へ渡す用
 
   const qs = new URLSearchParams(location.search);
   const mode = (qs.get("mode") || "").trim();
@@ -226,6 +227,17 @@
     (mode === "fukubako") ? "/confirm.html?mode=fukubako"
   : (mode === "original") ? "/confirm-original.html"
   : "/confirm.html";
+
+  // ✅ 次ページ（confirm_cod / confirm_card）
+  const NEXT_CONFIRM_CARD =
+    (mode === "fukubako") ? "/public/confirm_card.html?mode=fukubako"
+  : (mode === "original") ? "/public/confirm_card.html?mode=original"
+  : "/public/confirm_card.html";
+
+  const NEXT_CONFIRM_COD =
+    (mode === "fukubako") ? "/public/confirm_cod.html?mode=fukubako"
+  : (mode === "original") ? "/public/confirm_cod.html?mode=original"
+  : "/public/confirm_cod.html";
 
   const status=document.getElementById("status");
   const addrText=document.getElementById("addrText");
@@ -377,6 +389,14 @@
     if(codBtn)  codBtn.disabled  = isCard;
   }
 
+  function buildNextUrl(basePathOrWithQuery){
+    // ✅ addr_step=1 を維持して次ページへ
+    const u = new URL(location.origin + basePathOrWithQuery);
+    u.searchParams.set("addr_step", "1");
+    if(mode) u.searchParams.set("mode", mode);
+    return u.pathname + u.search;
+  }
+
   try{
     status.textContent="確認中…";
 
@@ -453,6 +473,20 @@
     const quote = normalizeQuote(rawQuote, subtotal);
     applyQuoteToUI(quote);
 
+    // ✅ 次ページで使えるように保存（confirm→confirm_cod / confirm_card）
+    // items も一緒に渡したい場合に備え、uid/mode/at も同梱
+    localStorage.setItem(KEY_LAST_QUOTE, JSON.stringify({
+      ...quote,
+      size: quote.size || (rawQuote?.size ?? rawQuote?.yamato_size ?? rawQuote?.shipping_size ?? ""),
+      shippingFee: quote.shippingFee,
+      codFee: quote.codFee,
+      totalCod: quote.totalCod,
+      subtotal: quote.subtotal,
+      uid,
+      mode,
+      at: Date.now()
+    }));
+
     applyPayMethodUI("card");
     status.textContent="内容をご確認ください。";
 
@@ -481,42 +515,27 @@
     if(payCard) payCard.addEventListener("change", ()=>applyPayMethodUI("card"));
     if(payCod)  payCod.addEventListener("change", ()=>applyPayMethodUI("cod"));
 
+    /* =========================================================
+       ✅ ここが肝：confirm では確定しない
+         - card: confirm_card.html へ
+         - cod : confirm_cod.html へ
+    ========================================================= */
     if(cardBtn){
-      cardBtn.onclick = async ()=>{
+      cardBtn.onclick = ()=>{
         if(!(payCard && payCard.checked)) return;
-
-        setBtnBusy(cardBtn, true, "移動中…", "クレジットで支払う");
-        try{
-          const data = await postJson("/api/pay/stripe/create", {
-            uid,
-            checkout:{ items }
-          });
-          if(!data?.url) throw new Error("stripe url missing");
-          location.href = data.url;
-        }catch(e){
-          console.error(e);
-          alert("クレジット決済の開始に失敗しました: " + (e?.message||e));
-          setBtnBusy(cardBtn, false, "移動中…", "クレジットで支払う");
-        }
+        setBtnBusy(cardBtn, true, "移動中…", "クレジットへ進む");
+        location.href = buildNextUrl(NEXT_CONFIRM_CARD);
       };
     }
 
     if(codBtn){
-      codBtn.onclick = async ()=>{
+      codBtn.onclick = ()=>{
         if(!(payCod && payCod.checked)) return;
-
-        setBtnBusy(codBtn, true, "確定中…", "代引きで注文確定");
-        try{
-          const data = await postJson("/api/order/cod/create", { uid, checkout:{ items } });
-          localStorage.setItem(KEY_CART, JSON.stringify({ items: [] }));
-          location.href = `/complete.html?method=cod&orderId=${encodeURIComponent(data.orderId||"")}`;
-        }catch(e){
-          console.error(e);
-          alert("代引き確定に失敗しました: " + (e?.message||e));
-          setBtnBusy(codBtn, false, "確定中…", "代引きで注文確定");
-        }
+        setBtnBusy(codBtn, true, "移動中…", "代引きへ進む");
+        location.href = buildNextUrl(NEXT_CONFIRM_COD);
       };
     }
+    /* ========================================================= */
 
   }catch(e){
     console.error(e);

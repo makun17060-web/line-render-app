@@ -75,7 +75,12 @@ const STRIPE_WEBHOOK_SECRET = env.STRIPE_WEBHOOK_SECRET || "";
 const STRIPE_SUCCESS_URL    = env.STRIPE_SUCCESS_URL || "";
 const STRIPE_CANCEL_URL     = env.STRIPE_CANCEL_URL || "";
 
-const COD_FEE = String(env.COD_FEE || "330");
+// ✅ 友だち追加/ブロックの管理者通知 ON/OFF
+const FRIEND_NOTIFY = String(env.FRIEND_NOTIFY || "1").trim() === "1";
+
+
+const COD_FEE = Number(env.COD_FEE || 330);
+
 
 const KEYWORD_DIRECT = env.KEYWORD_DIRECT || "直接注文";
 const KEYWORD_KUSUKE = env.KEYWORD_KUSUKE || "久助";
@@ -1620,11 +1625,15 @@ async function notifyCardPending({ orderId, userId, items, shippingFee, total, s
  * Friend notify（follow/unfollow）
  * ========================= */
 async function notifyAdminFriendAdded({ userId, displayName, day }) {
+  if (!FRIEND_NOTIFY) return;   // 🔕 ここで即終了
   if (!ADMIN_USER_ID) return;
 
   let todayCounts = null;
   try {
-    const r = await pool.query(`SELECT added_count, blocked_count FROM friend_logs WHERE day=$1`, [day]);
+    const r = await pool.query(
+      `SELECT added_count, blocked_count FROM friend_logs WHERE day=$1`,
+      [day]
+    );
     if (r.rowCount > 0) todayCounts = r.rows[0];
   } catch {}
 
@@ -1644,15 +1653,19 @@ async function notifyAdminFriendAdded({ userId, displayName, day }) {
 }
 
 async function notifyAdminFriendBlocked({ userId, displayName, day }) {
+  if (!FRIEND_NOTIFY) return;   // 🔕
   if (!ADMIN_USER_ID) return;
 
   let todayCounts = null;
   try {
-    const r = await pool.query(`SELECT added_count, blocked_count FROM friend_logs WHERE day=$1`, [day]);
+    const r = await pool.query(
+      `SELECT added_count, blocked_count FROM friend_logs WHERE day=$1`,
+      [day]
+    );
     if (r.rowCount > 0) todayCounts = r.rows[0];
   } catch {}
 
-  const name = displayName ? `「${displayName}」` : "（表示名不明：DB未保存の可能性）";
+  const name = displayName ? `「${displayName}」` : "（表示名不明）";
   const counts = todayCounts
     ? `\n今日の累計：追加 ${Number(todayCounts.added_count || 0)} / ブロック ${Number(todayCounts.blocked_count || 0)}`
     : "";
@@ -2912,9 +2925,14 @@ async function onFollow(ev) {
 
   try {
     await pool.query(
-      `INSERT INTO follow_events (user_id, followed_at, raw_event) VALUES ($1, now(), $2)`,
-      [userId, ev ? JSON.stringify(ev) : null]
-    );
+  `
+  INSERT INTO follow_events (user_id, followed_at, raw_event)
+  VALUES ($1, now(), $2)
+  ON CONFLICT DO NOTHING
+  `,
+  [userId, ev ? JSON.stringify(ev) : null]
+);
+
   } catch (e) {
     logErr("insert follow_events failed", e?.message || e);
   }

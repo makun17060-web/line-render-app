@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+  <title>クレジット｜最終確認</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    :root{--bg:#f6f7f9;--card:#fff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;--pri2:#123b66;--danger:#b91c1c;--radius:14px;--shadow:0 1px 3px rgba(0,0,0,.06);}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)}
+    .wrap{max-width:860px;margin:0 auto;padding:14px 14px 26px}
+    h1{margin:0 0 6px;font-size:18px}
+    .muted{color:var(--muted);font-size:13px;line-height:1.5}
+    .err{color:var(--danger);font-weight:900}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:12px;margin-top:12px;box-shadow:var(--shadow)}
+    .row{display:flex;justify-content:space-between;gap:10px;margin:0;padding:6px 0;font-size:14px}
+    .btn{width:100%;border:none;border-radius:14px;padding:12px 14px;font-weight:1000;cursor:pointer;margin-top:10px;background:var(--pri2);color:#fff}
+    .btn:disabled{opacity:.55;cursor:not-allowed}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>クレジット｜最終確認</h1>
+    <div class="muted" id="status">読み込み中…</div>
+
+    <div class="card">
+      <div class="muted">お支払い方法</div>
+      <div style="margin-top:6px;font-weight:1000">クレジット（Stripe決済）</div>
+      <div class="muted" style="margin-top:6px">※代引手数料はかかりません。</div>
+    </div>
+
+    <div class="card">
+      <div class="row"><div>小計</div><div id="subtotal">—</div></div>
+      <div class="row"><div>送料</div><div id="shipping">—</div></div>
+      <div class="row" style="border-top:2px solid var(--line);padding-top:10px">
+        <div style="font-weight:1000">合計（クレジット）</div>
+        <div style="font-weight:1000;font-size:18px" id="totalCard">—</div>
+      </div>
+
+      <button id="submit" class="btn" type="button">Stripe決済へ進む</button>
+      <button id="back" class="btn" type="button" style="background:#fff;color:#111827;border:1px solid var(--line)">戻る（内容確認へ）</button>
+    </div>
+  </div>
+
+<script>
+(async function(){
+  "use strict";
+  const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
+  const KEY_UID ="isoya_userId";
+  const qs = new URLSearchParams(location.search);
+  const mode = (qs.get("mode")||"").trim();
+
+  const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
+  const status=document.getElementById("status");
+  const subtotalEl=document.getElementById("subtotal");
+  const shippingEl=document.getElementById("shipping");
+  const totalCardEl=document.getElementById("totalCard");
+  const submit=document.getElementById("submit");
+  const back=document.getElementById("back");
+
+  function loadJson(k){ try{return JSON.parse(localStorage.getItem(k)||"");}catch{return null;} }
+  async function postJson(url, body){
+    const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d?.error||("HTTP "+r.status));
+    return d;
+  }
+  async function ensureUserSoft(){
+    const cached=(localStorage.getItem(KEY_UID)||"").trim();
+    if(cached) return cached;
+    await liff.init({ liffId: LIFF_ID_ORDER });
+    if(!liff.isLoggedIn()) return null;
+    const prof=await liff.getProfile();
+    const uid=(prof?.userId||"").trim();
+    if(uid) localStorage.setItem(KEY_UID, uid);
+    return uid||null;
+  }
+
+  const KEY_CART =
+    (mode === "original") ? "isoya_cart_original"
+  : (mode === "fukubako") ? "isoya_cart_fukubako"
+  : "isoya_cart";
+
+  const RETURN_CONFIRM =
+    (mode === "fukubako") ? "/confirm.html?mode=fukubako"
+  : (mode === "original") ? "/confirm-original.html"
+  : "/confirm.html";
+
+  try{
+    const uid = await ensureUserSoft();
+    if(!uid){
+      status.innerHTML='<span class="err">ユーザー情報が取得できません。</span>';
+      return;
+    }
+
+    const cart=loadJson(KEY_CART) || {items:[]};
+    const items=(cart.items||[]).filter(x=>x?.id && Number(x.qty||0)>0);
+    if(items.length===0){
+      status.innerHTML='<span class="err">カートが空です。</span>';
+      return;
+    }
+
+    const quote = loadJson("isoya_last_quote");
+    if(!quote){
+      status.innerHTML='<span class="err">見積情報がありません。確認画面へ戻ってください。</span>';
+      return;
+    }
+
+    const shipping = Number(quote.shippingFee ?? quote.shipping_fee ?? 0);
+    const subtotal = Number(quote.subtotal ?? 0);
+    const totalCard = subtotal + shipping;
+
+    subtotalEl.textContent = yen(subtotal);
+    shippingEl.textContent = yen(shipping);
+    totalCardEl.textContent = yen(totalCard);
+    status.textContent="最終確認をお願いします。";
+
+    back.onclick = ()=> location.href = RETURN_CONFIRM;
+
+    submit.onclick = async ()=>{
+      submit.disabled = true;
+      submit.textContent = "移動中…";
+      try{
+        const data = await postJson("/api/pay/stripe/create", { uid, checkout:{ items } });
+        if(!data?.url) throw new Error("stripe url missing");
+        location.href = data.url;
+      }catch(e){
+        alert("クレジット決済の開始に失敗しました: " + (e?.message||e));
+        submit.disabled = false;
+        submit.textContent = "Stripe決済へ進む";
+      }
+    };
+
+  }catch(e){
+    console.error(e);
+    status.innerHTML='<span class="err">読み込みに失敗しました。</span>';
+  }
+})();
+</script>
+</body>
+</html>

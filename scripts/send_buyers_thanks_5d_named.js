@@ -1,12 +1,17 @@
 /**
  * scripts/send_buyers_thanks_5d_named.js
- * 購入後5日「名前付き」サンクス（注文単位 / push送信 / 最終完成版）
+ * 購入後5日「名前付き」サンクス（最終購入日基準 / push送信 / 最終完成版）
+ *
+ * ✅ 仕様（重要）
+ * - 「ユーザーごとに最新の購入(orders.created_at 最大)」を1件だけ対象にする（= 最終購入日基準）
+ * - 購入後 X〜Y日（既定: 6〜5日）で抽出
+ * - orders.notified_user_at / orders.notified_kind で二重送信防止
  *
  * ✅ 安全柵
- * - latest_addr + LIMIT 1（FORCE_ORDER_ID でも増殖しない）
- * - 同一 order_id 二重送信防止
- * - ★今回だけ user_id を1回に抑えるスイッチ（DEDUP_BY_USER=1）
- * - ★本番で実際に送られるIDを事前確認できる [WILL_SEND] ログ
+ * - latest_addr を user_id ごとに最新1件に絞る（増殖しない）
+ * - FORCE_ORDER_ID で特定注文だけ検証できる
+ * - （保険）DEDUP_BY_USER=1（通常はSQL側で重複が出ない）
+ * - 本番で実際に送られるIDを事前確認できる [WILL_SEND] ログ
  * - MESSAGE_FILE の実体パスを必ず表示
  */
 
@@ -88,7 +93,11 @@ function deepReplaceName(obj, name) {
   return obj;
 }
 
-/* 対象注文取得 */
+/**
+ * 対象注文取得（最終購入日基準）
+ * - latest_order: user_idごとに created_at が最大の注文を1件だけ
+ * - その最新注文が「購入後X〜Y日」に入っている人だけ送る
+ */
 async function loadTargetOrders({ startDays, endDays, limit }) {
   const sql = `
     WITH latest_addr AS (
@@ -96,28 +105,41 @@ async function loadTargetOrders({ startDays, endDays, limit }) {
         user_id, name
       FROM addresses
       ORDER BY user_id, created_at DESC
+    ),
+    latest_order AS (
+      SELECT DISTINCT ON (o.user_id)
+        o.user_id,
+        o.id AS order_id,
+        o.name,
+        o.created_at,
+        o.notified_user_at,
+        o.notified_kind
+      FROM orders o
+      WHERE o.user_id IS NOT NULL
+        AND o.user_id <> ''
+        AND o.status IN ('paid','confirmed','pickup')
+      ORDER BY o.user_id, o.created_at DESC
     )
     SELECT
-      o.id AS order_id,
-      o.user_id,
+      lo.order_id,
+      lo.user_id,
       COALESCE(
-        NULLIF(o.name, ''),
+        NULLIF(lo.name, ''),
         NULLIF(a.name, ''),
         NULLIF(u.display_name, ''),
         'お客様'
       ) AS resolved_name,
-      o.created_at
-    FROM orders o
-    LEFT JOIN latest_addr a ON a.user_id = o.user_id
-    LEFT JOIN users u ON u.user_id = o.user_id
-    WHERE o.user_id IS NOT NULL
-      AND o.status IN ('paid','confirmed','pickup')
-      AND o.created_at >= NOW() - ($1 || ' days')::interval
-      AND o.created_at <  NOW() - ($2 || ' days')::interval
-      AND (o.notified_user_at IS NULL OR o.notified_kind IS DISTINCT FROM $3)
-    ORDER BY o.created_at ASC
+      lo.created_at
+    FROM latest_order lo
+    LEFT JOIN latest_addr a ON a.user_id = lo.user_id
+    LEFT JOIN users u ON u.user_id = lo.user_id
+    WHERE lo.created_at >= NOW() - ($1 || ' days')::interval
+      AND lo.created_at <  NOW() - ($2 || ' days')::interval
+      AND (lo.notified_user_at IS NULL OR lo.notified_kind IS DISTINCT FROM $3)
+    ORDER BY lo.created_at DESC
     LIMIT $4
   `;
+
   const { rows } = await pool.query(sql, [
     String(startDays),
     String(endDays),
@@ -127,7 +149,7 @@ async function loadTargetOrders({ startDays, endDays, limit }) {
   return rows;
 }
 
-/* FORCE_ORDER_ID 用 */
+/* FORCE_ORDER_ID 用（指定注文を1件だけ検証） */
 async function loadSingleOrder(orderId) {
   const sql = `
     WITH latest_addr AS (
@@ -172,6 +194,7 @@ async function markOrderSent(orderId) {
   console.log("NOTIFIED_KIND=", NOTIFIED_KIND);
   console.log("DRY_RUN=", DRY_RUN ? "1" : "0");
   console.log("DEDUP_BY_USER=", DEDUP_BY_USER ? "1" : "0");
+  console.log("WINDOW_START_DAYS=", WINDOW_START_DAYS, "WINDOW_END_DAYS=", WINDOW_END_DAYS);
   console.log("MESSAGE_FILE(resolved)=", path.resolve(process.cwd(), MESSAGE_FILE));
 
   const template = loadMessageTemplate();
@@ -195,6 +218,7 @@ async function markOrderSent(orderId) {
         order_id: o.order_id,
         user_id: o.user_id,
         name: o.resolved_name,
+        created_at: o.created_at,
       }))
     );
   }
@@ -207,6 +231,7 @@ async function markOrderSent(orderId) {
     if (sentOrderIds.has(o.order_id)) continue;
     sentOrderIds.add(o.order_id);
 
+    // 保険（通常はSQLが重複を出さないので、ここはほぼ効かない）
     if (DEDUP_BY_USER) {
       if (sentUserIds.has(o.user_id)) {
         console.log(`SKIP duplicate user_id=${o.user_id} (order_id=${o.order_id})`);

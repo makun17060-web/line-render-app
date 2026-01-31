@@ -466,6 +466,14 @@
       location.replace(`/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`);
       return;
     }
+status.textContent = "addr確認中…";
+status.style.whiteSpace = "pre-line";
+status.textContent =
+  "addr keys = " + Object.keys(addr || {}).join(", ") + "\n" +
+  "addr.name = " + JSON.stringify(addr?.name) + "\n" +
+  "addr.full_name = " + JSON.stringify(addr?.full_name) + "\n" +
+  "addr.recipient_name = " + JSON.stringify(addr?.recipient_name) + "\n" +
+  "addr.customer_name = " + JSON.stringify(addr?.customer_name) + "\n";
 
     // ✅ お届け先表示（名前キー違い吸収）
     const displayName = pickName(addr);

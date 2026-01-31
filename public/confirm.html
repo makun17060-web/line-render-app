@@ -108,7 +108,6 @@
     <h1 id="pageTitle">注文内容の確認</h1>
     <div class="muted" id="status">読み込み中…</div>
 
-    <!-- （任意）お試しセット注意：残したいなら表示 -->
     <div class="trialNotice" id="trialNotice">
       ※お試しセットは <b>ご自宅配送のみ</b> です（ギフト配送はできません）
     </div>
@@ -129,7 +128,6 @@
       <div class="row"><div>小計</div><div id="subtotal">0円</div></div>
       <div class="row"><div>送料（見積）</div><div id="shipping">—</div></div>
 
-      <!-- 支払い方法ラジオ -->
       <div class="paySelect" role="radiogroup" aria-label="支払い方法">
         <label class="payPill" id="pillCard">
           <input type="radio" name="payMethod" id="payCard" value="card">
@@ -143,7 +141,6 @@
       </div>
 
       <div class="payGrid">
-        <!-- クレジット -->
         <div class="card" id="cardPanel" style="margin-top:0">
           <div class="payCardTitle">クレジットでのお支払い</div>
           <div class="payHint">※代引手数料はかかりません。Stripe決済画面へ進みます。</div>
@@ -161,7 +158,6 @@
           </button>
         </div>
 
-        <!-- 代引 -->
         <div class="card" id="codPanel" style="margin-top:0">
           <div class="payCardTitle">代引きでのお支払い</div>
           <div class="payHint">※代引手数料がかかります。配達員へ現金でお支払いください。</div>
@@ -180,7 +176,6 @@
           </button>
         </div>
 
-        <!-- 戻る -->
         <div class="backWrap">
           <button id="backBtn" class="payBtn" type="button">戻る（住所入力へ）</button>
           <div class="muted" style="margin-top:8px">
@@ -197,12 +192,11 @@
 
   const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
   const KEY_UID ="isoya_userId";
-  const KEY_LAST_QUOTE = "isoya_last_quote"; // ✅ confirm→confirm_cod/confirm_card へ渡す用
+  const KEY_LAST_QUOTE = "isoya_last_quote";
 
   const qs = new URLSearchParams(location.search);
   const mode = (qs.get("mode") || "").trim();
 
-  // （任意）お試しセットの見出し＆注意だけ残す：ギフト機能は無し
   const isTrial = (mode === "trial" || mode === "fukubako");
   const trialNotice = document.getElementById("trialNotice");
   const pageTitle = document.getElementById("pageTitle");
@@ -222,13 +216,11 @@
   : (mode === "fukubako") ? "/fukubako.html"
   : "/products.html";
 
-  // confirm 自身（returnTo用）
   const RETURN_TO_THIS =
     (mode === "fukubako") ? "/confirm.html?mode=fukubako"
   : (mode === "original") ? "/confirm-original.html"
   : "/confirm.html";
 
-  // ✅ 次ページ（confirm_cod / confirm_card）
   const NEXT_CONFIRM_CARD =
     (mode === "fukubako") ? "/public/confirm_card.html?mode=fukubako"
   : (mode === "original") ? "/public/confirm_card.html?mode=original"
@@ -277,6 +269,26 @@
   }
   function safeSetText(el, txt){ if(el) el.textContent = txt; }
 
+  // ✅ 住所の「名前」キー違いを全部吸収して表示する
+  function pickName(addr){
+    const candidates = [
+      addr?.name,
+      addr?.full_name,
+      addr?.fullName,
+      addr?.recipient_name,
+      addr?.recipientName,
+      addr?.customer_name,
+      addr?.customerName,
+      addr?.receiver_name,
+      addr?.receiverName,
+      addr?.to_name,
+      addr?.toName,
+      addr?.addressee,
+    ];
+    const s = candidates.find(v => typeof v === "string" && v.trim());
+    return (s || "").trim();
+  }
+
   async function postJson(url, body){
     const r=await fetch(url,{
       method:"POST",
@@ -292,7 +304,8 @@
     const r=await fetch(`/api/address/get?userId=${encodeURIComponent(userId)}`,{cache:"no-store"});
     const d=await r.json().catch(()=>({}));
     if(!r.ok) throw new Error(d?.error||("HTTP "+r.status));
-    return d?.address || null;
+    // ✅ address / addr / data.address どれでも拾う
+    return d?.address || d?.addr || d?.data?.address || null;
   }
 
   async function getProducts(){
@@ -348,7 +361,6 @@
   }
 
   function normalizeQuote(q, fallbackSubtotal){
-    // snake_case / camelCase どっちでも受ける
     const shippingFee = (q?.shippingFee ?? q?.shipping_fee ?? q?.shipping ?? 0);
     const size = (q?.size ?? q?.yamato_size ?? q?.shipping_size ?? "");
     const sub = (q?.subtotal ?? q?.sub_total ?? fallbackSubtotal ?? 0);
@@ -390,7 +402,6 @@
   }
 
   function buildNextUrl(basePathOrWithQuery){
-    // ✅ addr_step=1 を維持して次ページへ
     const u = new URL(location.origin + basePathOrWithQuery);
     u.searchParams.set("addr_step", "1");
     if(mode) u.searchParams.set("mode", mode);
@@ -434,13 +445,15 @@
     /* ========================================================= */
 
     const addr=await getAddress(uid).catch(()=>null);
+    // console.log("addr from /api/address/get:", addr); // ←必要なら有効化
     if(!addr){
       location.replace(`/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`);
       return;
     }
 
-    // お届け先表示
-    const nameLine = addr.name ? `${addr.name}\n` : "";
+    // ✅ お届け先表示（名前キー違い吸収）
+    const displayName = pickName(addr);
+    const nameLine = displayName ? `${displayName}\n` : "";
     addrText.textContent =
       `${nameLine}〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}\nTEL: ${addr.phone||""}`.trim();
 
@@ -454,7 +467,6 @@
     safeSetText(totalCodEl, "計算中…");
     safeSetText(totalCardEl, "計算中…");
 
-    // ✅ 送料見積
     let rawQuote = null;
     try{
       rawQuote = await postJson("/api/order/quote", { uid, checkout:{ items } });
@@ -473,8 +485,6 @@
     const quote = normalizeQuote(rawQuote, subtotal);
     applyQuoteToUI(quote);
 
-    // ✅ 次ページで使えるように保存（confirm→confirm_cod / confirm_card）
-    // items も一緒に渡したい場合に備え、uid/mode/at も同梱
     localStorage.setItem(KEY_LAST_QUOTE, JSON.stringify({
       ...quote,
       size: quote.size || (rawQuote?.size ?? rawQuote?.yamato_size ?? rawQuote?.shipping_size ?? ""),
@@ -515,11 +525,6 @@
     if(payCard) payCard.addEventListener("change", ()=>applyPayMethodUI("card"));
     if(payCod)  payCod.addEventListener("change", ()=>applyPayMethodUI("cod"));
 
-    /* =========================================================
-       ✅ ここが肝：confirm では確定しない
-         - card: confirm_card.html へ
-         - cod : confirm_cod.html へ
-    ========================================================= */
     if(cardBtn){
       cardBtn.onclick = ()=>{
         if(!(payCard && payCard.checked)) return;
@@ -535,7 +540,6 @@
         location.href = buildNextUrl(NEXT_CONFIRM_COD);
       };
     }
-    /* ========================================================= */
 
   }catch(e){
     console.error(e);

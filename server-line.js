@@ -1101,17 +1101,27 @@ function normalizeZip(z) {
 function norm(s) {
   return String(s || "").replace(/\s+/g, " ").trim();
 }
-
 function makeAddressKey(a) {
-  const s = [
-    normalizeZip(a?.postal),
-    norm(a?.prefecture),
-    norm(a?.city),
-    norm(a?.address1),
-    norm(a?.address2),
-  ].join("|");
+  const postal = normalizeZip(a?.postal);
+  const pref = norm(a?.prefecture);
+  const city = norm(a?.city);
+  const addr1 = norm(a?.address1);
+  const addr2 = norm(a?.address2);
+
+  // ✅ ここで必須が欠けてたら「キーを作らない」ではなく「呼び元で止める」設計にする
+  // upsertAddress 側で必須チェックしている前提なので、ここでは確実にキーを返す
+  const s = [postal, pref, city, addr1, addr2].join("|");
   const base = s.replace(/\|+/g, "|").replace(/^\||\|$/g, "").trim();
-  if (!base) return null;
+
+  // 念のため
+  if (!postal || !pref || !city || !addr1) {
+    // ここでnullにすると増殖に戻るので、例外にする
+    throw Object.assign(new Error("ADDRESS_KEY_BUILD_FAILED"), {
+      code: "ADDRESS_KEY_BUILD_FAILED",
+      got: { postal, pref, city, addr1 }
+    });
+  }
+
   return crypto.createHash("sha1").update(base).digest("hex").slice(0, 20);
 }
 
@@ -1121,16 +1131,36 @@ async function upsertAddress(userId, addr) {
 
   const addressId = addr?.id ? Number(addr.id) : null;
 
+  // ✅ 必須（ここで止める：空保存＝増殖の原因）
+  const name = String(addr?.name || "").trim();
+  const phone = String(addr?.phone || "").trim();
+  const postal = String(addr?.postal || "").trim();
+  const prefecture = String(addr?.prefecture || "").trim();
+  const city = String(addr?.city || "").trim();
+  const address1 = String(addr?.address1 || "").trim();
+  const address2 = String(addr?.address2 || "").trim();
+
+  if (!name || !phone || !postal || !prefecture || !city || !address1) {
+    const e = new Error("ADDRESS_REQUIRED_FIELDS_MISSING");
+    e.code = "ADDRESS_REQUIRED_FIELDS_MISSING";
+    e.got = { name, phone, postal, prefecture, city, address1 };
+    throw e;
+  }
+
   const label = String(addr?.label || "住所").trim();
   const isDefault = !!addr?.is_default;
 
   const memberCodeIn = String(addr?.member_code || "").trim() || null;
-  const addressKey = (addr?.address_key ? String(addr.address_key).trim() : null) || makeAddressKey(addr);
 
+  // ✅ ここが本丸：クライアントの address_key は捨てる
+  const addressKey = makeAddressKey({
+    postal, prefecture, city, address1, address2
+  });
+
+  // is_default の切替
   if (isDefault) {
     await pool.query(`UPDATE addresses SET is_default=false WHERE user_id=$1`, [uid]);
   }
-
   if (addressId) {
     const r = await pool.query(
       `
@@ -2214,6 +2244,17 @@ app.post("/api/address/set", async (req, res) => {
       label: a.label,
       is_default: !!a.is_default,
     };
+// ✅ 必須チェック（空保存を100%止める）
+if (!payload.name || !payload.phone || !payload.postal || !payload.prefecture || !payload.city || !payload.address1) {
+  return res.status(400).json({
+    ok:false,
+    error:"required: name/phone/postal/prefecture/city/address1",
+    got: payload
+  });
+}
+
+// ✅ クライアントの address_key は信用しない（明示的に捨てる）
+payload.address_key = null;
 
     // ✅ 空INSERTを止める（ここが増殖の原因つぶし）
     if (!payload.name || !payload.phone || !payload.postal || !payload.prefecture || !payload.city || !payload.address1) {

@@ -132,11 +132,9 @@
 (async function(){
   "use strict";
 
-  // ★あなたの LIFF ID（cod-register 用）
   const LIFF_ID_COD  = "2008406620-G5j1gjzM";
   const KEY_UID = "isoya_userId";
 
-  // confirm に戻す先
   const qs = new URLSearchParams(location.search);
   const mode = (qs.get("mode") || "").trim();
   const returnToRaw = (qs.get("returnTo") || "/confirm.html").trim();
@@ -210,10 +208,29 @@
     }
   }
 
+  // ✅ 名前キー違い吸収（読み込み/表示/保存で共通に使う）
+  function pickName(obj){
+    const candidates = [
+      obj?.name,
+      obj?.full_name, obj?.fullName,
+      obj?.recipient_name, obj?.recipientName,
+      obj?.customer_name, obj?.customerName,
+      obj?.receiver_name, obj?.receiverName,
+      obj?.to_name, obj?.toName,
+      obj?.addressee,
+    ];
+    const s = candidates.find(v => typeof v === "string" && v.trim());
+    return (s || "").trim();
+  }
+
   function normalizeAddr(a){
+    const name = pickName(a);
     return {
       id: a?.id ?? a?.address_id ?? a?.addressId ?? null,
-      name: a?.name ?? "",
+
+      // ✅ ここが肝：どのキーで来ても最終的に name に入れる
+      name: name,
+
       phone: a?.phone ?? "",
       postal: a?.postal ?? a?.zip ?? "",
       prefecture: a?.prefecture ?? a?.pref ?? "",
@@ -226,7 +243,8 @@
   }
 
   function toAddrText(a){
-    const nameLine = a?.name ? `${a.name}\n` : "";
+    const displayName = pickName(a) || (a?.name || "");
+    const nameLine = displayName ? `${displayName}\n` : "";
     const postal = a?.postal || "";
     const pref = a?.prefecture || "";
     const city = a?.city || "";
@@ -238,7 +256,7 @@
   }
 
   function fillForm(a){
-    el("name").value       = a?.name || "";
+    el("name").value       = pickName(a) || "";
     el("phone").value      = a?.phone || "";
     el("postal").value     = a?.postal || "";
     el("prefecture").value = a?.prefecture || "";
@@ -249,8 +267,9 @@
   }
 
   function readForm(){
+    const name = (el("name").value || "").trim();
     return {
-      name: (el("name").value || "").trim(),
+      name,
       phone: (el("phone").value || "").trim(),
       postal: (el("postal").value || "").trim(),
       prefecture: (el("prefecture").value || "").trim(),
@@ -258,12 +277,15 @@
       address1: (el("address1").value || "").trim(),
       address2: (el("address2").value || "").trim(),
       label: (el("label").value || "").trim(),
+
+      // ✅ サーバがどのキー名を期待してても入るよう“別名”も一緒に送る
+      full_name: name,
+      recipient_name: name
     };
   }
 
   function buildReturnUrl(){
     const u = new URL(returnToRaw, location.origin);
-    // confirm側が「住所登録済み」判定に使うなら残す（無害）
     u.searchParams.set("addr_step", "1");
     if (mode) u.searchParams.set("mode", mode);
     return u.pathname + u.search;
@@ -274,7 +296,7 @@
   }
 
   async function loadAddress(uid){
-    // 1) list があるなら：default優先、なければ先頭
+    // 1) list：default優先
     try{
       const d = await getJson(`/api/address/list?userId=${encodeURIComponent(uid)}`);
       const rows = Array.isArray(d?.addresses) ? d.addresses : (Array.isArray(d?.list) ? d.list : []);
@@ -284,24 +306,23 @@
         return chosen || null;
       }
     }catch(e){
-      // list無し → fallback
+      // list無し→fallback
     }
 
-    // 2) get のみ（単一）
+    // 2) get：単一
     try{
       const d = await getJson(`/api/address/get?userId=${encodeURIComponent(uid)}`);
-      if(d?.address) return normalizeAddr(d.address);
+      const raw = d?.address || d?.addr || d?.data?.address || null;
+      if(raw) return normalizeAddr(raw);
     }catch(e){
       // none
     }
-
     return null;
   }
 
   async function saveAddress(uid){
     const a = readForm();
 
-    // 必須（最低限）
     if(!a.name || !a.phone || !a.postal || !a.prefecture || !a.city || !a.address1){
       alert("お名前/電話番号/郵便番号/都道府県/市区町村/番地 は必須です。");
       return;
@@ -314,9 +335,8 @@
       await postJson("/api/address/set", {
         userId: uid,
         address: {
-          id: currentAddr?.id || null, // 編集時は上書き
+          id: currentAddr?.id || null,
           ...a
-          // ★ギフト概念は使わない（is_gift は送らない）
         }
       });
 
@@ -342,12 +362,12 @@
       status.textContent = "お届け先住所を登録してください。";
       fillForm(null);
       showForm("お届け先住所を入力");
-      if(cancelBtn) cancelBtn.style.display = "none"; // 未登録時はキャンセル不要（戻るは下にある）
+      if(cancelBtn) cancelBtn.style.display = "none";
     }else{
       status.textContent = "お届け先住所は登録済みです。";
       viewAddr.textContent = toAddrText(currentAddr);
       showView();
-      if(cancelBtn) cancelBtn.style.display = ""; // 以後編集時に使う
+      if(cancelBtn) cancelBtn.style.display = "";
     }
 
     if(useBtn) useBtn.onclick = ()=>goNext();
@@ -358,7 +378,6 @@
     };
 
     if(cancelBtn) cancelBtn.onclick = ()=>{
-      // 編集キャンセル：表示に戻す
       if(currentAddr){
         viewAddr.textContent = toAddrText(currentAddr);
         showView();

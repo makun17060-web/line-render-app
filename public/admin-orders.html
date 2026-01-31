@@ -430,10 +430,12 @@
         const dateFilter = (dateFilterInput.value || "").replace(/-/g, "");
         const params = [];
         if (dateFilter) params.push("date=" + encodeURIComponent(dateFilter));
-        const path = "/api/admin/orders" + (params.length ? "?" + params.join("&") : "");
+        let path = "/api/admin/orders" + (params.length ? "?" + params.join("&") : "");
+path += (path.includes("?") ? "&" : "?") + "_ts=" + Date.now(); // ★304回避
 
-        let data;
-        try { data = await apiFetch(path); }
+let data;
+try { data = await apiFetch(path); }
+
         catch (e) {
           ordersSummaryEl.textContent = "読み込みエラー：" + e.message;
           console.error(e);

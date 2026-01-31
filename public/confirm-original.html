@@ -40,53 +40,32 @@
 
     .row{display:flex;justify-content:space-between;gap:10px;margin:0;padding:6px 0;font-size:14px}
 
-    /* 支払い方法ラジオ */
-    .paySelect{ display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
-    .payPill{
-      display:flex; align-items:center; gap:8px;
-      padding:10px 12px; border-radius:999px;
-      background:#fff; border:1px solid var(--line);
-      box-shadow:var(--shadow);
-      cursor:pointer; user-select:none;
-      font-size:13px; font-weight:900;
-    }
-    .payPill input{ transform:scale(1.1); }
-    .payPill[aria-disabled="true"]{ opacity:.55; cursor:not-allowed; }
-    .payPill .sub{ font-weight:700; color:var(--muted); font-size:12px; }
-
-    .payGrid{ display:grid; grid-template-columns:1fr; gap:12px; margin-top:10px; }
-    @media (min-width:760px){
-      .payGrid{ grid-template-columns:1fr 1fr; align-items:stretch; }
-      .backWrap{ grid-column:1 / -1; }
-    }
-
-    .payCardTitle{ font-weight:1000; font-size:14px; margin:0 0 6px; }
-    .payHint{ color:var(--muted); font-size:12px; line-height:1.5; margin-bottom:10px; }
-
-    .miniRow{
-      display:flex; justify-content:space-between; gap:10px;
-      padding:6px 0; font-size:13px; border-top:1px dashed var(--line);
-    }
-    .miniRow:first-of-type{border-top:1px solid var(--line)}
-    .payTotal{
+    .total{
       margin-top:10px; padding-top:10px; border-top:2px solid var(--line);
       display:flex; justify-content:space-between; align-items:baseline; gap:10px;
     }
-    .payTotal .label{font-weight:900;font-size:13px;color:var(--muted)}
-    .payTotal .price{font-weight:1000;font-size:18px;white-space:nowrap}
+    .total .label{font-weight:900;font-size:13px;color:var(--muted)}
+    .total .price{font-weight:1000;font-size:18px;white-space:nowrap}
 
-    .payBtn{
+    .btn{
       width:100%;
       border:none; border-radius:14px;
       padding:12px 14px;
       font-weight:1000;
       cursor:pointer;
-      margin-top:10px;
     }
-    .payBtn:disabled{opacity:.55;cursor:not-allowed}
+    .btn:disabled{opacity:.55;cursor:not-allowed}
 
-    .backWrap .payBtn{ background:#fff;border:1px solid var(--line);color:#111827; margin-top:0; }
-    .inactive{ opacity:.55; filter:saturate(.85); }
+    .btnCard{ background:var(--pri2); color:#fff; }
+    .btnCod{ background:var(--pri); color:#fff; }
+    .btnBack{ background:#fff; border:1px solid var(--line); color:#111827; }
+
+    .btnStack{ display:grid; gap:10px; margin-top:12px; }
+    @media(min-width:760px){
+      .btnStack{ grid-template-columns: 1fr 1fr; }
+      .btnBack{ grid-column:1 / -1; }
+    }
+    .note{ margin-top:8px; }
   </style>
 </head>
 
@@ -110,68 +89,29 @@
       <div class="row"><div>小計</div><div id="subtotal">0円</div></div>
       <div class="row"><div>送料（見積）</div><div id="shipping">—</div></div>
 
-      <!-- 支払い方法ラジオ -->
-      <div class="paySelect" role="radiogroup" aria-label="支払い方法">
-        <label class="payPill" id="pillCard">
-          <input type="radio" name="payMethod" id="payCard" value="card">
-          <div>クレジット<div class="sub">Stripe決済へ</div></div>
-        </label>
+      <!-- 合計（カード/代引きの両方を表示） -->
+      <div class="total">
+        <div class="label">合計（クレジット）</div>
+        <div class="price" id="totalCard">—</div>
+      </div>
+      <div class="row" style="padding-top:8px;border-top:1px dashed var(--line);margin-top:8px">
+        <div class="muted" style="font-weight:900">合計（代引）</div>
+        <div id="totalCod" style="font-weight:1000;white-space:nowrap">—</div>
+      </div>
+      <div class="muted" id="codFeeLine" style="margin-top:6px">代引手数料：—</div>
 
-        <label class="payPill" id="pillCod">
-          <input type="radio" name="payMethod" id="payCod" value="cod">
-          <div>代引き<div class="sub">配達員へ現金</div></div>
-        </label>
+      <div class="btnStack">
+        <button id="cardBtn" class="btn btnCard" type="button">クレジットで支払う</button>
+        <button id="codBtn" class="btn btnCod" type="button">代引きで注文確定</button>
+        <button id="backBtn" class="btn btnBack" type="button">戻る（住所入力へ）</button>
       </div>
 
-      <div class="payGrid">
-        <!-- クレジット -->
-        <div class="card" id="cardPanel" style="margin-top:0">
-          <div class="payCardTitle">クレジットでのお支払い</div>
-          <div class="payHint">※代引手数料はかかりません。Stripe決済画面へ進みます。</div>
+      <div id="codDisabledNote" class="muted note" style="display:none">
+        ※贈り先への配送では、代引きはご利用いただけません（クレジットのみ）
+      </div>
 
-          <div class="miniRow"><div>小計</div><div id="subtotal2">—</div></div>
-          <div class="miniRow"><div>送料</div><div id="shipping2">—</div></div>
-
-          <div class="payTotal">
-            <div class="label">合計（クレジット）</div>
-            <div class="price" id="totalCard">—</div>
-          </div>
-
-          <button id="cardBtn" class="payBtn" style="background:var(--pri2);color:#fff" type="button">
-            クレジットで支払う
-          </button>
-        </div>
-
-        <!-- 代引 -->
-        <div class="card" id="codPanel" style="margin-top:0">
-          <div class="payCardTitle">代引きでのお支払い</div>
-          <div class="payHint">※代引手数料がかかります。配達員へ現金でお支払いください。</div>
-
-          <div class="miniRow"><div>小計</div><div id="subtotal3">—</div></div>
-          <div class="miniRow"><div>送料</div><div id="shipping3">—</div></div>
-          <div class="miniRow"><div>代引手数料</div><div id="codFee">—</div></div>
-
-          <div class="payTotal">
-            <div class="label">合計（代引）</div>
-            <div class="price" id="totalCod">—</div>
-          </div>
-
-          <button id="codBtn" class="payBtn" style="background:var(--pri);color:#fff" type="button">
-            代引きで注文確定
-          </button>
-
-          <div id="codDisabledNote" class="muted" style="margin-top:8px;display:none">
-            ※贈り先への配送では、代引きはご利用いただけません（クレジットのみ）
-          </div>
-        </div>
-
-        <!-- 戻る（住所入力へ） -->
-        <div class="backWrap">
-          <button id="backBtn" class="payBtn" type="button">戻る（住所入力へ）</button>
-          <div class="muted" style="margin-top:8px">
-            ※送料は見積り表示です（確定時に再計算されます）。
-          </div>
-        </div>
+      <div class="muted note">
+        ※送料は見積り表示です（確定時に再計算されます）。
       </div>
     </div>
   </div>
@@ -198,25 +138,13 @@
   const subtotalEl=document.getElementById("subtotal");
   const shippingEl=document.getElementById("shipping");
 
-  const subtotal2El=document.getElementById("subtotal2");
-  const shipping2El=document.getElementById("shipping2");
   const totalCardEl=document.getElementById("totalCard");
-
-  const subtotal3El=document.getElementById("subtotal3");
-  const shipping3El=document.getElementById("shipping3");
-  const codFeeEl=document.getElementById("codFee");
   const totalCodEl=document.getElementById("totalCod");
+  const codFeeLine=document.getElementById("codFeeLine");
 
   const backBtn=document.getElementById("backBtn");
   const cardBtn=document.getElementById("cardBtn");
   const codBtn=document.getElementById("codBtn");
-
-  const payCard=document.getElementById("payCard");
-  const payCod=document.getElementById("payCod");
-  const pillCard=document.getElementById("pillCard");
-  const pillCod=document.getElementById("pillCod");
-  const cardPanel=document.getElementById("cardPanel");
-  const codPanel=document.getElementById("codPanel");
 
   const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
   const loadJson=k=>{try{return JSON.parse(localStorage.getItem(k)||"");}catch{return null;}};
@@ -278,8 +206,6 @@
     }
 
     safeSetText(subtotalEl, yen(subtotal));
-    safeSetText(subtotal2El, yen(subtotal));
-    safeSetText(subtotal3El, yen(subtotal));
     return subtotal;
   }
 
@@ -301,44 +227,11 @@
     }
   }
 
-  function applyQuoteToUI(quote){
-    const shippingText = `${yen(quote.shippingFee)}（ヤマト ${quote.size}サイズ）`;
-
-    safeSetText(shippingEl, shippingText);
-
-    safeSetText(shipping2El, shippingText);
-    const totalCard = Number(quote.subtotal||0) + Number(quote.shippingFee||0);
-    safeSetText(totalCardEl, yen(totalCard));
-
-    safeSetText(shipping3El, shippingText);
-    safeSetText(codFeeEl, yen(quote.codFee));
-    safeSetText(totalCodEl, yen(quote.totalCod));
-  }
-
-  // radioでボタン制御
-  function applyPayMethodUI(method){
-    const isCard = (method === "card");
-
-    if(payCard) payCard.checked = isCard;
-    if(payCod)  payCod.checked  = !isCard;
-
-    if(cardPanel) cardPanel.classList.toggle("inactive", !isCard);
-    if(codPanel)  codPanel.classList.toggle("inactive", isCard);
-
-    if(cardBtn) cardBtn.disabled = !isCard;
-    if(codBtn)  codBtn.disabled  = isCard;
-  }
-
-  // ✅ 贈り先なら代引きを完全ロック（オリジナルも同じ）
+  // ✅ 贈り先なら代引きを完全ロック
   function lockCodIfGift(isGift){
     const note = document.getElementById("codDisabledNote");
 
     if(isGift){
-      if(payCod){ payCod.disabled = true; payCod.checked = false; }
-      if(pillCod){ pillCod.setAttribute("aria-disabled","true"); }
-
-      applyPayMethodUI("card");
-
       if(codBtn){
         codBtn.disabled = true;
         codBtn.textContent = "贈り先では代引き不可";
@@ -346,10 +239,8 @@
       }
       if(note) note.style.display = "block";
     }else{
-      if(payCod){ payCod.disabled = false; }
-      if(pillCod){ pillCod.removeAttribute("aria-disabled"); }
-
       if(codBtn){
+        codBtn.disabled = false;
         codBtn.textContent = "代引きで注文確定";
         codBtn.style.opacity = "1";
       }
@@ -367,7 +258,7 @@
       return;
     }
 
-    // ✅ confirm 直行防止（オリジナルも）
+    // ✅ confirm 直行防止
     const stepped = (qs.get("addr_step") || "").trim();
     if (stepped !== "1") {
       const returnUrl = new URL(location.origin + RETURN_TO_THIS);
@@ -396,7 +287,7 @@
       return;
     }
 
-    // 贈り先判定（通常confirmと同じロジック）
+    // 贈り先判定
     const shipQS = (qs.get("ship") || "").trim(); // "home" / "gift"
     let isGift;
     if (shipQS === "home") isGift = false;
@@ -411,45 +302,25 @@
     const subtotal = renderItems(items, products);
 
     safeSetText(shippingEl, "計算中…");
-    safeSetText(shipping2El, "計算中…");
-    safeSetText(shipping3El, "計算中…");
-    safeSetText(codFeeEl, "計算中…");
-    safeSetText(totalCodEl, "計算中…");
     safeSetText(totalCardEl, "計算中…");
+    safeSetText(totalCodEl, "計算中…");
+    safeSetText(codFeeLine, "代引手数料：計算中…");
 
-    // ✅ 送料/手数料はサーバ計算（オリジナルでも）
+    // ✅ 送料/手数料はサーバ計算
     const quote = await postJson("/api/order/quote", { uid, checkout:{ items } });
     quote.subtotal = quote.subtotal ?? subtotal;
-    applyQuoteToUI(quote);
 
-    // 初期：クレジット
-    applyPayMethodUI("card");
+    const shippingText = `${yen(quote.shippingFee)}（ヤマト ${quote.size}サイズ）`;
+    safeSetText(shippingEl, shippingText);
+
+    const totalCard = Number(quote.subtotal||0) + Number(quote.shippingFee||0);
+    safeSetText(totalCardEl, yen(totalCard));
+
+    safeSetText(codFeeLine, `代引手数料：${yen(quote.codFee)}`);
+    safeSetText(totalCodEl, yen(quote.totalCod));
 
     // 贈り先なら代引きをロック
     lockCodIfGift(isGift);
-
-    // pillクリックでも切替（LIFFでchange不安定対策）
-    if(pillCard){
-      pillCard.addEventListener("click", ()=>{
-        if(payCard && !payCard.disabled){
-          payCard.checked = true;
-          applyPayMethodUI("card");
-        }
-      });
-    }
-    if(pillCod){
-      pillCod.addEventListener("click", ()=>{
-        if(payCod && !payCod.disabled){
-          payCod.checked = true;
-          applyPayMethodUI("cod");
-        }
-      });
-    }
-    if(payCard) payCard.addEventListener("change", ()=>applyPayMethodUI("card"));
-    if(payCod)  payCod.addEventListener("change", ()=>{
-      if(payCod.disabled) return;
-      applyPayMethodUI("cod");
-    });
 
     status.textContent="内容をご確認ください。";
 
@@ -462,7 +333,6 @@
 
     if(cardBtn){
       cardBtn.onclick = async ()=>{
-        if(!(payCard && payCard.checked)) return;
         setBtnBusy(cardBtn, true, "移動中…", "クレジットで支払う");
         try{
           const data = await postJson("/api/pay/stripe/create", { uid, checkout:{ items } });
@@ -478,7 +348,6 @@
 
     if(codBtn){
       codBtn.onclick = async ()=>{
-        if(!(payCod && payCod.checked)) return;
         if(isGift) return; // 二重ロック
 
         setBtnBusy(codBtn, true, "確定中…", "代引きで注文確定");

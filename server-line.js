@@ -3245,20 +3245,29 @@ async function onTextMessage(ev) {
 }
 
 /* =========================
- * 起動
+ * 起動（修正版：listen を先に）
  * ========================= */
 async function main() {
   await ensureDir(DATA_DIR);
   await ensureDir(UPLOAD_DIR);
 
-  await ensureDb();
-  await loadSessions();
-
+  // ✅ 先にサーバを起動（/health が即返せる）
   const port = Number(env.PORT || 10000);
   app.listen(port, () => {
     logInfo(`server-line.js listening on :${port}`);
   });
+
+  // ✅ DB準備は後ろ（重くても起動は成立）
+  await ensureDb();
+  await loadSessions();
+
+  logInfo("boot completed");
 }
+
+main().catch((e) => {
+  logErr("boot failed", e?.stack || e);
+  process.exit(1);
+});
 
 main().catch((e) => {
   logErr("boot failed", e?.stack || e);

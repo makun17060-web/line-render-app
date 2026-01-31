@@ -1,21 +1,14 @@
 /**
  * scripts/send_buyers_thanks_5d_named.js
- * 購入後5日「名前付き」サンクス
- * （最終購入日基準 / push送信 / ✅buyers_thanks系 横断除外 / 最終版）
+ * 購入後5日「名前付き」サンクス（最終購入日基準 / push送信 / ✅横断除外なし / 最終版）
  *
- * ✅ 仕様（重要）
- * - ユーザーごとに最新の購入を1件だけ（最終購入日基準）
- * - 購入後 X〜Y日（既定: 6〜5日）
- * - orders.notified_* でこのJS自身の二重送信防止
- * - ✅ 横断除外（キー忘れ対策）
- *    - segment_blast: buyers/2026などにマッチする key で sent_at があれば除外
- *    - orders       : notified_kind が buyers/2026などにマッチする注文があれば除外（←★追加）
+ * ✅ 仕様
+ * - user_idごとに最新購入を1件だけ（最終購入日基準）
+ * - X〜Y日前（既定: 6〜5日）
+ * - orders.notified_user_at / orders.notified_kind で二重送信防止（このキーのみ）
  *
- * ✅ 安全柵
- * - latest_addr は user_id ごとに最新1件
- * - FORCE_ORDER_ID は横断除外をかけない（調査用）
- * - DEDUP_BY_USER は保険
- * - WILL_SEND ログで本番対象を事前確認
+ * ✅ 運用
+ * - “別キーで既に送った”人は、後述の「印付け」(mark)で除外する
  */
 
 "use strict";
@@ -42,16 +35,6 @@ const SLEEP_MS = Number(process.env.SLEEP_MS || 200);
 
 const FORCE_ORDER_ID = (process.env.FORCE_ORDER_ID || "").trim();
 
-/**
- * ✅ 横断除外用 正規表現（Postgresの ~ で使う）
- * 例にマッチ:
- *  - buyers_thanks_20260128
- *  - buyers_2026_xxx
- *  - thanks_2026
- */
-const THANKS_EXCLUDE_REGEX =
-  (process.env.THANKS_EXCLUDE_REGEX || "(buyers|2026)").trim();
-
 if (!TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
 if (!DBURL) throw new Error("DATABASE_URL is required");
 
@@ -68,7 +51,6 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/* LINE push */
 async function linePush(to, messages) {
   const res = await fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",
@@ -82,7 +64,6 @@ async function linePush(to, messages) {
   if (!res.ok) throw new Error(`LINE push failed: ${res.status} ${text}`);
 }
 
-/* テンプレ読込 */
 function loadMessageTemplate() {
   const fp = path.resolve(process.cwd(), MESSAGE_FILE);
   if (!fs.existsSync(fp)) throw new Error(`MESSAGE_FILE not found: ${fp}`);
@@ -91,7 +72,6 @@ function loadMessageTemplate() {
   return Array.isArray(json) ? json : json.messages;
 }
 
-/* {{NAME}} 置換 */
 function deepReplaceName(obj, name) {
   const rep = name && name.trim() ? name.trim() : "お客様";
   if (obj == null) return obj;
@@ -105,9 +85,7 @@ function deepReplaceName(obj, name) {
   return obj;
 }
 
-/**
- * 対象注文取得（最終購入日基準 + 横断除外）
- */
+/** 最終購入日基準：userごと最新注文1件のみ */
 async function loadTargetOrders({ startDays, endDays, limit }) {
   const sql = `
     WITH latest_addr AS (
@@ -146,42 +124,18 @@ async function loadTargetOrders({ startDays, endDays, limit }) {
     WHERE lo.created_at >= NOW() - ($1 || ' days')::interval
       AND lo.created_at <  NOW() - ($2 || ' days')::interval
       AND (lo.notified_user_at IS NULL OR lo.notified_kind IS DISTINCT FROM $3)
-
-      -- ✅ 横断除外①: segment_blast に「buyers/2026等で送信済み」があれば除外
-      AND NOT EXISTS (
-        SELECT 1
-        FROM segment_blast sb
-        WHERE sb.user_id = lo.user_id
-          AND sb.sent_at IS NOT NULL
-          AND sb.segment_key ~ $5
-      )
-
-      -- ✅ 横断除外②: orders に「buyers/2026等で通知済み」があれば除外（shell直叩きでここだけ付いてるケース対応）
-      AND NOT EXISTS (
-        SELECT 1
-        FROM orders oo
-        WHERE oo.user_id = lo.user_id
-          AND oo.notified_user_at IS NOT NULL
-          AND COALESCE(oo.notified_kind,'') ~ $5
-      )
-
     ORDER BY lo.created_at DESC
     LIMIT $4
   `;
-
   const { rows } = await pool.query(sql, [
     String(startDays),
     String(endDays),
     NOTIFIED_KIND,
     limit,
-    THANKS_EXCLUDE_REGEX,
   ]);
   return rows;
 }
 
-/**
- * FORCE_ORDER_ID 用（調査専用：横断除外なし）
- */
 async function loadSingleOrder(orderId) {
   const sql = `
     WITH latest_addr AS (
@@ -226,17 +180,8 @@ async function markOrderSent(orderId) {
   console.log("NOTIFIED_KIND=", NOTIFIED_KIND);
   console.log("DRY_RUN=", DRY_RUN ? "1" : "0");
   console.log("DEDUP_BY_USER=", DEDUP_BY_USER ? "1" : "0");
-  console.log(
-    "WINDOW_START_DAYS=",
-    WINDOW_START_DAYS,
-    "WINDOW_END_DAYS=",
-    WINDOW_END_DAYS
-  );
-  console.log("THANKS_EXCLUDE_REGEX=", THANKS_EXCLUDE_REGEX);
-  console.log(
-    "MESSAGE_FILE(resolved)=",
-    path.resolve(process.cwd(), MESSAGE_FILE)
-  );
+  console.log("WINDOW_START_DAYS=", WINDOW_START_DAYS, "WINDOW_END_DAYS=", WINDOW_END_DAYS);
+  console.log("MESSAGE_FILE(resolved)=", path.resolve(process.cwd(), MESSAGE_FILE));
 
   const template = loadMessageTemplate();
 
@@ -272,11 +217,10 @@ async function markOrderSent(orderId) {
     if (sentOrderIds.has(o.order_id)) continue;
     sentOrderIds.add(o.order_id);
 
+    // 保険
     if (DEDUP_BY_USER) {
       if (sentUserIds.has(o.user_id)) {
-        console.log(
-          `SKIP duplicate user_id=${o.user_id} (order_id=${o.order_id})`
-        );
+        console.log(`SKIP duplicate user_id=${o.user_id} (order_id=${o.order_id})`);
         continue;
       }
       sentUserIds.add(o.user_id);

@@ -2150,6 +2150,17 @@ app.get("/api/liff/config", (req, res) => {
   if (!liffId) return res.status(400).json({ ok:false, error:"LIFF_ID_NOT_SET", kind });
   return res.json({ ok:true, liffId });
 });
+function pickNameFromAny(obj){
+  const cands = [
+    obj?.name,
+    obj?.full_name, obj?.fullName,
+    obj?.recipient_name, obj?.recipientName,
+    obj?.customer_name, obj?.customerName,
+  ];
+  const s = cands.find(v => typeof v === "string" && v.trim());
+  return (s || "").trim();
+}
+function normStr(v){ return (typeof v === "string" ? v : (v==null ? "" : String(v))).trim(); }
 
 /* =========================
  * Address API
@@ -2183,28 +2194,41 @@ app.get("/api/address/list", async (req, res) => {
 app.post("/api/address/set", async (req, res) => {
   try {
     const b = req.body || {};
-    const userId = String(b.userId || "").trim();
-    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
+    const userId = normStr(b.userId || b.uid || req.query.userId);
+    if (!userId) return res.status(400).json({ ok:false, error:"userId required" });
 
-    const saved = await upsertAddress(userId, {
-      id: b.id,
-      member_code: b.member_code,
-      name: b.name,
-      phone: b.phone,
-      postal: b.postal,
-      prefecture: b.prefecture,
-      city: b.city,
-      address1: b.address1,
-      address2: b.address2,
-      address_key: b.address_key,
-      label: b.label,
-      is_default: b.is_default,
-    });
+    // ✅ ネスト形式 { userId, address:{...} } も、フラット形式も両対応
+    const a = (b.address && typeof b.address === "object") ? b.address : b;
 
-    res.json({ ok: true, address: saved });
+    const payload = {
+      id: a.id,
+      member_code: a.member_code,
+      name: pickNameFromAny(a),
+      phone: normStr(a.phone),
+      postal: normStr(a.postal || a.zip),
+      prefecture: normStr(a.prefecture || a.pref),
+      city: normStr(a.city),
+      address1: normStr(a.address1 || a.address),
+      address2: normStr(a.address2),
+      address_key: a.address_key,
+      label: a.label,
+      is_default: !!a.is_default,
+    };
+
+    // ✅ 空INSERTを止める（ここが増殖の原因つぶし）
+    if (!payload.name || !payload.phone || !payload.postal || !payload.prefecture || !payload.city || !payload.address1) {
+      return res.status(400).json({
+        ok:false,
+        error:"required: name/phone/postal/prefecture/city/address1",
+        got: payload
+      });
+    }
+
+    const saved = await upsertAddress(userId, payload);
+    res.json({ ok:true, address:saved });
   } catch (e) {
     logErr("POST /api/address/set", e?.stack || e);
-    res.status(500).json({ ok: false, error: "server_error" });
+    res.status(500).json({ ok:false, error:"server_error" });
   }
 });
 
@@ -2232,7 +2256,8 @@ app.post("/api/liff/address", async (req, res) => {
     const saved = await upsertAddress(userId, {
       id: address.id,
       member_code: address.member_code,
-      name: address.name,
+     name: pickNameFromAny(address),
+
       phone: address.phone,
       postal: address.postal,
       prefecture: address.prefecture,

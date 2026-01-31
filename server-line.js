@@ -3269,7 +3269,4 @@ main().catch((e) => {
   process.exit(1);
 });
 
-main().catch((e) => {
-  logErr("boot failed", e?.stack || e);
-  process.exit(1);
-});
+

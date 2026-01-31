@@ -1,19 +1,22 @@
 /**
  * scripts/send_buyers_thanks_5d_named.js
- * 購入後5日「名前付き」サンクス（最終購入日基準 / push送信 / ✅buyers_thanks系 横断除外 / 最終版）
+ * 購入後5日「名前付き」サンクス
+ * （最終購入日基準 / push送信 / ✅buyers+年号 横断除外 / 最終完成版）
  *
  * ✅ 仕様（重要）
- * - 「ユーザーごとに最新の購入(orders.created_at 最大)」を1件だけ対象にする（= 最終購入日基準）
- * - 購入後 X〜Y日（既定: 6〜5日）で抽出
- * - orders.notified_user_at / orders.notified_kind で二重送信防止（このJSのキー）
- * - ✅ segment_blast の buyers_thanks% を横断チェックし、過去に何か送っていれば除外（キー忘れ対策）
+ * - ユーザーごとに「最新の購入（orders.created_at 最大）」を1件だけ対象
+ * - 購入後 X〜Y日（既定: 6〜5日）
+ * - orders.notified_* でこのJS自身の二重送信防止
+ * - ✅ segment_blast を横断チェック
+ *     ・buyers 系
+ *     ・年号（2026 など）
+ *   を含むキーで sent_at があれば除外（記憶に依存しない）
  *
  * ✅ 安全柵
- * - latest_addr を user_id ごとに最新1件に絞る（増殖しない）
- * - FORCE_ORDER_ID で特定注文だけ検証できる（※横断除外は適用しない＝調査優先）
- * - （保険）DEDUP_BY_USER=1（通常はSQL側で重複が出ない）
- * - 本番で実際に送られるIDを事前確認できる [WILL_SEND] ログ
- * - MESSAGE_FILE の実体パスを必ず表示
+ * - latest_addr は user_id ごとに1件
+ * - FORCE_ORDER_ID は横断除外をかけない（調査用）
+ * - DEDUP_BY_USER は保険
+ * - WILL_SEND ログで本番対象を事前確認
  */
 
 "use strict";
@@ -25,7 +28,8 @@ const { Pool } = require("pg");
 const TOKEN = (process.env.LINE_CHANNEL_ACCESS_TOKEN || "").trim();
 const DBURL = (process.env.DATABASE_URL || "").trim();
 
-const NOTIFIED_KIND = (process.env.NOTIFIED_KIND || "thanks_5d_named").trim();
+const NOTIFIED_KIND =
+  (process.env.NOTIFIED_KIND || "buyers_thanks_5d_named").trim();
 const MESSAGE_FILE =
   (process.env.MESSAGE_FILE || "./messages/buyers_thanks_5d_named.json").trim();
 
@@ -39,8 +43,18 @@ const SLEEP_MS = Number(process.env.SLEEP_MS || 200);
 
 const FORCE_ORDER_ID = (process.env.FORCE_ORDER_ID || "").trim();
 
-// ✅ buyers_thanks 系を横断で除外するための prefix（必要なら env で変えられる）
-const THANKS_KEY_PREFIX = (process.env.THANKS_KEY_PREFIX || "buyers_thanks").trim();
+/**
+ * ✅ 横断除外用 正規表現
+ * - buyers を含む
+ * - 2026（将来 2027 でも拡張可）
+ *
+ * 例にマッチ:
+ *  - buyers_thanks_20260128
+ *  - buyers_2026_xxx
+ *  - thanks_2026
+ */
+const THANKS_EXCLUDE_REGEX =
+  (process.env.THANKS_EXCLUDE_REGEX || "(buyers|2026)").trim();
 
 if (!TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
 if (!DBURL) throw new Error("DATABASE_URL is required");
@@ -91,17 +105,16 @@ function deepReplaceName(obj, name) {
   if (Array.isArray(obj)) return obj.map((v) => deepReplaceName(v, rep));
   if (typeof obj === "object") {
     const out = {};
-    for (const [k, v] of Object.entries(obj)) out[k] = deepReplaceName(v, rep);
+    for (const [k, v] of Object.entries(obj)) {
+      out[k] = deepReplaceName(v, rep);
+    }
     return out;
   }
   return obj;
 }
 
 /**
- * 対象注文取得（最終購入日基準）
- * - latest_order: user_idごとに created_at が最大の注文を1件だけ
- * - その最新注文が「購入後X〜Y日」に入っている人だけ送る
- * - ✅ buyers_thanks%（segment_blast）で sent_at がある user は除外
+ * 対象注文取得（最終購入日基準 + 横断除外）
  */
 async function loadTargetOrders({ startDays, endDays, limit }) {
   const sql = `
@@ -146,7 +159,7 @@ async function loadTargetOrders({ startDays, endDays, limit }) {
         FROM segment_blast sb
         WHERE sb.user_id = lo.user_id
           AND sb.sent_at IS NOT NULL
-          AND sb.segment_key LIKE ($5 || '%')
+          AND sb.segment_key ~ $5
       )
     ORDER BY lo.created_at DESC
     LIMIT $4
@@ -157,14 +170,14 @@ async function loadTargetOrders({ startDays, endDays, limit }) {
     String(endDays),
     NOTIFIED_KIND,
     limit,
-    THANKS_KEY_PREFIX,
+    THANKS_EXCLUDE_REGEX,
   ]);
+
   return rows;
 }
 
 /**
- * FORCE_ORDER_ID 用（指定注文を1件だけ検証）
- * - 調査用途優先：横断除外はかけない（= 送信対象に入るかを確認できる）
+ * FORCE_ORDER_ID 用（調査専用：横断除外なし）
  */
 async function loadSingleOrder(orderId) {
   const sql = `
@@ -210,9 +223,17 @@ async function markOrderSent(orderId) {
   console.log("NOTIFIED_KIND=", NOTIFIED_KIND);
   console.log("DRY_RUN=", DRY_RUN ? "1" : "0");
   console.log("DEDUP_BY_USER=", DEDUP_BY_USER ? "1" : "0");
-  console.log("WINDOW_START_DAYS=", WINDOW_START_DAYS, "WINDOW_END_DAYS=", WINDOW_END_DAYS);
-  console.log("THANKS_KEY_PREFIX=", THANKS_KEY_PREFIX);
-  console.log("MESSAGE_FILE(resolved)=", path.resolve(process.cwd(), MESSAGE_FILE));
+  console.log(
+    "WINDOW_START_DAYS=",
+    WINDOW_START_DAYS,
+    "WINDOW_END_DAYS=",
+    WINDOW_END_DAYS
+  );
+  console.log("THANKS_EXCLUDE_REGEX=", THANKS_EXCLUDE_REGEX);
+  console.log(
+    "MESSAGE_FILE(resolved)=",
+    path.resolve(process.cwd(), MESSAGE_FILE)
+  );
 
   const template = loadMessageTemplate();
 
@@ -248,10 +269,11 @@ async function markOrderSent(orderId) {
     if (sentOrderIds.has(o.order_id)) continue;
     sentOrderIds.add(o.order_id);
 
-    // 保険（通常はSQLが重複を出さないので、ここはほぼ効かない）
     if (DEDUP_BY_USER) {
       if (sentUserIds.has(o.user_id)) {
-        console.log(`SKIP duplicate user_id=${o.user_id} (order_id=${o.order_id})`);
+        console.log(
+          `SKIP duplicate user_id=${o.user_id} (order_id=${o.order_id})`
+        );
         continue;
       }
       sentUserIds.add(o.user_id);
@@ -259,8 +281,9 @@ async function markOrderSent(orderId) {
 
     if (!isValidLineUserId(o.user_id)) continue;
 
-    // ★ 本番で実際に送られるIDを確定表示
-    console.log(`[WILL_SEND] user_id=${o.user_id} order_id=${o.order_id}`);
+    console.log(
+      `[WILL_SEND] user_id=${o.user_id} order_id=${o.order_id}`
+    );
 
     if (DRY_RUN) continue;
 

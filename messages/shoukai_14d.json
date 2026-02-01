@@ -43,7 +43,7 @@
             "action": {
               "type": "uri",
               "label": "お店紹介を見る",
-              "uri": "https://line-render-app-1.onrender.com/public/omise_html/"
+              "uri": "https://line-render-app-1.onrender.com/public/omise.html/"
             }
           },
           {

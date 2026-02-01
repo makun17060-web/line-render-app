@@ -18,9 +18,23 @@ EXCLUDE_SENT_KEYS_FIXED="shoukai_14d"
 
 cd "$APP_DIR"
 
-# Cron環境の pg 事故防止（node_modules保証）
+# --- 環境チェック（軽量・安全） ---
 node -v
 
+# ✅ デプロイ直後などで node_modules が無い場合は安全にスキップ
+if [ ! -d "node_modules" ]; then
+  echo "[cron_shoukai_14d] node_modules not found. skip."
+  exit 0
+fi
+
+# ✅ メッセージファイル存在チェック（パス事故防止）
+if [ ! -f "$MESSAGE_FILE_FIXED" ]; then
+  echo "[cron_shoukai_14d] MESSAGE_FILE not found: $MESSAGE_FILE_FIXED"
+  exit 1
+fi
+
+# ✅ JSON文法チェック（配信事故防止）
+node -e "JSON.parse(require('fs').readFileSync('$MESSAGE_FILE_FIXED','utf8'));"
 
 # 1) 友だち追加(followed_at)から14日経過した未購入者を名簿(shoukai_14d)に入れる（14〜15日前の窓）
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'

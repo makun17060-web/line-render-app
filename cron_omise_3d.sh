@@ -21,34 +21,40 @@ cd "$APP_DIR"
 # Cron環境の pg 事故防止（node_modules保証）
 npm ci --omit=dev
 
-# 1) 友だち追加(first_seen)から3日経過した未購入者を名簿(omise_3d)に入れる（3〜4日前の窓）
+# 1) 友だち追加(followed_at)から3日経過した未購入者を名簿(omise_3d)に入れる（3〜4日前の窓）
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
 INSERT INTO segment_blast (segment_key, user_id, created_at)
 SELECT
   'omise_3d',
-  su.user_id,
+  fe.user_id,
   NOW()
-FROM segment_users su
+FROM follow_events fe
 LEFT JOIN segment_blast sb
   ON sb.segment_key='omise_3d'
- AND sb.user_id=su.user_id
-WHERE su.user_id IS NOT NULL
-  AND su.user_id <> ''
-  AND su.user_id ~* '^U[0-9a-f]{32}$'
+ AND sb.user_id=fe.user_id
+LEFT JOIN segment_users su
+  ON su.user_id = fe.user_id
+WHERE fe.user_id IS NOT NULL
+  AND fe.user_id <> ''
+  AND fe.user_id ~* '^U[0-9a-f]{32}$'
+  AND fe.user_id NOT LIKE 'UDEBUG%'
 
-  -- ✅ 3日後（「ちょうど3日前〜4日前」の窓）
-  AND su.first_seen IS NOT NULL
-  AND su.first_seen >= NOW() - INTERVAL '4 days'
-  AND su.first_seen <  NOW() - INTERVAL '3 days'
+  -- ✅ 3日後（「ちょうど3日前〜4日前」の窓）※follow基準
+  AND fe.followed_at IS NOT NULL
+  AND fe.followed_at >= NOW() - INTERVAL '4 days'
+  AND fe.followed_at <  NOW() - INTERVAL '3 days'
 
   -- ✅ まだ名簿に入ってない人だけ
   AND sb.user_id IS NULL
 
-  -- ✅ 購入者は除外
+  -- ✅ 購入者は除外（segment_users が無い人もいるので orders を直接見る）
   AND NOT EXISTS (
     SELECT 1 FROM orders o
-    WHERE o.user_id = su.user_id
+    WHERE o.user_id = fe.user_id
   )
+
+  -- ✅ もし segment_users に has_ordered があるなら、ここでも落とせる（安全側）
+  AND COALESCE(su.has_ordered, false) = false
 ON CONFLICT (segment_key, user_id) DO NOTHING;
 SQL
 
@@ -58,6 +64,7 @@ MESSAGE_FILE="$MESSAGE_FILE_FIXED" \
 EXCLUDE_SENT_KEYS="$EXCLUDE_SENT_KEYS_FIXED" \
 ONCE_ONLY="$ONCE_ONLY" \
 DRY_RUN="$DRY_RUN" \
+AUTO_ROSTER_3D=0 \
 node send_blast_once.js
 
 echo "[cron_omise_3d] done: $(date -Is)"

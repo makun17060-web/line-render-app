@@ -1,12 +1,12 @@
 [
   {
     "type": "flex",
-    "altText": "ちょっとだけ覗いてみませんか？",
+    "altText": "磯屋のこと、少しだけ",
     "contents": {
       "type": "bubble",
       "hero": {
         "type": "image",
-        "url": "https://line-render-app-1.onrender.com/uploads/isoya_4grid_square_nodistort.png",
+        "url": "https://line-render-app-1.onrender.com/uploads/omise_hero.jpg",
         "size": "full",
         "aspectRatio": "1:1",
         "aspectMode": "cover"
@@ -14,7 +14,7 @@
       "body": {
         "type": "box",
         "layout": "vertical",
-        "spacing": "md",
+        "spacing": "sm",
         "contents": [
           {
             "type": "text",
@@ -25,20 +25,10 @@
           },
           {
             "type": "text",
-            "text": "まずは、どんなお店か\n少しだけ見てみてください。",
+            "text": "どんなお店か、少しだけまとめました。",
             "size": "sm",
-            "wrap": true
-          },
-          {
-            "type": "box",
-            "layout": "vertical",
-            "margin": "md",
-            "spacing": "sm",
-            "contents": [
-              { "type": "text", "text": "✔ 無理な購入案内はありません", "size": "sm", "wrap": true },
-              { "type": "text", "text": "✔ 商品を眺めるだけでもOK", "size": "sm", "wrap": true },
-              { "type": "text", "text": "✔ 気になったら、そのまま注文もできます", "size": "sm", "wrap": true }
-            ]
+            "wrap": true,
+            "color": "#555555"
           }
         ]
       },
@@ -52,8 +42,8 @@
             "style": "primary",
             "action": {
               "type": "uri",
-              "label": "ちょっと覗いてみる",
-              "uri": ""
+              "label": "お店紹介を見る",
+              "uri": "https://line-render-app-1.onrender.com/public/omise_html/"
             }
           },
           {

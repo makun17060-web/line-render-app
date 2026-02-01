@@ -8,7 +8,7 @@ APP_DIR="/opt/render/project/src"
 
 # ▼ 今回送る配信キー（＝名簿キー）とメッセージ
 SEGMENT_KEY_FIXED="omise_3d"
-MESSAGE_FILE_FIXED="./messages/flex.json"
+MESSAGE_FILE_FIXED="./messages/omise_3d.json"
 
 # ▼ 一回配信：同じキーを除外に使う（＝二度送らない）
 EXCLUDE_SENT_KEYS_FIXED="omise_3d"

@@ -20,9 +20,26 @@
     .err{color:var(--danger);font-weight:900;white-space:pre-line}
     .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:12px;margin-top:12px;box-shadow:var(--shadow)}
     .row{display:flex;justify-content:space-between;gap:10px;margin:0;padding:6px 0;font-size:14px}
-    .nameRow{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid var(--line);margin-top:6px}
-    .nameRow .k{color:var(--muted);font-size:13px}
-    .nameRow .v{font-weight:1000;font-size:14px;text-align:right}
+    .nameRow{
+  display:block;
+  padding:10px 0 12px;
+  border-top:1px solid var(--line);
+  margin-top:6px;
+}
+.nameRow .k{
+  color:var(--muted);
+  font-size:12px;
+  letter-spacing:.02em;
+  margin-bottom:4px;
+}
+.nameRow .v{
+  font-weight:1000;
+  font-size:18px;
+  line-height:1.25;
+  text-align:left;
+  word-break:break-word;
+}
+
     #addrText{white-space:pre-line;font-weight:900;margin-top:6px}
 
     .items{margin-top:10px;border-top:1px solid var(--line)}
@@ -62,7 +79,7 @@
       <div class="muted">お届け先</div>
 
       <div class="nameRow">
-        <div class="k">お届け先氏名</div>
+        <div class="k">お名前</div>
         <div class="v" id="addrName">—</div>
       </div>
 

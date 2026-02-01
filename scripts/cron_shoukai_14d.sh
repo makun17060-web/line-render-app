@@ -19,7 +19,8 @@ EXCLUDE_SENT_KEYS_FIXED="shoukai_14d"
 cd "$APP_DIR"
 
 # Cron環境の pg 事故防止（node_modules保証）
-npm ci --omit=dev
+node -v
+
 
 # 1) 友だち追加(followed_at)から14日経過した未購入者を名簿(shoukai_14d)に入れる（14〜15日前の窓）
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'

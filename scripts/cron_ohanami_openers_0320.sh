@@ -25,7 +25,7 @@ echo "ASOF_ISO_FIXED=$ASOF_ISO_FIXED"
 # ① 3/20時点の「起動者名簿」を blast 名簿に確定
 SEGMENT_KEY="$SEGMENT_KEY_FIXED" \
 ASOF_ISO="$ASOF_ISO_FIXED" \
-node scripts/roster_openers_asof.js
+node scripts/roster_openers_asof_to_blast.js
 
 # ② 名簿に対して送信（AUTO_ROSTERしない＝固定名簿）
 # ※ send_blast_once.js の仕様に合わせて env を渡す

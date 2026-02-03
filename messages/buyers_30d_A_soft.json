@@ -1,0 +1,66 @@
+[
+  {
+    "type": "flex",
+    "altText": "【磯屋】先日はありがとうございました（30日後のご挨拶）",
+    "contents": {
+      "type": "bubble",
+      "hero": {
+        "type": "image",
+        "url": "https://line-render-app-1.onrender.com/uploads/isoya_4grid_square_nodistort.png",
+        "size": "full",
+        "aspectRatio": "1:1",
+        "aspectMode": "cover"
+      },
+      "body": {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "md",
+        "contents": [
+          { "type": "text", "text": "手造りえびせんべい 磯屋", "weight": "bold", "size": "lg", "wrap": true },
+          { "type": "text", "text": "先日はご注文ありがとうございました。", "size": "sm", "color": "#6b7280", "wrap": true },
+          { "type": "separator" },
+          {
+            "type": "text",
+            "text": "あれから30日ほど経ちましたが、\nお口に合いましたでしょうか？",
+            "wrap": true
+          },
+          {
+            "type": "text",
+            "text": "「また食べたいな」と思ったときに、\nふと思い出してもらえたら嬉しいです。",
+            "size": "sm",
+            "wrap": true
+          },
+          {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "xs",
+            "margin": "md",
+            "contents": [
+              { "type": "text", "text": "ちょっとだけ近況", "size": "xs", "color": "#6b7280" },
+              {
+                "type": "text",
+                "text": "磯屋は今日も手造りで焼いています。\n季節で香りや食感も少し変わります。",
+                "size": "sm",
+                "wrap": true
+              }
+            ]
+          }
+        ]
+      },
+      "footer": {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "sm",
+        "contents": [
+          {
+            "type": "button",
+            "style": "primary",
+            "color": "#0b3a53",
+            "action": { "type": "uri", "label": "商品を見る", "uri": "https://liff.line.me/2008406620-8CWfgEKh" }
+          },
+          { "type": "text", "text": "※初回購入から約30日でお届けしています。", "size": "xxs", "color": "#9ca3af", "wrap": true }
+        ]
+      }
+    }
+  }
+]

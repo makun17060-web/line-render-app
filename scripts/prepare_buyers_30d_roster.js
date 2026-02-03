@@ -1,13 +1,17 @@
 /**
- * prepare_buyers_30d_roster.js
+ * scripts/prepare_buyers_30d_roster.js  (CommonJS版)
  *
  * - SEGMENT_KEY（例: buyers_30d_2026-01-04）を受け取る
  * - その日付(JST)に購入したユーザーを抽出
  * - user_segments に名簿投入（重複は NOT EXISTS で回避）
- * - segment_blast に送信対象の器を作成（sent_at=NULL）
+ * - segment_blast に送信対象の器を作成（sent_at=NULL / last_error=NULL）
+ *
+ * 必須ENV:
+ * - DATABASE_URL
+ * - SEGMENT_KEY
  */
 
-import pg from "pg";
+const pg = require("pg");
 const { Pool } = pg;
 
 function must(name) {
@@ -16,12 +20,12 @@ function must(name) {
   return v;
 }
 
+const SEGMENT_KEY = must("SEGMENT_KEY");
+
 const pool = new Pool({
   connectionString: must("DATABASE_URL"),
   ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false },
 });
-
-const SEGMENT_KEY = must("SEGMENT_KEY");
 
 async function main() {
   const m = SEGMENT_KEY.match(/buyers_30d_(\d{4}-\d{2}-\d{2})/);
@@ -98,7 +102,7 @@ async function main() {
 main()
   .then(() => pool.end())
   .catch(async (e) => {
-    console.error("[prepare_buyers_30d_roster] ERROR:", e?.message || e);
+    console.error("[prepare_buyers_30d_roster] ERROR:", e && e.message ? e.message : e);
     try { await pool.end(); } catch {}
     process.exit(1);
   });

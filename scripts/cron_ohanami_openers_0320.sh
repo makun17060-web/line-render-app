@@ -28,15 +28,22 @@ ASOF_ISO="$ASOF_ISO_FIXED" \
 node scripts/roster_openers_asof_to_blast.js
 
 # ② 名簿に対して送信（AUTO_ROSTERしない＝固定名簿）
-# ※ send_blast_once.js の仕様に合わせて env を渡す
+#    ✅ 今回は「購入者も含める」＝ bought除外を明示的にOFFにする
 DRY_RUN="$DRY_RUN" \
 AUTO_ROSTER_3D=0 \
 SEGMENT_KEY="$SEGMENT_KEY_FIXED" \
 MESSAGE_FILE="$MESSAGE_FILE_FIXED" \
 EXCLUDE_SENT_KEYS="$SEGMENT_KEY_FIXED" \
 ONCE_ONLY=0 \
-BUYER_KIND=all \ 
-BUYER_DAYS=9999 \
+\
+# ▼購入者除外をOFF（send_blast_once.js 側がどの変数名でも拾えるように安全に複数指定）
+EXCLUDE_BOUGHT=0 \
+SKIP_BOUGHT=0 \
+EXCLUDE_HAS_ORDERED=0 \
+SKIP_HAS_ORDERED=0 \
+INCLUDE_BOUGHT=1 \
+INCLUDE_HAS_ORDERED=1 \
+\
 LIMIT="$LIMIT" \
 BATCH_SIZE="$BATCH_SIZE" \
 SLEEP_MS="$SLEEP_MS" \

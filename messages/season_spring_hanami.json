@@ -1,0 +1,99 @@
+[
+  {
+    "type": "flex",
+    "altText": "【磯屋】お花見のおともに、えびせんべいはいかがですか",
+    "contents": {
+      "type": "bubble",
+      "hero": {
+        "type": "image",
+        "url": "https://line-render-app-1.onrender.com/uploads/isoya_4grid_square_nodistort.png",
+        "size": "full",
+        "aspectRatio": "1:1",
+        "aspectMode": "cover"
+      },
+      "body": {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "md",
+        "contents": [
+          {
+            "type": "text",
+            "text": "手造りえびせんべい 磯屋",
+            "weight": "bold",
+            "size": "lg",
+            "wrap": true
+          },
+          {
+            "type": "text",
+            "text": "春のご挨拶",
+            "size": "sm",
+            "color": "#6b7280",
+            "wrap": true
+          },
+          { "type": "separator" },
+          {
+            "type": "text",
+            "text": "桜の季節になりました。",
+            "wrap": true
+          },
+          {
+            "type": "text",
+            "text": "お花見のおともや、\n集まりのちょっとした差し入れに\nえびせんべいはいかがでしょうか。",
+            "size": "sm",
+            "wrap": true
+          },
+          {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "xs",
+            "margin": "md",
+            "contents": [
+              {
+                "type": "text",
+                "text": "お花見に向いている理由",
+                "size": "xs",
+                "color": "#6b7280"
+              },
+              {
+                "type": "text",
+                "text": "・分けやすい\n・手が汚れにくい\n・軽くつまめる",
+                "size": "sm",
+                "wrap": true
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "text": "気取らず持っていけるので、\n毎年この時期に選ばれています。",
+            "size": "sm",
+            "wrap": true
+          }
+        ]
+      },
+      "footer": {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "sm",
+        "contents": [
+          {
+            "type": "button",
+            "style": "primary",
+            "color": "#0b3a53",
+            "action": {
+              "type": "uri",
+              "label": "商品を見る",
+              "uri": "https://liff.line.me/2008406620-8CWfgEKh"
+            }
+          },
+          {
+            "type": "text",
+            "text": "※春の季節のご案内としてお届けしています。",
+            "size": "xxs",
+            "color": "#9ca3af",
+            "wrap": true
+          }
+        ]
+      }
+    }
+  }
+]

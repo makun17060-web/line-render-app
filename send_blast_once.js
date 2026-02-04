@@ -10,6 +10,10 @@
 //   ONCE_ONLY=0/1              (※従来: 全キー横断の永久除外。あなたの運用では基本0推奨)
 //   EXCLUDE_SENT_KEYS="k1,k2"  (✅ これらのキーで sent_at があるユーザーを除外)
 //
+// ✅ お花見など「例外運用」用スイッチ（sh/コマンドで渡す）
+//   SKIP_GLOBAL_EVER_SENT=1    (✅ ONCE_ONLY=1 でも ever_sent(全キー横断)除外をスキップ)
+//   INCLUDE_BOUGHT=1           (✅ FUKUBAKO_ID 購入済み除外をしない＝購入者も含める)
+//
 // ✅ 購入者配信（名簿不要：ordersから抽出して送信台帳(segment_blast)だけ残す）
 //   BUYER_KIND=card|cod|pickup|all
 //   BUYER_DAYS=30     (任意) 直近N日だけに絞る。0/未指定なら無制限
@@ -72,7 +76,13 @@ const EXCLUDE_SENT_KEYS = (process.env.EXCLUDE_SENT_KEYS || "")
 // ✅ 自分テスト用：強制ターゲット
 const FORCE_USER_ID = (process.env.FORCE_USER_ID || "").trim();
 
-// ✅【今回追加】KEYごとに「global除外(ever_sent all keys)」をスキップしたい場合
+// ✅【追加】sh から動的に切り替えるスイッチ
+// - SKIP_GLOBAL_EVER_SENT=1 : ONCE_ONLY=1でも ever_sent(全キー) 除外をスキップ
+// - INCLUDE_BOUGHT=1        : FUKUBAKO_ID 購入済み除外をしない（購入者も含める）
+const SKIP_GLOBAL_EVER_SENT = String(process.env.SKIP_GLOBAL_EVER_SENT || "").trim() === "1";
+const INCLUDE_BOUGHT        = String(process.env.INCLUDE_BOUGHT || "").trim() === "1";
+
+// ✅【従来互換】KEYごとに「global除外(ever_sent all keys)」をスキップしたい場合
 // - buyers_thanks_3d（購入後お礼）は「過去に何か送っていてもOK」なので global除外は無効化が自然
 // - それ以外は従来どおり安全装置としてON
 const SKIP_GLOBAL_EVER_SENT_KEYS = new Set([
@@ -368,9 +378,14 @@ async function ensureBlastRows(segmentKey, userIds) {
 
   console.log(`BUYER_KIND=${BUYER_KIND || "(none)"} BUYER_DAYS=${BUYER_DAYS || "(none)"}`);
 
-  // ✅ 今回追加：このキーでは global ever_sent 除外をスキップするか
-  const skipGlobalEverSent = SKIP_GLOBAL_EVER_SENT_KEYS.has(SEGMENT_KEY);
+  // ✅ 今回追加：この実行では global ever_sent 除外をスキップするか
+  // - env(SKIP_GLOBAL_EVER_SENT=1) を最優先
+  // - それ以外は従来のキー固定（互換）で判定
+  const skipGlobalEverSent = SKIP_GLOBAL_EVER_SENT || SKIP_GLOBAL_EVER_SENT_KEYS.has(SEGMENT_KEY);
   console.log(`SKIP_GLOBAL_EVER_SENT=${skipGlobalEverSent ? "1" : "0"} (keys=${[...SKIP_GLOBAL_EVER_SENT_KEYS].join(",")})`);
+
+  // ✅ これもログで見えるように（お花見など例外運用の確認）
+  console.log(`INCLUDE_BOUGHT=${INCLUDE_BOUGHT ? "1" : "0"}`);
 
   console.log(`messages_count=${messages.length}, first_type=${messages[0]?.type}`);
 
@@ -444,7 +459,7 @@ async function ensureBlastRows(segmentKey, userIds) {
   }
 
   // 3) 一生1回のみ：過去に “どのキーでも” 送った user を取得（永久除外）
-  // ✅ 今回追加：buyers_thanks_3d のような「購入後お礼」は global 除外をスキップ
+  // ✅ 追加：env/キーで global 除外をスキップ可能
   let everSentSet = new Set();
   if (ONCE_ONLY && !skipGlobalEverSent) {
     everSentSet = await loadEverSentSetAll();
@@ -473,7 +488,8 @@ async function ensureBlastRows(segmentKey, userIds) {
   let ids = allTargets;
 
   // 未購入配信（従来）だけ：FUKUBAKO_ID 購入済み除外
-  if (!BUYER_KIND) {
+  // ✅ 追加：INCLUDE_BOUGHT=1 のときは購入者も含めるので除外しない
+  if (!BUYER_KIND && !INCLUDE_BOUGHT) {
     const boughtSet = globalThis.__boughtSet || new Set();
     ids = ids.filter(uid => !boughtSet.has(uid));
   }
@@ -487,7 +503,7 @@ async function ensureBlastRows(segmentKey, userIds) {
   const valid = ids.filter(uid => isValidLineUserId(String(uid).trim()));
 
   console.log(
-    `eligible_targets (${BUYER_KIND ? "buyer_mode" : "exclude bought"}${EXCLUDE_SENT_KEYS.length ? " + sent(keys)" : ""}${ONCE_ONLY ? (skipGlobalEverSent ? " + ever_sent(global skipped)" : " + ever_sent(global)") : ""})=${ids.length}`
+    `eligible_targets (${BUYER_KIND ? "buyer_mode" : (INCLUDE_BOUGHT ? "include bought" : "exclude bought")}${EXCLUDE_SENT_KEYS.length ? " + sent(keys)" : ""}${ONCE_ONLY ? (skipGlobalEverSent ? " + ever_sent(global skipped)" : " + ever_sent(global)") : ""})=${ids.length}`
   );
   console.log(`valid_targets=${valid.length} invalid_targets=${invalid.length}`);
   console.log("would_send_batches=" + Math.ceil(valid.length / 500) + " (batch_size=500)");

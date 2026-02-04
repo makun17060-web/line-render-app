@@ -1,143 +1,39 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="ja">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-  <title>ご注文内容の最終確認・お支払い｜磯屋</title>
-
+  <title>ご注文内容の最終確認お支払い｜磯屋</title>
   <style>
     :root{
-      --bg:#f6f7f9;
-      --card:#ffffff;
-      --text:#111827;
-      --muted:#6b7280;
-      --line:#e5e7eb;
-      --accent:#0b3a53;
-      --danger:#b91c1c;
-      --radius:14px;
-      --shadow:0 1px 3px rgba(0,0,0,.06);
+      --bg:#f6f7f9;--card:#fff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;
+      --accent:#0b3a53;--radius:14px;--shadow:0 1px 3px rgba(0,0,0,.06);
     }
     *{box-sizing:border-box}
-    body{
-      margin:0;
-      font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
-      background:var(--bg);
-      color:var(--text);
-    }
-    .wrap{
-      max-width:720px;
-      margin:0 auto;
-      padding:14px;
-    }
-    .card{
-      background:var(--card);
-      border:1px solid var(--line);
-      border-radius:var(--radius);
-      box-shadow:var(--shadow);
-      padding:14px;
-      margin-bottom:14px;
-    }
-    .title{
-      font-size:18px;
-      font-weight:800;
-      margin-bottom:6px;
-    }
-    .shop{
-      font-size:13px;
-      color:var(--muted);
-    }
-    .row{
-      display:flex;
-      justify-content:space-between;
-      align-items:flex-end;
-      gap:12px;
-    }
-    .amount{
-      font-size:26px;
-      font-weight:900;
-    }
-    .badge{
-      font-size:12px;
-      color:var(--muted);
-      border:1px solid var(--line);
-      border-radius:999px;
-      padding:6px 10px;
-      white-space:nowrap;
-    }
-    .hr{
-      height:1px;
-      background:var(--line);
-      margin:10px 0;
-    }
-    .list{
-      font-size:14px;
-      line-height:1.6;
-    }
-    .list div{
-      display:flex;
-      justify-content:space-between;
-      gap:10px;
-    }
-    .total{
-      font-weight:800;
-      font-size:16px;
-    }
-    .section-title{
-      font-size:16px;
-      font-weight:800;
-      margin-bottom:8px;
-    }
-    #card-element{
-      padding:12px;
-      border:1px solid var(--line);
-      border-radius:12px;
-      background:#fff;
-      color:var(--muted);
-      font-size:13px;
-    }
-    .note{
-      font-size:12px;
-      color:var(--muted);
-      line-height:1.6;
-      margin-top:10px;
-    }
-    .important{
-      font-size:13px;
-      color:#374151;
-      background:#f9fafb;
-      border:1px solid var(--line);
-      border-radius:10px;
-      padding:10px;
-      margin-top:10px;
-      line-height:1.6;
-    }
-    .btn{
-      width:100%;
-      border:none;
-      border-radius:12px;
-      padding:14px;
-      background:var(--accent);
-      color:#fff;
-      font-size:16px;
-      font-weight:800;
-      margin-top:14px;
-    }
-    .btn:disabled{opacity:.6}
-    .sub{
-      font-size:12px;
-      color:var(--muted);
-      margin-top:10px;
-      text-align:center;
-      line-height:1.5;
-    }
+    body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)}
+    .wrap{max-width:720px;margin:0 auto;padding:14px}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;margin-bottom:14px}
+    .title{font-size:18px;font-weight:800;margin:0 0 6px}
+    .shop{font-size:13px;color:var(--muted)}
+    .row{display:flex;justify-content:space-between;align-items:flex-end;gap:12px}
+    .amount{font-size:26px;font-weight:900}
+    .badge{font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:6px 10px;white-space:nowrap}
+    .hr{height:1px;background:var(--line);margin:10px 0}
+    .list{font-size:14px;line-height:1.6}
+    .list div{display:flex;justify-content:space-between;gap:10px}
+    .total{font-weight:800;font-size:16px}
+    .section-title{font-size:16px;font-weight:800;margin-bottom:8px}
+    #card-element{padding:12px;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--muted);font-size:13px}
+    .note{font-size:12px;color:var(--muted);line-height:1.6;margin-top:10px}
+    .important{font-size:13px;color:#374151;background:#f9fafb;border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:10px;line-height:1.6}
+    .btn{width:100%;border:0;border-radius:12px;padding:14px;background:var(--accent);color:#fff;font-size:16px;font-weight:800;margin-top:14px}
+    .sub{font-size:12px;color:var(--muted);margin-top:10px;text-align:center;line-height:1.5}
   </style>
 </head>
-
 <body>
 <div class="wrap">
-
   <div class="card">
-    <div class="title">ご注文内容の最終確認・お支払い</div>
+    <div class="title">ご注文内容の最終確認お支払い</div>
     <div class="shop">手造りえびせんべい 磯屋（公式）</div>
   </div>
 
@@ -154,4 +50,43 @@
 
     <div class="list" id="items">
       <div><span>磯屋 初めてセット</span><span>¥1,280</span></div>
-      <div><span>送料</span><span>¥0</span></
+      <div><span>送料</span><span>¥0</span></div>
+    </div>
+
+    <div class="hr"></div>
+
+    <div class="list total">
+      <div><span>合計</span><span id="totalText">¥1,280</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">クレジットカード情報入力</div>
+    <div id="card-element">（ここにカード入力欄が表示されます）</div>
+
+    <div class="note">
+      🔒 安全なお支払いについて<br>
+      カード情報は当店には保存されません<br>
+      国際基準のセキュリティで暗号化されています
+    </div>
+
+    <div class="important">
+       カード会社によっては、このあと本人認証画面が表示されます。<br>
+      認証後、この画面に戻って「お支払い完了」と表示されます。
+    </div>
+
+    <button class="btn" id="payBtn">¥1,280 を支払って注文を確定する</button>
+
+    <div class="sub">
+      クレジットカードが不安な方は<br>
+      代引き店頭受取もご利用いただけます
+    </div>
+  </div>
+</div>
+<script>
+document.getElementById("payBtn").addEventListener("click", ()=>{
+  alert("見た目確認OK。次はStripe Elementsを接続します。");
+});
+</script>
+</body>
+</html>

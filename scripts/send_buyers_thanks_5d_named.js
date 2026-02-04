@@ -7,8 +7,17 @@
  * - X〜Y日前（既定: 6〜5日）
  * - orders.notified_user_at / orders.notified_kind で二重送信防止（このキーのみ）
  *
- * ✅ 運用
- * - “別キーで既に送った”人は、後述の「印付け」(mark)で除外する
+ * ✅ 追加（今回）
+ * - FORCE_USER_ID 対応（自分の user_id を固定できる）
+ * - 安全ロック：SAFE_USER_ID を設定したら「その user_id にしか送らない」
+ *   - DRY_RUN=0 でも SAFE_USER_ID 以外は絶対送らない（事故防止）
+ *
+ * ✅ 運用メモ（おすすめ）
+ * - force専用サービスには ENV でこれだけ固定：
+ *     DRY_RUN=1
+ *     FORCE_USER_ID=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx（自分）
+ *     SAFE_USER_ID=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx（自分）  ←最重要
+ * - 送信したい瞬間だけ DRY_RUN=0 にして実行→終わったら戻す
  */
 
 "use strict";
@@ -33,7 +42,12 @@ const WINDOW_END_DAYS = Number(process.env.WINDOW_END_DAYS || 5);
 const LIMIT = Number(process.env.LIMIT || 2000);
 const SLEEP_MS = Number(process.env.SLEEP_MS || 200);
 
-const FORCE_ORDER_ID = (process.env.FORCE_ORDER_ID || "").trim();
+// force
+const FORCE_ORDER_ID = (process.env.FORCE_ORDER_ID || "").trim(); // orders.id（数値）
+const FORCE_USER_ID = (process.env.FORCE_USER_ID || "").trim();   // LINE user_id（U...）
+
+// safety lock（これを入れたら、その user_id にしか送らない）
+const SAFE_USER_ID = (process.env.SAFE_USER_ID || "").trim();     // LINE user_id（U...）
 
 if (!TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
 if (!DBURL) throw new Error("DATABASE_URL is required");
@@ -136,6 +150,7 @@ async function loadTargetOrders({ startDays, endDays, limit }) {
   return rows;
 }
 
+/** 注文ID（orders.id）で1件 */
 async function loadSingleOrder(orderId) {
   const sql = `
     WITH latest_addr AS (
@@ -164,6 +179,40 @@ async function loadSingleOrder(orderId) {
   return rows;
 }
 
+/** user_id（LINEのU...）で「その人の最新注文1件」 */
+async function loadLatestOrderByUser(userId) {
+  const sql = `
+    WITH latest_addr AS (
+      SELECT DISTINCT ON (user_id)
+        user_id, name
+      FROM addresses
+      ORDER BY user_id, created_at DESC
+    )
+    SELECT
+      o.id AS order_id,
+      o.user_id,
+      COALESCE(
+        NULLIF(o.name, ''),
+        NULLIF(a.name, ''),
+        NULLIF(u.display_name, ''),
+        'お客様'
+      ) AS resolved_name,
+      o.created_at,
+      o.notified_user_at,
+      o.notified_kind
+    FROM orders o
+    LEFT JOIN latest_addr a ON a.user_id=o.user_id
+    LEFT JOIN users u ON u.user_id=o.user_id
+    WHERE o.user_id = $1
+      AND o.user_id <> ''
+      AND o.status IN ('paid','confirmed','pickup')
+    ORDER BY o.created_at DESC
+    LIMIT 1
+  `;
+  const { rows } = await pool.query(sql, [userId]);
+  return rows;
+}
+
 async function markOrderSent(orderId) {
   await pool.query(
     `
@@ -176,18 +225,44 @@ async function markOrderSent(orderId) {
   );
 }
 
+/** 安全ロック：SAFE_USER_ID が設定されていたら、その user_id 以外は「絶対送らない」 */
+function isAllowedBySafetyLock(targetUserId) {
+  if (!SAFE_USER_ID) return true; // ロック無し
+  return String(targetUserId || "").trim() === SAFE_USER_ID;
+}
+
 (async () => {
   console.log("NOTIFIED_KIND=", NOTIFIED_KIND);
   console.log("DRY_RUN=", DRY_RUN ? "1" : "0");
   console.log("DEDUP_BY_USER=", DEDUP_BY_USER ? "1" : "0");
-  console.log("WINDOW_START_DAYS=", WINDOW_START_DAYS, "WINDOW_END_DAYS=", WINDOW_END_DAYS);
-  console.log("MESSAGE_FILE(resolved)=", path.resolve(process.cwd(), MESSAGE_FILE));
+  console.log(
+    "WINDOW_START_DAYS=",
+    WINDOW_START_DAYS,
+    "WINDOW_END_DAYS=",
+    WINDOW_END_DAYS
+  );
+  console.log(
+    "MESSAGE_FILE(resolved)=",
+    path.resolve(process.cwd(), MESSAGE_FILE)
+  );
+
+  console.log("FORCE_ORDER_ID=", FORCE_ORDER_ID ? FORCE_ORDER_ID : "(none)");
+  console.log("FORCE_USER_ID=", FORCE_USER_ID ? FORCE_USER_ID : "(none)");
+  console.log("SAFE_USER_ID=", SAFE_USER_ID ? SAFE_USER_ID : "(none)");
 
   const template = loadMessageTemplate();
 
+  // ---- force 判定（優先順位：ORDER_ID > USER_ID > 通常） ----
   let targets = [];
   if (FORCE_ORDER_ID) {
+    console.log("=== FORCE MODE (ORDER) ===");
     targets = await loadSingleOrder(FORCE_ORDER_ID);
+  } else if (FORCE_USER_ID) {
+    console.log("=== FORCE MODE (USER) ===");
+    if (!isValidLineUserId(FORCE_USER_ID)) {
+      throw new Error(`FORCE_USER_ID is invalid: ${FORCE_USER_ID}`);
+    }
+    targets = await loadLatestOrderByUser(FORCE_USER_ID);
   } else {
     targets = await loadTargetOrders({
       startDays: WINDOW_START_DAYS,
@@ -214,19 +289,34 @@ async function markOrderSent(orderId) {
   const sentUserIds = new Set();
 
   for (const o of targets) {
+    if (!o) continue;
+
     if (sentOrderIds.has(o.order_id)) continue;
     sentOrderIds.add(o.order_id);
 
     // 保険
     if (DEDUP_BY_USER) {
       if (sentUserIds.has(o.user_id)) {
-        console.log(`SKIP duplicate user_id=${o.user_id} (order_id=${o.order_id})`);
+        console.log(
+          `SKIP duplicate user_id=${o.user_id} (order_id=${o.order_id})`
+        );
         continue;
       }
       sentUserIds.add(o.user_id);
     }
 
-    if (!isValidLineUserId(o.user_id)) continue;
+    if (!isValidLineUserId(o.user_id)) {
+      console.log(`SKIP invalid LINE user_id=${o.user_id} (order_id=${o.order_id})`);
+      continue;
+    }
+
+    // ✅ 安全ロック：SAFE_USER_ID があるなら自分以外は送らない
+    if (!isAllowedBySafetyLock(o.user_id)) {
+      console.log(
+        `[SAFETY_LOCK] BLOCKED user_id=${o.user_id} order_id=${o.order_id} (allowed only SAFE_USER_ID=${SAFE_USER_ID})`
+      );
+      continue;
+    }
 
     console.log(`[WILL_SEND] user_id=${o.user_id} order_id=${o.order_id}`);
 

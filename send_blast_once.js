@@ -10,6 +10,12 @@
 //   ONCE_ONLY=0/1              (※従来: 全キー横断の永久除外。あなたの運用では基本0推奨)
 //   EXCLUDE_SENT_KEYS="k1,k2"  (✅ これらのキーで sent_at があるユーザーを除外)
 //
+// ✅ 朝/昼/夜 の時間帯ブロック配信（sh/コマンドで渡す）
+//   SLOT=morning|day|night
+//   - JST(Asia/Tokyo) 기준で判定
+//   - ref_ts は opened_at（liff_open_logs）優先、なければ followed_at（follow_events）
+//   - morning: 6-10, day: 11-16, night: その他(17-23,0-5)
+//
 // ✅ お花見など「例外運用」用スイッチ（sh/コマンドで渡す）
 //   SKIP_GLOBAL_EVER_SENT=1    (✅ ONCE_ONLY=1 でも ever_sent(全キー横断)除外をスキップ)
 //   INCLUDE_BOUGHT=1           (✅ FUKUBAKO_ID 購入済み除外をしない＝購入者も含める)
@@ -18,25 +24,14 @@
 //   BUYER_KIND=card|cod|pickup|all
 //   BUYER_DAYS=30     (任意) 直近N日だけに絞る。0/未指定なら無制限
 //
-//   - card   : status='paid'      AND payment_method IN ('card','stripe')
-//   - cod    : status='confirmed' AND payment_method='cod'
-//   - pickup : status='pickup'    AND payment_method='pickup_cash'
-//   - all    : status IN ('paid','confirmed','pickup') かつ上記のいずれか
-//
 // ✅ 自分テスト用（強制1ユーザー送信）
 //   FORCE_USER_ID=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-//   - 名簿 / 購入済み / 除外キー / ever_sent / sent_at などのフィルタを無視して、その userId にだけ送る
-//   - 送信結果は segment_blast に記録（存在しなければ作る）
 //
 // Requires: DATABASE_URL, LINE_CHANNEL_ACCESS_TOKEN
 //
 // MESSAGE_FILE の形式：
 //   - JSON配列: [ {message}, {message} ... ]
 //   - または: { "messages": [ ... ] }
-//
-// 例:
-//   MESSAGE_FILE=./messages/text.json
-//   MESSAGE_FILE=./messages/flex.json
 
 "use strict";
 
@@ -54,6 +49,9 @@ const DRY_RUN       = String(process.env.DRY_RUN || "").trim() === "1";
 const AUTO_ROSTER_3D  = String(process.env.AUTO_ROSTER_3D || "").trim() === "1";
 const FIRST_SEEN_DAYS = Number(process.env.FIRST_SEEN_DAYS || 3);
 
+// ✅ 朝/昼/夜ブロック（指定なし/空なら全員）
+const SLOT = (process.env.SLOT || "").trim(); // "morning" | "day" | "night" | ""
+
 // ✅ 購入者直抽出モード（名簿不要）
 const BUYER_KIND = (process.env.BUYER_KIND || "").trim(); // card | cod | pickup | all | ""
 const BUYER_DAYS = Number(process.env.BUYER_DAYS || 0);   // 0なら絞らない
@@ -63,8 +61,6 @@ const FUKUBAKO_ID   = (process.env.FUKUBAKO_ID || "fukubako-2026").trim();
 const FUKUBAKO_URL  = (process.env.FUKUBAKO_URL || "").trim();
 
 // ✅ 一生1回のみ（全キー横断）
-// - デフォルトON（ONCE_ONLY=1）
-// ※あなたの運用（未購入は何度でも初めてセット）なら基本OFF推奨：ONCE_ONLY=0
 const ONCE_ONLY = String(process.env.ONCE_ONLY || "1").trim() !== "0";
 
 // ✅ キー指定除外（このキー送信済みユーザーを除外）
@@ -77,14 +73,10 @@ const EXCLUDE_SENT_KEYS = (process.env.EXCLUDE_SENT_KEYS || "")
 const FORCE_USER_ID = (process.env.FORCE_USER_ID || "").trim();
 
 // ✅【追加】sh から動的に切り替えるスイッチ
-// - SKIP_GLOBAL_EVER_SENT=1 : ONCE_ONLY=1でも ever_sent(全キー) 除外をスキップ
-// - INCLUDE_BOUGHT=1        : FUKUBAKO_ID 購入済み除外をしない（購入者も含める）
 const SKIP_GLOBAL_EVER_SENT = String(process.env.SKIP_GLOBAL_EVER_SENT || "").trim() === "1";
 const INCLUDE_BOUGHT        = String(process.env.INCLUDE_BOUGHT || "").trim() === "1";
 
 // ✅【従来互換】KEYごとに「global除外(ever_sent all keys)」をスキップしたい場合
-// - buyers_thanks_3d（購入後お礼）は「過去に何か送っていてもOK」なので global除外は無効化が自然
-// - それ以外は従来どおり安全装置としてON
 const SKIP_GLOBAL_EVER_SENT_KEYS = new Set([
   "buyers_thanks_3d",
 ]);
@@ -182,9 +174,6 @@ ${FUKUBAKO_URL || "（URL未設定：FUKUBAKO_URLを指定してください）"
 }
 
 // ✅ 購入済み判定（orders.items が jsonb）
-// - items が配列: [{id, qty, ...}, ...] でも
-// - items がオブジェクト: {items:[{id..}], ...} でも
-// 両方拾えるようにする
 function buildAlreadyBoughtSQL() {
   return `
     SELECT DISTINCT o.user_id
@@ -378,9 +367,10 @@ async function ensureBlastRows(segmentKey, userIds) {
 
   console.log(`BUYER_KIND=${BUYER_KIND || "(none)"} BUYER_DAYS=${BUYER_DAYS || "(none)"}`);
 
+  // ✅ 今回追加：SLOTログ
+  console.log(`SLOT=${SLOT || "(none)"}`);
+
   // ✅ 今回追加：この実行では global ever_sent 除外をスキップするか
-  // - env(SKIP_GLOBAL_EVER_SENT=1) を最優先
-  // - それ以外は従来のキー固定（互換）で判定
   const skipGlobalEverSent = SKIP_GLOBAL_EVER_SENT || SKIP_GLOBAL_EVER_SENT_KEYS.has(SEGMENT_KEY);
   console.log(`SKIP_GLOBAL_EVER_SENT=${skipGlobalEverSent ? "1" : "0"} (keys=${[...SKIP_GLOBAL_EVER_SENT_KEYS].join(",")})`);
 
@@ -418,7 +408,7 @@ async function ensureBlastRows(segmentKey, userIds) {
     return;
   }
 
-  // 0) AUTO_ROSTER（N日経過を名簿へ）※ BUYER_KIND 時でも動かしてOK（運用が混ざるなら）
+  // 0) AUTO_ROSTER（N日経過を名簿へ）※ BUYER_KIND 時でも動かしてOK
   if (AUTO_ROSTER_3D) {
     const cand = await pool.query(
       `SELECT COUNT(*)::int AS n FROM segment_users su WHERE su.first_seen <= NOW() - ($1::text || ' days')::interval`,
@@ -448,7 +438,7 @@ async function ensureBlastRows(segmentKey, userIds) {
     console.log(`already_bought_users=${boughtSet.size}`);
 
     // 後段で使うので閉じない
-    globalThis.__boughtSet = boughtSet; // 既存構造に合わせて苦肉の策（下で参照）
+    globalThis.__boughtSet = boughtSet;
   }
 
   // 2) EXCLUDE_SENT_KEYS：指定キーで送信済みを除外
@@ -459,7 +449,6 @@ async function ensureBlastRows(segmentKey, userIds) {
   }
 
   // 3) 一生1回のみ：過去に “どのキーでも” 送った user を取得（永久除外）
-  // ✅ 追加：env/キーで global 除外をスキップ可能
   let everSentSet = new Set();
   if (ONCE_ONLY && !skipGlobalEverSent) {
     everSentSet = await loadEverSentSetAll();
@@ -469,17 +458,46 @@ async function ensureBlastRows(segmentKey, userIds) {
   }
 
   // 4) segment_blast から「未送信」を取得（最大20000）
-  const { rows } = await pool.query(
-    `
+  // ✅ 変更：SLOTが指定されていれば DB側で朝/昼/夜に絞り込む（JST判定）
+  const slotParam = (SLOT === "morning" || SLOT === "day" || SLOT === "night") ? SLOT : null;
+
+  const unsentSql = `
+    WITH base AS (
+      SELECT sb.user_id
+      FROM segment_blast sb
+      WHERE sb.segment_key = $1
+        AND sb.sent_at IS NULL
+        AND sb.user_id IS NOT NULL
+        AND sb.user_id <> ''
+    ),
+    ref AS (
+      SELECT
+        b.user_id,
+        COALESCE(
+          (SELECT MAX(opened_at)   FROM public.liff_open_logs WHERE user_id=b.user_id),
+          (SELECT MAX(followed_at) FROM public.follow_events  WHERE user_id=b.user_id)
+        ) AS ref_ts
+      FROM base b
+    ),
+    slotted AS (
+      SELECT
+        user_id,
+        CASE
+          WHEN ref_ts IS NULL THEN 'night'
+          WHEN EXTRACT(HOUR FROM (ref_ts AT TIME ZONE 'Asia/Tokyo')) BETWEEN 6 AND 10 THEN 'morning'
+          WHEN EXTRACT(HOUR FROM (ref_ts AT TIME ZONE 'Asia/Tokyo')) BETWEEN 11 AND 16 THEN 'day'
+          ELSE 'night'
+        END AS slot
+      FROM ref
+    )
     SELECT user_id
-      FROM segment_blast
-     WHERE segment_key = $1
-       AND sent_at IS NULL
-     ORDER BY user_id
-     LIMIT 20000
-    `,
-    [SEGMENT_KEY]
-  );
+    FROM slotted
+    WHERE ($2::text IS NULL OR slot = $2::text)
+    ORDER BY user_id
+    LIMIT 20000
+  `;
+
+  const { rows } = await pool.query(unsentSql, [SEGMENT_KEY, slotParam]);
 
   const allTargets = rows.map(r => r.user_id).filter(Boolean);
   console.log(`unsent_targets=${allTargets.length}`);
@@ -488,7 +506,6 @@ async function ensureBlastRows(segmentKey, userIds) {
   let ids = allTargets;
 
   // 未購入配信（従来）だけ：FUKUBAKO_ID 購入済み除外
-  // ✅ 追加：INCLUDE_BOUGHT=1 のときは購入者も含めるので除外しない
   if (!BUYER_KIND && !INCLUDE_BOUGHT) {
     const boughtSet = globalThis.__boughtSet || new Set();
     ids = ids.filter(uid => !boughtSet.has(uid));
@@ -503,7 +520,7 @@ async function ensureBlastRows(segmentKey, userIds) {
   const valid = ids.filter(uid => isValidLineUserId(String(uid).trim()));
 
   console.log(
-    `eligible_targets (${BUYER_KIND ? "buyer_mode" : (INCLUDE_BOUGHT ? "include bought" : "exclude bought")}${EXCLUDE_SENT_KEYS.length ? " + sent(keys)" : ""}${ONCE_ONLY ? (skipGlobalEverSent ? " + ever_sent(global skipped)" : " + ever_sent(global)") : ""})=${ids.length}`
+    `eligible_targets (${BUYER_KIND ? "buyer_mode" : (INCLUDE_BOUGHT ? "include bought" : "exclude bought")}${slotParam ? ` + slot(${slotParam})` : ""}${EXCLUDE_SENT_KEYS.length ? " + sent(keys)" : ""}${ONCE_ONLY ? (skipGlobalEverSent ? " + ever_sent(global skipped)" : " + ever_sent(global)") : ""})=${ids.length}`
   );
   console.log(`valid_targets=${valid.length} invalid_targets=${invalid.length}`);
   console.log("would_send_batches=" + Math.ceil(valid.length / 500) + " (batch_size=500)");

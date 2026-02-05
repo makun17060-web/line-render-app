@@ -207,78 +207,56 @@
   "use strict";
 
   const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
-  const KEY_UID = "isoya_userId";
+  const KEY_UID ="isoya_userId";
   const KEY_LAST_QUOTE = "isoya_last_quote";
 
-  const qs = new URLSearchParams(location.search);
-  const mode = (qs.get("mode") || "").trim();
+  const status=document.getElementById("status");
+  const subtotalEl=document.getElementById("subtotal");
+  const shippingEl=document.getElementById("shipping");
+  const totalCardEl=document.getElementById("totalCard");
+  const submit=document.getElementById("submit");
+  const back=document.getElementById("back");
 
-  // 「trial」だけをお試し扱いにする（fukubako を混ぜると誤表示しやすいので分離）
-  const isTrial = (mode === "trial");
-  const trialNotice = document.getElementById("trialNotice");
-  const pageTitle = document.getElementById("pageTitle");
-  if(isTrial){
-    pageTitle.textContent = "お試しセット｜注文内容の確認";
-    document.title = pageTitle.textContent;
-    trialNotice.style.display = "block";
+  const shipCard=document.getElementById("shipCard");
+  const shipNameEl=document.getElementById("shipName");
+  const shipAddrEl=document.getElementById("shipAddr");
+  const shipTelEl=document.getElementById("shipTel");
+
+  // ✅ どこで止まったか出す
+  function step(msg){
+    status.classList.remove("err");
+    status.classList.add("muted");
+    status.textContent = msg;
   }
-
-  const KEY_CART =
-    (mode === "original") ? "isoya_cart_original"
-  : (mode === "fukubako") ? "isoya_cart_fukubako"
-  : "isoya_cart";
-
-  const RETURN_TO_THIS =
-    (mode === "fukubako") ? "/confirm.html?mode=fukubako"
-  : (mode === "original") ? "/confirm-original.html"
-  : "/confirm.html";
-
-  // ✅ ここが重要：confirm → confirm_card（最終確認）→ pay-card（カード入力）
-  const NEXT_CONFIRM_CARD =
-    (mode === "fukubako") ? "/confirm_card.html?mode=fukubako"
-  : (mode === "original") ? "/confirm_card.html?mode=original"
-  : "/confirm_card.html";
-
-  const NEXT_CONFIRM_COD =
-    (mode === "fukubako") ? "/confirm_cod.html?mode=fukubako"
-  : (mode === "original") ? "/confirm_cod.html?mode=original"
-  : "/confirm_cod.html";
-
-  const status = document.getElementById("status");
-  const addrNameEl = document.getElementById("addrName");
-  const addrTextEl = document.getElementById("addrText");
-  const itemsEl = document.getElementById("items");
-  const subtotalEl = document.getElementById("subtotal");
-  const shippingEl = document.getElementById("shipping");
-  const totalCardEl = document.getElementById("totalCard");
-  const totalCodEl = document.getElementById("totalCod");
-  const nextBtn = document.getElementById("nextBtn");
-  const backBtn = document.getElementById("backBtn");
-
-  const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
-  const loadJson = k => { try { return JSON.parse(localStorage.getItem(k)||""); } catch { return null; } };
-
-  let selectedPayMethod = "card";
-
-  document.querySelectorAll(".payBtn").forEach(btn=>{
-    btn.addEventListener("click", ()=>{
-      document.querySelectorAll(".payBtn").forEach(b=>b.classList.remove("active"));
-      btn.classList.add("active");
-      selectedPayMethod = btn.dataset.method || "card";
-    });
-  });
-
   function showErr(title, err){
+    const msg = (err && err.message) ? err.message : String(err);
     status.classList.remove("muted");
     status.classList.add("err");
-    status.textContent = title + "\n" + (err?.message || String(err||""));
+    status.textContent = `${title}\n${msg}`;
   }
 
-  async function fetchJson(url, options){
-    const r = await fetch(url, { cache:"no-store", ...(options||{}) });
+  // ✅ JS構文エラー/例外も拾って画面に出す
+  window.addEventListener("error", (e)=>{
+    showErr("JSエラー（window.error）", e?.error || e?.message || e);
+  });
+  window.addEventListener("unhandledrejection", (e)=>{
+    showErr("JSエラー（unhandledrejection）", e?.reason || e);
+  });
+
+  const qs = new URLSearchParams(location.search);
+  const mode = (qs.get("mode")||"").trim();
+
+  const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
+
+  function loadJson(k){
+    try{ return JSON.parse(localStorage.getItem(k)||""); }catch{ return null; }
+  }
+
+  async function fetchJson(url){
+    const r = await fetch(url, { cache: "no-store" });
     const text = await r.text();
     let d = null;
-    try { d = JSON.parse(text); } catch { d = null; }
+    try { d = JSON.parse(text); } catch { /* ignore */ }
     if(!r.ok){
       const detail = d?.error || d?.message || text || ("HTTP " + r.status);
       throw new Error(`URL: ${url}\nHTTP ${r.status}\n${detail}`);
@@ -286,155 +264,154 @@
     return d ?? {};
   }
 
-  // ✅ 住所の「名前」キー揺れを吸収（前に入れてたやつと同じ思想）
+  // ✅ liff.init が固まる時用：タイムアウト
+  function withTimeout(promise, ms, label){
+    return Promise.race([
+      promise,
+      new Promise((_, rej)=>setTimeout(()=>rej(new Error(`TIMEOUT ${ms}ms: ${label}`)), ms))
+    ]);
+  }
+
   function pickName(addr){
     const candidates = [
-      addr?.name,
-      addr?.full_name,
-      addr?.fullName,
-      addr?.recipient_name,
-      addr?.recipientName,
-      addr?.customer_name,
-      addr?.customerName,
-      addr?.receiver_name,
-      addr?.receiverName,
-      addr?.to_name,
-      addr?.toName,
-      addr?.addressee,
-      addr?.display_name,
-      addr?.displayName,
+      addr?.name, addr?.full_name, addr?.fullName,
+      addr?.recipient_name, addr?.recipientName,
+      addr?.customer_name, addr?.customerName,
+      addr?.receiver_name, addr?.receiverName,
+      addr?.to_name, addr?.toName,
+      addr?.addressee, addr?.display_name, addr?.displayName,
     ];
     const s = candidates.find(v => typeof v === "string" && v.trim());
     return (s || "").trim();
   }
 
-  async function ensureUser(){
-    await liff.init({ liffId: LIFF_ID_ORDER });
-    if(!liff.isLoggedIn()) throw new Error("ログインできません（LIFF）");
-    const prof = await liff.getProfile();
-    const uid = (prof?.userId || "").trim();
-    if(!uid) throw new Error("ユーザーIDが取得できません");
-    localStorage.setItem(KEY_UID, uid);
-    return uid;
+  async function getAddress(userId){
+    const d = await fetchJson(`/api/address/get?userId=${encodeURIComponent(userId)}`);
+    return d?.address || d?.addr || d?.data?.address || null;
   }
 
+  async function ensureUserSoft(){
+    const cached=(localStorage.getItem(KEY_UID)||"").trim();
+    if(cached) return cached;
+
+    step("LIFF初期化中…");
+    // liff が無いならここで即落ちる → window.error で拾える
+    await withTimeout(liff.init({ liffId: LIFF_ID_ORDER }), 8000, "liff.init");
+
+    if(!liff.isLoggedIn()) return null;
+
+    step("プロフィール取得中…");
+    const prof = await withTimeout(liff.getProfile(), 8000, "liff.getProfile");
+    const uid=(prof?.userId||"").trim();
+    if(uid) localStorage.setItem(KEY_UID, uid);
+    return uid||null;
+  }
+
+  const KEY_CART =
+    (mode === "original") ? "isoya_cart_original"
+  : (mode === "fukubako") ? "isoya_cart_fukubako"
+  : "isoya_cart";
+
+  const RETURN_CONFIRM =
+    (mode === "fukubako") ? "/confirm.html?mode=fukubako"
+  : (mode === "original") ? "/confirm-original.html"
+  : "/confirm.html";
+
   try{
-    status.textContent = "確認中…";
+    step("JS起動…");
 
-    const uid = await ensureUser();
-
-    // カート
-    const cart = loadJson(KEY_CART) || { items: [] };
-    const rawItems = Array.isArray(cart.items) ? cart.items : [];
-    const items = rawItems.filter(x => x?.id && Number(x.qty||0) > 0);
-
-    if(items.length === 0){
-      throw new Error("カートが空です。商品ページからやり直してください。");
+    // ① uid
+    step("ユーザー確認中…");
+    const uid = await ensureUserSoft();
+    if(!uid){
+      showErr("ユーザー情報が取得できません。", "LINE内（LIFF）から開き直してください。");
+      return;
     }
 
-    // 住所
-    let addrObj = null;
-    try{
-      const addrRes = await fetchJson(`/api/address/get?userId=${encodeURIComponent(uid)}`);
-      addrObj = addrRes?.address || addrRes?.addr || addrRes?.data?.address || null;
-    }catch(e){
-      // 住所が取れない場合でも、ここで止める（見積りに住所が必要なことが多い）
-      throw new Error("住所情報が取得できません。\n住所入力をやり直してください。");
+    // ② 見積（confirm.html が保存するやつ）
+    step("見積情報の読み込み…");
+    const quote = loadJson(KEY_LAST_QUOTE);
+    if(!quote){
+      showErr("見積情報がありません。", "確認画面（confirm.html）へ戻ってやり直してください。");
+      return;
     }
 
-    const name = pickName(addrObj) || "（未入力）";
-    const postal = (addrObj?.postal || "").trim();
-    const pref = (addrObj?.prefecture || "").trim();
-    const city = (addrObj?.city || "").trim();
-    const a1 = (addrObj?.address1 || "").trim();
-    const a2 = (addrObj?.address2 || "").trim();
-    const tel = (addrObj?.phone || addrObj?.tel || "").trim();
-
-    addrNameEl.textContent = name;
-
-    const addrLines = [];
-    if(postal || pref || city || a1 || a2){
-      const line1 = [postal ? ("〒"+postal) : "", [pref, city, a1].join(""), a2].filter(Boolean).join(" ").trim();
-      if(line1) addrLines.push(line1);
-    }else{
-      addrLines.push("（住所未入力）");
-    }
-    if(tel) addrLines.push("TEL: " + tel);
-    addrTextEl.textContent = addrLines.join("\n");
-
-    // 商品情報
-    const prodRes = await fetchJson("/api/products");
-    const products = Array.isArray(prodRes.products) ? prodRes.products : [];
-
-    let subtotal = 0;
-    itemsEl.innerHTML = "";
-
-    items.forEach(it=>{
-      const p = products.find(x=>x.id===it.id);
-      if(!p) return;
-      const qty = Number(it.qty||0);
-      const unit = Number(p.price||0);
-      const line = unit * qty;
-      subtotal += line;
-
-      const safeName = String(p.name || "");
-      itemsEl.innerHTML += `
-        <div class="item">
-          <div class="name">${safeName}</div>
-          <div class="price">${yen(line)}</div>
-          <div class="qty">× ${qty} 点</div>
-        </div>`;
-    });
+    const shipping = Number(quote.shippingFee ?? quote.shipping_fee ?? 0);
+    const subtotal = Number(quote.subtotal ?? 0);
+    const totalCard = subtotal + shipping;
 
     subtotalEl.textContent = yen(subtotal);
+    shippingEl.textContent = yen(shipping);
+    totalCardEl.textContent = yen(totalCard);
 
-    // 見積り（送料など）
-    const quote = await fetchJson("/api/order/quote",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ uid, checkout:{ items } })
-    });
+    // ③ 住所表示（失敗しても続行）
+    step("住所を取得中…");
+    try{
+      const addr = await getAddress(uid);
+      if(addr){
+        const name = pickName(addr);
+        const body =
+          `〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim();
+        const tel = (addr.phone || addr.tel || "").trim();
 
-    const shippingFee = Number(quote.shippingFee ?? quote.shipping_fee ?? 0);
-    shippingEl.textContent = yen(shippingFee);
+        shipCard.style.display = "block";
+        shipNameEl.textContent = name || "（未入力）";
+        shipAddrEl.textContent = body || "（住所未入力）";
+        shipTelEl.textContent  = tel ? ("TEL: " + tel) : "";
+      }else{
+        shipCard.style.display = "none";
+      }
+    }catch(e){
+      shipCard.style.display = "none";
+      // 住所が取れなくても決済準備はできるので続行
+    }
 
-    const amount_yen = subtotal + shippingFee;
-    totalCardEl.textContent = yen(amount_yen);
+    step("最終確認をお願いします。");
 
-    // 代引合計（なければ fallback）
-    const totalCod = Number(quote.totalCod ?? quote.total_cod ?? (amount_yen + Number(quote.codFee ?? 0)));
-    totalCodEl.textContent = yen(totalCod);
+    back.onclick = ()=> location.href = RETURN_CONFIRM;
 
-    // ✅ 次画面（confirm_card / confirm_cod）が参照できるよう保存
-    localStorage.setItem(KEY_LAST_QUOTE, JSON.stringify({
-      ...quote,
-      uid,
-      mode,
-      subtotal,
-      amount_yen,
-      shippingFee,
-      totalCod
-    }));
+    // ④ 次へ（ここはあなたの intent/checkout の実装に合わせる）
+    submit.onclick = async ()=> {
+      submit.disabled = true;
+      submit.textContent = "移動中…";
+      try{
+        const cart = loadJson(KEY_CART) || {items:[]};
+        const items = (cart.items||[]).filter(x=>x?.id && Number(x.qty||0)>0);
+        if(items.length===0) throw new Error("カートが空です。");
 
-    status.textContent = "内容をご確認ください。";
+        // ここは「pay-cardへ進む」なら intent版にする
+        // 現状のAPIが違うならエラーに出る（=原因特定できる）
+        const r = await fetch("/api/pay/stripe/intent",{
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ uid, checkout:{ items } })
+        });
+        const text = await r.text();
+        let d = {};
+        try{ d = JSON.parse(text); }catch{ d = {}; }
+        if(!r.ok) throw new Error(d?.error || d?.message || text || ("HTTP "+r.status));
+        if(!d?.clientSecret) throw new Error("clientSecret missing");
 
-    backBtn.onclick = ()=>{
-      // 住所入力へ（あなたの既存フロー踏襲）
-      location.href =
-        `/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2`;
-    };
+        localStorage.setItem("isoya_stripe_payment", JSON.stringify({
+          clientSecret: d.clientSecret,
+          mode,
+          createdAt: Date.now()
+        }));
 
-    nextBtn.onclick = ()=>{
-      nextBtn.disabled = true;
-      const next = (selectedPayMethod === "cod") ? NEXT_CONFIRM_COD : NEXT_CONFIRM_CARD;
-      location.href = next;
+        location.href = `/pay-card.html?mode=${encodeURIComponent(mode)}`;
+      }catch(e){
+        alert("決済の準備に失敗しました: " + (e?.message||e));
+        submit.disabled = false;
+        submit.textContent = "Stripe決済へ進む";
+      }
     };
 
   }catch(e){
     console.error(e);
-    showErr("読み込みに失敗しました", e);
+    showErr("読み込みに失敗しました。", e);
   }
 })();
 </script>
+
 </body>
 </html>

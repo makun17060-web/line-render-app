@@ -203,38 +203,45 @@
     back.onclick = ()=> location.href = RETURN_CONFIRM;
 
     // ✅ Stripeへ
-    submit.onclick = async ()=> {
-      submit.disabled = true;
-      submit.textContent = "移動中…";
-      try{
-        const cart = loadJson(KEY_CART) || {items:[]};
-        const items = (cart.items||[]).filter(x=>x?.id && Number(x.qty||0)>0);
-        if(items.length===0) throw new Error("カートが空です。");
+  submit.onclick = async ()=> {
+  submit.disabled = true;
+  submit.textContent = "準備中…";
+  try{
+    const cart = loadJson(KEY_CART) || {items:[]};
+    const items = (cart.items||[]).filter(x=>x?.id && Number(x.qty||0)>0);
+    if(items.length===0) throw new Error("カートが空です。");
 
-        const r = await fetch("/api/pay/stripe/create",{
-          method:"POST",
-          headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({ uid, checkout:{ items } })
-        });
-        const text = await r.text();
-        let d = {};
-        try{ d = JSON.parse(text); }catch{ d = {}; }
-        if(!r.ok) throw new Error(d?.error || d?.message || text || ("HTTP "+r.status));
-        if(!d?.url) throw new Error("stripe url missing");
+    // ✅ ここは「Checkout URL」ではなく「PaymentIntent clientSecret」を返すAPIにする
+    const r = await fetch("/api/pay/stripe/intent",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ uid, checkout:{ items } })
+    });
 
-        location.href = d.url;
-      }catch(e){
-        alert("クレジット決済の開始に失敗しました: " + (e?.message||e));
-        submit.disabled = false;
-        submit.textContent = "Stripe決済へ進む";
-      }
-    };
+    const text = await r.text();
+    let d = {};
+    try{ d = JSON.parse(text); }catch{ d = {}; }
+    if(!r.ok) throw new Error(d?.error || d?.message || text || ("HTTP "+r.status));
+    if(!d?.clientSecret) throw new Error("clientSecret missing");
+
+    // ✅ pay-card.html に渡す（localStorage）
+    localStorage.setItem(KEY_STRIPE, JSON.stringify({
+      clientSecret: d.clientSecret,
+      mode,
+      createdAt: Date.now()
+    }));
+
+    // ✅ 次の画面へ
+    location.href = `/pay-card.html?mode=${encodeURIComponent(mode)}`;
 
   }catch(e){
-    console.error(e);
-    showErr("読み込みに失敗しました。", e);
+    alert("クレジット決済の準備に失敗しました: " + (e?.message||e));
+    submit.disabled = false;
+    submit.textContent = "Stripe決済へ進む";
   }
-})();
+};
+
 </script>
 </body>
 </html>
+<!-- confirm-card.html v2026-02-05 -->

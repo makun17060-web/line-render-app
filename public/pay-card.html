@@ -2,105 +2,252 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>カード決済</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>カード決済｜入力</title>
+
+  <!-- Stripe.js -->
   <script src="https://js.stripe.com/v3/"></script>
+  <!-- LIFF (任意だが、あなたの環境に合わせて入れておく) -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
   <style>
-    body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:16px}
-    #payment-element{margin:12px 0}
-    button{width:100%;padding:12px;font-size:16px;font-weight:800}
-    .err{color:#b91c1c;margin-top:10px;white-space:pre-wrap;font-weight:800}
-    .muted{color:#6b7280;font-size:12px;line-height:1.5}
+    :root{
+      --bg:#f6f7f9;--card:#fff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;
+      --pri:#123b66;--danger:#b91c1c;
+      --radius:14px;--shadow:0 1px 3px rgba(0,0,0,.06);
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)}
+    .wrap{max-width:860px;margin:0 auto;padding:14px 14px 26px}
+    h1{margin:0 0 6px;font-size:18px}
+    .muted{color:var(--muted);font-size:13px;line-height:1.5}
+    .err{color:var(--danger);font-weight:900;white-space:pre-line}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:12px;margin-top:12px;box-shadow:var(--shadow)}
+    .btn{
+      width:100%;border:none;border-radius:14px;padding:12px 14px;
+      font-weight:1000;cursor:pointer;margin-top:10px;background:var(--pri);color:#fff
+    }
+    .btn.secondary{background:#fff;color:#111827;border:1px solid var(--line)}
+    .btn:disabled{opacity:.55;cursor:not-allowed}
+    #payment-element{margin-top:10px}
+    .kv{display:flex;justify-content:space-between;gap:10px;padding:6px 0}
+    .kv .k{color:var(--muted);font-size:13px}
+    .kv .v{font-weight:1000;font-size:14px;text-align:right}
+    .badge{display:inline-block;font-size:12px;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-weight:800}
   </style>
 </head>
-<body>
-  <h2>カード情報の入力</h2>
-  <div class="muted" id="info">読み込み中…</div>
 
-  <div id="payment-element"></div>
-  <button id="payBtn" type="button" disabled>支払う</button>
-  <div id="err" class="err"></div>
+<body>
+  <div class="wrap">
+    <h1>カード決済｜入力</h1>
+    <div class="muted" id="status">読み込み中…</div>
+
+    <div class="card">
+      <div class="muted">決済情報</div>
+      <div class="kv" style="margin-top:6px;border-top:1px solid var(--line);padding-top:10px">
+        <div class="k">方式</div>
+        <div class="v"><span class="badge">Stripe Payment Element</span></div>
+      </div>
+      <div class="kv">
+        <div class="k">モード</div>
+        <div class="v" id="modeLabel">—</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="muted">カード情報の入力</div>
+      <div id="payment-element"></div>
+
+      <button id="payBtn" class="btn" type="button" disabled>支払う</button>
+      <button id="backBtn" class="btn secondary" type="button">戻る</button>
+
+      <div id="err" class="err" style="margin-top:10px"></div>
+    </div>
+  </div>
 
 <script>
-(async () => {
-  const errEl = document.getElementById("err");
-  const infoEl = document.getElementById("info");
+(async function(){
+  "use strict";
+
+  // =========================
+  // 設定
+  // =========================
+  // ✅ あなたのStripe「公開可能キー(pk_live... / pk_test...)」に置換
+  const STRIPE_PUBLISHABLE_KEY = "REPLACE_WITH_YOUR_STRIPE_PUBLISHABLE_KEY";
+
+  // LIFF（必要なら。不要なら init失敗しても続行するようにしてある）
+  const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
+
+  // localStorage keys
+  const KEY_UID = "isoya_userId";
+  const KEY_STRIPE = "isoya_stripe_payment";   // confirm-card が保存する想定
+  const KEY_LAST_QUOTE = "isoya_last_quote";   // 表示用（あれば）
+
+  // =========================
+  // DOM
+  // =========================
+  const status = document.getElementById("status");
+  const errEl  = document.getElementById("err");
   const payBtn = document.getElementById("payBtn");
+  const backBtn= document.getElementById("backBtn");
+  const modeLabel = document.getElementById("modeLabel");
 
-  const KEY_LAST_QUOTE = "isoya_last_quote";
+  const qs = new URLSearchParams(location.search);
+  const mode = (qs.get("mode") || "").trim(); // original / fukubako / ""(default)
 
-  const loadQuote = () => {
-    try { return JSON.parse(localStorage.getItem(KEY_LAST_QUOTE) || ""); }
+  const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
+
+  function setStatus(text, isError=false){
+    status.classList.remove("err");
+    status.classList.add("muted");
+    if(isError){
+      status.classList.remove("muted");
+      status.classList.add("err");
+    }
+    status.textContent = text;
+  }
+
+  function setErr(text){
+    errEl.textContent = text || "";
+  }
+
+  function loadJson(k){
+    try { return JSON.parse(localStorage.getItem(k) || ""); }
     catch { return null; }
-  };
+  }
 
-  try {
-    // 1) publishableKey
-    const conf = await fetch("/api/stripe/config").then(r => r.json());
-    const pk = conf.publishableKey;
-    if (!pk) throw new Error("publishableKey が未設定です（STRIPE_PUBLISHABLE_KEY）");
+  // 戻り先（必要ならあなたの画面名に合わせて変更）
+  const RETURN_CONFIRM =
+      (mode === "fukubako") ? "/confirm.html?mode=fukubako"
+    : (mode === "original") ? "/confirm-original.html"
+    : "/confirm.html";
 
-    // 2) last_quote から uid / 金額を取る（ここがポイント）
-    const quote = loadQuote();
-    if (!quote) throw new Error("last_quote がありません（confirm から来てください）");
+  // 決済後戻り先（サーバ側でステータス表示するなら pay-return.html 推奨）
+  // ここは「あなたの公開URL + パス」にするのが本当は確実。
+  // ただ、同一オリジンで動いている前提なら相対パスでOK。
+  const RETURN_URL =
+      (mode === "fukubako") ? (location.origin + "/pay-return.html?mode=fukubako")
+    : (mode === "original") ? (location.origin + "/pay-return.html?mode=original")
+    : (location.origin + "/pay-return.html");
 
-    const uid = String(quote.uid || "");
-    const mode = String(quote.mode || "");
-    // あなたの quote の構造に合わせる（totalCard が無い場合は subtotal+shippingFee）
-    const amount_yen =
-      Number(quote.totalCard || 0) ||
-      (Number(quote.subtotal || 0) + Number(quote.shippingFee || 0));
+  // =========================
+  // LIFF（取れればuid取得）
+  // =========================
+  async function ensureUserSoft(){
+    const cached = (localStorage.getItem(KEY_UID) || "").trim();
+    if(cached) return cached;
 
-    if (!uid) throw new Error("uid がありません（last_quote が壊れている可能性）");
-    if (!Number.isFinite(amount_yen) || amount_yen <= 0) {
-      throw new Error("amount_yen が不正です（合計金額が 0）: " + amount_yen);
+    try{
+      await liff.init({ liffId: LIFF_ID_ORDER });
+      if(!liff.isLoggedIn()) return null;
+      const prof = await liff.getProfile();
+      const uid = (prof?.userId || "").trim();
+      if(uid) localStorage.setItem(KEY_UID, uid);
+      return uid || null;
+    }catch(e){
+      // LIFFがなくても決済自体はできるケースがあるので続行
+      return null;
+    }
+  }
+
+  // =========================
+  // main
+  // =========================
+  try{
+    modeLabel.textContent =
+      (mode === "fukubako") ? "福箱"
+    : (mode === "original") ? "オリジナル"
+    : "通常";
+
+    setStatus("決済情報を確認しています…");
+    setErr("");
+
+    // 1) clientSecret を localStorage から取得
+    const saved = loadJson(KEY_STRIPE);
+
+    if(!saved?.clientSecret){
+      setStatus("決済情報が見つかりません。", true);
+      setErr("この画面は「最終確認」から進んでください。\n（clientSecret not found in localStorage）");
+      payBtn.disabled = true;
+      backBtn.onclick = ()=> location.href = RETURN_CONFIRM;
+      return;
     }
 
-    infoEl.textContent = `お支払い金額：${amount_yen.toLocaleString("ja-JP")}円`;
-
-    // 3) PaymentIntent を作って client_secret を取る
-    const pi = await fetch("/api/stripe/create-payment-intent", {
-      method: "POST",
-      headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({ uid, amount_yen, mode })
-    }).then(r => r.json());
-
-    const clientSecret = pi.client_secret;
-    if (!clientSecret) {
-      throw new Error("client_secret が取得できません: " + JSON.stringify(pi));
+    // 2) 期限っぽいもの（任意）
+    // createdAtが古すぎる場合は戻す（例：30分）
+    const ageMs = Date.now() - Number(saved.createdAt || 0);
+    if(saved.createdAt && ageMs > 30 * 60 * 1000){
+      setStatus("決済情報の有効期限が切れています。", true);
+      setErr("恐れ入りますが、最終確認からもう一度お進みください。");
+      payBtn.disabled = true;
+      backBtn.onclick = ()=> location.href = RETURN_CONFIRM;
+      return;
     }
 
-    // 4) Payment Element 表示（これがカード入力欄）
-    const stripe = Stripe(pk);
-    const elements = stripe.elements({ clientSecret });
+    // 3) uid（取れれば）
+    await ensureUserSoft();
+
+    // 4) Stripe 初期化
+    if(!window.Stripe) throw new Error("Stripe.js の読み込みに失敗しました。");
+    if(!STRIPE_PUBLISHABLE_KEY || STRIPE_PUBLISHABLE_KEY.includes("REPLACE_WITH")){
+      throw new Error("Stripe 公開可能キーが未設定です。STRIPE_PUBLISHABLE_KEY を設定してください。");
+    }
+
+    setStatus("カード入力欄を準備しています…");
+
+    const stripe = Stripe(STRIPE_PUBLISHABLE_KEY);
+
+    // Payment Element
+    const elements = stripe.elements({
+      clientSecret: saved.clientSecret,
+      // appearance は必要ならここで。まずはデフォルトで安定優先。
+      // appearance: { theme: 'stripe' }
+    });
+
     const paymentElement = elements.create("payment");
     paymentElement.mount("#payment-element");
 
+    // 5) ボタン
+    backBtn.onclick = ()=> location.href = RETURN_CONFIRM;
+
     payBtn.disabled = false;
-
-    // 5) 決済確定
-    payBtn.addEventListener("click", async () => {
-      errEl.textContent = "";
+    payBtn.onclick = async ()=> {
       payBtn.disabled = true;
+      payBtn.textContent = "処理中…";
+      setErr("");
+      try{
+        // confirmPayment はカード入力→認証→return_url に遷移
+        const result = await stripe.confirmPayment({
+          elements,
+          confirmParams: {
+            return_url: RETURN_URL
+          }
+        });
 
-      const { error } = await stripe.confirmPayment({
-        elements,
-        confirmParams: {
-          return_url: location.origin + "/stripe-success.html"
+        // 通常ここまで来るのは「即時エラー」の時
+        if(result?.error){
+          throw new Error(result.error.message || "決済に失敗しました。");
         }
-      });
 
-      if (error) {
-        errEl.textContent = error.message || String(error);
+      }catch(e){
+        const msg = e?.message || String(e);
+        setErr("決済を完了できませんでした。\n" + msg);
         payBtn.disabled = false;
+        payBtn.textContent = "支払う";
       }
-    });
+    };
 
-  } catch (e) {
-    infoEl.textContent = "エラー";
-    errEl.textContent = e?.message || String(e);
+    setStatus("カード情報を入力して「支払う」を押してください。");
+
+  }catch(e){
+    console.error(e);
+    setStatus("読み込みに失敗しました。", true);
+    setErr((e && e.message) ? e.message : String(e));
+    payBtn.disabled = true;
+    backBtn.onclick = ()=> location.href = RETURN_CONFIRM;
   }
 })();
 </script>
+
 </body>
 </html>

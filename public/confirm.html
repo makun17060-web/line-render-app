@@ -233,11 +233,11 @@
   : (mode === "original") ? "/confirm-original.html"
   : "/confirm.html";
 
-  // ✅ ここが重要：confirm → confirm-card（最終確認）→ pay-card（カード入力）
+  // ✅ ここが重要：confirm → confirm_card（最終確認）→ pay-card（カード入力）
   const NEXT_CONFIRM_CARD =
-    (mode === "fukubako") ? "/confirm-card.html?mode=fukubako"
-  : (mode === "original") ? "/confirm-card.html?mode=original"
-  : "/confirm-card.html";
+    (mode === "fukubako") ? "/confirm_card.html?mode=fukubako"
+  : (mode === "original") ? "/confirm_card.html?mode=original"
+  : "/confirm_card.html";
 
   const NEXT_CONFIRM_COD =
     (mode === "fukubako") ? "/confirm_cod.html?mode=fukubako"
@@ -405,7 +405,7 @@
     const totalCod = Number(quote.totalCod ?? quote.total_cod ?? (amount_yen + Number(quote.codFee ?? 0)));
     totalCodEl.textContent = yen(totalCod);
 
-    // ✅ 次画面（confirm-card / confirm_cod）が参照できるよう保存
+    // ✅ 次画面（confirm_card / confirm_cod）が参照できるよう保存
     localStorage.setItem(KEY_LAST_QUOTE, JSON.stringify({
       ...quote,
       uid,

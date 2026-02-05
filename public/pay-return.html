@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+  <title>決済結果</title>
+  <script src="https://js.stripe.com/v3/"></script>
+  <style>
+    :root{
+      --bg:#f6f7f9;--card:#fff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;
+      --pri:#123b66;--danger:#b91c1c;--ok:#065f46;
+      --radius:14px;--shadow:0 1px 3px rgba(0,0,0,.06);
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)}
+    .wrap{max-width:860px;margin:0 auto;padding:14px 14px 26px}
+    h1{margin:0 0 6px;font-size:18px}
+    .muted{color:var(--muted);font-size:13px;line-height:1.5}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:12px;margin-top:12px;box-shadow:var(--shadow)}
+    .btn{
+      width:100%;border:none;border-radius:14px;padding:12px 14px;
+      font-weight:1000;cursor:pointer;margin-top:10px;background:var(--pri);color:#fff
+    }
+    .btn.secondary{background:#fff;color:#111827;border:1px solid var(--line)}
+    .ok{color:var(--ok);font-weight:900}
+    .err{color:var(--danger);font-weight:900;white-space:pre-line}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:var(--muted);word-break:break-all}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>決済結果</h1>
+    <div class="muted" id="status">確認中…</div>
+
+    <div class="card">
+      <div id="msg" class="muted"></div>
+      <div id="detail" class="mono" style="margin-top:8px"></div>
+
+      <button id="goConfirm" class="btn" type="button">注文確認に戻る</button>
+      <button id="closeBtn" class="btn secondary" type="button">閉じる</button>
+    </div>
+  </div>
+
+<script>
+(async function(){
+  "use strict";
+  const statusEl = document.getElementById("status");
+  const msgEl = document.getElementById("msg");
+  const detailEl = document.getElementById("detail");
+  const goConfirm = document.getElementById("goConfirm");
+  const closeBtn = document.getElementById("closeBtn");
+
+  const qs = new URLSearchParams(location.search);
+  const redirectStatus = (qs.get("redirect_status") || "").trim(); // succeeded / failed / ...
+  const paymentIntentId = (qs.get("payment_intent") || "").trim();
+  const mode = (qs.get("mode") || "").trim(); // optional
+
+  const RETURN_CONFIRM =
+      (mode === "fukubako") ? "/confirm.html?mode=fukubako"
+    : (mode === "original") ? "/confirm-original.html"
+    : "/confirm.html";
+
+  goConfirm.onclick = () => { location.href = RETURN_CONFIRM; };
+
+  // LIFFなら close できる
+  closeBtn.onclick = async () => {
+    try{
+      if(window.liff){
+        if(!liff.isInClient()){
+          // ブラウザなら戻る
+          location.href = RETURN_CONFIRM;
+          return;
+        }
+        await liff.closeWindow();
+        return;
+      }
+    }catch(e){}
+    location.href = RETURN_CONFIRM;
+  };
+
+  // 表示
+  detailEl.textContent =
+    "redirect_status=" + redirectStatus + "\n" +
+    "payment_intent=" + paymentIntentId;
+
+  if(redirectStatus === "succeeded"){
+    statusEl.textContent = "決済が完了しました";
+    msgEl.innerHTML = '<div class="ok">ありがとうございます。決済が完了しました。</div><div class="muted">このまま注文確定処理に進めます。</div>';
+  }else if(redirectStatus){
+    statusEl.textContent = "決済が完了しませんでした";
+    msgEl.innerHTML = '<div class="err">決済が完了しませんでした：' + redirectStatus + '</div><div class="muted">もう一度お試しください。</div>';
+  }else{
+    statusEl.textContent = "状態を確認できませんでした";
+    msgEl.innerHTML = '<div class="err">決済結果の情報が見つかりません。</div><div class="muted">注文確認に戻ってやり直してください。</div>';
+  }
+})();
+</script>
+</body>
+</html>

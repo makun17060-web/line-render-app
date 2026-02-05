@@ -3318,6 +3318,13 @@ async function onTextMessage(ev) {
 async function main() {
   await ensureDir(DATA_DIR);
   await ensureDir(UPLOAD_DIR);
+  app.get("/api/stripe/config", (req, res) => {
+  res.json({
+    publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || "",
+    appBaseUrl: process.env.APP_BASE_URL || ""
+  });
+});
+
 
   // ✅ 先にサーバを起動（/health が即返せる）
   const port = Number(env.PORT || 10000);

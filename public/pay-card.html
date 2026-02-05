@@ -5,9 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>カード決済｜入力</title>
 
-  <!-- Stripe.js -->
   <script src="https://js.stripe.com/v3/"></script>
-  <!-- LIFF (任意だが、あなたの環境に合わせて入れておく) -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
   <style>
@@ -70,18 +68,13 @@
   "use strict";
 
   // =========================
-  // 設定
+  // LIFF（任意）
   // =========================
-  // ✅ あなたのStripe「公開可能キー(pk_live... / pk_test...)」に置換
-  const STRIPE_PUBLISHABLE_KEY = "REPLACE_WITH_YOUR_STRIPE_PUBLISHABLE_KEY";
-
-  // LIFF（必要なら。不要なら init失敗しても続行するようにしてある）
   const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
 
   // localStorage keys
   const KEY_UID = "isoya_userId";
   const KEY_STRIPE = "isoya_stripe_payment";   // confirm-card が保存する想定
-  const KEY_LAST_QUOTE = "isoya_last_quote";   // 表示用（あれば）
 
   // =========================
   // DOM
@@ -95,8 +88,6 @@
   const qs = new URLSearchParams(location.search);
   const mode = (qs.get("mode") || "").trim(); // original / fukubako / ""(default)
 
-  const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
-
   function setStatus(text, isError=false){
     status.classList.remove("err");
     status.classList.add("muted");
@@ -106,25 +97,20 @@
     }
     status.textContent = text;
   }
-
-  function setErr(text){
-    errEl.textContent = text || "";
-  }
+  function setErr(text){ errEl.textContent = text || ""; }
 
   function loadJson(k){
     try { return JSON.parse(localStorage.getItem(k) || ""); }
     catch { return null; }
   }
 
-  // 戻り先（必要ならあなたの画面名に合わせて変更）
+  // 戻り先
   const RETURN_CONFIRM =
       (mode === "fukubako") ? "/confirm.html?mode=fukubako"
     : (mode === "original") ? "/confirm-original.html"
     : "/confirm.html";
 
-  // 決済後戻り先（サーバ側でステータス表示するなら pay-return.html 推奨）
-  // ここは「あなたの公開URL + パス」にするのが本当は確実。
-  // ただ、同一オリジンで動いている前提なら相対パスでOK。
+  // 決済後戻り先
   const RETURN_URL =
       (mode === "fukubako") ? (location.origin + "/pay-return.html?mode=fukubako")
     : (mode === "original") ? (location.origin + "/pay-return.html?mode=original")
@@ -145,9 +131,36 @@
       if(uid) localStorage.setItem(KEY_UID, uid);
       return uid || null;
     }catch(e){
-      // LIFFがなくても決済自体はできるケースがあるので続行
-      return null;
+      return null; // LIFF失敗しても続行
     }
+  }
+
+  // =========================
+  // Stripe config 取得（ここが今回の修正）
+  // =========================
+  async function fetchStripeConfig(){
+    // 同一オリジンでまず試す
+    const urls = [
+      location.origin + "/api/stripe/config",
+      "/api/stripe/config",
+    ];
+
+    let lastErr = null;
+    for(const u of urls){
+      try{
+        const r = await fetch(u, { cache: "no-store" });
+        if(!r.ok) throw new Error("HTTP " + r.status);
+        const j = await r.json();
+
+        const publishableKey = String(j.publishableKey || j.publishable_key || "").trim();
+        const appBaseUrl = String(j.appBaseUrl || j.app_base_url || "").trim();
+
+        return { publishableKey, appBaseUrl };
+      }catch(e){
+        lastErr = e;
+      }
+    }
+    throw new Error("Stripe設定の取得に失敗しました: " + (lastErr?.message || lastErr));
   }
 
   // =========================
@@ -173,8 +186,7 @@
       return;
     }
 
-    // 2) 期限っぽいもの（任意）
-    // createdAtが古すぎる場合は戻す（例：30分）
+    // 2) 期限チェック（任意：30分）
     const ageMs = Date.now() - Number(saved.createdAt || 0);
     if(saved.createdAt && ageMs > 30 * 60 * 1000){
       setStatus("決済情報の有効期限が切れています。", true);
@@ -187,21 +199,24 @@
     // 3) uid（取れれば）
     await ensureUserSoft();
 
-    // 4) Stripe 初期化
+    // 4) Stripe 初期化（configからpkを取得）
     if(!window.Stripe) throw new Error("Stripe.js の読み込みに失敗しました。");
-    if(!STRIPE_PUBLISHABLE_KEY || STRIPE_PUBLISHABLE_KEY.includes("REPLACE_WITH")){
-      throw new Error("Stripe 公開可能キーが未設定です。STRIPE_PUBLISHABLE_KEY を設定してください。");
+
+    setStatus("Stripe設定を取得しています…");
+    const cfg = await fetchStripeConfig();
+
+    if(!cfg.publishableKey){
+      throw new Error("Stripe 公開可能キーが未設定です（/api/stripe/config の publishableKey が空です）");
     }
 
+    // appBaseUrl（将来使うなら）：空ならlocation.origin
+    const APP_BASE = cfg.appBaseUrl || location.origin;
+
     setStatus("カード入力欄を準備しています…");
+    const stripe = Stripe(cfg.publishableKey);
 
-    const stripe = Stripe(STRIPE_PUBLISHABLE_KEY);
-
-    // Payment Element
     const elements = stripe.elements({
       clientSecret: saved.clientSecret,
-      // appearance は必要ならここで。まずはデフォルトで安定優先。
-      // appearance: { theme: 'stripe' }
     });
 
     const paymentElement = elements.create("payment");
@@ -216,19 +231,19 @@
       payBtn.textContent = "処理中…";
       setErr("");
       try{
-        // confirmPayment はカード入力→認証→return_url に遷移
         const result = await stripe.confirmPayment({
           elements,
           confirmParams: {
+            // RETURN_URLは location.origin 前提なので、
+            // もし別オリジンで開くなら APP_BASE を使う形にする
             return_url: RETURN_URL
+            // return_url: APP_BASE + "/pay-return.html" みたいにしてもOK
           }
         });
 
-        // 通常ここまで来るのは「即時エラー」の時
         if(result?.error){
           throw new Error(result.error.message || "決済に失敗しました。");
         }
-
       }catch(e){
         const msg = e?.message || String(e);
         setErr("決済を完了できませんでした。\n" + msg);

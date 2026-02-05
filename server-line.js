@@ -686,6 +686,14 @@ async function ensureDb() {
   try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS notified_user_at TIMESTAMPTZ;`); } catch {}
   try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS notified_admin_at TIMESTAMPTZ;`); } catch {}
   try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS notified_kind TEXT;`); } catch {}
+// Payment Element（PaymentIntent）用
+try { 
+  await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_intent_id TEXT;`);
+} catch {}
+
+try {
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_orders_payment_intent_id ON orders(payment_intent_id);`);
+} catch {}
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS follow_events (

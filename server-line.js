@@ -2691,6 +2691,70 @@ app.post("/api/store-order", async (req, res) => {
     res.status(500).json({ ok:false, error:"server_error" });
   }
 });
+// ================================
+// Stripe: PaymentIntent (Payment Element用)
+// POST /api/pay/stripe/intent
+// body: { uid, checkout: { items: [{id, qty}, ...] } }
+// return: { clientSecret }
+// ================================
+app.post("/api/pay/stripe/intent", express.json(), async (req, res) => {
+  try {
+    const uid = String(req.body?.uid || "").trim();
+    const items = req.body?.checkout?.items;
+
+    if (!uid) return res.status(400).json({ error: "uid missing" });
+    if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "items missing" });
+
+    const secret = process.env.STRIPE_SECRET_KEY;
+    if (!secret) return res.status(500).json({ error: "STRIPE_SECRET_KEY is not set" });
+
+    // ✅ 価格はサーバ側で確定（id/qtyで products を参照）
+    const prod = await pool.query(`SELECT id, price FROM products`);
+    const priceMap = new Map(prod.rows.map(r => [String(r.id), Number(r.price || 0)]));
+
+    let subtotal = 0;
+    const normItems = [];
+
+    for (const it of items) {
+      const id = String(it?.id || "").trim();
+      const qty = Number(it?.qty || 0);
+      if (!id || qty <= 0) continue;
+
+      const unit = priceMap.get(id);
+      if (typeof unit !== "number" || !isFinite(unit) || unit <= 0) continue;
+
+      subtotal += unit * qty;
+      normItems.push({ id, qty, unit });
+    }
+
+    if (subtotal <= 0) {
+      return res.status(400).json({ error: "subtotal is 0 (bad items or products mismatch)" });
+    }
+
+    // 送料はまず0でOK（あとで quote ロジックに寄せる）
+    const shippingFee = 0;
+    const amountYen = Math.round(subtotal + shippingFee);
+
+    // ✅ JPYは最小単位が「円」なので amount は “円のまま”
+    const stripe = require("stripe")(secret);
+
+    const pi = await stripe.paymentIntents.create({
+      amount: amountYen,
+      currency: "jpy",
+      automatic_payment_methods: { enabled: true },
+      metadata: {
+        uid,
+        subtotal: String(Math.round(subtotal)),
+        shippingFee: String(Math.round(shippingFee)),
+      },
+    });
+
+    return res.json({ clientSecret: pi.client_secret });
+  } catch (e) {
+    console.error("[api/pay/stripe/intent] error:", e);
+    return res.status(500).json({ error: e?.message || String(e) });
+  }
+});
 
 app.post("/api/pay/stripe/create", async (req, res) => {
   try {

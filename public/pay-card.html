@@ -202,9 +202,12 @@
 
     // 6) Elements マウント（Payment Element）
     const elements = stripe.elements({
-      clientSecret: pi.client_secret
-      // appearance は触らない（周囲UIが磯屋レジを作る）
-    });
+  clientSecret: pi.client_secret,
+  wallets: {
+    link: 'never'
+  }
+});
+
     const paymentElement = elements.create("payment");
     paymentElement.mount("#card-element");
 

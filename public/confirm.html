@@ -238,10 +238,11 @@
   : (mode === "original") ? "/confirm-original.html"
   : "/confirm.html";
 
-  const NEXT_CONFIRM_CARD =
-    (mode === "fukubako") ? "/public/confirm_card.html?mode=fukubako"
-  : (mode === "original") ? "/public/confirm_card.html?mode=original"
-  : "/public/confirm_card.html";
+const NEXT_CONFIRM_CARD =
+  (mode === "fukubako") ? "/pay-card.html?mode=fukubako"
+: (mode === "original") ? "/pay-card.html?mode=original"
+: "/pay-card.html";
+
 
   const NEXT_CONFIRM_COD =
     (mode === "fukubako") ? "/public/confirm_cod.html?mode=fukubako"

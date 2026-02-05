@@ -34,7 +34,6 @@
       <div class="muted" style="margin-top:6px">※代引手数料はかかりません。</div>
     </div>
 
-    <!-- ✅ お届け先（confirm と同じ API で取得して表示） -->
     <div class="card" id="shipCard" style="display:none">
       <div class="muted">お届け先</div>
 
@@ -67,12 +66,15 @@
 <script>
 (async function(){
   "use strict";
+
   const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
   const KEY_UID ="isoya_userId";
   const KEY_LAST_QUOTE = "isoya_last_quote";
+  const KEY_STRIPE = "isoya_stripe_payment"; // ✅ これが抜けてた
 
   const qs = new URLSearchParams(location.search);
   const mode = (qs.get("mode")||"").trim();
+  const v = qs.get("v") || "20260205"; // ✅ キャッシュ避け
 
   const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
   const status=document.getElementById("status");
@@ -108,29 +110,19 @@
     return d ?? {};
   }
 
-  // ✅ confirm と同じ：住所の「名前」キー違いを全部吸収
   function pickName(addr){
     const candidates = [
-      addr?.name,
-      addr?.full_name,
-      addr?.fullName,
-      addr?.recipient_name,
-      addr?.recipientName,
-      addr?.customer_name,
-      addr?.customerName,
-      addr?.receiver_name,
-      addr?.receiverName,
-      addr?.to_name,
-      addr?.toName,
-      addr?.addressee,
-      addr?.display_name,
-      addr?.displayName,
+      addr?.name, addr?.full_name, addr?.fullName,
+      addr?.recipient_name, addr?.recipientName,
+      addr?.customer_name, addr?.customerName,
+      addr?.receiver_name, addr?.receiverName,
+      addr?.to_name, addr?.toName,
+      addr?.addressee, addr?.display_name, addr?.displayName,
     ];
     const s = candidates.find(v => typeof v === "string" && v.trim());
     return (s || "").trim();
   }
 
-  // ✅ confirm と同じ：GET /api/address/get?userId=...
   async function getAddress(userId){
     const d = await fetchJson(`/api/address/get?userId=${encodeURIComponent(userId)}`);
     return d?.address || d?.addr || d?.data?.address || null;
@@ -164,7 +156,6 @@
       return;
     }
 
-    // ✅ 見積：confirm が保存した isoya_last_quote を使う
     const quote = loadJson(KEY_LAST_QUOTE);
     if(!quote){
       showErr("見積情報がありません。", "確認画面へ戻ってください。");
@@ -179,13 +170,11 @@
     shippingEl.textContent = yen(shipping);
     totalCardEl.textContent = yen(totalCard);
 
-    // ✅ 住所表示（confirm と同じ API で取得）
     let addr = null;
-    try { addr = await getAddress(uid); } catch(e){ /* 画面は続行しても良い */ }
+    try { addr = await getAddress(uid); } catch(e){ /* ignore */ }
     if(addr){
       const name = pickName(addr);
-      const body =
-        `〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim();
+      const body = `〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim();
       const tel = (addr.phone || addr.tel || "").trim();
 
       shipCard.style.display = "block";
@@ -200,48 +189,49 @@
     status.classList.add("muted");
     status.textContent="最終確認をお願いします。";
 
-    back.onclick = ()=> location.href = RETURN_CONFIRM;
+    back.onclick = ()=> location.href = RETURN_CONFIRM + (RETURN_CONFIRM.includes("?") ? "&" : "?") + "v=" + encodeURIComponent(v);
 
-    // ✅ Stripeへ
-  submit.onclick = async ()=> {
-  submit.disabled = true;
-  submit.textContent = "準備中…";
-  try{
-    const cart = loadJson(KEY_CART) || {items:[]};
-    const items = (cart.items||[]).filter(x=>x?.id && Number(x.qty||0)>0);
-    if(items.length===0) throw new Error("カートが空です。");
+    submit.onclick = async ()=> {
+      submit.disabled = true;
+      submit.textContent = "準備中…";
+      try{
+        const cart = loadJson(KEY_CART) || {items:[]};
+        const items = (cart.items||[]).filter(x=>x?.id && Number(x.qty||0)>0);
+        if(items.length===0) throw new Error("カートが空です。");
 
-    // ✅ ここは「Checkout URL」ではなく「PaymentIntent clientSecret」を返すAPIにする
-    const r = await fetch("/api/pay/stripe/intent",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ uid, checkout:{ items } })
-    });
+        const r = await fetch("/api/pay/stripe/intent",{
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ uid, checkout:{ items } })
+        });
 
-    const text = await r.text();
-    let d = {};
-    try{ d = JSON.parse(text); }catch{ d = {}; }
-    if(!r.ok) throw new Error(d?.error || d?.message || text || ("HTTP "+r.status));
-    if(!d?.clientSecret) throw new Error("clientSecret missing");
+        const text = await r.text();
+        let d = {};
+        try{ d = JSON.parse(text); }catch{ d = {}; }
+        if(!r.ok) throw new Error(d?.error || d?.message || text || ("HTTP "+r.status));
+        if(!d?.clientSecret) throw new Error("clientSecret missing");
 
-    // ✅ pay-card.html に渡す（localStorage）
-    localStorage.setItem(KEY_STRIPE, JSON.stringify({
-      clientSecret: d.clientSecret,
-      mode,
-      createdAt: Date.now()
-    }));
+        localStorage.setItem(KEY_STRIPE, JSON.stringify({
+          clientSecret: d.clientSecret,
+          mode,
+          createdAt: Date.now()
+        }));
 
-    // ✅ 次の画面へ
-    location.href = `/pay-card.html?mode=${encodeURIComponent(mode)}`;
+        location.href = `/pay-card.html?mode=${encodeURIComponent(mode)}&v=${encodeURIComponent(v)}`;
+
+      }catch(e){
+        alert("クレジット決済の準備に失敗しました: " + (e?.message||e));
+        submit.disabled = false;
+        submit.textContent = "Stripe決済へ進む";
+      }
+    };
 
   }catch(e){
-    alert("クレジット決済の準備に失敗しました: " + (e?.message||e));
-    submit.disabled = false;
-    submit.textContent = "Stripe決済へ進む";
+    console.error(e);
+    showErr("読み込みに失敗しました。", e);
   }
-};
-
+})();
 </script>
 </body>
 </html>
-<!-- confirm-card.html v2026-02-05 -->
+<!-- confirm_card.html v2026-02-05 -->

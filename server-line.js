@@ -2694,141 +2694,78 @@ app.post("/api/store-order", async (req, res) => {
 // ================================
 // Stripe: PaymentIntent (Payment Element用)
 // POST /api/pay/stripe/intent
-// body: { uid, checkout: { items: [{id, qty}, ...] } }
-// return: { clientSecret }
+// body: { uid, checkout: { items:[{id, qty}, ...] }, addressId? }
+// return: { ok, orderId, clientSecret, amount }
 // ================================
-app.post("/api/pay/stripe/intent", express.json(), async (req, res) => {
-  try {
-    const uid = String(req.body?.uid || "").trim();
-    const items = req.body?.checkout?.items;
-
-    if (!uid) return res.status(400).json({ error: "uid missing" });
-    if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: "items missing" });
-
-    const secret = process.env.STRIPE_SECRET_KEY;
-    if (!secret) return res.status(500).json({ error: "STRIPE_SECRET_KEY is not set" });
-
-    // ✅ 価格はサーバ側で確定（id/qtyで products を参照）
-    const prod = await pool.query(`SELECT id, price FROM products`);
-    const priceMap = new Map(prod.rows.map(r => [String(r.id), Number(r.price || 0)]));
-
-    let subtotal = 0;
-    const normItems = [];
-
-    for (const it of items) {
-      const id = String(it?.id || "").trim();
-      const qty = Number(it?.qty || 0);
-      if (!id || qty <= 0) continue;
-
-      const unit = priceMap.get(id);
-      if (typeof unit !== "number" || !isFinite(unit) || unit <= 0) continue;
-
-      subtotal += unit * qty;
-      normItems.push({ id, qty, unit });
-    }
-
-    if (subtotal <= 0) {
-      return res.status(400).json({ error: "subtotal is 0 (bad items or products mismatch)" });
-    }
-
-    // 送料はまず0でOK（あとで quote ロジックに寄せる）
-    const shippingFee = 0;
-    const amountYen = Math.round(subtotal + shippingFee);
-
-    // ✅ JPYは最小単位が「円」なので amount は “円のまま”
-    const stripe = require("stripe")(secret);
-
-    const pi = await stripe.paymentIntents.create({
-      amount: amountYen,
-      currency: "jpy",
-      automatic_payment_methods: { enabled: true },
-      metadata: {
-        uid,
-        subtotal: String(Math.round(subtotal)),
-        shippingFee: String(Math.round(shippingFee)),
-      },
-    });
-
-    return res.json({ clientSecret: pi.client_secret });
-  } catch (e) {
-    console.error("[api/pay/stripe/intent] error:", e);
-    return res.status(500).json({ error: e?.message || String(e) });
-  }
-});
-
-app.post("/api/pay/stripe/create", async (req, res) => {
+app.post("/api/pay/stripe/intent", async (req, res) => {
   try {
     if (!stripe) return res.status(400).json({ ok:false, error:"stripe_not_configured" });
 
     const uid = String(req.body?.uid || "").trim();
     const checkout = req.body?.checkout || null;
-
     const addressId = mustInt(req.body?.addressId || req.body?.address_id || (checkout && (checkout.addressId || checkout.address_id)));
 
-    await touchUser(uid, "seen", null, "stripe_create");
-    const built = await buildOrderFromCheckout(uid, checkout, { requireAddress: true, addressId });
-
-    const lineItems = built.items.map(it => ({
-      price_data: {
-        currency: "jpy",
-        product_data: { name: `${it.name}${it.volume ? `（${it.volume}）` : ""}` },
-        unit_amount: it.price,
-      },
-      quantity: it.qty,
-    }));
-
-    if (built.shippingFee > 0) {
-      lineItems.push({
-        price_data: {
-          currency: "jpy",
-          product_data: { name: `送料（ヤマト ${built.size}サイズ）` },
-          unit_amount: built.shippingFee,
-        },
-        quantity: 1,
-      });
+    if (!uid) return res.status(400).json({ ok:false, error:"uid missing" });
+    if (!checkout || !Array.isArray(checkout.items) || checkout.items.length === 0) {
+      return res.status(400).json({ ok:false, error:"items missing" });
     }
 
+    // 価格・送料はサーバで確定（改ざん防止）
+    await touchUser(uid, "seen", null, "stripe_intent");
+
+    const built = await buildOrderFromCheckout(uid, checkout, { requireAddress: true, addressId });
+
+    const amountYen = Math.round(Number(built.subtotal || 0) + Number(built.shippingFee || 0));
+    if (!Number.isFinite(amountYen) || amountYen <= 0) {
+      return res.status(400).json({ ok:false, error:"amount invalid" });
+    }
+
+    // 先に orders を作る（未決済）
     const orderId = await insertOrderToDb({
       userId: built.userId,
       items: built.items,
-      total: built.subtotal + built.shippingFee,
+      total: amountYen,
       shippingFee: built.shippingFee,
       paymentMethod: "card",
       status: "new",
-      rawEvent: { type: "checkout_create_v2", addressId: addressId || null },
+      rawEvent: { type: "payment_intent_create", addressId: addressId || null },
       source: "liff",
       addrOverride: built.addr,
     });
 
-    const session = await stripe.checkout.sessions.create({
-      mode: "payment",
-      line_items: lineItems,
-      success_url: `${stripeSuccessUrl(req)}?orderId=${orderId}`,
-      cancel_url: `${stripeCancelUrl(req)}?orderId=${orderId}`,
-      metadata: { orderId: String(orderId), userId: built.userId },
+    // PaymentIntent 作成（metadata に orderId を持たせる）
+    const pi = await stripe.paymentIntents.create({
+      amount: amountYen,           // JPYは円単位
+      currency: "jpy",
+      automatic_payment_methods: { enabled: true },
+      metadata: {
+        orderId: String(orderId),
+        userId: built.userId,
+      },
     });
 
+    // 仮受付通知（任意：欲しければON）
     await notifyCardPending({
       orderId,
       userId: built.userId,
       items: built.items,
       shippingFee: built.shippingFee,
-      total: built.subtotal + built.shippingFee,
-      size: built.size
+      total: amountYen,
+      size: built.size,
     }).catch(()=>{});
 
-    res.json({
+    return res.json({
       ok: true,
       orderId,
-      url: session.url,
-      subtotal: built.subtotal,
+      clientSecret: pi.client_secret,
+      amount: amountYen,
       shippingFee: built.shippingFee,
       size: built.size,
       addressId: addressId || null,
     });
   } catch (e) {
     const code = e?.code || "";
-    logErr("POST /api/pay/stripe/create", code, e?.stack || e);
+    logErr("POST /api/pay/stripe/intent", code, e?.stack || e);
 
     const handled = respondFukubakoErrors(res, code);
     if (handled) return;
@@ -2837,7 +2774,7 @@ app.post("/api/pay/stripe/create", async (req, res) => {
     if (code === "OUT_OF_STOCK") return res.status(409).json({ ok:false, error:"OUT_OF_STOCK", productId: e.productId });
     if (code === "EMPTY_ITEMS") return res.status(400).json({ ok:false, error:"EMPTY_ITEMS" });
 
-    res.status(500).json({ ok:false, error:"server_error" });
+    return res.status(500).json({ ok:false, error:"server_error" });
   }
 });
 

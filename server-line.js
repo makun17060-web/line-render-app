@@ -3311,26 +3311,7 @@ async function onTextMessage(ev) {
   // デフォ：注文URL案内（うるさくしない）
   return;
 }
-
-/* =========================
- * 起動（修正版：listen を先に）
- * ========================= */
-async function main() {
-  await ensureDir(DATA_DIR);
-  await ensureDir(UPLOAD_DIR);
-  app.get("/api/stripe/config", (req, res) => {
-  res.json({
-    publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || "",
-    appBaseUrl: process.env.APP_BASE_URL || ""
-  });
-});
-
-// ===== Stripe PaymentIntent (confirm.html -> pay-card.html via last_quote) =====
-const Stripe = require("stripe");
-const stripe = process.env.STRIPE_SECRET_KEY
-  ? new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2024-06-20" })
-  : null;
-
+// ===== Stripe config（フロントが必要なら）=====
 app.get("/api/stripe/config", (req, res) => {
   res.json({
     publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || "",
@@ -3347,27 +3328,23 @@ app.post("/api/stripe/create-payment-intent", async (req, res) => {
     if (!stripe) return res.status(500).json({ error: "Stripe is not configured" });
 
     const { uid, amount_yen, mode } = req.body || {};
-    const uidStr = String(uid || "");
+    const uidStr = String(uid || "").trim();
     const amountYen = Number(amount_yen || 0);
-    const modeStr = String(mode || "");
+    const modeStr = String(mode || "").trim();
 
     if (!uidStr) return res.status(400).json({ error: "missing uid" });
     if (!Number.isFinite(amountYen) || amountYen <= 0) {
       return res.status(400).json({ error: "invalid amount_yen" });
     }
 
-    // 同一ユーザー・同一金額・同一モードで二重作成を避ける（短時間の連打対策）
     const idem = `pi_${uidStr}_${amountYen}_${modeStr}`;
 
     const pi = await stripe.paymentIntents.create(
       {
-        amount: amountYen,          // JPYは円単位
+        amount: amountYen, // JPYは円単位
         currency: "jpy",
         automatic_payment_methods: { enabled: true },
-        metadata: {
-          uid: uidStr,
-          mode: modeStr
-        },
+        metadata: { uid: uidStr, mode: modeStr },
         description: `Isoya checkout ${uidStr} (${modeStr || "normal"})`
       },
       { idempotencyKey: idem }
@@ -3379,6 +3356,13 @@ app.post("/api/stripe/create-payment-intent", async (req, res) => {
     res.status(500).json({ error: "server error" });
   }
 });
+
+/* =========================
+ * 起動（修正版：listen を先に）
+ * ========================= */
+async function main() {
+  await ensureDir(DATA_DIR);
+  await ensureDir(UPLOAD_DIR);
 
   // ✅ 先にサーバを起動（/health が即返せる）
   const port = Number(env.PORT || 10000);

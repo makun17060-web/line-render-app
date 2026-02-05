@@ -238,16 +238,16 @@
   : (mode === "original") ? "/confirm-original.html"
   : "/confirm.html";
 
-const NEXT_CONFIRM_CARD =
-  (mode === "fukubako") ? "/pay-card.html?mode=fukubako"
-: (mode === "original") ? "/pay-card.html?mode=original"
-: "/pay-card.html";
+  const NEXT_CONFIRM_CARD =
+    (mode === "fukubako") ? "/pay-card.html?mode=fukubako"
+  : (mode === "original") ? "/pay-card.html?mode=original"
+  : "/pay-card.html";
 
-
+  // ✅ 注意：public/ をURLに付けないのが基本（Express static の想定）
   const NEXT_CONFIRM_COD =
-    (mode === "fukubako") ? "/public/confirm_cod.html?mode=fukubako"
-  : (mode === "original") ? "/public/confirm_cod.html?mode=original"
-  : "/public/confirm_cod.html";
+    (mode === "fukubako") ? "/confirm_cod.html?mode=fukubako"
+  : (mode === "original") ? "/confirm_cod.html?mode=original"
+  : "/confirm_cod.html";
 
   const status = document.getElementById("status");
   const addrNameEl = document.getElementById("addrName");
@@ -317,10 +317,19 @@ const NEXT_CONFIRM_CARD =
     })).json();
 
     shippingEl.textContent = yen(quote.shippingFee);
-    totalCardEl.textContent = yen(subtotal + quote.shippingFee);
+
+    const amount_yen = subtotal + quote.shippingFee; // ✅ Stripe用の「円」合計
+    totalCardEl.textContent = yen(amount_yen);
     totalCodEl.textContent = yen(quote.totalCod);
 
-    localStorage.setItem(KEY_LAST_QUOTE, JSON.stringify({ ...quote, uid, mode }));
+    // ✅ ここが今回の修正：pay-card.html が読む amount_yen を last_quote に保存
+    localStorage.setItem(KEY_LAST_QUOTE, JSON.stringify({
+      ...quote,
+      uid,
+      mode,
+      subtotal,
+      amount_yen
+    }));
 
     status.textContent = "内容をご確認ください。";
 
@@ -337,7 +346,7 @@ const NEXT_CONFIRM_CARD =
   }catch(e){
     status.textContent = "読み込みに失敗しました";
     status.classList.add("err");
-    status.textContent += "\n" + e.message;
+    status.textContent += "\n" + (e?.message || String(e));
   }
 })();
 </script>

@@ -2,18 +2,21 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>カード決済</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script src="https://js.stripe.com/v3/"></script>
   <style>
     body{font-family:system-ui;margin:16px}
     #payment-element{margin:12px 0}
     button{width:100%;padding:12px;font-size:16px}
     .err{color:#b91c1c;margin-top:10px;white-space:pre-wrap}
+    .muted{color:#6b7280;font-size:13px}
   </style>
 </head>
 <body>
   <h2>カード情報の入力</h2>
+  <div class="muted" id="info"></div>
 
   <div id="payment-element"></div>
   <button id="payBtn">支払う</button>
@@ -21,53 +24,90 @@
 
 <script>
 (async () => {
-  // 1) サーバから publishableKey を取る
+  const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
+  const KEY_LAST_QUOTE = "isoya_last_quote";
+  const KEY_UID = "isoya_userId";
+
+  const errEl = document.getElementById("err");
+  const infoEl = document.getElementById("info");
+  const qs = new URLSearchParams(location.search);
+  const mode = (qs.get("mode") || "").trim(); // confirm側から ?mode=original 等で来る
+
+  const loadJson = (k) => { try { return JSON.parse(localStorage.getItem(k) || ""); } catch { return null; } };
+
+  // 1) publishableKey 取得
   const conf = await fetch("/api/stripe/config").then(r => r.json());
   const pk = conf.publishableKey;
-  if (!pk) { document.getElementById("err").textContent = "publishableKey が未設定です"; return; }
+  if (!pk) { errEl.textContent = "publishableKey が未設定です"; return; }
 
-  // 2) 金額と uid はあなたの「last_quote」等から渡す想定（ここは仮）
-  const uid = (new URLSearchParams(location.search)).get("uid") || "";
-  const amount_yen = Number((new URLSearchParams(location.search)).get("amount_yen") || 0);
-  const mode = (new URLSearchParams(location.search)).get("mode") || "";
+  // 2) LIFFで uid 取得（確実に）
+  await liff.init({ liffId: LIFF_ID_ORDER });
+  if (!liff.isLoggedIn()) { errEl.textContent = "LIFF ログインできません"; return; }
+  const prof = await liff.getProfile();
+  const uid = prof.userId;
+  localStorage.setItem(KEY_UID, uid);
 
-  if (!uid || !amount_yen) {
-    document.getElementById("err").textContent = "uid / amount_yen がありません（URLパラメータか last_quote から渡してください）";
+  // 3) last_quote から金額を取る（URLパラメータは使わない）
+  const q = loadJson(KEY_LAST_QUOTE);
+  if (!q) { errEl.textContent = "last_quote がありません。confirm から来ていますか？"; return; }
+
+  // confirm側で保存してる uid と一致チェック（事故防止）
+  if (q.uid && q.uid !== uid) {
+    errEl.textContent = "uid が一致しません（別ユーザーの見積が残っている可能性）\n一度戻ってやり直してください。";
     return;
   }
 
-  // 3) PaymentIntent を作って client_secret を取る
+  // 金額：まず totalCard を優先。無ければ subtotal+shippingFee。無ければ total。
+  const amount_yen =
+    Number(q.totalCard || 0) ||
+    (Number(q.subtotal || 0) + Number(q.shippingFee || 0)) ||
+    Number(q.total || 0);
+
+  if (!amount_yen || amount_yen <= 0) {
+    errEl.textContent =
+      "amount_yen を算出できません。\nlast_quote の内容: " + JSON.stringify(q, null, 2);
+    return;
+  }
+
+  infoEl.textContent = `お支払い金額：${amount_yen.toLocaleString("ja-JP")}円`;
+
+  // 4) PaymentIntent 作成
   const pi = await fetch("/api/stripe/create-payment-intent", {
     method: "POST",
     headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ uid, amount_yen, mode })
+    body: JSON.stringify({ uid, amount_yen, mode: (mode || q.mode || "") })
   }).then(r => r.json());
 
   const clientSecret = pi.client_secret;
   if (!clientSecret) {
-    document.getElementById("err").textContent = "client_secret が取得できません: " + JSON.stringify(pi);
+    errEl.textContent = "client_secret が取得できません: " + JSON.stringify(pi);
     return;
   }
 
-  // 4) Payment Element を表示（←これが無いとカード番号欄は出ない）
+  // 5) Payment Element 表示
   const stripe = Stripe(pk);
   const elements = stripe.elements({ clientSecret });
   const paymentElement = elements.create("payment");
   paymentElement.mount("#payment-element");
 
-  // 5) 決済確定
-  document.getElementById("payBtn").addEventListener("click", async () => {
-    document.getElementById("err").textContent = "";
+  // 6) 決済確定 → successへ
+  const payBtn = document.getElementById("payBtn");
+  payBtn.addEventListener("click", async () => {
+    errEl.textContent = "";
+    payBtn.disabled = true;
 
     const { error } = await stripe.confirmPayment({
       elements,
       confirmParams: {
-        // 決済後に戻るURL（適宜）
-        return_url: location.origin + "/stripe-success.html"
+        // successページで注文確定 & 通知する
+        return_url: location.origin + "/stripe-success.html?mode=" + encodeURIComponent(mode || q.mode || "")
       }
     });
 
-    if (error) document.getElementById("err").textContent = error.message || String(error);
+    if (error) {
+      errEl.textContent = error.message || String(error);
+      payBtn.disabled = false;
+    }
   });
 })();
 </script>

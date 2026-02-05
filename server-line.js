@@ -3356,6 +3356,72 @@ app.post("/api/stripe/create-payment-intent", async (req, res) => {
     res.status(500).json({ error: "server error" });
   }
 });
+app.post("/api/order/stripe/complete", async (req, res) => {
+  try {
+    const { uid, mode, payment_intent_id, quote } = req.body || {};
+    const uidStr = String(uid || "");
+    const piId = String(payment_intent_id || "");
+    if (!uidStr) return res.status(400).json({ ok:false, error:"missing uid" });
+    if (!piId) return res.status(400).json({ ok:false, error:"missing payment_intent_id" });
+
+    // ここで「同じ payment_intent_id は二重確定しない」チェックを必ず入れるのが理想
+    // → まず簡易でメモリガード、後でDBガード推奨
+    const orderId = `stripe_${piId}`; // 仮の注文ID（DB注文IDがあるならそれを使う）
+
+    // 明細に必要な情報を整形（quoteの形に合わせて調整）
+    const subtotal = Number(quote?.subtotal || 0);
+    const shippingFee = Number(quote?.shippingFee || 0);
+    const totalCard =
+      Number(quote?.totalCard || 0) || (subtotal + shippingFee) || Number(quote?.total || 0);
+
+    // 住所はDBから引くのが確実（例）
+    let addr = null;
+    try {
+      const r = await pool.query(
+        `SELECT name, phone, postal, prefecture, city, address1, address2
+         FROM addresses
+         WHERE user_id=$1
+         ORDER BY is_default DESC, updated_at DESC, id DESC
+         LIMIT 1`,
+        [uidStr]
+      );
+      addr = r.rows[0] || null;
+    } catch {}
+
+    // items は quoteに入ってない事が多いので、必要なら「カート」or「注文作成時のitems」を渡すのがベスト
+    // いったん “金額中心” 通知にする（あとでitemsも確実に入れる版にできます）
+    const order = {
+      orderId,
+      uid: uidStr,
+      payment: "クレジット（Stripe）",
+      items: (quote?.items || []).map(it => ({
+        name: it.name, qty: it.qty, price: it.price
+      })),
+      subtotal,
+      shippingFee,
+      total: totalCard,
+      address: addr,
+      createdAt: new Date().toISOString(),
+      note: `mode=${mode || ""}\npayment_intent=${piId}`
+    };
+
+    // 二重送信防止（最低限）
+    // ここは前の回答の notifyOrderToCustomerAndAdmin / buildOrderDetailText を入れて使う
+    // 例:
+    // if (markNotifiedOnce(order.orderId)) await notifyOrderToCustomerAndAdmin({ lineClient, order });
+
+    if (typeof notifyOrderToCustomerAndAdmin === "function" && typeof markNotifiedOnce === "function") {
+      if (markNotifiedOnce(order.orderId)) {
+        await notifyOrderToCustomerAndAdmin({ lineClient, order });
+      }
+    }
+
+    res.json({ ok:true, orderId });
+  } catch (e) {
+    console.error("[/api/order/stripe/complete] error", e);
+    res.status(500).json({ ok:false, error:"server error" });
+  }
+});
 
 /* =========================
  * 起動（修正版：listen を先に）

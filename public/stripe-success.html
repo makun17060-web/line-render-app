@@ -1,72 +1,88 @@
 <!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>決済完了</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+  <title>決済確認</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="https://js.stripe.com/v3/"></script>
   <style>
-    body{ font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:#f6f7f9; margin:0; padding:16px; color:#111827; }
-    .card{ max-width:520px; margin:16px auto; background:#fff; border-radius:14px; padding:16px; box-shadow:0 1px 3px rgba(0,0,0,.08); border:1px solid #e5e7eb; }
-    h1{ margin:0 0 8px; font-size:20px; }
-    p{ margin:6px 0; color:#374151; line-height:1.7; font-size:14px; }
-    .status{ margin-top:10px; font-weight:900; }
-    .ok{ color:#065f46; }
-    .wait{ color:#92400e; }
-    a.btn{ display:block; text-align:center; margin-top:12px; padding:12px 14px; border-radius:12px; background:#111827; color:#fff; text-decoration:none; font-weight:900; }
+    body{font-family:system-ui;margin:16px}
+    .muted{color:#6b7280;font-size:13px}
+    .err{color:#b91c1c;white-space:pre-wrap;font-weight:800}
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>決済完了</h1>
-    <p>ご利用ありがとうございます。注文の確定を確認中です（Webhook反映待ち）。</p>
-    <p>注文ID：<strong id="orderId">—</strong></p>
-    <div id="msg" class="status wait">確認中…</div>
-
-    <a class="btn" href="/public/products.html">商品一覧へ戻る</a>
-  </div>
+  <h2>決済を確認しています…</h2>
+  <div class="muted" id="msg">少しお待ちください</div>
+  <div class="err" id="err"></div>
 
 <script>
-(function(){
-  "use strict";
-
-  const params = new URLSearchParams(location.search);
-  const orderId = params.get("orderId") || "";
-  document.getElementById("orderId").textContent = orderId || "—";
-
+(async () => {
+  const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
+  const KEY_LAST_QUOTE = "isoya_last_quote";
+  const errEl = document.getElementById("err");
   const msgEl = document.getElementById("msg");
 
-  if(!orderId){
-    msgEl.textContent = "orderId が見つかりません。";
-    msgEl.className = "status wait";
+  const loadJson = (k) => { try { return JSON.parse(localStorage.getItem(k) || ""); } catch { return null; } };
+
+  // pk取得（retrievePaymentIntent用）
+  const conf = await fetch("/api/stripe/config").then(r => r.json());
+  const pk = conf.publishableKey;
+  if (!pk) { errEl.textContent = "publishableKey が未設定です"; return; }
+
+  await liff.init({ liffId: LIFF_ID_ORDER });
+  if (!liff.isLoggedIn()) { errEl.textContent = "LIFF ログインできません"; return; }
+  const prof = await liff.getProfile();
+  const uid = prof.userId;
+
+  const q = loadJson(KEY_LAST_QUOTE);
+  if (!q) { errEl.textContent = "last_quote がありません。"; return; }
+
+  const url = new URL(location.href);
+  const mode = (url.searchParams.get("mode") || q.mode || "").trim();
+
+  // Stripeから戻ると payment_intent_client_secret がURLにつく
+  const clientSecret = url.searchParams.get("payment_intent_client_secret") || "";
+  if (!clientSecret) {
+    errEl.textContent = "payment_intent_client_secret がありません（Stripeから戻ってきていますか？）";
     return;
   }
 
-  async function poll(){
-    try{
-      const res = await fetch("/api/order/status?orderId=" + encodeURIComponent(orderId), { cache:"no-store" });
-      const data = await res.json().catch(()=> ({}));
-      if(!res.ok || !data.ok){
-        msgEl.textContent = "確認に失敗しました（しばらくして更新してください）";
-        msgEl.className = "status wait";
-        return;
-      }
-      const st = data.order?.status || "unknown";
-      if(st === "paid"){
-        msgEl.textContent = "支払い完了（DB反映済み）✅ 注文確定しました。";
-        msgEl.className = "status ok";
-        return;
-      }
-      msgEl.textContent = "確認中…（現在: " + st + "）";
-      msgEl.className = "status wait";
-      setTimeout(poll, 1500);
-    }catch(e){
-      console.error(e);
-      msgEl.textContent = "通信エラー。更新して再確認してください。";
-      msgEl.className = "status wait";
-    }
+  const stripe = Stripe(pk);
+  const { paymentIntent, error } = await stripe.retrievePaymentIntent(clientSecret);
+
+  if (error) { errEl.textContent = error.message || String(error); return; }
+  if (!paymentIntent) { errEl.textContent = "paymentIntent が取得できません"; return; }
+
+  if (paymentIntent.status !== "succeeded") {
+    errEl.textContent = "決済が完了していません: " + paymentIntent.status;
+    return;
   }
 
-  poll();
+  msgEl.textContent = "決済OK。注文を確定しています…";
+
+  // ★サーバに「注文確定」を依頼（ここで通知も行う）
+  const resp = await fetch("/api/order/stripe/complete", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({
+      uid,
+      mode,
+      payment_intent_id: paymentIntent.id,
+      quote: q
+    })
+  }).then(r => r.json());
+
+  if (!resp || !resp.ok) {
+    errEl.textContent = "注文確定に失敗: " + JSON.stringify(resp);
+    return;
+  }
+
+  msgEl.textContent = "注文が確定しました。ありがとうございました！";
+
+  // 必要なら完了ページへ遷移
+  // location.href = "/thanks.html";
 })();
 </script>
 </body>

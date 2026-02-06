@@ -6,6 +6,8 @@
   <title>商品一覧</title>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <!-- ✅ LIFF_ID を1か所に集約した設定（public/liff-config.js） -->
+  <script src="/liff-config.js"></script>
 
   <style>
     :root{
@@ -25,7 +27,8 @@
     h1{ margin:0 0 6px; font-size:18px; }
     .muted{ color:var(--muted); font-size:13px; line-height:1.5; }
     .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; margin-top:12px; }
-    .card{ confirmed:0; background:var(--card); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow); }
+    /* ✅ card の謎プロパティ(confirmed:0)を削除 */
+    .card{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; box-shadow:var(--shadow); }
 
     .imgbox{
       height:200px; background:#fff;
@@ -198,7 +201,10 @@
 (async function(){
   "use strict";
 
-  const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
+  // ✅ LIFF_ID を1か所に集約（public/liff-config.js を参照）
+  // もし未ロードならフォールバック
+  const LIFF_ID_ORDER = (window.LIFF_ID_DEFAULT || window.LIFF_ID_ORDER || "2008406620-G5j1gjzM");
+
   const KEY_UID  = "isoya_userId";
   const KEY_CART = "isoya_cart";
 
@@ -306,26 +312,18 @@
     const ing = (p.ingredients ?? p.ingredient ?? "").toString().trim();
     const bb  = (getBestBefore(p) ?? "").toString().trim();
 
-    // 全商品 “折りたたみ方式”：
-    // ・中身が無い場合も「情報を見る」だけ出し、中は「準備中」でOK（要望に合わせる）
-    // ・もし「空なら表示しない」にしたい場合は、この関数で早期return ""にしてください。
     const hasAny = !!(ing || bb);
 
     const lines = [];
     if(ing) lines.push(`<div class="metaLine"><span class="metaLabel">原材料：</span>${escapeHtml(ing)}</div>`);
     if(bb)  lines.push(`<div class="metaLine"><span class="metaLabel">賞味期限：</span>${escapeHtml(bb)}</div>`);
-
-    if(!hasAny){
-      lines.push(`<div class="metaLine">${escapeHtml("（準備中）")}</div>`);
-    }
+    if(!hasAny) lines.push(`<div class="metaLine">${escapeHtml("（準備中）")}</div>`);
 
     return `
       <div class="metaBox">
         <details class="metaDetails">
           <summary>${hasAny ? "原材料・賞味期限を見る" : "商品情報を見る"}</summary>
-          <div class="metaText">
-            ${lines.join("")}
-          </div>
+          <div class="metaText">${lines.join("")}</div>
         </details>
       </div>
     `;
@@ -339,7 +337,6 @@
     let subtotal = 0, count = 0;
 
     for(const it of cart.items){
-      // ✅ 念のため「オリジナルセットは合計計算に入れない」
       if(String(it.id||"").trim() === ORIGINAL_SET_ID) continue;
 
       const p = byId[it.id];
@@ -360,7 +357,6 @@
   function addToCart(product, qtyToAdd){
     const id = String(product.id||"").trim();
 
-    // ✅ 追加段階でもオリジナルセットはブロック
     if(id === ORIGINAL_SET_ID){
       showToast("この画面ではオリジナルセットは購入できません");
       return;
@@ -382,7 +378,7 @@
     el.className = "card";
 
     const img = normalizeImageSrc(p.image);
-    const stock = Number(p.stock||0);
+    const stock = Number(p.stock ?? 0);
 
     el.innerHTML = `
       <div class="imgbox">${img ? `<img src="${escapeHtml(img)}" alt="">` : ""}</div>
@@ -394,7 +390,7 @@
 
         <div class="row">
           <div class="price">${yen(p.price)}</div>
-          <span class="badge">${p.volume ? `内容量 ${escapeHtml(p.volume)}` : `在庫 ${stock}`}</span>
+          <span class="badge">${p.volume ? `内容量 ${escapeHtml(p.volume)}` : `在庫 ${Number.isFinite(stock) ? stock : "-"}`}</span>
         </div>
 
         <div class="controls">
@@ -415,8 +411,10 @@
     if(im) im.addEventListener("error", ()=> im.remove());
 
     const q = el.querySelector(".q");
-    el.querySelector(".dec").onclick = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1))-1)); };
-    el.querySelector(".inc").onclick = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1))+1)); };
+    const dec = el.querySelector(".dec");
+    const inc = el.querySelector(".inc");
+    if(dec) dec.onclick = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1))-1)); };
+    if(inc) inc.onclick = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1))+1)); };
     q.onchange = ()=>{ q.value = String(Math.max(1, Math.floor(Number(q.value||1)))); };
 
     const addBtn = el.querySelector(".add");
@@ -429,6 +427,7 @@
       const add = Math.max(1, Math.floor(Number(q.value||1)));
       const inCart = cart.items.find(x => x.id === p.id)?.qty || 0;
       const next = inCart + add;
+
       if(Number.isFinite(stock) && stock >= 0 && next > stock){
         alert(`在庫不足です（在庫 ${stock}）。個数を減らしてください。`);
         return;
@@ -445,6 +444,7 @@
     location.href = `/cod-register.html?returnTo=${ret}`;
   }
 
+  // LIFF
   try{
     const uid = await ensureLiffUser();
     if(!uid){
@@ -476,36 +476,35 @@
     showToast("カートを空にしました");
   };
 
+  // products
   try{
     const r = await fetch("/api/products", { cache:"no-store" });
     const d = await r.json().catch(()=>({}));
     if(!r.ok || !d.ok) throw new Error(d?.error || ("HTTP "+r.status));
 
-    
     // ✅ hidden:true の商品は一覧に出さない（福箱など）
-// 文字列 "true" で入ってても除外できるようにする
-const raw = Array.isArray(d.products) ? d.products : [];
-products = raw.filter(p => {
-  if (isOriginalSet(p)) return false;
+    // 文字列 "true" / 1 も除外
+    const raw = Array.isArray(d.products) ? d.products : [];
+    products = raw.filter(p => {
+      if (isOriginalSet(p)) return false;
 
-  const h = p?.hidden;
-  const hidden = (h === true) || (String(h).toLowerCase() === "true") || (Number(h) === 1);
-  if (hidden) return false;
+      const h = p?.hidden;
+      const hidden = (h === true) || (String(h).toLowerCase() === "true") || (Number(h) === 1);
+      if (hidden) return false;
 
-  return true;
-});
-
+      return true;
+    });
 
     statusEl.textContent = products.length ? "" : "商品がありません（products.json を確認）";
     gridEl.innerHTML = "";
     products.forEach(p => gridEl.appendChild(card(p)));
 
-    // ✅ 商品ロード後もカートを浄化（念のため）
     cart = purgeOriginalSetFromCart(cart);
 
     renderSum();
     syncBarHeight();
   }catch(e){
+    console.error(e);
     statusEl.innerHTML = '<span class="danger">商品読み込み失敗：/api/products を確認してください</span>';
     renderSum();
     syncBarHeight();

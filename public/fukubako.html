@@ -211,7 +211,8 @@
   // =========================
   // 設定
   // =========================
-  const LIFF_ID_ORDER = "2008406620-yQFRswAu";
+  // ✅ ここだけ修正：LINE 400 の原因を潰す
+  const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
 
   // ✅ 表示名だけ変更（DB/判定IDはそのまま）
   const FUKUBAKO_ID = "fukubako-2026";
@@ -381,7 +382,6 @@
     const incBtn = card.querySelector(".inc");
     const addBtn = card.querySelector(".add");
 
-    // ✅ 数量は常に1固定（操作不可）
     if(qInput){
       qInput.value = "1";
       qInput.readOnly = true;
@@ -392,7 +392,6 @@
 
     const stock = Number(product.stock ?? 0);
 
-    // ✅ サーバで2回目判定されたら完全ロック
     if(!allowedByServer){
       if(addBtn){
         addBtn.disabled = true;
@@ -404,7 +403,6 @@
       return;
     }
 
-    // ✅ 画面内は1個のみ（カートに入ってたら追加不可）
     const id = String(product.id||"").trim();
     const inCart = cart.items.find(x => String(x.id||"").trim() === id)?.qty || 0;
 
@@ -469,9 +467,7 @@
 
         <div class="desc">${escapeHtml(p.desc || "まずは味見に。内容はお楽しみのセットです。")}</div>
 
-        <!-- ✅ セット内容（set_items）を表示 -->
         ${setItemsHtml(p)}
-
         ${metaDetailsHtml(p)}
 
         <div class="row">
@@ -501,7 +497,6 @@
     const im = el.querySelector("img");
     if(im) im.addEventListener("error", ()=> im.remove());
 
-    // 数量操作は無効
     const q = el.querySelector(".q");
     const dec = el.querySelector(".dec");
     const inc = el.querySelector(".inc");
@@ -549,7 +544,6 @@
     return;
   }
 
-  // ✅ サーバ側の「購入済み」チェック（文言変更）
   const st = await checkAlreadyOrdered(uid);
   if(st && st.ok && st.allowed === false){
     allowedByServer = false;
@@ -597,7 +591,6 @@
     showToast("カートを空にしました");
   };
 
-  // 商品取得（/api/products）
   try{
     const r = await fetch("/api/products", { cache:"no-store" });
     const d = await r.json().catch(()=>({}));
@@ -614,7 +607,6 @@
       return;
     }
 
-    // ✅ 読み込み中表示を消す（あると見栄えが良い）
     statusEl.textContent = "";
 
     mountEl.innerHTML = "";

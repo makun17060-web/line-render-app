@@ -152,7 +152,7 @@
   // ✅ ここが重要：住所画面は「どの注文フローから来たか(mode)」で LIFF_ID を選ぶ
   function pickLiffIdByMode(m){
     if(m === "original") return window.LIFF_ID_ORDER_ORIGINAL || window.LIFF_ID_COD || "2008406620-G5j1gjzM";
-    if(m === "fukubako") return window.LIFF_ID_ORDER_TRIAL   || window.LIFF_ID_COD || "2008406620-G5j1gjzM"; // ※あなたの現状では fukubako=初めてセットを使ってる
+    if(m === "fukubako") return window.LIFF_ID_ORDER_TRIAL   || window.LIFF_ID_COD || "2008406620-G5j1gjzM"; // ※現状 fukubako=初めてセット
     if(m === "trial")    return window.LIFF_ID_ORDER_TRIAL   || window.LIFF_ID_COD || "2008406620-G5j1gjzM";
     if(m === "store")    return window.LIFF_ID_ORDER_STORE   || window.LIFF_ID_COD || "2008406620-G5j1gjzM";
     // デフォ：あかしゃ（通常）
@@ -326,16 +326,57 @@
     };
   }
 
+  // =========================
+  // ✅ ここが今回の修正点：returnTo を安全に復元して「LIFF内で」戻す
+  // =========================
+  function getReturnToUrl(){
+    const raw = (returnToRaw || "").trim();
+    let decoded = "";
+    try{
+      // 初めてセット側で encodeURIComponent して渡してくる想定
+      decoded = raw ? decodeURIComponent(raw) : "";
+    }catch(e){
+      decoded = raw; // decode失敗なら生で使う
+    }
+
+    const url = (decoded || "/confirm.html").trim();
+
+    // 相対でも必ず絶対URLにする（LINE内遷移の事故防止）
+    try{
+      return new URL(url, location.origin).toString();
+    }catch(e){
+      return new URL("/confirm.html", location.origin).toString();
+    }
+  }
+
   function buildReturnUrl(){
-    const u = new URL(returnToRaw, location.origin);
+    // returnTo がすでに /confirm.html?mode=fukubako みたいに mode を含んでてもOK
+    const u = new URL(getReturnToUrl());
+
+    // 住所ステップ印（任意）
     u.searchParams.set("addr_step", "1");
-    if (mode) u.searchParams.set("mode", mode);
-    return u.pathname + u.search;
+
+    // mode は「確実に」残す（上書きでOK）
+    if(mode) u.searchParams.set("mode", mode);
+
+    return u.toString();
   }
 
   function goNext(){
-    location.replace(buildReturnUrl());
+    const url = buildReturnUrl();
+
+    // ✅ LINE内なら external:false で「同じLIFF内」で開く（ここがポイント）
+    try{
+      if(window.liff && typeof liff.isInClient === "function" && liff.isInClient()){
+        liff.openWindow({ url, external:false });
+        return;
+      }
+    }catch(e){}
+
+    // ブラウザ等は通常遷移
+    location.replace(url);
   }
+  // =========================
 
   async function loadAddress(uid){
     // 1) list：default優先
@@ -388,6 +429,8 @@
       };
 
       await postJson("/api/address/set", payload);
+
+      // ✅ 保存成功 → returnToへ戻る（LIFF内は openWindow external:false）
       goNext();
     }catch(e){
       alert("住所の保存に失敗しました: " + toMsg(e));
@@ -417,6 +460,7 @@
       if(cancelBtn) cancelBtn.style.display = "";
     }
 
+    // ✅ 「この住所で進む」も安全に戻す（同じ goNext を使う）
     if(useBtn) useBtn.onclick = ()=>goNext();
 
     if(editBtn) editBtn.onclick = ()=>{
@@ -434,6 +478,8 @@
     };
 
     if(saveBtn) saveBtn.onclick = ()=>saveAddress(uid);
+
+    // ✅ 戻るボタン（商品ページに戻る）は今まで通り
     if(backBtn) backBtn.onclick = ()=>location.replace(backTo);
 
   }catch(e){

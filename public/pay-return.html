@@ -4,7 +4,13 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
   <title>決済結果</title>
+
+  <!-- Stripeはこのページでは必須ではないけど、残してOK -->
   <script src="https://js.stripe.com/v3/"></script>
+
+  <!-- ✅ トーク画面に戻る（LIFFを閉じる）ために追加 -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+
   <style>
     :root{
       --bg:#f6f7f9;--card:#fff;--text:#111827;--muted:#6b7280;--line:#e5e7eb;
@@ -27,6 +33,7 @@
     .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:var(--muted);word-break:break-all}
   </style>
 </head>
+
 <body>
   <div class="wrap">
     <h1>決済結果</h1>
@@ -37,13 +44,17 @@
       <div id="detail" class="mono" style="margin-top:8px"></div>
 
       <button id="goConfirm" class="btn" type="button">注文確認に戻る</button>
-      <button id="closeBtn" class="btn secondary" type="button">閉じる</button>
+      <button id="closeBtn" class="btn secondary" type="button">閉じる（トークへ）</button>
     </div>
   </div>
 
 <script>
 (async function(){
   "use strict";
+
+  // ✅ あなたの注文系LIFF ID（pay-card.htmlと合わせる）
+  const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
+
   const statusEl = document.getElementById("status");
   const msgEl = document.getElementById("msg");
   const detailEl = document.getElementById("detail");
@@ -51,7 +62,7 @@
   const closeBtn = document.getElementById("closeBtn");
 
   const qs = new URLSearchParams(location.search);
-  const redirectStatus = (qs.get("redirect_status") || "").trim(); // succeeded / failed / ...
+  const redirectStatus = (qs.get("redirect_status") || "").trim(); // succeeded / failed / processing / ...
   const paymentIntentId = (qs.get("payment_intent") || "").trim();
   const mode = (qs.get("mode") || "").trim(); // optional
 
@@ -60,38 +71,70 @@
     : (mode === "original") ? "/confirm-original.html"
     : "/confirm.html";
 
-  goConfirm.onclick = () => { location.href = RETURN_CONFIRM; };
+  // ✅ 安全なHTMLエスケープ（innerHTMLで status を表示してるので）
+  function esc(s){
+    return String(s ?? "")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#39;");
+  }
 
-  // LIFFなら close できる
-  closeBtn.onclick = async () => {
+  // ✅ 「閉じる（トークへ）」の本体
+  async function closeToTalk(){
+    // LIFF外（PCブラウザ等）なら普通に戻る
+    if(!window.liff){
+      location.href = RETURN_CONFIRM;
+      return;
+    }
+
     try{
-      if(window.liff){
-        if(!liff.isInClient()){
-          // ブラウザなら戻る
-          location.href = RETURN_CONFIRM;
-          return;
-        }
-        await liff.closeWindow();
+      // initしてからclose（環境によって init なしだと失敗することがある）
+      await liff.init({ liffId: LIFF_ID_ORDER });
+
+      // LINEアプリ内なら閉じてトークへ
+      if(liff.isInClient()){
+        liff.closeWindow();
         return;
       }
-    }catch(e){}
-    location.href = RETURN_CONFIRM;
-  };
 
-  // 表示
+      // ブラウザなら戻る
+      location.href = RETURN_CONFIRM;
+    }catch(e){
+      location.href = RETURN_CONFIRM;
+    }
+  }
+
+  goConfirm.onclick = () => { location.href = RETURN_CONFIRM; };
+  closeBtn.onclick = closeToTalk;
+
+  // 表示（デバッグ用）
   detailEl.textContent =
-    "redirect_status=" + redirectStatus + "\n" +
-    "payment_intent=" + paymentIntentId;
+    "redirect_status=" + (redirectStatus || "(none)") + "\n" +
+    "payment_intent=" + (paymentIntentId || "(none)") + "\n" +
+    "mode=" + (mode || "(none)");
 
+  // メッセージ
   if(redirectStatus === "succeeded"){
     statusEl.textContent = "決済が完了しました";
-    msgEl.innerHTML = '<div class="ok">ありがとうございます。決済が完了しました。</div><div class="muted">このまま注文確定処理に進めます。</div>';
+    msgEl.innerHTML =
+      '<div class="ok">ありがとうございます。決済が完了しました。</div>' +
+      '<div class="muted">「閉じる（トークへ）」でトーク画面に戻れます。</div>';
+    // ✅ もし「自動で閉じる」ならここで数秒後に：
+    // setTimeout(closeToTalk, 2500);
+
   }else if(redirectStatus){
     statusEl.textContent = "決済が完了しませんでした";
-    msgEl.innerHTML = '<div class="err">決済が完了しませんでした：' + redirectStatus + '</div><div class="muted">もう一度お試しください。</div>';
+    msgEl.innerHTML =
+      '<div class="err">決済が完了しませんでした：' + esc(redirectStatus) + '</div>' +
+      '<div class="muted">「注文確認に戻る」からやり直してください。</div>';
+
   }else{
     statusEl.textContent = "状態を確認できませんでした";
-    msgEl.innerHTML = '<div class="err">決済結果の情報が見つかりません。</div><div class="muted">注文確認に戻ってやり直してください。</div>';
+    msgEl.innerHTML =
+      '<div class="err">決済結果の情報が見つかりません。</div>' +
+      '<div class="muted">「注文確認に戻る」からやり直してください。</div>';
   }
 })();
 </script>

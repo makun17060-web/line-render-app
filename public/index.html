@@ -7,6 +7,8 @@
 
   <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <!-- ✅ LIFF_ID を1か所に集約した設定（public/liff-config.js） -->
+  <script src="/liff-config.js"></script>
 
   <style>
     :root{
@@ -89,28 +91,28 @@
 
     <!-- 🆕 初めてセット -->
     <div class="card">
-      <a class="btn btnTrial" href="https://liff.line.me/2008406620-yQFRswAu">
+      <a class="btn btnTrial" id="btnTrial" href="#">
         🆕 初めての方限定セット
       </a>
     </div>
 
     <!-- オリジナルセット -->
     <div class="card">
-      <a class="btn btnOriginal" href="https://liff.line.me/2008406620-Bd9Zo9od">
+      <a class="btn btnOriginal" id="btnOriginal" href="#">
         🎁 オリジナルセット
       </a>
     </div>
 
     <!-- あかしゃシリーズ -->
     <div class="card">
-      <a class="btn btnAkasha" href="https://liff.line.me/2008406620-G5j1gjzM">
+      <a class="btn btnAkasha" id="btnAkasha" href="#">
         🍘 あかしゃシリーズ
       </a>
     </div>
 
     <!-- 店頭受取 -->
     <div class="card">
-      <a class="btn btnStore" href="https://liff.line.me/2008406620-7tSkOcqd">
+      <a class="btn btnStore" id="btnStore" href="#">
         🏠 店頭受取（現金）
       </a>
     </div>
@@ -118,9 +120,35 @@
 
 <script>
 (async function(){
-  // ===== 固定設定 =====
-  const LIFF_ID = "2008406620-8CWfgEKh";
-  const VERSION = "index_v_20260126_trial_added";
+  "use strict";
+
+  // ✅ LIFF設定は public/liff-config.js に集約
+  // 例（liff-config.js）:
+  // window.LIFF_ID_MENU = "2008406620-8CWfgEKh";
+  // window.LIFF_LINK_TRIAL = "https://liff.line.me/2008406620-yQFRswAu";
+  // window.LIFF_LINK_ORIGINAL = "https://liff.line.me/2008406620-Bd9Zo9od";
+  // window.LIFF_LINK_AKASHA = "https://liff.line.me/2008406620-G5j1gjzM";
+  // window.LIFF_LINK_STORE = "https://liff.line.me/2008406620-7tSkOcqd";
+
+  const LIFF_ID_MENU = window.LIFF_ID_MENU || "2008406620-8CWfgEKh"; // フォールバック
+  const VERSION = "index_v_20260206_liff_config";
+
+  // リンクも config から
+  const LINK_TRIAL    = window.LIFF_LINK_TRIAL    || "https://liff.line.me/2008406620-yQFRswAu";
+  const LINK_ORIGINAL = window.LIFF_LINK_ORIGINAL || "https://liff.line.me/2008406620-Bd9Zo9od";
+  const LINK_AKASHA   = window.LIFF_LINK_AKASHA   || "https://liff.line.me/2008406620-G5j1gjzM";
+  const LINK_STORE    = window.LIFF_LINK_STORE    || "https://liff.line.me/2008406620-7tSkOcqd";
+
+  // ボタンに反映（HTMLに直書きしない＝ズレ防止）
+  const btnTrial    = document.getElementById("btnTrial");
+  const btnOriginal = document.getElementById("btnOriginal");
+  const btnAkasha   = document.getElementById("btnAkasha");
+  const btnStore    = document.getElementById("btnStore");
+
+  if(btnTrial)    btnTrial.href    = LINK_TRIAL;
+  if(btnOriginal) btnOriginal.href = LINK_ORIGINAL;
+  if(btnAkasha)   btnAkasha.href   = LINK_AKASHA;
+  if(btnStore)    btnStore.href    = LINK_STORE;
 
   // ===== デバッグ =====
   const qs = new URLSearchParams(location.search);
@@ -132,7 +160,7 @@
 
   // 1) init
   try {
-    await liff.init({ liffId: LIFF_ID });
+    await liff.init({ liffId: LIFF_ID_MENU });
   } catch (e) {
     d("init FAILED: " + (e?.message || String(e)));
     return;
@@ -155,8 +183,8 @@
     return;
   }
 
-  // 4) 二重送信防止
-  const key = "liff_opened_sent:" + LIFF_ID + ":" + location.pathname;
+  // 4) 二重送信防止（LIFF_ID_MENU 固定）
+  const key = "liff_opened_sent:" + LIFF_ID_MENU + ":" + location.pathname;
   if (!FORCE && sessionStorage.getItem(key)) {
     return;
   }
@@ -165,7 +193,7 @@
   // 5) 起動ログ送信
   const payload = {
     userId,
-    source: `index|order|${VERSION}|origin=${location.origin}`,
+    source: `index|menu|${VERSION}|origin=${location.origin}`,
     ts: Date.now()
   };
 

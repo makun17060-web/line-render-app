@@ -1765,6 +1765,76 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
         }
       }
     }
+    // ============================
+    // ✅ Payment Element（PaymentIntent）確定：ここが本命
+    // ============================
+    if (event.type === "payment_intent.succeeded") {
+      const pi = event.data.object;
+
+      const piId = pi?.id || "";
+      const orderId = pi?.metadata?.orderId || null;
+      const userIdFromMeta = pi?.metadata?.userId || "";
+
+      // 1) まず「注文IDがmetadataに入ってる」ならそれで確定
+      if (orderId) {
+        await pool.query(`UPDATE orders SET status='paid' WHERE id=$1`, [orderId]);
+
+        await markUserOrdered(userIdFromMeta || "", Number(orderId)).catch(()=>{});
+
+        const row = await getOrderRow(orderId);
+        if (row) {
+          const items = Array.isArray(row.items) ? row.items : (row.items || []);
+          await notifyOrderCompleted({
+            orderId: row.id,
+            userId: row.user_id || userIdFromMeta || "",
+            items,
+            shippingFee: row.shipping_fee,
+            total: row.total,
+            paymentMethod: row.payment_method || "card",
+            codFee: 0,
+            size: null,
+            addr: null,
+            title: "新規注文（カード）",
+            isPaid: true,
+            deliveryMethod: "delivery",
+          });
+        }
+      } else if (piId) {
+        // 2) 念のため：metadataが無い場合は orders.payment_intent_id で引く
+        const r = await pool.query(
+          `SELECT id FROM orders WHERE payment_intent_id=$1 ORDER BY created_at DESC LIMIT 1`,
+          [piId]
+        );
+        const foundOrderId = r.rows?.[0]?.id;
+
+        if (foundOrderId) {
+          await pool.query(`UPDATE orders SET status='paid' WHERE id=$1`, [foundOrderId]);
+
+          const row = await getOrderRow(foundOrderId);
+          if (row) {
+            await markUserOrdered(row.user_id || "", Number(foundOrderId)).catch(()=>{});
+            const items = Array.isArray(row.items) ? row.items : (row.items || []);
+            await notifyOrderCompleted({
+              orderId: row.id,
+              userId: row.user_id || "",
+              items,
+              shippingFee: row.shipping_fee,
+              total: row.total,
+              paymentMethod: row.payment_method || "card",
+              codFee: 0,
+              size: null,
+              addr: null,
+              title: "新規注文（カード）",
+              isPaid: true,
+              deliveryMethod: "delivery",
+            });
+          }
+        } else {
+          logErr("payment_intent.succeeded but order not found", piId);
+        }
+      }
+    }
+
 
     res.json({ received: true });
   } catch (e) {
@@ -1772,7 +1842,6 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
     res.status(500).send("server_error");
   }
 });
-
 /* =========================
  * LINE Webhook（★ここをJSONより前に！）
  * ========================= */
@@ -2751,6 +2820,15 @@ app.post("/api/pay/stripe/intent", async (req, res) => {
         userId: built.userId,
       },
     });
+// ★追加：orders に payment_intent_id を保存（後でwebhookで確実に紐付けできる）
+try {
+  await pool.query(
+    `UPDATE orders SET payment_intent_id=$2 WHERE id=$1`,
+    [orderId, pi.id]
+  );
+} catch (e) {
+  logErr("update orders.payment_intent_id failed", orderId, pi?.id, e?.message || e);
+}
 
     // 仮受付通知（任意：欲しければON）
     await notifyCardPending({

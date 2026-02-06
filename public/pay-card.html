@@ -73,7 +73,7 @@
   const errEl  = document.getElementById("err");
   const payBtn = document.getElementById("payBtn");
   const backBtn= document.getElementById("backBtn");
-  const modeLabel = document.getElementById("modeLabel");
+  
 
   const qs = new URLSearchParams(location.search);
   const mode = (qs.get("mode") || "").trim(); // original / fukubako / ""(default)
@@ -157,10 +157,7 @@
   // main
   // =========================
   try{
-    modeLabel.textContent =
-      (mode === "fukubako") ? "福箱"
-    : (mode === "original") ? "オリジナル"
-    : "通常";
+ 
 
     setStatus("決済情報を確認しています…");
     setErr("");

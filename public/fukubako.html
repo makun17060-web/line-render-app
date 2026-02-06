@@ -41,6 +41,20 @@
       font-size:13px;
       line-height:1.6;
     }
+    .debugBox{
+      margin-top:10px;
+      padding:10px 12px;
+      border-radius:12px;
+      border:1px solid #dbeafe;
+      background:#eff6ff;
+      color:#1e40af;
+      font-weight:800;
+      font-size:12px;
+      line-height:1.6;
+      white-space:pre-wrap;
+      word-break:break-word;
+    }
+    .debugBox .t{ font-weight:900; margin-bottom:6px; display:block; }
 
     .card{
       background:var(--card);
@@ -184,6 +198,7 @@
   </div>
 
   <div class="muted" id="status">読み込み中…</div>
+  <div id="debug" class="debugBox" style="display:none;"></div>
   <div id="mount"></div>
 </div>
 
@@ -209,21 +224,21 @@
   "use strict";
 
   // =========================
-  // 設定（✅ LIFF_ID は liff-config.js で一元管理）
+  // 設定
   // =========================
   // このページ（初めてセット）は “注文用(初めてセット)” の LIFF を使う
-  const LIFF_ID_ORDER = window.LIFF_ID_ORDER_TRIAL || "2008406620-yQFRswAu";
+  // ✅ liff-config.js が読み込めていないと事故るので、基本は config を必須にする
+  const LIFF_ID_ORDER = window.LIFF_ID_ORDER_TRIAL || "";
+  // どうしてもフォールバックしたい場合だけ下を使う（※IDが違うと init が落ちます）
+  const LIFF_ID_FALLBACK = "2008406620-yQFRswAu";
 
-  // ✅ 表示名だけ変更（DB/判定IDはそのまま）
-  const FUKUBAKO_ID = "fukubako-2026";
+  // ✅ 「初めてセット」の products 側 id（あなたの現状に合わせてこのまま）
+  //    ※本当に trial 専用IDがあるならここを差し替えてOK（例: "trial-set"）
+  const PRODUCT_ID = "fukubako-2026";
 
   const KEY_UID  = "isoya_userId";
-  const KEY_CART = "isoya_cart_fukubako"; // ✅ 専用カート（名称はそのまま）
-
-  // ✅ confirm 側でカート/分岐に使う値。ここは変えない（ずれると他が壊れる）
-  const MODE = "fukubako";
-
-  // ✅ 住所画面→戻り先（confirm）
+  const KEY_CART = "isoya_cart_fukubako"; // ✅ 専用カート（現状に合わせて）
+  const MODE = "fukubako";                // ✅ confirm 側で分岐に使う値（現状に合わせて）
   const RETURN_TO = "/confirm.html?mode=fukubako";
 
   const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
@@ -309,12 +324,85 @@
   }
 
   // =========================
-  // LIFF（✅ IDToken優先で userId を安定化）
+  // DOM
   // =========================
+  const statusEl = document.getElementById("status");
+  const mountEl  = document.getElementById("mount");
+  const sumEl    = document.getElementById("sum");
+  const clearBtn = document.getElementById("clearBtn");
+  const addrBtn  = document.getElementById("addrBtn");
+  const nextBtn  = document.getElementById("nextBtn");
+  const toastEl  = document.getElementById("toast");
+  const onceNotice = document.getElementById("onceNotice");
+  const debugEl = document.getElementById("debug");
+
+  function showDebug(text){
+    if(!debugEl) return;
+    debugEl.style.display = "block";
+    debugEl.innerHTML = `<span class="t">DEBUG</span>${escapeHtml(text || "")}`;
+  }
+
+  function syncBarHeight(){
+    const bar = document.querySelector(".bar");
+    if(!bar) return;
+    const h = Math.ceil(bar.getBoundingClientRect().height || 0);
+    if(h > 0) document.documentElement.style.setProperty("--barH", h + "px");
+  }
+
+  function showToast(msg){
+    if(!toastEl) return;
+    toastEl.textContent = msg || "カートに追加しました";
+    toastEl.classList.add("show");
+    clearTimeout(toastEl._t);
+    toastEl._t = setTimeout(()=> toastEl.classList.remove("show"), 800);
+  }
+
+  // =========================
+  // LIFF（✅ 失敗理由を画面に出す）
+  // =========================
+  function safeStringify(v){
+    try{ return JSON.stringify(v); }catch{ return String(v); }
+  }
+
   async function ensureLiffUser(){
-    await liff.init({ liffId: LIFF_ID_ORDER });
+    const hasConfig = !!window.LIFF_ID_ORDER_TRIAL;
+    const chosenLiffId = (LIFF_ID_ORDER || LIFF_ID_FALLBACK).trim();
+
+    // config が無い場合は分かりやすく表示（ここ超重要）
+    if(!hasConfig){
+      showDebug(
+        [
+          "liff-config.js から LIFF_ID_ORDER_TRIAL が取得できません。",
+          "1) /liff-config.js が 404 になってないか（Network確認）",
+          "2) 中身で window.LIFF_ID_ORDER_TRIAL を set しているか",
+          "",
+          "現在のフォールバックで init します：",
+          "liffId=" + chosenLiffId,
+          "url=" + location.href
+        ].join("\n")
+      );
+    }else{
+      showDebug("liffId(from config)=" + chosenLiffId + "\nurl=" + location.href);
+    }
+
+    try{
+      await liff.init({ liffId: chosenLiffId });
+    }catch(err){
+      const msg =
+        (err && (err.message || err.code)) ? safeStringify(err) : String(err);
+
+      // ここで「何が悪いか」を必ず可視化
+      throw new Error(
+        "liff.init failed\n" +
+        "liffId=" + chosenLiffId + "\n" +
+        "url=" + location.href + "\n" +
+        "userAgent=" + navigator.userAgent + "\n" +
+        "err=" + msg
+      );
+    }
 
     if(!liff.isLoggedIn()){
+      // ※外部ブラウザで開いた時などは login が走る
       liff.login({ redirectUri: location.href });
       return null;
     }
@@ -336,7 +424,7 @@
   async function checkAlreadyOrdered(uid){
     try{
       const r = await fetch(
-        `/api/fukubako/status?userId=${encodeURIComponent(uid)}&productId=${encodeURIComponent(FUKUBAKO_ID)}`,
+        `/api/fukubako/status?userId=${encodeURIComponent(uid)}&productId=${encodeURIComponent(PRODUCT_ID)}`,
         { cache:"no-store" }
       );
       const d = await r.json().catch(()=>({}));
@@ -345,33 +433,6 @@
     }catch{
       return { ok:false, allowed:true };
     }
-  }
-
-  // =========================
-  // DOM
-  // =========================
-  const statusEl = document.getElementById("status");
-  const mountEl  = document.getElementById("mount");
-  const sumEl    = document.getElementById("sum");
-  const clearBtn = document.getElementById("clearBtn");
-  const addrBtn  = document.getElementById("addrBtn");
-  const nextBtn  = document.getElementById("nextBtn");
-  const toastEl  = document.getElementById("toast");
-  const onceNotice = document.getElementById("onceNotice");
-
-  function syncBarHeight(){
-    const bar = document.querySelector(".bar");
-    if(!bar) return;
-    const h = Math.ceil(bar.getBoundingClientRect().height || 0);
-    if(h > 0) document.documentElement.style.setProperty("--barH", h + "px");
-  }
-
-  function showToast(msg){
-    if(!toastEl) return;
-    toastEl.textContent = msg || "カートに追加しました";
-    toastEl.classList.add("show");
-    clearTimeout(toastEl._t);
-    toastEl._t = setTimeout(()=> toastEl.classList.remove("show"), 800);
   }
 
   // =========================
@@ -555,6 +616,7 @@
     }
   }catch(e){
     statusEl.innerHTML = '<span class="danger">LIFF初期化に失敗しました</span>';
+    showDebug(String(e?.message || e));
     console.error(e);
     return;
   }
@@ -610,10 +672,10 @@
     if(!r.ok || !d.ok) throw new Error(d?.error || ("HTTP "+r.status));
 
     const raw = Array.isArray(d.products) ? d.products : [];
-    product = raw.find(p => String(p?.id||"").trim() === FUKUBAKO_ID) || null;
+    product = raw.find(p => String(p?.id||"").trim() === PRODUCT_ID) || null;
 
     if(!product){
-      statusEl.innerHTML = `<span class="danger">磯屋初めてセット（${escapeHtml(FUKUBAKO_ID)}）が products に見つかりません</span>`;
+      statusEl.innerHTML = `<span class="danger">初めてセット（${escapeHtml(PRODUCT_ID)}）が products に見つかりません</span>`;
       mountEl.innerHTML = "";
       renderSum();
       syncBarHeight();
@@ -629,6 +691,7 @@
     syncBarHeight();
   }catch(e){
     statusEl.innerHTML = '<span class="danger">読み込み失敗：/api/products を確認してください</span>';
+    showDebug("products fetch error:\n" + String(e?.message || e));
     mountEl.innerHTML = "";
     renderSum();
     syncBarHeight();

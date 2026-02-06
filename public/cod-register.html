@@ -6,6 +6,8 @@
   <title>お届け先住所の登録</title>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <!-- ✅ LIFF_ID を1か所に集約（public/liff-config.js） -->
+  <script src="/liff-config.js"></script>
 
   <style>
     :root{
@@ -18,7 +20,7 @@
     .wrap{max-width:860px;margin:0 auto;padding:14px 14px 26px}
     h1{margin:0 0 6px;font-size:18px}
     .muted{color:var(--muted);font-size:13px;line-height:1.5}
-    .err{color:var(--danger);font-weight:900}
+    .err{color:var(--danger);font-weight:900;white-space:pre-line}
 
     .card{
       background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
@@ -132,16 +134,38 @@
 (async function(){
   "use strict";
 
-  const LIFF_ID_COD  = "2008406620-G5j1gjzM";
+  // ✅ modeごとに LIFF を切替（ただし設定は1か所：liff-config.js）
+  // liff-config.js 例：
+  // window.LIFF_ID_MENU = "...";
+  // window.LIFF_ID_ORDER_AKASHA = "2008406620-G5j1gjzM";
+  // window.LIFF_ID_ORDER_ORIGINAL = "2008406620-Bd9Zo9od";
+  // window.LIFF_ID_ORDER_TRIAL = "2008406620-yQFRswAu";
+  // window.LIFF_ID_ORDER_STORE = "2008406620-7tSkOcqd";
+  // window.LIFF_ID_COD = "2008406620-G5j1gjzM"; // 旧互換（任意）
+
   const KEY_UID = "isoya_userId";
 
   const qs = new URLSearchParams(location.search);
   const mode = (qs.get("mode") || "").trim();
   const returnToRaw = (qs.get("returnTo") || "/confirm.html").trim();
 
+  // ✅ ここが重要：住所画面は「どの注文フローから来たか(mode)」で LIFF_ID を選ぶ
+  function pickLiffIdByMode(m){
+    if(m === "original") return window.LIFF_ID_ORDER_ORIGINAL || window.LIFF_ID_COD || "2008406620-G5j1gjzM";
+    if(m === "fukubako") return window.LIFF_ID_ORDER_TRIAL   || window.LIFF_ID_COD || "2008406620-G5j1gjzM"; // ※あなたの現状では fukubako=初めてセットを使ってる
+    if(m === "trial")    return window.LIFF_ID_ORDER_TRIAL   || window.LIFF_ID_COD || "2008406620-G5j1gjzM";
+    if(m === "store")    return window.LIFF_ID_ORDER_STORE   || window.LIFF_ID_COD || "2008406620-G5j1gjzM";
+    // デフォ：あかしゃ（通常）
+    return window.LIFF_ID_ORDER_AKASHA || window.LIFF_ID_COD || "2008406620-G5j1gjzM";
+  }
+
+  const LIFF_ID_THIS = pickLiffIdByMode(mode);
+
   const backTo =
     (mode === "original") ? "/original-set.html"
   : (mode === "fukubako") ? "/fukubako.html"
+  : (mode === "trial") ? "/fukubako.html"
+  : (mode === "store") ? "/omise.html"
   : "/products.html";
 
   const status = document.getElementById("status");
@@ -201,22 +225,28 @@
     return d;
   }
 
-  async function ensureUserSoft(){
+  // ✅ 住所画面は「soft」じゃなく“確実にログイン”させるのが安全（LINE 400の回避）
+  async function ensureUserHard(){
     const cached = (localStorage.getItem(KEY_UID) || "").trim();
     if(cached) return cached;
 
-    try{
-      await liff.init({ liffId: LIFF_ID_COD });
-      if(liff.isLoggedIn()){
-        const prof = await liff.getProfile();
-        const uid = (prof?.userId || "").trim();
-        if(uid) localStorage.setItem(KEY_UID, uid);
-        return uid || null;
-      }
-      return null;
-    }catch{
+    await liff.init({ liffId: LIFF_ID_THIS });
+
+    if(!liff.isLoggedIn()){
+      // returnTo / mode を保持したまま戻ってくる
+      liff.login({ redirectUri: location.href });
       return null;
     }
+
+    let uid = null;
+    try { uid = liff.getDecodedIDToken()?.sub || null; } catch(e){}
+    if(!uid){
+      try { uid = (await liff.getProfile())?.userId || null; } catch(e){}
+    }
+
+    uid = (uid || "").trim();
+    if(uid) localStorage.setItem(KEY_UID, uid);
+    return uid || null;
   }
 
   // ✅ 名前キー違い吸収
@@ -335,7 +365,6 @@
   async function saveAddress(uid){
     const a = readForm();
 
-    // ✅ 名前は必須（ECとして正しい）
     if(!a.name || !a.phone || !a.postal || !a.prefecture || !a.city || !a.address1){
       alert("お名前/電話番号/郵便番号/都道府県/市区町村/番地 は必須です。");
       return;
@@ -345,15 +374,13 @@
     saveBtn.textContent = "保存中…";
 
     try{
-      // ✅ ここが修正点：サーバがどっちを読んでも良いように「直下」＋「address」の両方を送る
+      // サーバがどっちを読んでもOK：「直下」＋「address」の両方
       const payload = {
         userId: uid,
 
-        // 直下（サーバがreq.body.name等を読む場合に対応）
         id: currentAddr?.id || null,
         ...a,
 
-        // ネスト（サーバがreq.body.address.name等を読む場合に対応）
         address: {
           id: currentAddr?.id || null,
           ...a
@@ -370,10 +397,9 @@
   }
 
   try{
-    const uid = await ensureUserSoft();
+    const uid = await ensureUserHard();
     if(!uid){
-      showErr("ユーザー情報が取得できません。", "いったん商品ページから開き直してください。");
-      setTimeout(()=>location.replace(backTo), 900);
+      status.textContent = "LIFFログイン中…";
       return;
     }
 
@@ -411,7 +437,8 @@
     if(backBtn) backBtn.onclick = ()=>location.replace(backTo);
 
   }catch(e){
-    showErr("読み込みに失敗しました（住所API/DBを確認）", e);
+    showErr("読み込みに失敗しました（住所API/LIFF設定を確認）", e);
+    setTimeout(()=>location.replace(backTo), 1200);
   }
 })();
 </script>

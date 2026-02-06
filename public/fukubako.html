@@ -6,6 +6,8 @@
   <title>磯屋初めてセット</title>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <!-- ✅ LIFF_ID を1か所に集約（public/liff-config.js） -->
+  <script src="/liff-config.js"></script>
 
   <style>
     :root{
@@ -28,7 +30,6 @@
     .muted{ color:var(--muted); font-size:13px; line-height:1.6; margin-top:8px; }
     .danger{ color:var(--danger); font-weight:900; }
 
-    /* ✅ 注意ボックス */
     .notice{
       margin-top:10px;
       padding:10px 12px;
@@ -60,7 +61,6 @@
     .badge{ font-size:12px; border:1px solid var(--line); background:#fafafa; border-radius:999px; padding:2px 8px; white-space:nowrap; }
     .badgeHot{ border-color:rgba(180,83,9,.25); background:rgba(180,83,9,.08); color:var(--accent); font-weight:900; }
 
-    /* ✅ セット内容（set_items） */
     .setItems{
       margin-top:10px;
       padding:10px 12px;
@@ -209,10 +209,10 @@
   "use strict";
 
   // =========================
-  // 設定
+  // 設定（✅ LIFF_ID は liff-config.js で一元管理）
   // =========================
-  // ✅ ここだけ修正：LINE 400 の原因を潰す
-  const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
+  // このページ（初めてセット）は “注文用(初めてセット)” の LIFF を使う
+  const LIFF_ID_ORDER = window.LIFF_ID_ORDER_TRIAL || "2008406620-yQFRswAu";
 
   // ✅ 表示名だけ変更（DB/判定IDはそのまま）
   const FUKUBAKO_ID = "fukubako-2026";
@@ -220,7 +220,10 @@
   const KEY_UID  = "isoya_userId";
   const KEY_CART = "isoya_cart_fukubako"; // ✅ 専用カート（名称はそのまま）
 
+  // ✅ confirm 側でカート/分岐に使う値。ここは変えない（ずれると他が壊れる）
   const MODE = "fukubako";
+
+  // ✅ 住所画面→戻り先（confirm）
   const RETURN_TO = "/confirm.html?mode=fukubako";
 
   const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
@@ -268,7 +271,6 @@
     `;
   }
 
-  // ✅ set_items をHTMLにする（配列があれば表示）
   function getSetItemsArray(p){
     const a = p?.set_items ?? p?.setItems ?? p?.set_items_list ?? null;
     if(Array.isArray(a)) return a.map(x => String(x||"").trim()).filter(Boolean);
@@ -307,26 +309,36 @@
   }
 
   // =========================
-  // LIFF
+  // LIFF（✅ IDToken優先で userId を安定化）
   // =========================
   async function ensureLiffUser(){
     await liff.init({ liffId: LIFF_ID_ORDER });
+
     if(!liff.isLoggedIn()){
       liff.login({ redirectUri: location.href });
       return null;
     }
-    const prof = await liff.getProfile();
-    const uid = (prof?.userId || "").trim();
+
+    let uid = null;
+    try{ uid = liff.getDecodedIDToken()?.sub || null; }catch(e){}
+    if(!uid){
+      try{ uid = (await liff.getProfile())?.userId || null; }catch(e){}
+    }
+
+    uid = (uid || "").trim();
     if(uid) localStorage.setItem(KEY_UID, uid);
-    return uid;
+    return uid || null;
   }
 
   // =========================
-  // ✅ 2回目購入チェック（サーバ判定）
+  // 2回目購入チェック（サーバ判定）
   // =========================
   async function checkAlreadyOrdered(uid){
     try{
-      const r = await fetch(`/api/fukubako/status?userId=${encodeURIComponent(uid)}&productId=${encodeURIComponent(FUKUBAKO_ID)}`, { cache:"no-store" });
+      const r = await fetch(
+        `/api/fukubako/status?userId=${encodeURIComponent(uid)}&productId=${encodeURIComponent(FUKUBAKO_ID)}`,
+        { cache:"no-store" }
+      );
       const d = await r.json().catch(()=>({}));
       if(!r.ok || !d.ok) return { ok:false, allowed:true };
       return d; // {ok, allowed, reason?}
@@ -371,9 +383,8 @@
 
   let product = null;
   let allowedByServer = true;
-  let alreadyReason = "";
 
-  function updateFukubakoUiLock(){
+  function updateUiLock(){
     const card = mountEl.querySelector(".card");
     if(!card || !product) return;
 
@@ -428,6 +439,7 @@
       subtotal += Number(product.price||0) * Number(it.qty||0);
       count += Number(it.qty||0);
     }
+
     sumEl.innerHTML = `
       <div class="sumLabel">小計</div>
       <div class="sumAmount">${yen(subtotal)}</div>
@@ -439,15 +451,17 @@
 
   function addToCart(){
     if(!product) return;
+
     if(!allowedByServer){
       alert("すでに磯屋初めてセットをご購入済みのため、今回はご注文できません。");
       return;
     }
+
     const id = String(product.id||"").trim();
     cart.items = [{ id, qty: 1 }];
     saveCart(cart);
     renderSum();
-    updateFukubakoUiLock();
+    updateUiLock();
   }
 
   function renderCard(p){
@@ -539,15 +553,16 @@
       statusEl.innerHTML = '<span class="danger">LIFFログイン中…</span>';
       return;
     }
-  }catch{
+  }catch(e){
     statusEl.innerHTML = '<span class="danger">LIFF初期化に失敗しました</span>';
+    console.error(e);
     return;
   }
 
+  // ✅ サーバ側の「購入済み」チェック
   const st = await checkAlreadyOrdered(uid);
   if(st && st.ok && st.allowed === false){
     allowedByServer = false;
-    alreadyReason = st.reason || "already_ordered";
 
     statusEl.innerHTML = '<span class="danger">すでに磯屋初めてセットをご購入済みです（2回目は購入できません）</span>';
     if(onceNotice) onceNotice.innerHTML = '⚠️ <b>ご購入済みのため</b>、今回は磯屋初めてセットをご注文いただけません（2回目不可）';
@@ -557,10 +572,7 @@
       addrBtn.classList.add("btnDisabled");
       addrBtn.textContent = "住所入力（購入済みのため不可）";
     }
-
-    if(nextBtn){
-      nextBtn.classList.add("btnDisabled");
-    }
+    if(nextBtn) nextBtn.classList.add("btnDisabled");
   }else{
     allowedByServer = true;
     if(addrBtn){
@@ -587,10 +599,11 @@
     cart = { items: [] };
     saveCart(cart);
     renderSum();
-    updateFukubakoUiLock();
+    updateUiLock();
     showToast("カートを空にしました");
   };
 
+  // 商品取得（/api/products）
   try{
     const r = await fetch("/api/products", { cache:"no-store" });
     const d = await r.json().catch(()=>({}));
@@ -612,7 +625,7 @@
     mountEl.innerHTML = "";
     mountEl.appendChild(renderCard(product));
     renderSum();
-    updateFukubakoUiLock();
+    updateUiLock();
     syncBarHeight();
   }catch(e){
     statusEl.innerHTML = '<span class="danger">読み込み失敗：/api/products を確認してください</span>';

@@ -6,6 +6,8 @@
   <title>オリジナルセット（購入）</title>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <!-- ✅ LIFF_ID を1か所に集約（public/liff-config.js） -->
+  <script src="/liff-config.js"></script>
 
   <style>
     :root{
@@ -37,7 +39,6 @@
     .warn{ color:var(--danger); font-weight:900; }
     .mini{ font-size:12px; color:var(--muted); line-height:1.5; margin-top:6px; }
 
-    /* bottom bar */
     .bar{
       position:fixed; left:0; right:0; bottom:0;
       border-top:1px solid var(--line);
@@ -69,7 +70,6 @@
 
     <div class="card">
       <div class="body">
-        <!-- ✅ Disk配信した画像を表示 -->
         <img id="pimg" alt="商品画像" style="
           width:100%;
           height:auto;
@@ -129,12 +129,13 @@
 (async function(){
   "use strict";
 
-  const LIFF_ID_ORDER = "2008406620-Bd9Zo9od";
+  // ✅ LIFF_ID は一元管理（liff-config.js）
+  const LIFF_ID_ORDER = window.LIFF_ID_ORDER_ORIGINAL || "2008406620-Bd9Zo9od";
 
   const KEY_UID  = "isoya_userId";
   const KEY_CART = "isoya_cart_original";
 
-  const ORIGINAL_ID = (window.ORIGINAL_SET_PRODUCT_ID || "original-set-2000").trim();
+  const ORIGINAL_ID = String(window.ORIGINAL_SET_PRODUCT_ID || "original-set-2000").trim();
 
   const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
 
@@ -160,14 +161,22 @@
 
   async function ensureLiffUser(){
     await liff.init({ liffId: LIFF_ID_ORDER });
+
     if(!liff.isLoggedIn()){
       liff.login({ redirectUri: location.href });
       return null;
     }
-    const prof = await liff.getProfile();
-    const uid = (prof?.userId || "").trim();
+
+    // ✅ IDToken優先（安定）
+    let uid = null;
+    try{ uid = liff.getDecodedIDToken()?.sub || null; }catch(e){}
+    if(!uid){
+      try{ uid = (await liff.getProfile())?.userId || null; }catch(e){}
+    }
+
+    uid = (uid || "").trim();
     if(uid) localStorage.setItem(KEY_UID, uid);
-    return uid;
+    return uid || null;
   }
 
   const statusEl = document.getElementById("status");
@@ -180,7 +189,7 @@
   const pdescEl  = document.getElementById("pdesc");
   const ppriceEl = document.getElementById("pprice");
   const pvolEl   = document.getElementById("pvolume");
-  const pimgEl   = document.getElementById("pimg"); // ✅追加
+  const pimgEl   = document.getElementById("pimg");
 
   const decBtn   = document.getElementById("dec");
   const incBtn   = document.getElementById("inc");
@@ -192,6 +201,7 @@
 
   let cart = loadCart();
   cart.items = normItems(cart.items);
+  saveCart(cart);
 
   function sizeByQty(q){
     q = Number(q)||0;
@@ -213,7 +223,7 @@
   }
 
   function getQtyInCart(){
-    const it = cart.items.find(x => x.id === ORIGINAL_ID);
+    const it = cart.items.find(x => String(x.id||"").trim() === ORIGINAL_ID);
     return it ? Number(it.qty||0) : 0;
   }
 
@@ -239,7 +249,7 @@
 
   function goAddress(){
     const ret = encodeURIComponent("/confirm-original.html");
-    location.href = `/cod-register.html?returnTo=${ret}&mode=original`;
+    location.href = `/cod-register.html?returnTo=${ret}&mode=original&liff.hback=2`;
   }
 
   backBtn.onclick = ()=>{ location.href = "/index.html"; };
@@ -290,7 +300,7 @@
     return;
   }
 
-  // 商品情報（products.json）から ORIGINAL_ID を引く
+  // 商品情報（/api/products）
   try{
     const r = await fetch("/api/products", { cache:"no-store" });
     const d = await r.json().catch(()=>({}));
@@ -312,18 +322,19 @@
       ppriceEl.textContent = yen(product.price);
       pvolEl.textContent = product.volume ? `内容量 ${product.volume}` : "内容量";
 
-      // ✅ Disk配信の画像URLへ変換して表示
+      // ✅ 画像パス補完： /uploads/（他ページと統一）
       const rawImg = String(product.image || "").trim();
       let imgUrl = "";
       if(rawImg){
         if(/^https?:\/\//i.test(rawImg)) imgUrl = rawImg;
         else if(rawImg.startsWith("/")) imgUrl = rawImg;
-        else imgUrl = "/public/uploads/" + rawImg; // ファイル名だけならこれ
+        else imgUrl = "/uploads/" + rawImg;
       }
 
       if(imgUrl){
         pimgEl.src = imgUrl;
         pimgEl.style.display = "block";
+        pimgEl.onerror = ()=>{ pimgEl.style.display = "none"; };
       }else{
         pimgEl.removeAttribute("src");
         pimgEl.style.display = "none";

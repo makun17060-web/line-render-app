@@ -50,6 +50,31 @@
     .btnSub{background:#fff;border:1px solid var(--line);color:#111827}
     .rowBtns{display:grid;grid-template-columns:1fr;gap:10px;margin-top:10px}
     @media(min-width:760px){ .rowBtns{grid-template-columns:1fr 1fr} }
+
+    /* ✅ デバッグ表示 */
+    .dbg{
+      border:1px solid #dbeafe;
+      background:#eff6ff;
+      border-radius:14px;
+      padding:10px 12px;
+      font-size:12px;
+      line-height:1.6;
+      color:#1e40af;
+      white-space:pre-wrap;
+      word-break:break-word;
+    }
+    .dbg .t{font-weight:1000; display:block; margin-bottom:6px}
+    .dbgBtns{display:flex; gap:8px; flex-wrap:wrap; margin-top:8px}
+    .btnMini{
+      border:1px solid var(--line);
+      background:#fff;
+      color:#111827;
+      border-radius:12px;
+      padding:8px 10px;
+      font-weight:900;
+      font-size:12px;
+      cursor:pointer;
+    }
   </style>
 </head>
 
@@ -57,6 +82,18 @@
   <div class="wrap">
     <h1>お届け先住所の登録</h1>
     <div class="muted" id="status">読み込み中…</div>
+
+    <!-- ✅ スマホでURLが見えないので、画面に表示するデバッグ枠 -->
+    <div class="card" id="dbgCard" style="display:none">
+      <div class="dbg" id="dbgText"><span class="t">DEBUG</span>...</div>
+      <div class="dbgBtns">
+        <button class="btnMini" id="copyDbgBtn" type="button">URLをコピー</button>
+        <button class="btnMini" id="hideDbgBtn" type="button">デバッグ非表示</button>
+      </div>
+      <div class="muted" style="margin-top:8px">
+        ※ LINE内でURLが見えないため、この枠に戻り先URLなどを表示しています
+      </div>
+    </div>
 
     <!-- 住所表示（登録済みの場合） -->
     <div class="card" id="viewCard" style="display:none">
@@ -134,28 +171,17 @@
 (async function(){
   "use strict";
 
-  // ✅ modeごとに LIFF を切替（ただし設定は1か所：liff-config.js）
-  // liff-config.js 例：
-  // window.LIFF_ID_MENU = "...";
-  // window.LIFF_ID_ORDER_AKASHA = "2008406620-G5j1gjzM";
-  // window.LIFF_ID_ORDER_ORIGINAL = "2008406620-Bd9Zo9od";
-  // window.LIFF_ID_ORDER_TRIAL = "2008406620-yQFRswAu";
-  // window.LIFF_ID_ORDER_STORE = "2008406620-7tSkOcqd";
-  // window.LIFF_ID_COD = "2008406620-G5j1gjzM"; // 旧互換（任意）
-
   const KEY_UID = "isoya_userId";
 
   const qs = new URLSearchParams(location.search);
   const mode = (qs.get("mode") || "").trim();
   const returnToRaw = (qs.get("returnTo") || "/confirm.html").trim();
 
-  // ✅ ここが重要：住所画面は「どの注文フローから来たか(mode)」で LIFF_ID を選ぶ
   function pickLiffIdByMode(m){
     if(m === "original") return window.LIFF_ID_ORDER_ORIGINAL || window.LIFF_ID_COD || "2008406620-G5j1gjzM";
-    if(m === "fukubako") return window.LIFF_ID_ORDER_TRIAL   || window.LIFF_ID_COD || "2008406620-G5j1gjzM"; // ※現状 fukubako=初めてセット
+    if(m === "fukubako") return window.LIFF_ID_ORDER_TRIAL   || window.LIFF_ID_COD || "2008406620-G5j1gjzM";
     if(m === "trial")    return window.LIFF_ID_ORDER_TRIAL   || window.LIFF_ID_COD || "2008406620-G5j1gjzM";
     if(m === "store")    return window.LIFF_ID_ORDER_STORE   || window.LIFF_ID_COD || "2008406620-G5j1gjzM";
-    // デフォ：あかしゃ（通常）
     return window.LIFF_ID_ORDER_AKASHA || window.LIFF_ID_COD || "2008406620-G5j1gjzM";
   }
 
@@ -182,6 +208,11 @@
 
   const backBtn = document.getElementById("backBtn");
 
+  const dbgCard = document.getElementById("dbgCard");
+  const dbgText = document.getElementById("dbgText");
+  const copyDbgBtn = document.getElementById("copyDbgBtn");
+  const hideDbgBtn = document.getElementById("hideDbgBtn");
+
   const el = (id)=>document.getElementById(id);
 
   let currentAddr = null;
@@ -207,6 +238,35 @@
     status.textContent = `${title}\n${toMsg(err)}`;
   }
 
+  function showDbg(text){
+    if(!dbgCard || !dbgText) return;
+    dbgCard.style.display = "block";
+    dbgText.innerHTML = `<span class="t">DEBUG</span>${String(text || "")}`;
+  }
+
+  async function copyText(text){
+    const s = String(text || "");
+    try{
+      await navigator.clipboard.writeText(s);
+      alert("コピーしました");
+      return;
+    }catch(e){}
+    try{
+      const ta = document.createElement("textarea");
+      ta.value = s;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+      alert("コピーしました");
+    }catch(e){
+      alert("コピーできませんでした…\n" + toMsg(e));
+    }
+  }
+
   async function postJson(url, body){
     const r = await fetch(url, {
       method:"POST",
@@ -225,7 +285,6 @@
     return d;
   }
 
-  // ✅ 住所画面は「soft」じゃなく“確実にログイン”させるのが安全（LINE 400の回避）
   async function ensureUserHard(){
     const cached = (localStorage.getItem(KEY_UID) || "").trim();
     if(cached) return cached;
@@ -233,7 +292,6 @@
     await liff.init({ liffId: LIFF_ID_THIS });
 
     if(!liff.isLoggedIn()){
-      // returnTo / mode を保持したまま戻ってくる
       liff.login({ redirectUri: location.href });
       return null;
     }
@@ -249,7 +307,6 @@
     return uid || null;
   }
 
-  // ✅ 名前キー違い吸収
   function pickName(obj){
     const candidates = [
       obj?.name,
@@ -326,22 +383,16 @@
     };
   }
 
-  // =========================
-  // ✅ ここが今回の修正点：returnTo を安全に復元して「LIFF内で」戻す
-  // =========================
+  // ✅ returnTo復元＆戻り（スマホでURL見えないのでDEBUGにも出す）
   function getReturnToUrl(){
     const raw = (returnToRaw || "").trim();
     let decoded = "";
     try{
-      // 初めてセット側で encodeURIComponent して渡してくる想定
       decoded = raw ? decodeURIComponent(raw) : "";
     }catch(e){
-      decoded = raw; // decode失敗なら生で使う
+      decoded = raw;
     }
-
     const url = (decoded || "/confirm.html").trim();
-
-    // 相対でも必ず絶対URLにする（LINE内遷移の事故防止）
     try{
       return new URL(url, location.origin).toString();
     }catch(e){
@@ -350,36 +401,39 @@
   }
 
   function buildReturnUrl(){
-    // returnTo がすでに /confirm.html?mode=fukubako みたいに mode を含んでてもOK
     const u = new URL(getReturnToUrl());
-
-    // 住所ステップ印（任意）
     u.searchParams.set("addr_step", "1");
-
-    // mode は「確実に」残す（上書きでOK）
     if(mode) u.searchParams.set("mode", mode);
-
     return u.toString();
   }
 
   function goNext(){
     const url = buildReturnUrl();
 
-    // ✅ LINE内なら external:false で「同じLIFF内」で開く（ここがポイント）
+    // ✅ DEBUG表示（スマホでURLが見えないのでここが命）
+    const inClient = (window.liff && typeof liff.isInClient==="function") ? liff.isInClient() : "n/a";
+    showDbg(
+      [
+        "mode=" + mode,
+        "LIFF_ID_THIS=" + LIFF_ID_THIS,
+        "isInClient=" + inClient,
+        "returnToRaw=" + returnToRaw,
+        "returnUrl=" + url
+      ].join("\n")
+    );
+
+    // ✅ LINE内なら同一LIFF内遷移
     try{
-      if(window.liff && typeof liff.isInClient === "function" && liff.isInClient()){
+      if(window.liff && typeof liff.isInClient==="function" && liff.isInClient()){
         liff.openWindow({ url, external:false });
         return;
       }
     }catch(e){}
 
-    // ブラウザ等は通常遷移
     location.replace(url);
   }
-  // =========================
 
   async function loadAddress(uid){
-    // 1) list：default優先
     try{
       const d = await getJson(`/api/address/list?userId=${encodeURIComponent(uid)}`);
       const rows = Array.isArray(d?.addresses) ? d.addresses : (Array.isArray(d?.list) ? d.list : []);
@@ -388,18 +442,14 @@
         const chosen = addrs.find(x=>x.is_default) || addrs[0];
         return chosen || null;
       }
-    }catch(e){
-      // list無し→fallback
-    }
+    }catch(e){}
 
-    // 2) get：単一
     try{
       const d = await getJson(`/api/address/get?userId=${encodeURIComponent(uid)}`);
       const raw = d?.address || d?.addr || d?.data?.address || null;
       if(raw) return normalizeAddr(raw);
-    }catch(e){
-      // none
-    }
+    }catch(e){}
+
     return null;
   }
 
@@ -415,22 +465,16 @@
     saveBtn.textContent = "保存中…";
 
     try{
-      // サーバがどっちを読んでもOK：「直下」＋「address」の両方
       const payload = {
         userId: uid,
-
         id: currentAddr?.id || null,
         ...a,
-
-        address: {
-          id: currentAddr?.id || null,
-          ...a
-        }
+        address: { id: currentAddr?.id || null, ...a }
       };
 
       await postJson("/api/address/set", payload);
 
-      // ✅ 保存成功 → returnToへ戻る（LIFF内は openWindow external:false）
+      // ✅ 保存成功 → confirmへ戻る
       goNext();
     }catch(e){
       alert("住所の保存に失敗しました: " + toMsg(e));
@@ -444,6 +488,27 @@
     if(!uid){
       status.textContent = "LIFFログイン中…";
       return;
+    }
+
+    // DEBUG表示（初期状態）
+    try{
+      const inClient = (window.liff && typeof liff.isInClient==="function") ? liff.isInClient() : "n/a";
+      showDbg(
+        [
+          "mode=" + mode,
+          "LIFF_ID_THIS=" + LIFF_ID_THIS,
+          "isInClient=" + inClient,
+          "returnToRaw=" + returnToRaw,
+          "returnUrl(preview)=" + buildReturnUrl()
+        ].join("\n")
+      );
+    }catch(e){}
+
+    if(copyDbgBtn){
+      copyDbgBtn.onclick = ()=>copyText(buildReturnUrl());
+    }
+    if(hideDbgBtn){
+      hideDbgBtn.onclick = ()=>{ dbgCard.style.display="none"; };
     }
 
     currentAddr = await loadAddress(uid);
@@ -460,7 +525,6 @@
       if(cancelBtn) cancelBtn.style.display = "";
     }
 
-    // ✅ 「この住所で進む」も安全に戻す（同じ goNext を使う）
     if(useBtn) useBtn.onclick = ()=>goNext();
 
     if(editBtn) editBtn.onclick = ()=>{
@@ -478,8 +542,6 @@
     };
 
     if(saveBtn) saveBtn.onclick = ()=>saveAddress(uid);
-
-    // ✅ 戻るボタン（商品ページに戻る）は今まで通り
     if(backBtn) backBtn.onclick = ()=>location.replace(backTo);
 
   }catch(e){

@@ -225,19 +225,28 @@ async function loadSentSetForKeys(keys) {
   return new Set(rows.map(r => r.user_id).filter(Boolean));
 }
 
-// ✅ 友だち追加からN日経過した人を名簿に入れる（送信は別）
+// ✅ 友だち追加（follow_events.followed_at）からN日経過した人を名簿に入れる（送信は別）
 async function autoRosterByFirstSeen(days) {
   const d = Number(days);
   if (!Number.isFinite(d) || d <= 0) throw new Error(`FIRST_SEEN_DAYS invalid: ${days}`);
 
   const r = await pool.query(
     `
-    WITH cand AS (
-      SELECT su.user_id
-      FROM segment_users su
-      WHERE su.user_id IS NOT NULL
-        AND su.user_id <> ''
-        AND su.first_seen <= NOW() - ($2::text || ' days')::interval
+    WITH first_follow AS (
+      -- user_idごとに最初のfollowed_at（友だち追加）を取る
+      SELECT DISTINCT ON (fe.user_id)
+        fe.user_id,
+        fe.followed_at AS first_followed_at
+      FROM follow_events fe
+      WHERE fe.user_id IS NOT NULL
+        AND fe.user_id <> ''
+        AND fe.followed_at IS NOT NULL
+      ORDER BY fe.user_id, fe.followed_at ASC
+    ),
+    cand AS (
+      SELECT ff.user_id
+      FROM first_follow ff
+      WHERE ff.first_followed_at <= NOW() - ($2::text || ' days')::interval
     )
     INSERT INTO segment_blast (segment_key, user_id, created_at)
     SELECT $1, c.user_id, NOW()
@@ -411,7 +420,21 @@ async function ensureBlastRows(segmentKey, userIds) {
   // 0) AUTO_ROSTER（N日経過を名簿へ）※ BUYER_KIND 時でも動かしてOK
   if (AUTO_ROSTER_3D) {
     const cand = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM segment_users su WHERE su.first_seen <= NOW() - ($1::text || ' days')::interval`,
+      `
+      WITH first_follow AS (
+        SELECT DISTINCT ON (fe.user_id)
+          fe.user_id,
+          fe.followed_at AS first_followed_at
+        FROM follow_events fe
+        WHERE fe.user_id IS NOT NULL
+          AND fe.user_id <> ''
+          AND fe.followed_at IS NOT NULL
+        ORDER BY fe.user_id, fe.followed_at ASC
+      )
+      SELECT COUNT(*)::int AS n
+      FROM first_follow
+      WHERE first_followed_at <= NOW() - ($1::text || ' days')::interval
+      `,
       [String(FIRST_SEEN_DAYS)]
     );
     console.log(`roster_candidates_by_first_seen=${cand.rows?.[0]?.n ?? "?"} (days=${FIRST_SEEN_DAYS})`);

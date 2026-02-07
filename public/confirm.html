@@ -73,7 +73,6 @@
     ※お試しセットは <b>ご自宅配送のみ</b> です（ギフト配送はできません）
   </div>
 
-  <!-- お届け先 -->
   <div class="card">
     <div class="muted">お届け先</div>
 
@@ -89,7 +88,6 @@
     </div>
   </div>
 
-  <!-- 商品＆金額 -->
   <div class="card">
     <div class="muted">ご注文商品</div>
     <div class="items" id="items"></div>
@@ -125,7 +123,7 @@
 
   const qs = new URLSearchParams(location.search);
   const mode = (qs.get("mode") || "").trim();
-  const v = qs.get("v") || "20260205";
+  const v = (qs.get("v") || "20260205").trim();
 
   function pickLiffIdByMode(m){
     if(m === "original") return window.LIFF_ID_ORDER_ORIGINAL || window.LIFF_ID_COD;
@@ -133,7 +131,7 @@
     if(m === "store") return window.LIFF_ID_ORDER_STORE || window.LIFF_ID_COD;
     return window.LIFF_ID_ORDER_AKASHA || window.LIFF_ID_COD;
   }
-  const LIFF_ID_ORDER = pickLiffIdByMode(mode);
+  const LIFF_ID_ORDER = (pickLiffIdByMode(mode) || "").trim();
 
   const KEY_CART =
     (mode === "original") ? "isoya_cart_original"
@@ -143,11 +141,13 @@
   const NEXT_CONFIRM_CARD =
     (mode === "fukubako" || mode === "trial") ? "/confirm_card.html?mode=fukubako"
   : (mode === "original") ? "/confirm_card.html?mode=original"
+  : (mode === "store") ? "/confirm_card.html?mode=store"
   : "/confirm_card.html";
 
   const NEXT_CONFIRM_COD =
     (mode === "fukubako" || mode === "trial") ? "/confirm_cod.html?mode=fukubako"
   : (mode === "original") ? "/confirm_cod.html?mode=original"
+  : (mode === "store") ? "/confirm_cod.html?mode=store"
   : "/confirm_cod.html";
 
   const status = document.getElementById("status");
@@ -172,13 +172,17 @@
   }
 
   async function ensureUser(){
+    if(!LIFF_ID_ORDER) throw new Error("LIFF_ID が空です（/liff-config.js を確認）");
     await liff.init({ liffId: LIFF_ID_ORDER });
+
     if(!liff.isLoggedIn()){
       liff.login({ redirectUri: location.href });
       return null;
     }
+
     try{
-      let uid = liff.getDecodedIDToken()?.sub || null;
+      let uid = null;
+      try{ uid = liff.getDecodedIDToken()?.sub || null; }catch(e){}
       if(!uid) uid = (await liff.getProfile())?.userId || null;
       uid = (uid||"").trim();
       if(!uid) throw new Error("uid missing");
@@ -186,7 +190,7 @@
       return uid;
     }catch(e){
       if(isTokenExpiredError(e)){
-        try{ liff.logout(); }catch{}
+        try{ if(typeof liff.logout==="function") liff.logout(); }catch{}
         liff.login({ redirectUri: location.href });
         return null;
       }
@@ -197,22 +201,62 @@
   function openInternal(url){
     const abs = new URL(url, location.origin).toString();
     try{
-      if(liff.isInClient()){
+      if(window.liff && typeof liff.isInClient==="function" && liff.isInClient()){
         liff.openWindow({ url: abs, external:false });
         return;
       }
-    }catch{}
+    }catch(e){}
     location.href = abs;
+  }
+
+  function buildUrlWithV(basePathOrUrl){
+    const u = new URL(basePathOrUrl, location.origin);
+    if(v) u.searchParams.set("v", v);
+    return u.toString();
+  }
+
+  function escapeHtml(s){
+    return String(s ?? "")
+      .replaceAll("&","&amp;")
+      .replaceAll("<","&lt;")
+      .replaceAll(">","&gt;")
+      .replaceAll('"',"&quot;")
+      .replaceAll("'","&#039;");
   }
 
   let selectedPayMethod = "card";
   document.querySelectorAll(".payBtn").forEach(btn=>{
-    btn.onclick = ()=>{
+    btn.addEventListener("click", ()=>{
       document.querySelectorAll(".payBtn").forEach(b=>b.classList.remove("active"));
       btn.classList.add("active");
       selectedPayMethod = btn.dataset.method || "card";
-    };
+    });
   });
+
+  async function fetchJson(url, options){
+    const r = await fetch(url, { cache:"no-store", ...(options||{}) });
+    const text = await r.text();
+    let d = null;
+    try{ d = JSON.parse(text); }catch{ d = null; }
+    if(!r.ok){
+      const detail = d?.error || d?.message || text || ("HTTP " + r.status);
+      throw new Error(`URL: ${url}\nHTTP ${r.status}\n${detail}`);
+    }
+    return d ?? {};
+  }
+
+  function pickName(addr){
+    const candidates = [
+      addr?.name, addr?.full_name, addr?.fullName,
+      addr?.recipient_name, addr?.recipientName,
+      addr?.customer_name, addr?.customerName,
+      addr?.receiver_name, addr?.receiverName,
+      addr?.to_name, addr?.toName,
+      addr?.addressee, addr?.display_name, addr?.displayName,
+    ];
+    const s = candidates.find(v => typeof v === "string" && v.trim());
+    return (s || "").trim();
+  }
 
   try{
     status.textContent = "確認中…";
@@ -222,69 +266,94 @@
     if(!uid) return;
 
     const cart = loadJson(KEY_CART) || { items: [] };
-    const items = (cart.items||[]).filter(x=>x?.id && Number(x.qty||0)>0);
-    if(items.length===0) throw new Error("カートが空です");
+    const items = (Array.isArray(cart.items) ? cart.items : []).filter(x=>x?.id && Number(x.qty||0)>0);
+    if(items.length===0) throw new Error("カートが空です。商品ページからやり直してください。");
 
-    const addrRes = await fetch(`/api/address/get?userId=${encodeURIComponent(uid)}`);
-    const addrJson = await addrRes.json();
-    const addr = addrJson.address;
-    if(!addr) throw new Error("住所がありません");
+    const addrRes = await fetchJson(`/api/address/get?userId=${encodeURIComponent(uid)}`);
+    const addrObj = addrRes?.address || addrRes?.addr || addrRes?.data?.address || null;
+    if(!addrObj) throw new Error("住所が取得できません。住所入力をやり直してください。");
 
-    addrNameEl.textContent = addr.name || "—";
-    addrTextEl.textContent =
-      `〒${addr.postal} ${addr.prefecture}${addr.city}${addr.address1} ${addr.address2||""}` +
-      (addr.phone ? `\nTEL: ${addr.phone}` : "");
+    const name = pickName(addrObj) || "（未入力）";
+    const postal = String(addrObj?.postal || "").trim();
+    const pref = String(addrObj?.prefecture || "").trim();
+    const city = String(addrObj?.city || "").trim();
+    const a1 = String(addrObj?.address1 || "").trim();
+    const a2 = String(addrObj?.address2 || "").trim();
+    const tel = String(addrObj?.phone || addrObj?.tel || "").trim();
 
-    const prodRes = await fetch("/api/products");
-    const prodJson = await prodRes.json();
-    const products = prodJson.products || [];
+    addrNameEl.textContent = name;
+    const addrLines = [];
+    const line1 = [postal ? ("〒"+postal) : "", [pref, city, a1].join(""), a2].filter(Boolean).join(" ").trim();
+    addrLines.push(line1 || "（住所未入力）");
+    if(tel) addrLines.push("TEL: " + tel);
+    addrTextEl.textContent = addrLines.join("\n");
+
+    const prodRes = await fetchJson("/api/products");
+    const products = Array.isArray(prodRes.products) ? prodRes.products : [];
 
     let subtotal = 0;
     itemsEl.innerHTML = "";
-    items.forEach(it=>{
+    for(const it of items){
       const p = products.find(x=>x.id===it.id);
-      if(!p) return;
-      const line = Number(p.price||0) * Number(it.qty||0);
+      if(!p) continue;
+      const qty = Number(it.qty||0);
+      const unit = Number(p.price||0);
+      const line = unit * qty;
       subtotal += line;
+
       itemsEl.innerHTML += `
         <div class="item">
-          <div class="name">${p.name}</div>
+          <div class="name">${escapeHtml(p.name || "")}</div>
           <div class="price">${yen(line)}</div>
-          <div class="qty">× ${it.qty} 点</div>
+          <div class="qty">× ${qty} 点</div>
         </div>`;
-    });
+    }
+    if(!itemsEl.innerHTML.trim()) throw new Error("商品情報が取得できません（productsにIDが見つからない可能性）");
 
     subtotalEl.textContent = yen(subtotal);
 
-    const quoteRes = await fetch("/api/order/quote",{
+    const quote = await fetchJson("/api/order/quote",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body: JSON.stringify({ uid, checkout:{ items } })
     });
-    const quote = await quoteRes.json();
 
-    const shippingFee = Number(quote.shippingFee||0);
+    const shippingFee = Number(quote.shippingFee ?? quote.shipping_fee ?? 0);
     shippingEl.textContent = yen(shippingFee);
-    totalCardEl.textContent = yen(subtotal + shippingFee);
-    totalCodEl.textContent = yen(quote.totalCod || (subtotal + shippingFee));
 
-    localStorage.setItem(KEY_LAST_QUOTE, JSON.stringify({ ...quote, uid, mode }));
+    const amount = subtotal + shippingFee;
+    totalCardEl.textContent = yen(amount);
+
+    const totalCod = Number(quote.totalCod ?? quote.total_cod ?? amount);
+    totalCodEl.textContent = yen(totalCod);
+
+    localStorage.setItem(KEY_LAST_QUOTE, JSON.stringify({
+      ...quote, uid, mode, subtotal, shippingFee, totalCod, amount
+    }));
 
     status.textContent = "内容をご確認ください。";
 
     backBtn.onclick = ()=>{
-      openInternal(`/cod-register.html?returnTo=${encodeURIComponent(location.pathname + location.search)}&mode=${encodeURIComponent(mode)}&liff.hback=2&v=${encodeURIComponent(v)}`);
+      // ✅ 戻り先（このconfirm）を returnTo に入れる（v も含めてOK）
+      const returnTo = location.pathname + location.search;
+      const u = new URL("/cod-register.html", location.origin);
+      u.searchParams.set("returnTo", returnTo);
+      if(mode) u.searchParams.set("mode", mode);
+      u.searchParams.set("liff.hback", "2");
+      if(v) u.searchParams.set("v", v);
+      openInternal(u.toString());
     };
 
     nextBtn.onclick = ()=>{
       nextBtn.disabled = true;
       const base = (selectedPayMethod==="cod") ? NEXT_CONFIRM_COD : NEXT_CONFIRM_CARD;
-      openInternal(base + "&v=" + encodeURIComponent(v));
+      openInternal(buildUrlWithV(base)); // ✅ ここが修正点（? / & を自動で正しく）
     };
 
   }catch(e){
+    status.classList.remove("muted");
     status.classList.add("err");
-    status.textContent = "読み込みに失敗しました\n" + (e.message || String(e));
+    status.textContent = "読み込みに失敗しました\n" + (e?.message || String(e));
   }
 })();
 </script>

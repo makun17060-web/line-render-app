@@ -1868,6 +1868,16 @@ app.use(express.static(path.join(__dirname, "public")));
 app.use("/public", express.static(path.join(__dirname, "public")));
 app.use("/uploads", express.static(UPLOAD_DIR));
 app.use("/public/uploads", express.static(UPLOAD_DIR));
+// ===== Stripe config（Payment Element用：公開鍵を返すだけ）=====
+app.get("/api/stripe/config", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    ok: true,
+    publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || "",
+    // 使ってなければ空でOK
+    appBaseUrl: process.env.APP_BASE_URL || ""
+  });
+});
 
 // health
 app.get("/health", (req, res) => res.json({ ok: true, time: nowISO() }));

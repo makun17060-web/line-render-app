@@ -6,7 +6,6 @@
   <title>磯屋初めてセット</title>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <!-- ✅ LIFF_ID を1か所に集約（public/liff-config.js） -->
   <script src="/liff-config.js"></script>
 
   <style>
@@ -41,21 +40,6 @@
       font-size:13px;
       line-height:1.6;
     }
-    .debugBox{
-      margin-top:10px;
-      padding:10px 12px;
-      border-radius:12px;
-      border:1px solid #dbeafe;
-      background:#eff6ff;
-      color:#1e40af;
-      font-weight:800;
-      font-size:12px;
-      line-height:1.6;
-      white-space:pre-wrap;
-      word-break:break-word;
-      display:none;
-    }
-    .debugBox .t{ font-weight:900; margin-bottom:6px; display:block; }
 
     .card{
       background:var(--card);
@@ -199,7 +183,6 @@
   </div>
 
   <div class="muted" id="status">読み込み中…</div>
-  <div id="debug" class="debugBox"></div>
   <div id="mount"></div>
 </div>
 
@@ -227,11 +210,8 @@
   // =========================
   // 設定（初めてセット）
   // =========================
-  // ✅ このフローは「初めてセット（＝fukubako運用）」なので ORDER_TRIAL を必ず使う
-  // ✅ configが取れない場合は「落ちる」より「理由を表示」して止める
   const LIFF_ID_ORDER = (window.LIFF_ID_ORDER_TRIAL || "").trim();
 
-  // products 側のID（あなたの現状に合わせて）
   const PRODUCT_ID = "fukubako-2026";
 
   const KEY_UID  = "isoya_userId";
@@ -252,17 +232,10 @@
   const nextBtn  = document.getElementById("nextBtn");
   const toastEl  = document.getElementById("toast");
   const onceNotice = document.getElementById("onceNotice");
-  const debugEl = document.getElementById("debug");
 
   const escapeHtml = (s)=>String(s??"")
     .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
     .replaceAll('"',"&quot;").replaceAll("'","&#039;");
-
-  function showDebug(text){
-    if(!debugEl) return;
-    debugEl.style.display = "block";
-    debugEl.innerHTML = `<span class="t">DEBUG</span>${escapeHtml(text || "")}`;
-  }
 
   function showToast(msg){
     if(!toastEl) return;
@@ -277,6 +250,12 @@
     if(!bar) return;
     const h = Math.ceil(bar.getBoundingClientRect().height || 0);
     if(h > 0) document.documentElement.style.setProperty("--barH", h + "px");
+  }
+
+  function showFatal(title, err){
+    statusEl.classList.remove("muted");
+    statusEl.classList.add("danger");
+    statusEl.textContent = title + (err ? ("\n" + (err?.message || String(err))) : "");
   }
 
   // =========================
@@ -340,25 +319,14 @@
   // =========================
   async function ensureLiffUserStable(){
     if(!LIFF_ID_ORDER){
-      const hint = [
-        "LIFF_ID_ORDER_TRIAL が取得できません。",
-        "→ /liff-config.js が 404 か、window.LIFF_ID_ORDER_TRIAL を設定していません。",
-        "",
-        "確認：",
-        "  - https://あなたのドメイン/liff-config.js が開ける？",
-        "  - 中身に window.LIFF_ID_ORDER_TRIAL = '2008...'; がある？",
-        "",
-        "現在のURL：",
-        location.href
-      ].join("\n");
-      showDebug(hint);
+      showFatal("設定エラー：LIFF_ID_ORDER_TRIAL が空です（/liff-config.js を確認）");
       throw new Error("LIFF_ID_ORDER_TRIAL is empty");
     }
 
     await liff.init({ liffId: LIFF_ID_ORDER });
 
     if(!liff.isLoggedIn()){
-      statusEl.innerHTML = '<span class="danger">LIFFログイン中…</span>';
+      statusEl.textContent = "LIFFログイン中…";
       liff.login({ redirectUri: location.href });
       return null;
     }
@@ -375,8 +343,7 @@
       return uid;
     }catch(e){
       if(isTokenExpiredError(e)){
-        statusEl.innerHTML = '<span class="danger">セッション更新中…（再ログインします）</span>';
-        showDebug("TOKEN EXPIRED\nrelogin...\n" + String(e?.message || e));
+        statusEl.textContent = "セッション更新中…";
         reloginHere();
         return null;
       }
@@ -589,8 +556,7 @@
     }
     const ret = encodeURIComponent(RETURN_TO);
     const mode = encodeURIComponent(MODE);
-    const url = `/cod-register.html?returnTo=${ret}&mode=${mode}&liff.hback=2`;
-    openInternal(url);
+    openInternal(`/cod-register.html?returnTo=${ret}&mode=${mode}&liff.hback=2`);
   }
 
   // =========================
@@ -602,28 +568,13 @@
   let uid = "";
   try{
     uid = await ensureLiffUserStable();
-    if(!uid){
-      // login/relogin 中
-      return;
-    }
-    showDebug(
-      [
-        "OK",
-        "mode=" + MODE,
-        "liffId=" + LIFF_ID_ORDER,
-        "isInClient=" + (window.liff && typeof liff.isInClient==="function" ? liff.isInClient() : "n/a"),
-        "uid=" + uid.slice(0,6) + "…",
-        "productId=" + PRODUCT_ID
-      ].join("\n")
-    );
+    if(!uid) return; // login/relogin 中
   }catch(e){
-    statusEl.innerHTML = '<span class="danger">LIFF初期化に失敗しました</span>';
-    showDebug(String(e?.message || e));
     console.error(e);
     return;
   }
 
-  // サーバ側の購入済みチェック
+  // 購入済みチェック
   const st = await checkAlreadyOrdered(uid);
   if(st && st.ok && st.allowed === false){
     allowedByServer = false;
@@ -690,7 +641,6 @@
     syncBarHeight();
   }catch(e){
     statusEl.innerHTML = '<span class="danger">読み込み失敗：/api/products を確認してください</span>';
-    showDebug("products fetch error:\n" + String(e?.message || e));
     mountEl.innerHTML = "";
     renderSum();
     syncBarHeight();

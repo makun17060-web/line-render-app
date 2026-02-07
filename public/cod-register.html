@@ -50,31 +50,6 @@
     .btnSub{background:#fff;border:1px solid var(--line);color:#111827}
     .rowBtns{display:grid;grid-template-columns:1fr;gap:10px;margin-top:10px}
     @media(min-width:760px){ .rowBtns{grid-template-columns:1fr 1fr} }
-
-    /* ✅ デバッグ表示 */
-    .dbg{
-      border:1px solid #dbeafe;
-      background:#eff6ff;
-      border-radius:14px;
-      padding:10px 12px;
-      font-size:12px;
-      line-height:1.6;
-      color:#1e40af;
-      white-space:pre-wrap;
-      word-break:break-word;
-    }
-    .dbg .t{font-weight:1000; display:block; margin-bottom:6px}
-    .dbgBtns{display:flex; gap:8px; flex-wrap:wrap; margin-top:8px}
-    .btnMini{
-      border:1px solid var(--line);
-      background:#fff;
-      color:#111827;
-      border-radius:12px;
-      padding:8px 10px;
-      font-weight:900;
-      font-size:12px;
-      cursor:pointer;
-    }
   </style>
 </head>
 
@@ -82,18 +57,6 @@
   <div class="wrap">
     <h1>お届け先住所の登録</h1>
     <div class="muted" id="status">読み込み中…</div>
-
-    <!-- ✅ スマホでURLが見えないので、画面に表示するデバッグ枠 -->
-    <div class="card" id="dbgCard" style="display:none">
-      <div class="dbg" id="dbgText"><span class="t">DEBUG</span>...</div>
-      <div class="dbgBtns">
-        <button class="btnMini" id="copyDbgBtn" type="button">URLをコピー</button>
-        <button class="btnMini" id="hideDbgBtn" type="button">デバッグ非表示</button>
-      </div>
-      <div class="muted" style="margin-top:8px">
-        ※ LINE内でURLが見えないため、この枠に戻り先URLなどを表示しています
-      </div>
-    </div>
 
     <!-- 住所表示（登録済みの場合） -->
     <div class="card" id="viewCard" style="display:none">
@@ -208,11 +171,6 @@
 
   const backBtn = document.getElementById("backBtn");
 
-  const dbgCard = document.getElementById("dbgCard");
-  const dbgText = document.getElementById("dbgText");
-  const copyDbgBtn = document.getElementById("copyDbgBtn");
-  const hideDbgBtn = document.getElementById("hideDbgBtn");
-
   const el = (id)=>document.getElementById(id);
 
   let currentAddr = null;
@@ -238,35 +196,6 @@
     status.textContent = `${title}\n${toMsg(err)}`;
   }
 
-  function showDbg(text){
-    if(!dbgCard || !dbgText) return;
-    dbgCard.style.display = "block";
-    dbgText.innerHTML = `<span class="t">DEBUG</span>${String(text || "")}`;
-  }
-
-  async function copyText(text){
-    const s = String(text || "");
-    try{
-      await navigator.clipboard.writeText(s);
-      alert("コピーしました");
-      return;
-    }catch(e){}
-    try{
-      const ta = document.createElement("textarea");
-      ta.value = s;
-      ta.style.position = "fixed";
-      ta.style.left = "-9999px";
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
-      document.execCommand("copy");
-      ta.remove();
-      alert("コピーしました");
-    }catch(e){
-      alert("コピーできませんでした…\n" + toMsg(e));
-    }
-  }
-
   async function postJson(url, body){
     const r = await fetch(url, {
       method:"POST",
@@ -285,6 +214,20 @@
     return d;
   }
 
+  // ✅ token expired 対策：失敗したら logout→login
+  function isTokenExpiredError(e){
+    const msg = (e?.message || String(e||"")).toLowerCase();
+    return msg.includes("access token expired") || msg.includes("token expired");
+  }
+  function reloginHere(){
+    try{ if(window.liff && typeof liff.logout==="function") liff.logout(); }catch(e){}
+    setTimeout(()=>{
+      try{ liff.login({ redirectUri: location.href }); }
+      catch(e){ location.href = location.href; }
+    }, 250);
+  }
+
+  // ✅ 住所画面は “確実にログイン” させる
   async function ensureUserHard(){
     const cached = (localStorage.getItem(KEY_UID) || "").trim();
     if(cached) return cached;
@@ -296,15 +239,24 @@
       return null;
     }
 
-    let uid = null;
-    try { uid = liff.getDecodedIDToken()?.sub || null; } catch(e){}
-    if(!uid){
-      try { uid = (await liff.getProfile())?.userId || null; } catch(e){}
-    }
+    try{
+      let uid = null;
+      try { uid = liff.getDecodedIDToken()?.sub || null; } catch(e){}
+      if(!uid){
+        uid = (await liff.getProfile())?.userId || null;
+      }
 
-    uid = (uid || "").trim();
-    if(uid) localStorage.setItem(KEY_UID, uid);
-    return uid || null;
+      uid = (uid || "").trim();
+      if(uid) localStorage.setItem(KEY_UID, uid);
+      return uid || null;
+    }catch(e){
+      if(isTokenExpiredError(e)){
+        status.textContent = "セッション更新中…（再ログインします）";
+        reloginHere();
+        return null;
+      }
+      throw e;
+    }
   }
 
   function pickName(obj){
@@ -383,15 +335,11 @@
     };
   }
 
-  // ✅ returnTo復元＆戻り（スマホでURL見えないのでDEBUGにも出す）
+  // ✅ returnTo 復元 → confirmへ戻るURLを生成（画面には出さない）
   function getReturnToUrl(){
     const raw = (returnToRaw || "").trim();
     let decoded = "";
-    try{
-      decoded = raw ? decodeURIComponent(raw) : "";
-    }catch(e){
-      decoded = raw;
-    }
+    try{ decoded = raw ? decodeURIComponent(raw) : ""; }catch(e){ decoded = raw; }
     const url = (decoded || "/confirm.html").trim();
     try{
       return new URL(url, location.origin).toString();
@@ -407,33 +355,23 @@
     return u.toString();
   }
 
-  function goNext(){
-    const url = buildReturnUrl();
-
-    // ✅ DEBUG表示（スマホでURLが見えないのでここが命）
-    const inClient = (window.liff && typeof liff.isInClient==="function") ? liff.isInClient() : "n/a";
-    showDbg(
-      [
-        "mode=" + mode,
-        "LIFF_ID_THIS=" + LIFF_ID_THIS,
-        "isInClient=" + inClient,
-        "returnToRaw=" + returnToRaw,
-        "returnUrl=" + url
-      ].join("\n")
-    );
-
-    // ✅ LINE内なら同一LIFF内遷移
+  function openInternal(url){
     try{
       if(window.liff && typeof liff.isInClient==="function" && liff.isInClient()){
         liff.openWindow({ url, external:false });
         return;
       }
     }catch(e){}
-
     location.replace(url);
   }
 
+  function goNext(){
+    const url = buildReturnUrl();
+    openInternal(url);
+  }
+
   async function loadAddress(uid){
+    // 1) list：default優先
     try{
       const d = await getJson(`/api/address/list?userId=${encodeURIComponent(uid)}`);
       const rows = Array.isArray(d?.addresses) ? d.addresses : (Array.isArray(d?.list) ? d.list : []);
@@ -444,6 +382,7 @@
       }
     }catch(e){}
 
+    // 2) get：単一
     try{
       const d = await getJson(`/api/address/get?userId=${encodeURIComponent(uid)}`);
       const raw = d?.address || d?.addr || d?.data?.address || null;
@@ -473,8 +412,6 @@
       };
 
       await postJson("/api/address/set", payload);
-
-      // ✅ 保存成功 → confirmへ戻る
       goNext();
     }catch(e){
       alert("住所の保存に失敗しました: " + toMsg(e));
@@ -488,27 +425,6 @@
     if(!uid){
       status.textContent = "LIFFログイン中…";
       return;
-    }
-
-    // DEBUG表示（初期状態）
-    try{
-      const inClient = (window.liff && typeof liff.isInClient==="function") ? liff.isInClient() : "n/a";
-      showDbg(
-        [
-          "mode=" + mode,
-          "LIFF_ID_THIS=" + LIFF_ID_THIS,
-          "isInClient=" + inClient,
-          "returnToRaw=" + returnToRaw,
-          "returnUrl(preview)=" + buildReturnUrl()
-        ].join("\n")
-      );
-    }catch(e){}
-
-    if(copyDbgBtn){
-      copyDbgBtn.onclick = ()=>copyText(buildReturnUrl());
-    }
-    if(hideDbgBtn){
-      hideDbgBtn.onclick = ()=>{ dbgCard.style.display="none"; };
     }
 
     currentAddr = await loadAddress(uid);
@@ -542,7 +458,13 @@
     };
 
     if(saveBtn) saveBtn.onclick = ()=>saveAddress(uid);
-    if(backBtn) backBtn.onclick = ()=>location.replace(backTo);
+
+    if(backBtn){
+      backBtn.onclick = ()=>{
+        const u = new URL(backTo, location.origin).toString();
+        openInternal(u);
+      };
+    }
 
   }catch(e){
     showErr("読み込みに失敗しました（住所API/LIFF設定を確認）", e);

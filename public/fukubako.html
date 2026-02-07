@@ -53,6 +53,7 @@
       line-height:1.6;
       white-space:pre-wrap;
       word-break:break-word;
+      display:none;
     }
     .debugBox .t{ font-weight:900; margin-bottom:6px; display:block; }
 
@@ -198,7 +199,7 @@
   </div>
 
   <div class="muted" id="status">読み込み中…</div>
-  <div id="debug" class="debugBox" style="display:none;"></div>
+  <div id="debug" class="debugBox"></div>
   <div id="mount"></div>
 </div>
 
@@ -224,85 +225,77 @@
   "use strict";
 
   // =========================
-  // 設定
+  // 設定（初めてセット）
   // =========================
-  // このページ（初めてセット）は “注文用(初めてセット)” の LIFF を使う
-  // ✅ liff-config.js が読み込めていないと事故るので、基本は config を必須にする
-  const LIFF_ID_ORDER = window.LIFF_ID_ORDER_TRIAL || "";
-  // どうしてもフォールバックしたい場合だけ下を使う（※IDが違うと init が落ちます）
-  const LIFF_ID_FALLBACK = "2008406620-yQFRswAu";
+  // ✅ このフローは「初めてセット（＝fukubako運用）」なので ORDER_TRIAL を必ず使う
+  // ✅ configが取れない場合は「落ちる」より「理由を表示」して止める
+  const LIFF_ID_ORDER = (window.LIFF_ID_ORDER_TRIAL || "").trim();
 
-  // ✅ 「初めてセット」の products 側 id（あなたの現状に合わせてこのまま）
-  //    ※本当に trial 専用IDがあるならここを差し替えてOK（例: "trial-set"）
+  // products 側のID（あなたの現状に合わせて）
   const PRODUCT_ID = "fukubako-2026";
 
   const KEY_UID  = "isoya_userId";
-  const KEY_CART = "isoya_cart_fukubako"; // ✅ 専用カート（現状に合わせて）
-  const MODE = "fukubako";                // ✅ confirm 側で分岐に使う値（現状に合わせて）
+  const KEY_CART = "isoya_cart_fukubako";
+  const MODE = "fukubako";
   const RETURN_TO = "/confirm.html?mode=fukubako";
 
   const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
 
   // =========================
-  // utils
+  // DOM
   // =========================
-  function escapeHtml(s){
-    return String(s ?? "")
-      .replaceAll("&","&amp;")
-      .replaceAll("<","&lt;")
-      .replaceAll(">","&gt;")
-      .replaceAll('"',"&quot;")
-      .replaceAll("'","&#039;");
+  const statusEl = document.getElementById("status");
+  const mountEl  = document.getElementById("mount");
+  const sumEl    = document.getElementById("sum");
+  const clearBtn = document.getElementById("clearBtn");
+  const addrBtn  = document.getElementById("addrBtn");
+  const nextBtn  = document.getElementById("nextBtn");
+  const toastEl  = document.getElementById("toast");
+  const onceNotice = document.getElementById("onceNotice");
+  const debugEl = document.getElementById("debug");
+
+  const escapeHtml = (s)=>String(s??"")
+    .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;").replaceAll("'","&#039;");
+
+  function showDebug(text){
+    if(!debugEl) return;
+    debugEl.style.display = "block";
+    debugEl.innerHTML = `<span class="t">DEBUG</span>${escapeHtml(text || "")}`;
   }
 
-  function normalizeImageSrc(image){
-    const v = String(image || "").trim();
-    if(!v) return "";
-    if(v.startsWith("http://") || v.startsWith("https://") || v.startsWith("/")) return v;
-    return "/uploads/" + v;
+  function showToast(msg){
+    if(!toastEl) return;
+    toastEl.textContent = msg || "カートに追加しました";
+    toastEl.classList.add("show");
+    clearTimeout(toastEl._t);
+    toastEl._t = setTimeout(()=> toastEl.classList.remove("show"), 800);
   }
 
-  function getBestBefore(p){
-    return p.best_before ?? p.bestBefore ?? p.expiry ?? p.expiration ?? p.shelf_life ?? "";
+  function syncBarHeight(){
+    const bar = document.querySelector(".bar");
+    if(!bar) return;
+    const h = Math.ceil(bar.getBoundingClientRect().height || 0);
+    if(h > 0) document.documentElement.style.setProperty("--barH", h + "px");
   }
 
-  function metaDetailsHtml(p){
-    const ing = (p.ingredients ?? p.ingredient ?? "").toString().trim();
-    const bb  = (getBestBefore(p) ?? "").toString().trim();
-    const hasAny = !!(ing || bb);
-
-    const lines = [];
-    if(ing) lines.push(`<div class="metaLine"><span class="metaLabel">原材料：</span>${escapeHtml(ing)}</div>`);
-    if(bb)  lines.push(`<div class="metaLine"><span class="metaLabel">賞味期限：</span>${escapeHtml(bb)}</div>`);
-    if(!hasAny) lines.push(`<div class="metaLine">${escapeHtml("（準備中）")}</div>`);
-
-    return `
-      <div class="metaBox">
-        <details class="metaDetails">
-          <summary>${hasAny ? "原材料・賞味期限を見る" : "商品情報を見る"}</summary>
-          <div class="metaText">${lines.join("")}</div>
-        </details>
-      </div>
-    `;
+  // =========================
+  // navigation（✅ LINE内は openWindow）
+  // =========================
+  function openInternal(url){
+    const abs = new URL(url, location.origin).toString();
+    try{
+      if(window.liff && typeof liff.isInClient==="function" && liff.isInClient()){
+        liff.openWindow({ url: abs, external:false });
+        return;
+      }
+    }catch(e){}
+    location.href = abs;
   }
 
-  function getSetItemsArray(p){
-    const a = p?.set_items ?? p?.setItems ?? p?.set_items_list ?? null;
-    if(Array.isArray(a)) return a.map(x => String(x||"").trim()).filter(Boolean);
-    return [];
-  }
-  function setItemsHtml(p){
-    const items = getSetItemsArray(p);
-    if(items.length === 0) return "";
-    const lis = items.map(t => `<li>${escapeHtml(t)}</li>`).join("");
-    return `
-      <div class="setItems" aria-label="セット内容">
-        <div class="setItemsTitle">📦 セット内容</div>
-        <ul class="setItemsList">${lis}</ul>
-      </div>
-    `;
-  }
-
+  // =========================
+  // cart utils
+  // =========================
   function loadCart(){
     try{
       const v = JSON.parse(localStorage.getItem(KEY_CART) || "");
@@ -324,98 +317,71 @@
   }
 
   // =========================
-  // DOM
+  // token-expired recovery
   // =========================
-  const statusEl = document.getElementById("status");
-  const mountEl  = document.getElementById("mount");
-  const sumEl    = document.getElementById("sum");
-  const clearBtn = document.getElementById("clearBtn");
-  const addrBtn  = document.getElementById("addrBtn");
-  const nextBtn  = document.getElementById("nextBtn");
-  const toastEl  = document.getElementById("toast");
-  const onceNotice = document.getElementById("onceNotice");
-  const debugEl = document.getElementById("debug");
-
-  function showDebug(text){
-    if(!debugEl) return;
-    debugEl.style.display = "block";
-    debugEl.innerHTML = `<span class="t">DEBUG</span>${escapeHtml(text || "")}`;
+  function isTokenExpiredError(e){
+    const msg = (e?.message || String(e||"")).toLowerCase();
+    return msg.includes("access token expired") || msg.includes("token expired");
   }
 
-  function syncBarHeight(){
-    const bar = document.querySelector(".bar");
-    if(!bar) return;
-    const h = Math.ceil(bar.getBoundingClientRect().height || 0);
-    if(h > 0) document.documentElement.style.setProperty("--barH", h + "px");
-  }
-
-  function showToast(msg){
-    if(!toastEl) return;
-    toastEl.textContent = msg || "カートに追加しました";
-    toastEl.classList.add("show");
-    clearTimeout(toastEl._t);
-    toastEl._t = setTimeout(()=> toastEl.classList.remove("show"), 800);
+  function reloginHere(){
+    try{ if(window.liff && typeof liff.logout === "function") liff.logout(); }catch(e){}
+    setTimeout(()=>{
+      try{
+        liff.login({ redirectUri: location.href });
+      }catch(e){
+        location.href = location.href;
+      }
+    }, 300);
   }
 
   // =========================
-  // LIFF（✅ 失敗理由を画面に出す）
+  // LIFF user（✅ 安定版）
   // =========================
-  function safeStringify(v){
-    try{ return JSON.stringify(v); }catch{ return String(v); }
-  }
-
-  async function ensureLiffUser(){
-    const hasConfig = !!window.LIFF_ID_ORDER_TRIAL;
-    const chosenLiffId = (LIFF_ID_ORDER || LIFF_ID_FALLBACK).trim();
-
-    // config が無い場合は分かりやすく表示（ここ超重要）
-    if(!hasConfig){
-      showDebug(
-        [
-          "liff-config.js から LIFF_ID_ORDER_TRIAL が取得できません。",
-          "1) /liff-config.js が 404 になってないか（Network確認）",
-          "2) 中身で window.LIFF_ID_ORDER_TRIAL を set しているか",
-          "",
-          "現在のフォールバックで init します：",
-          "liffId=" + chosenLiffId,
-          "url=" + location.href
-        ].join("\n")
-      );
-    }else{
-      showDebug("liffId(from config)=" + chosenLiffId + "\nurl=" + location.href);
+  async function ensureLiffUserStable(){
+    if(!LIFF_ID_ORDER){
+      const hint = [
+        "LIFF_ID_ORDER_TRIAL が取得できません。",
+        "→ /liff-config.js が 404 か、window.LIFF_ID_ORDER_TRIAL を設定していません。",
+        "",
+        "確認：",
+        "  - https://あなたのドメイン/liff-config.js が開ける？",
+        "  - 中身に window.LIFF_ID_ORDER_TRIAL = '2008...'; がある？",
+        "",
+        "現在のURL：",
+        location.href
+      ].join("\n");
+      showDebug(hint);
+      throw new Error("LIFF_ID_ORDER_TRIAL is empty");
     }
 
-    try{
-      await liff.init({ liffId: chosenLiffId });
-    }catch(err){
-      const msg =
-        (err && (err.message || err.code)) ? safeStringify(err) : String(err);
-
-      // ここで「何が悪いか」を必ず可視化
-      throw new Error(
-        "liff.init failed\n" +
-        "liffId=" + chosenLiffId + "\n" +
-        "url=" + location.href + "\n" +
-        "userAgent=" + navigator.userAgent + "\n" +
-        "err=" + msg
-      );
-    }
+    await liff.init({ liffId: LIFF_ID_ORDER });
 
     if(!liff.isLoggedIn()){
-      // ※外部ブラウザで開いた時などは login が走る
+      statusEl.innerHTML = '<span class="danger">LIFFログイン中…</span>';
       liff.login({ redirectUri: location.href });
       return null;
     }
 
-    let uid = null;
-    try{ uid = liff.getDecodedIDToken()?.sub || null; }catch(e){}
-    if(!uid){
-      try{ uid = (await liff.getProfile())?.userId || null; }catch(e){}
+    try{
+      let uid = null;
+      try{ uid = liff.getDecodedIDToken()?.sub || null; }catch(e){}
+      if(!uid){
+        uid = (await liff.getProfile())?.userId || null;
+      }
+      uid = (uid || "").trim();
+      if(uid) localStorage.setItem(KEY_UID, uid);
+      if(!uid) throw new Error("userId empty");
+      return uid;
+    }catch(e){
+      if(isTokenExpiredError(e)){
+        statusEl.innerHTML = '<span class="danger">セッション更新中…（再ログインします）</span>';
+        showDebug("TOKEN EXPIRED\nrelogin...\n" + String(e?.message || e));
+        reloginHere();
+        return null;
+      }
+      throw e;
     }
-
-    uid = (uid || "").trim();
-    if(uid) localStorage.setItem(KEY_UID, uid);
-    return uid || null;
   }
 
   // =========================
@@ -429,14 +395,60 @@
       );
       const d = await r.json().catch(()=>({}));
       if(!r.ok || !d.ok) return { ok:false, allowed:true };
-      return d; // {ok, allowed, reason?}
+      return d;
     }catch{
       return { ok:false, allowed:true };
     }
   }
 
   // =========================
-  // cart
+  // 商品表示補助
+  // =========================
+  function normalizeImageSrc(image){
+    const v = String(image || "").trim();
+    if(!v) return "";
+    if(v.startsWith("http://") || v.startsWith("https://") || v.startsWith("/")) return v;
+    return "/uploads/" + v;
+  }
+  function getBestBefore(p){
+    return p.best_before ?? p.bestBefore ?? p.expiry ?? p.expiration ?? p.shelf_life ?? "";
+  }
+  function metaDetailsHtml(p){
+    const ing = (p.ingredients ?? p.ingredient ?? "").toString().trim();
+    const bb  = (getBestBefore(p) ?? "").toString().trim();
+    const hasAny = !!(ing || bb);
+    const lines = [];
+    if(ing) lines.push(`<div class="metaLine"><span class="metaLabel">原材料：</span>${escapeHtml(ing)}</div>`);
+    if(bb)  lines.push(`<div class="metaLine"><span class="metaLabel">賞味期限：</span>${escapeHtml(bb)}</div>`);
+    if(!hasAny) lines.push(`<div class="metaLine">${escapeHtml("（準備中）")}</div>`);
+    return `
+      <div class="metaBox">
+        <details class="metaDetails">
+          <summary>${hasAny ? "原材料・賞味期限を見る" : "商品情報を見る"}</summary>
+          <div class="metaText">${lines.join("")}</div>
+        </details>
+      </div>
+    `;
+  }
+  function getSetItemsArray(p){
+    const a = p?.set_items ?? p?.setItems ?? p?.set_items_list ?? null;
+    if(Array.isArray(a)) return a.map(x => String(x||"").trim()).filter(Boolean);
+    return [];
+  }
+  function setItemsHtml(p){
+    const items = getSetItemsArray(p);
+    if(items.length === 0) return "";
+    const lis = items.map(t => `<li>${escapeHtml(t)}</li>`).join("");
+    return `
+      <div class="setItems" aria-label="セット内容">
+        <div class="setItemsTitle">📦 セット内容</div>
+        <ul class="setItemsList">${lis}</ul>
+      </div>
+    `;
+  }
+
+  // =========================
+  // cart & UI
   // =========================
   let cart = loadCart();
   cart.items = normItems(cart.items);
@@ -444,53 +456,6 @@
 
   let product = null;
   let allowedByServer = true;
-
-  function updateUiLock(){
-    const card = mountEl.querySelector(".card");
-    if(!card || !product) return;
-
-    const qInput = card.querySelector(".q");
-    const decBtn = card.querySelector(".dec");
-    const incBtn = card.querySelector(".inc");
-    const addBtn = card.querySelector(".add");
-
-    if(qInput){
-      qInput.value = "1";
-      qInput.readOnly = true;
-      qInput.disabled = true;
-    }
-    if(decBtn) decBtn.disabled = true;
-    if(incBtn) incBtn.disabled = true;
-
-    const stock = Number(product.stock ?? 0);
-
-    if(!allowedByServer){
-      if(addBtn){
-        addBtn.disabled = true;
-        addBtn.textContent = "購入済み（2回目は不可）";
-      }
-      cart = { items: [] };
-      saveCart(cart);
-      renderSum();
-      return;
-    }
-
-    const id = String(product.id||"").trim();
-    const inCart = cart.items.find(x => String(x.id||"").trim() === id)?.qty || 0;
-
-    if(addBtn){
-      if(Number.isFinite(stock) && stock <= 0){
-        addBtn.disabled = true;
-        addBtn.textContent = "在庫なし";
-      }else if(inCart >= 1){
-        addBtn.disabled = true;
-        addBtn.textContent = "磯屋初めてセットは1人1つまで";
-      }else{
-        addBtn.disabled = false;
-        addBtn.textContent = "カートに追加";
-      }
-    }
-  }
 
   function renderSum(){
     let subtotal = 0, count = 0;
@@ -510,14 +475,47 @@
     syncBarHeight();
   }
 
+  function updateUiLock(){
+    const card = mountEl.querySelector(".card");
+    if(!card || !product) return;
+
+    const addBtn = card.querySelector(".add");
+
+    if(!allowedByServer){
+      if(addBtn){
+        addBtn.disabled = true;
+        addBtn.textContent = "購入済み（2回目は不可）";
+      }
+      cart = { items: [] };
+      saveCart(cart);
+      renderSum();
+      return;
+    }
+
+    const stock = Number(product.stock ?? 0);
+    const id = String(product.id||"").trim();
+    const inCart = cart.items.find(x => String(x.id||"").trim() === id)?.qty || 0;
+
+    if(addBtn){
+      if(Number.isFinite(stock) && stock <= 0){
+        addBtn.disabled = true;
+        addBtn.textContent = "在庫なし";
+      }else if(inCart >= 1){
+        addBtn.disabled = true;
+        addBtn.textContent = "磯屋初めてセットは1人1つまで";
+      }else{
+        addBtn.disabled = false;
+        addBtn.textContent = "カートに追加";
+      }
+    }
+  }
+
   function addToCart(){
     if(!product) return;
-
     if(!allowedByServer){
       alert("すでに磯屋初めてセットをご購入済みのため、今回はご注文できません。");
       return;
     }
-
     const id = String(product.id||"").trim();
     cart.items = [{ id, qty: 1 }];
     saveCart(cart);
@@ -553,9 +551,9 @@
         <div class="controls">
           <div class="controlsTop">
             <div class="qty">
-              <button type="button" class="dec">−</button>
-              <input class="q" type="number" min="1" max="1" step="1" value="1" inputmode="numeric">
-              <button type="button" class="inc">＋</button>
+              <button type="button" class="dec" disabled>−</button>
+              <input class="q" type="number" min="1" max="1" step="1" value="1" inputmode="numeric" readonly disabled>
+              <button type="button" class="inc" disabled>＋</button>
             </div>
             <span class="badge">個数</span>
           </div>
@@ -572,19 +570,6 @@
     const im = el.querySelector("img");
     if(im) im.addEventListener("error", ()=> im.remove());
 
-    const q = el.querySelector(".q");
-    const dec = el.querySelector(".dec");
-    const inc = el.querySelector(".inc");
-    if(q){
-      q.value = "1";
-      q.readOnly = true;
-      q.disabled = true;
-      q.onchange = ()=>{ q.value = "1"; };
-      q.oninput  = ()=>{ q.value = "1"; };
-    }
-    if(dec) dec.disabled = true;
-    if(inc) inc.disabled = true;
-
     const addBtn = el.querySelector(".add");
     addBtn.onclick = ()=>{
       addToCart();
@@ -594,6 +579,9 @@
     return el;
   }
 
+  // =========================
+  // address
+  // =========================
   function goAddress(){
     if(!allowedByServer){
       alert("すでに磯屋初めてセットをご購入済みのため、今回はご注文できません。");
@@ -601,19 +589,33 @@
     }
     const ret = encodeURIComponent(RETURN_TO);
     const mode = encodeURIComponent(MODE);
-    location.href = `/cod-register.html?returnTo=${ret}&mode=${mode}&liff.hback=2`;
+    const url = `/cod-register.html?returnTo=${ret}&mode=${mode}&liff.hback=2`;
+    openInternal(url);
   }
 
   // =========================
   // start
   // =========================
+  syncBarHeight();
+  window.addEventListener("resize", syncBarHeight);
+
   let uid = "";
   try{
-    uid = await ensureLiffUser();
+    uid = await ensureLiffUserStable();
     if(!uid){
-      statusEl.innerHTML = '<span class="danger">LIFFログイン中…</span>';
+      // login/relogin 中
       return;
     }
+    showDebug(
+      [
+        "OK",
+        "mode=" + MODE,
+        "liffId=" + LIFF_ID_ORDER,
+        "isInClient=" + (window.liff && typeof liff.isInClient==="function" ? liff.isInClient() : "n/a"),
+        "uid=" + uid.slice(0,6) + "…",
+        "productId=" + PRODUCT_ID
+      ].join("\n")
+    );
   }catch(e){
     statusEl.innerHTML = '<span class="danger">LIFF初期化に失敗しました</span>';
     showDebug(String(e?.message || e));
@@ -621,7 +623,7 @@
     return;
   }
 
-  // ✅ サーバ側の「購入済み」チェック
+  // サーバ側の購入済みチェック
   const st = await checkAlreadyOrdered(uid);
   if(st && st.ok && st.allowed === false){
     allowedByServer = false;
@@ -644,10 +646,8 @@
     }
   }
 
-  syncBarHeight();
-  window.addEventListener("resize", syncBarHeight);
-
   addrBtn.onclick = goAddress;
+
   nextBtn.onclick = ()=>{
     if(nextBtn.classList.contains("btnDisabled")){
       alert(!allowedByServer ? "購入済みのため進めません" : "カートが空です");
@@ -665,7 +665,7 @@
     showToast("カートを空にしました");
   };
 
-  // 商品取得（/api/products）
+  // 商品取得
   try{
     const r = await fetch("/api/products", { cache:"no-store" });
     const d = await r.json().catch(()=>({}));
@@ -683,7 +683,6 @@
     }
 
     statusEl.textContent = "";
-
     mountEl.innerHTML = "";
     mountEl.appendChild(renderCard(product));
     renderSum();

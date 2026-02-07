@@ -24,6 +24,13 @@
  *
  * ✅ liff_open_logs の ON CONFLICT エラー対策
  * - 起動ログは “履歴” なので毎回 INSERT（ON CONFLICT 不要・ユニーク制約不要）
+ *
+ * ✅ 今回の変更（あなたの依頼）
+ * - 旧Stripeルートを完全削除：
+ *   - /api/stripe/config
+ *   - /api/stripe/create-payment-intent
+ *   - /api/order/stripe/complete
+ *   ※ Stripeは Payment Element（PaymentIntent）系の /api/pay/stripe/intent に統一
  */
 
 "use strict";
@@ -78,9 +85,7 @@ const STRIPE_CANCEL_URL     = env.STRIPE_CANCEL_URL || "";
 // ✅ 友だち追加/ブロックの管理者通知 ON/OFF
 const FRIEND_NOTIFY = String(env.FRIEND_NOTIFY || "1").trim() === "1";
 
-
 const COD_FEE = Number(env.COD_FEE || 330);
-
 
 const KEYWORD_DIRECT = env.KEYWORD_DIRECT || "直接注文";
 const KEYWORD_KUSUKE = env.KEYWORD_KUSUKE || "久助";
@@ -616,13 +621,16 @@ async function ensureDb() {
     );
   `);
 
+  // 既存DB追従
   try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS label TEXT;`); } catch {}
   try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT false;`); } catch {}
   try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS address_key TEXT;`); } catch {}
   try { await pool.query(`ALTER TABLE addresses ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();`); } catch {}
 
+  // ✅ 1ユーザー1件縛りを復活させない
   try { await pool.query(`DROP INDEX IF EXISTS addresses_user_id_uidx;`); } catch {}
 
+  // 古い制約/インデックス掃除
   try { await pool.query(`ALTER TABLE addresses DROP CONSTRAINT IF EXISTS ux_addresses_user_label;`); } catch {}
   try { await pool.query(`DROP INDEX IF EXISTS ux_addresses_user_label;`); } catch {}
   try { await pool.query(`DROP INDEX IF EXISTS addresses_user_label_uidx;`); } catch {}
@@ -633,6 +641,7 @@ async function ensureDb() {
 
   try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_addresses_user_id ON addresses(user_id);`); } catch {}
 
+  // member_code はユニーク（NULLは許容）
   try {
     await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS addresses_member_code_uidx
@@ -641,6 +650,7 @@ async function ensureDb() {
     `);
   } catch {}
 
+  // デフォルトはユーザーごとに1つ
   try {
     await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS addresses_default_uidx
@@ -649,6 +659,7 @@ async function ensureDb() {
     `);
   } catch {}
 
+  // user_id + address_key はユニーク（同一住所増殖を止める）
   try {
     await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS addresses_user_address_key_uidx
@@ -686,14 +697,10 @@ async function ensureDb() {
   try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS notified_user_at TIMESTAMPTZ;`); } catch {}
   try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS notified_admin_at TIMESTAMPTZ;`); } catch {}
   try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS notified_kind TEXT;`); } catch {}
-// Payment Element（PaymentIntent）用
-try { 
-  await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_intent_id TEXT;`);
-} catch {}
 
-try {
-  await pool.query(`CREATE INDEX IF NOT EXISTS idx_orders_payment_intent_id ON orders(payment_intent_id);`);
-} catch {}
+  // Payment Element（PaymentIntent）用
+  try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_intent_id TEXT;`); } catch {}
+  try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_orders_payment_intent_id ON orders(payment_intent_id);`); } catch {}
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS follow_events (
@@ -950,7 +957,6 @@ async function touchUser(userId, kind, displayName = null, source = null) {
   );
 }
 
-
 async function upsertUserSegment(segmentKey, userId, patch = {}) {
   const seg = String(segmentKey || "").trim();
   const uid = String(userId || "").trim();
@@ -1116,14 +1122,10 @@ function makeAddressKey(a) {
   const addr1 = norm(a?.address1);
   const addr2 = norm(a?.address2);
 
-  // ✅ ここで必須が欠けてたら「キーを作らない」ではなく「呼び元で止める」設計にする
-  // upsertAddress 側で必須チェックしている前提なので、ここでは確実にキーを返す
   const s = [postal, pref, city, addr1, addr2].join("|");
   const base = s.replace(/\|+/g, "|").replace(/^\||\|$/g, "").trim();
 
-  // 念のため
   if (!postal || !pref || !city || !addr1) {
-    // ここでnullにすると増殖に戻るので、例外にする
     throw Object.assign(new Error("ADDRESS_KEY_BUILD_FAILED"), {
       code: "ADDRESS_KEY_BUILD_FAILED",
       got: { postal, pref, city, addr1 }
@@ -1160,15 +1162,14 @@ async function upsertAddress(userId, addr) {
 
   const memberCodeIn = String(addr?.member_code || "").trim() || null;
 
-  // ✅ ここが本丸：クライアントの address_key は捨てる
-  const addressKey = makeAddressKey({
-    postal, prefecture, city, address1, address2
-  });
+  // ✅ クライアントの address_key は捨てる（サーバで再計算）
+  const addressKey = makeAddressKey({ postal, prefecture, city, address1, address2 });
 
   // is_default の切替
   if (isDefault) {
     await pool.query(`UPDATE addresses SET is_default=false WHERE user_id=$1`, [uid]);
   }
+
   if (addressId) {
     const r = await pool.query(
       `
@@ -1663,7 +1664,7 @@ async function notifyCardPending({ orderId, userId, items, shippingFee, total, s
  * Friend notify（follow/unfollow）
  * ========================= */
 async function notifyAdminFriendAdded({ userId, displayName, day }) {
-  if (!FRIEND_NOTIFY) return;   // 🔕 ここで即終了
+  if (!FRIEND_NOTIFY) return;
   if (!ADMIN_USER_ID) return;
 
   let todayCounts = null;
@@ -1691,7 +1692,7 @@ async function notifyAdminFriendAdded({ userId, displayName, day }) {
 }
 
 async function notifyAdminFriendBlocked({ userId, displayName, day }) {
-  if (!FRIEND_NOTIFY) return;   // 🔕
+  if (!FRIEND_NOTIFY) return;
   if (!ADMIN_USER_ID) return;
 
   let todayCounts = null;
@@ -1734,37 +1735,6 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
       return res.status(400).send("Bad signature");
     }
 
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
-      const orderId = session?.metadata?.orderId;
-      const userId  = session?.metadata?.userId;
-
-      if (orderId) {
-        await pool.query(`UPDATE orders SET status='paid' WHERE id=$1`, [orderId]);
-        logInfo("Order paid:", orderId);
-
-        await markUserOrdered(userId || "", Number(orderId)).catch(()=>{});
-
-        const row = await getOrderRow(orderId);
-        if (row) {
-          const items = Array.isArray(row.items) ? row.items : (row.items || []);
-          await notifyOrderCompleted({
-            orderId: row.id,
-            userId: row.user_id || userId || "",
-            items,
-            shippingFee: row.shipping_fee,
-            total: row.total,
-            paymentMethod: row.payment_method || "card",
-            codFee: 0,
-            size: null,
-            addr: null,
-            title: "新規注文（カード）",
-            isPaid: true,
-            deliveryMethod: "delivery",
-          });
-        }
-      }
-    }
     // ============================
     // ✅ Payment Element（PaymentIntent）確定：ここが本命
     // ============================
@@ -1775,10 +1745,9 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
       const orderId = pi?.metadata?.orderId || null;
       const userIdFromMeta = pi?.metadata?.userId || "";
 
-      // 1) まず「注文IDがmetadataに入ってる」ならそれで確定
+      // 1) metadata.orderId がある場合
       if (orderId) {
         await pool.query(`UPDATE orders SET status='paid' WHERE id=$1`, [orderId]);
-
         await markUserOrdered(userIdFromMeta || "", Number(orderId)).catch(()=>{});
 
         const row = await getOrderRow(orderId);
@@ -1835,13 +1804,13 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
       }
     }
 
-
     res.json({ received: true });
   } catch (e) {
     logErr("POST /stripe/webhook", e?.stack || e);
     res.status(500).send("server_error");
   }
 });
+
 /* =========================
  * LINE Webhook（★ここをJSONより前に！）
  * ========================= */
@@ -2022,8 +1991,8 @@ app.get("/api/admin/orders", requireAdmin, async (req, res) => {
         orderNumber: row.id,
         userId: row.user_id,
         lineUserId: row.user_id,
-         name: row.name || "",
-          addr_name: row.name || "",  
+        name: row.name || "",
+        addr_name: row.name || "",
         items: itemsArr,
         subtotal,
         shipping: Number(row.shipping_fee || 0),
@@ -2321,19 +2290,8 @@ app.post("/api/address/set", async (req, res) => {
       label: a.label,
       is_default: !!a.is_default,
     };
-// ✅ 必須チェック（空保存を100%止める）
-if (!payload.name || !payload.phone || !payload.postal || !payload.prefecture || !payload.city || !payload.address1) {
-  return res.status(400).json({
-    ok:false,
-    error:"required: name/phone/postal/prefecture/city/address1",
-    got: payload
-  });
-}
 
-// ✅ クライアントの address_key は信用しない（明示的に捨てる）
-payload.address_key = null;
-
-    // ✅ 空INSERTを止める（ここが増殖の原因つぶし）
+    // ✅ 必須チェック（空保存を100%止める）
     if (!payload.name || !payload.phone || !payload.postal || !payload.prefecture || !payload.city || !payload.address1) {
       return res.status(400).json({
         ok:false,
@@ -2341,6 +2299,9 @@ payload.address_key = null;
         got: payload
       });
     }
+
+    // ✅ クライアントの address_key は信用しない（明示的に捨てる）
+    payload.address_key = null;
 
     const saved = await upsertAddress(userId, payload);
     res.json({ ok:true, address:saved });
@@ -2374,8 +2335,7 @@ app.post("/api/liff/address", async (req, res) => {
     const saved = await upsertAddress(userId, {
       id: address.id,
       member_code: address.member_code,
-     name: pickNameFromAny(address),
-
+      name: pickNameFromAny(address),
       phone: address.phone,
       postal: address.postal,
       prefecture: address.prefecture,
@@ -2418,7 +2378,6 @@ app.post("/api/liff/opened", async (req, res) => {
     res.status(500).json({ ok: false, error: "server_error" });
   }
 });
-
 
 // === DEBUG: ping endpoint (no userId) ===
 app.get("/api/ping", (req, res) => {
@@ -2768,6 +2727,7 @@ app.post("/api/store-order", async (req, res) => {
     res.status(500).json({ ok:false, error:"server_error" });
   }
 });
+
 // ================================
 // Stripe: PaymentIntent (Payment Element用)
 // POST /api/pay/stripe/intent
@@ -2820,17 +2780,18 @@ app.post("/api/pay/stripe/intent", async (req, res) => {
         userId: built.userId,
       },
     });
-// ★追加：orders に payment_intent_id を保存（後でwebhookで確実に紐付けできる）
-try {
-  await pool.query(
-    `UPDATE orders SET payment_intent_id=$2 WHERE id=$1`,
-    [orderId, pi.id]
-  );
-} catch (e) {
-  logErr("update orders.payment_intent_id failed", orderId, pi?.id, e?.message || e);
-}
 
-    // 仮受付通知（任意：欲しければON）
+    // orders に payment_intent_id を保存（webhookで確実に紐付け）
+    try {
+      await pool.query(
+        `UPDATE orders SET payment_intent_id=$2 WHERE id=$1`,
+        [orderId, pi.id]
+      );
+    } catch (e) {
+      logErr("update orders.payment_intent_id failed", orderId, pi?.id, e?.message || e);
+    }
+
+    // 仮受付通知（任意）
     await notifyCardPending({
       orderId,
       userId: built.userId,
@@ -3080,14 +3041,13 @@ async function onFollow(ev) {
 
   try {
     await pool.query(
-  `
-  INSERT INTO follow_events (user_id, followed_at, raw_event)
-  VALUES ($1, now(), $2)
-  ON CONFLICT DO NOTHING
-  `,
-  [userId, ev ? JSON.stringify(ev) : null]
-);
-
+      `
+      INSERT INTO follow_events (user_id, followed_at, raw_event)
+      VALUES ($1, now(), $2)
+      ON CONFLICT DO NOTHING
+      `,
+      [userId, ev ? JSON.stringify(ev) : null]
+    );
   } catch (e) {
     logErr("insert follow_events failed", e?.message || e);
   }
@@ -3332,7 +3292,7 @@ async function onTextMessage(ev) {
         return;
       }
 
-      // ✅ ここで「代引注文」を作って通知まで出す（完全に直注文を成立させる）
+      // ✅ ここで「代引注文」を作って通知まで出す
       const checkout = { items: [{ id: p.id, qty: parsed.qty }] };
       const built = await buildOrderFromCheckout(userId, checkout, { requireAddress: true });
 
@@ -3398,117 +3358,6 @@ async function onTextMessage(ev) {
   // デフォ：注文URL案内（うるさくしない）
   return;
 }
-// ===== Stripe config（フロントが必要なら）=====
-app.get("/api/stripe/config", (req, res) => {
-  res.json({
-    publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || "",
-    appBaseUrl: process.env.APP_BASE_URL || ""
-  });
-});
-
-/**
- * body:
- *  { uid: "Uxxxx", amount_yen: 1280, mode: "trial|original|fukubako|", note?: "..." }
- */
-app.post("/api/stripe/create-payment-intent", async (req, res) => {
-  try {
-    if (!stripe) return res.status(500).json({ error: "Stripe is not configured" });
-
-    const { uid, amount_yen, mode } = req.body || {};
-    const uidStr = String(uid || "").trim();
-    const amountYen = Number(amount_yen || 0);
-    const modeStr = String(mode || "").trim();
-
-    if (!uidStr) return res.status(400).json({ error: "missing uid" });
-    if (!Number.isFinite(amountYen) || amountYen <= 0) {
-      return res.status(400).json({ error: "invalid amount_yen" });
-    }
-
-    const idem = `pi_${uidStr}_${amountYen}_${modeStr}`;
-
-    const pi = await stripe.paymentIntents.create(
-      {
-        amount: amountYen, // JPYは円単位
-        currency: "jpy",
-        automatic_payment_methods: { enabled: true },
-        metadata: { uid: uidStr, mode: modeStr },
-        description: `Isoya checkout ${uidStr} (${modeStr || "normal"})`
-      },
-      { idempotencyKey: idem }
-    );
-
-    res.json({ client_secret: pi.client_secret, amount_yen: amountYen });
-  } catch (e) {
-    console.error("[create-payment-intent] error", e);
-    res.status(500).json({ error: "server error" });
-  }
-});
-app.post("/api/order/stripe/complete", async (req, res) => {
-  try {
-    const { uid, mode, payment_intent_id, quote } = req.body || {};
-    const uidStr = String(uid || "");
-    const piId = String(payment_intent_id || "");
-    if (!uidStr) return res.status(400).json({ ok:false, error:"missing uid" });
-    if (!piId) return res.status(400).json({ ok:false, error:"missing payment_intent_id" });
-
-    // ここで「同じ payment_intent_id は二重確定しない」チェックを必ず入れるのが理想
-    // → まず簡易でメモリガード、後でDBガード推奨
-    const orderId = `stripe_${piId}`; // 仮の注文ID（DB注文IDがあるならそれを使う）
-
-    // 明細に必要な情報を整形（quoteの形に合わせて調整）
-    const subtotal = Number(quote?.subtotal || 0);
-    const shippingFee = Number(quote?.shippingFee || 0);
-    const totalCard =
-      Number(quote?.totalCard || 0) || (subtotal + shippingFee) || Number(quote?.total || 0);
-
-    // 住所はDBから引くのが確実（例）
-    let addr = null;
-    try {
-      const r = await pool.query(
-        `SELECT name, phone, postal, prefecture, city, address1, address2
-         FROM addresses
-         WHERE user_id=$1
-         ORDER BY is_default DESC, updated_at DESC, id DESC
-         LIMIT 1`,
-        [uidStr]
-      );
-      addr = r.rows[0] || null;
-    } catch {}
-
-    // items は quoteに入ってない事が多いので、必要なら「カート」or「注文作成時のitems」を渡すのがベスト
-    // いったん “金額中心” 通知にする（あとでitemsも確実に入れる版にできます）
-    const order = {
-      orderId,
-      uid: uidStr,
-      payment: "クレジット（Stripe）",
-      items: (quote?.items || []).map(it => ({
-        name: it.name, qty: it.qty, price: it.price
-      })),
-      subtotal,
-      shippingFee,
-      total: totalCard,
-      address: addr,
-      createdAt: new Date().toISOString(),
-      note: `mode=${mode || ""}\npayment_intent=${piId}`
-    };
-
-    // 二重送信防止（最低限）
-    // ここは前の回答の notifyOrderToCustomerAndAdmin / buildOrderDetailText を入れて使う
-    // 例:
-    // if (markNotifiedOnce(order.orderId)) await notifyOrderToCustomerAndAdmin({ lineClient, order });
-
-    if (typeof notifyOrderToCustomerAndAdmin === "function" && typeof markNotifiedOnce === "function") {
-      if (markNotifiedOnce(order.orderId)) {
-        await notifyOrderToCustomerAndAdmin({ lineClient, order });
-      }
-    }
-
-    res.json({ ok:true, orderId });
-  } catch (e) {
-    console.error("[/api/order/stripe/complete] error", e);
-    res.status(500).json({ ok:false, error:"server error" });
-  }
-});
 
 /* =========================
  * 起動（修正版：listen を先に）
@@ -3534,5 +3383,3 @@ main().catch((e) => {
   logErr("boot failed", e?.stack || e);
   process.exit(1);
 });
-
-

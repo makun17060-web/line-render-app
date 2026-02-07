@@ -4,7 +4,9 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
   <title>注文内容の確認</title>
+
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="/liff-config.js"></script>
 
   <style>
     :root{
@@ -13,12 +15,7 @@
       --radius:14px;--shadow:0 1px 3px rgba(0,0,0,.06);
     }
     *{box-sizing:border-box}
-    body{
-      margin:0;
-      font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
-      background:var(--bg);
-      color:var(--text)
-    }
+    body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)}
     .wrap{max-width:860px;margin:0 auto;padding:14px 14px 26px}
     h1{margin:0 0 6px;font-size:18px}
     .muted{color:var(--muted);font-size:13px;line-height:1.5}
@@ -33,114 +30,59 @@
       box-shadow:var(--shadow)
     }
 
-    .row{
-      display:flex;
-      justify-content:space-between;
-      gap:10px;
-      margin:0;
-      padding:6px 0;
-      font-size:14px
-    }
+    .row{display:flex;justify-content:space-between;gap:10px;margin:0;padding:6px 0;font-size:14px}
 
-    /* 氏名 */
     .nameRow{
-      display:block;
-      padding:10px 12px 12px;
-      border-top:1px solid var(--line);
-      margin-top:6px;
-      background:#f8fafc;
-      border-radius:12px;
+      display:block;padding:10px 12px 12px;border-top:1px solid var(--line);
+      margin-top:6px;background:#f8fafc;border-radius:12px;
     }
-    .nameRow .k{
-      color:var(--muted);
-      font-size:12px;
-      margin-bottom:4px;
-    }
-    .nameRow .v{
-      font-weight:1000;
-      font-size:18px;
-      line-height:1.25;
-      word-break:break-word;
-    }
+    .nameRow .k{color:var(--muted);font-size:12px;margin-bottom:4px}
+    .nameRow .v{font-weight:1000;font-size:18px;line-height:1.25;word-break:break-word}
 
-    #addrText{
-      white-space:pre-line;
-      font-weight:700;
-      font-size:14px;
-      line-height:1.55;
-      margin-top:8px;
-    }
+    #addrText{white-space:pre-line;font-weight:700;font-size:14px;line-height:1.55;margin-top:8px}
 
-    /* 商品 */
     .items{margin-top:10px;border-top:1px solid var(--line)}
     .item{
-      display:grid;
-      grid-template-columns:1fr auto;
-      gap:6px 10px;
-      padding:12px 0;
-      border-bottom:1px dashed var(--line);
-      font-size:14px
+      display:grid;grid-template-columns:1fr auto;gap:6px 10px;
+      padding:12px 0;border-bottom:1px dashed var(--line);font-size:14px
     }
     .item:last-child{border-bottom:none}
     .item .name{font-weight:800}
     .item .qty{grid-column:1/2;color:var(--muted);font-size:13px}
-    .item .price{
-      grid-column:2/3;
-      grid-row:1/3;
-      align-self:center;
-      font-weight:900;
-      white-space:nowrap
-    }
+    .item .price{grid-column:2/3;grid-row:1/3;align-self:center;font-weight:900;white-space:nowrap}
 
-    /* 支払い方法ボタン */
-    .pay{
-      display:grid;
-      grid-template-columns:1fr 1fr;
-      gap:10px;
-      margin-top:12px;
-    }
+    .pay{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
     .payBtn{
-      border:1px solid var(--line);
-      background:#fff;
-      border-radius:14px;
-      padding:14px 10px;
-      font-size:14px;
-      font-weight:900;
-      cursor:pointer;
-      box-shadow:var(--shadow);
-      color:var(--text);
+      border:1px solid var(--line);background:#fff;border-radius:14px;
+      padding:14px 10px;font-size:14px;font-weight:900;cursor:pointer;
+      box-shadow:var(--shadow);color:var(--text);
     }
-    .payBtn.active{
-      background:var(--pri2);
-      color:#fff;
-      border-color:var(--pri2);
-    }
+    .payBtn.active{background:var(--pri2);color:#fff;border-color:var(--pri2)}
     .payBtn:active{transform:translateY(1px)}
 
     .btn{
-      width:100%;
-      border:none;
-      border-radius:14px;
-      padding:12px 14px;
-      font-weight:1000;
-      cursor:pointer;
-      margin-top:10px
+      width:100%;border:none;border-radius:14px;padding:12px 14px;
+      font-weight:1000;cursor:pointer;margin-top:10px
     }
     .btnPrimary{background:var(--pri2);color:#fff}
     .btnGhost{background:#fff;color:#111827;border:1px solid var(--line)}
     .btn:disabled{opacity:.55;cursor:not-allowed}
 
     .trialNotice{
-      margin-top:10px;
-      padding:10px 12px;
-      border-radius:12px;
-      border:1px solid #fecaca;
-      background:#fff5f5;
-      color:#991b1b;
-      font-weight:900;
-      font-size:13px;
-      line-height:1.55;
-      display:none;
+      margin-top:10px;padding:10px 12px;border-radius:12px;border:1px solid #fecaca;
+      background:#fff5f5;color:#991b1b;font-weight:900;font-size:13px;line-height:1.55;display:none;
+    }
+
+    /* ✅ ちらっと対策：常に見えるデバッグ */
+    .dbg{
+      margin-top:10px;padding:10px 12px;border-radius:12px;border:1px solid #dbeafe;
+      background:#eff6ff;color:#1e40af;font-weight:900;font-size:12px;line-height:1.55;
+      white-space:pre-wrap;word-break:break-word;
+    }
+    .dbgBtns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+    .btnMini{
+      border:1px solid var(--line);background:#fff;color:#111827;border-radius:12px;
+      padding:8px 10px;font-weight:900;font-size:12px;cursor:pointer;
     }
   </style>
 </head>
@@ -150,11 +92,19 @@
   <h1 id="pageTitle">注文内容の確認</h1>
   <div class="muted" id="status">読み込み中…</div>
 
+  <div class="card">
+    <div class="muted">デバッグ（消えない）</div>
+    <div class="dbg" id="dbg">boot…</div>
+    <div class="dbgBtns">
+      <button class="btnMini" id="copyBtn" type="button">URLをコピー</button>
+      <button class="btnMini" id="loginBtn" type="button" style="display:none">LIFFログイン</button>
+    </div>
+  </div>
+
   <div class="trialNotice" id="trialNotice">
     ※お試しセットは <b>ご自宅配送のみ</b> です（ギフト配送はできません）
   </div>
 
-  <!-- お届け先 -->
   <div class="card">
     <div class="muted">お届け先</div>
 
@@ -170,7 +120,6 @@
     </div>
   </div>
 
-  <!-- 商品＆金額 -->
   <div class="card">
     <div class="muted">ご注文商品</div>
     <div class="items" id="items"></div>
@@ -187,7 +136,6 @@
       <div style="font-weight:1000;font-size:18px" id="totalCod">—</div>
     </div>
 
-    <!-- 支払い方法 -->
     <div class="pay">
       <button type="button" class="payBtn active" data-method="card">クレジット</button>
       <button type="button" class="payBtn" data-method="cod">代引き（現金）</button>
@@ -206,15 +154,51 @@
 (async function(){
   "use strict";
 
-  const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
   const KEY_UID = "isoya_userId";
   const KEY_LAST_QUOTE = "isoya_last_quote";
 
   const qs = new URLSearchParams(location.search);
   const mode = (qs.get("mode") || "").trim();
-  const v = qs.get("v") || "20260205"; // キャッシュ避け用
+  const v = qs.get("v") || "20260205";
+  const addr_step = (qs.get("addr_step") || "").trim();
+
+  function pickLiffIdByMode(m){
+    if(m === "original") return window.LIFF_ID_ORDER_ORIGINAL || window.LIFF_ID_COD || "";
+    if(m === "fukubako") return window.LIFF_ID_ORDER_TRIAL   || window.LIFF_ID_COD || "";
+    if(m === "trial")    return window.LIFF_ID_ORDER_TRIAL   || window.LIFF_ID_COD || "";
+    if(m === "store")    return window.LIFF_ID_ORDER_STORE   || window.LIFF_ID_COD || "";
+    return window.LIFF_ID_ORDER_AKASHA || window.LIFF_ID_COD || "";
+  }
+  const LIFF_ID_ORDER = pickLiffIdByMode(mode);
+
+  const KEY_CART =
+    (mode === "original") ? "isoya_cart_original"
+  : (mode === "fukubako" || mode === "trial") ? "isoya_cart_fukubako"
+  : "isoya_cart";
+
+  const RETURN_TO_THIS =
+    (mode === "fukubako" || mode === "trial") ? "/confirm.html?mode=fukubako"
+  : (mode === "original") ? "/confirm.html?mode=original"
+  : (mode === "store") ? "/confirm.html?mode=store"
+  : "/confirm.html";
+
+  const NEXT_CONFIRM_CARD =
+    (mode === "fukubako" || mode === "trial") ? "/confirm_card.html?mode=fukubako"
+  : (mode === "original") ? "/confirm_card.html?mode=original"
+  : (mode === "store") ? "/confirm_card.html?mode=store"
+  : "/confirm_card.html";
+
+  const NEXT_CONFIRM_COD =
+    (mode === "fukubako" || mode === "trial") ? "/confirm_cod.html?mode=fukubako"
+  : (mode === "original") ? "/confirm_cod.html?mode=original"
+  : (mode === "store") ? "/confirm_cod.html?mode=store"
+  : "/confirm_cod.html";
 
   const status = document.getElementById("status");
+  const dbgEl = document.getElementById("dbg");
+  const copyBtn = document.getElementById("copyBtn");
+  const loginBtn = document.getElementById("loginBtn");
+
   const addrNameEl = document.getElementById("addrName");
   const addrTextEl = document.getElementById("addrText");
   const itemsEl = document.getElementById("items");
@@ -224,6 +208,7 @@
   const totalCodEl = document.getElementById("totalCod");
   const nextBtn = document.getElementById("nextBtn");
   const backBtn = document.getElementById("backBtn");
+  const trialNotice = document.getElementById("trialNotice");
 
   const yen = n => (Number(n)||0).toLocaleString("ja-JP") + "円";
   const loadJson = k => { try { return JSON.parse(localStorage.getItem(k)||""); } catch { return null; } };
@@ -236,6 +221,24 @@
       selectedPayMethod = btn.dataset.method || "card";
     });
   });
+
+  function setDbg(lines){
+    dbgEl.textContent = (Array.isArray(lines) ? lines : [String(lines||"")]).join("\n");
+  }
+
+  async function copyText(text){
+    const s = String(text||"");
+    try{ await navigator.clipboard.writeText(s); alert("コピーしました"); return; }catch(e){}
+    try{
+      const ta = document.createElement("textarea");
+      ta.value = s; ta.style.position="fixed"; ta.style.left="-9999px";
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      document.execCommand("copy"); ta.remove();
+      alert("コピーしました");
+    }catch(e){
+      alert("コピーできませんでした: " + (e?.message||String(e)));
+    }
+  }
 
   function showErr(title, err){
     status.classList.remove("muted");
@@ -268,48 +271,95 @@
     return (s || "").trim();
   }
 
-  async function ensureUser(){
-    await liff.init({ liffId: LIFF_ID_ORDER });
-    if(!liff.isLoggedIn()) throw new Error("ログインできません（LIFF）");
-    const prof = await liff.getProfile();
-    const uid = (prof?.userId || "").trim();
+  async function ensureUserNoAutoRedirect(){
+    if(!LIFF_ID_ORDER) throw new Error("LIFF_ID_ORDER が空です（liff-config.js / mode を確認）");
+
+    // ✅ init の失敗理由を画面に残す
+    try{
+      await liff.init({ liffId: LIFF_ID_ORDER });
+    }catch(e){
+      throw new Error("liff.init 失敗: " + (e?.message || String(e)));
+    }
+
+    // ✅ 自動loginしない（ちらっと問題の原因になる）
+    if(!liff.isLoggedIn()){
+      loginBtn.style.display = "";
+      status.textContent = "LIFF未ログインです（下の「LIFFログイン」を押してください）";
+      return null;
+    }
+
+    let uid = null;
+    try{ uid = liff.getDecodedIDToken()?.sub || null; }catch(e){}
+    if(!uid){
+      try{ uid = (await liff.getProfile())?.userId || null; }catch(e){}
+    }
+    uid = (uid || "").trim();
     if(!uid) throw new Error("ユーザーIDが取得できません");
     localStorage.setItem(KEY_UID, uid);
     return uid;
   }
 
-  const KEY_CART =
-    (mode === "original") ? "isoya_cart_original"
-  : (mode === "fukubako") ? "isoya_cart_fukubako"
-  : "isoya_cart";
+  function goAddress(){
+    const url = `/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2&v=${encodeURIComponent(v)}`;
+    try{
+      if(window.liff && typeof liff.isInClient==="function" && liff.isInClient()){
+        liff.openWindow({ url: new URL(url, location.origin).toString(), external:false });
+        return;
+      }
+    }catch(e){}
+    location.href = url;
+  }
 
-  const RETURN_TO_THIS =
-    (mode === "fukubako") ? "/confirm.html?mode=fukubako"
-  : (mode === "original") ? "/confirm-original.html"
-  : "/confirm.html";
+  function goNext(){
+    nextBtn.disabled = true;
+    const base = (selectedPayMethod === "cod") ? NEXT_CONFIRM_COD : NEXT_CONFIRM_CARD;
+    const url = base + (base.includes("?") ? "&" : "?") + "v=" + encodeURIComponent(v);
+    try{
+      if(window.liff && typeof liff.isInClient==="function" && liff.isInClient()){
+        liff.openWindow({ url: new URL(url, location.origin).toString(), external:false });
+        return;
+      }
+    }catch(e){}
+    location.href = url;
+  }
 
-  // ✅ “confirm_card” が正しい（アンダースコア）
-  const NEXT_CONFIRM_CARD =
-    (mode === "fukubako") ? "/confirm_card.html?mode=fukubako"
-  : (mode === "original") ? "/confirm_card.html?mode=original"
-  : "/confirm_card.html";
+  // 先にデバッグを固定表示
+  const inClient = (window.liff && typeof liff.isInClient==="function") ? liff.isInClient() : "n/a";
+  setDbg([
+    "CONFIRM DEBUG (always)",
+    "mode=" + mode,
+    "addr_step=" + addr_step,
+    "LIFF_ID_ORDER=" + LIFF_ID_ORDER,
+    "hasTrial=" + (!!window.LIFF_ID_ORDER_TRIAL),
+    "isInClient=" + inClient,
+    "url=" + location.href
+  ]);
 
-  const NEXT_CONFIRM_COD =
-    (mode === "fukubako") ? "/confirm_cod.html?mode=fukubako"
-  : (mode === "original") ? "/confirm_cod.html?mode=original"
-  : "/confirm_cod.html";
+  copyBtn.onclick = ()=>copyText(location.href);
+
+  loginBtn.onclick = ()=>{
+    try{
+      liff.login({ redirectUri: location.href });
+    }catch(e){
+      alert("login 失敗: " + (e?.message||String(e)));
+    }
+  };
 
   try{
     status.textContent = "確認中…";
-    const uid = await ensureUser();
 
-    // カート
+    const uid = await ensureUserNoAutoRedirect();
+    if(!uid) return;
+
+    if(trialNotice){
+      trialNotice.style.display = (mode === "fukubako" || mode === "trial") ? "block" : "none";
+    }
+
     const cart = loadJson(KEY_CART) || { items: [] };
     const rawItems = Array.isArray(cart.items) ? cart.items : [];
     const items = rawItems.filter(x => x?.id && Number(x.qty||0) > 0);
     if(items.length === 0) throw new Error("カートが空です。商品ページからやり直してください。");
 
-    // 住所
     const addrRes = await fetchJson(`/api/address/get?userId=${encodeURIComponent(uid)}`);
     const addrObj = addrRes?.address || addrRes?.addr || addrRes?.data?.address || null;
     if(!addrObj) throw new Error("住所が取得できません。住所入力をやり直してください。");
@@ -329,7 +379,6 @@
     if(tel) addrLines.push("TEL: " + tel);
     addrTextEl.textContent = addrLines.join("\n");
 
-    // 商品
     const prodRes = await fetchJson("/api/products");
     const products = Array.isArray(prodRes.products) ? prodRes.products : [];
 
@@ -351,9 +400,10 @@
         </div>`;
     });
 
+    if(!itemsEl.innerHTML.trim()) throw new Error("商品情報が取得できません（productsにIDが見つからない可能性）");
+
     subtotalEl.textContent = yen(subtotal);
 
-    // 見積
     const quote = await fetchJson("/api/order/quote",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
@@ -368,30 +418,22 @@
     const totalCod = Number(quote.totalCod ?? quote.total_cod ?? amount_yen);
     totalCodEl.textContent = yen(totalCod);
 
-    // ✅ confirm_card が読む
     localStorage.setItem(KEY_LAST_QUOTE, JSON.stringify({
       ...quote, uid, mode, subtotal, amount_yen, shippingFee, totalCod
     }));
 
     status.textContent = "内容をご確認ください。";
-
-    backBtn.onclick = ()=>{
-      location.href = `/cod-register.html?returnTo=${encodeURIComponent(RETURN_TO_THIS)}&mode=${encodeURIComponent(mode||"")}&liff.hback=2&v=${encodeURIComponent(v)}`;
-    };
-
-    nextBtn.onclick = ()=>{
-      nextBtn.disabled = true;
-      const next = (selectedPayMethod === "cod") ? NEXT_CONFIRM_COD : NEXT_CONFIRM_CARD;
-      location.href = next + (next.includes("?") ? "&" : "?") + "v=" + encodeURIComponent(v);
-    };
+    backBtn.onclick = goAddress;
+    nextBtn.onclick = goNext;
 
   }catch(e){
     console.error(e);
     showErr("読み込みに失敗しました", e);
+    // デバッグにも残す
+    setDbg(dbgEl.textContent + "\n\nERROR:\n" + (e?.message || String(e)));
   }
 })();
 </script>
-
 
 </body>
 </html>

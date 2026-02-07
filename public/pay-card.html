@@ -28,10 +28,18 @@
     .btn.secondary{background:#fff;color:#111827;border:1px solid var(--line)}
     .btn:disabled{opacity:.55;cursor:not-allowed}
     #payment-element{margin-top:10px}
-    .kv{display:flex;justify-content:space-between;gap:10px;padding:6px 0}
-    .kv .k{color:var(--muted);font-size:13px}
-    .kv .v{font-weight:1000;font-size:14px;text-align:right}
-    .badge{display:inline-block;font-size:12px;padding:4px 8px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-weight:800}
+
+    /* Express Checkout */
+    #express-wrap{margin-top:10px}
+    #express-checkout{margin-top:10px}
+    .divider{
+      display:flex;align-items:center;gap:10px;margin:12px 0 6px
+    }
+    .divider:before,.divider:after{
+      content:"";flex:1;height:1px;background:var(--line)
+    }
+    .divider span{color:var(--muted);font-size:12px;font-weight:800}
+    .mini{color:var(--muted);font-size:12px;line-height:1.5;margin-top:6px}
   </style>
 </head>
 
@@ -40,9 +48,17 @@
     <h1>カード決済｜入力</h1>
     <div class="muted" id="status">読み込み中…</div>
 
-   
-
     <div class="card">
+      <div class="muted">お支払い方法</div>
+
+      <!-- ✅ Express Checkout（Google Pay/Apple Pay：出る環境でだけ表示） -->
+      <div id="express-wrap" style="display:none">
+        <div class="muted">ワンタップ決済（対応している場合に表示されます）</div>
+        <div id="express-checkout"></div>
+        <div class="mini" id="express-note" style="display:none"></div>
+        <div class="divider"><span>または</span></div>
+      </div>
+
       <div class="muted">カード情報の入力</div>
       <div id="payment-element"></div>
 
@@ -73,7 +89,9 @@
   const errEl  = document.getElementById("err");
   const payBtn = document.getElementById("payBtn");
   const backBtn= document.getElementById("backBtn");
-  
+
+  const expressWrap = document.getElementById("express-wrap");
+  const expressNote = document.getElementById("express-note");
 
   const qs = new URLSearchParams(location.search);
   const mode = (qs.get("mode") || "").trim(); // original / fukubako / ""(default)
@@ -126,10 +144,9 @@
   }
 
   // =========================
-  // Stripe config 取得（ここが今回の修正）
+  // Stripe config 取得
   // =========================
   async function fetchStripeConfig(){
-    // 同一オリジンでまず試す
     const urls = [
       location.origin + "/api/stripe/config",
       "/api/stripe/config",
@@ -154,11 +171,75 @@
   }
 
   // =========================
+  // Express Checkout（Google Pay / Apple Pay）
+  // =========================
+  function isLikelyInAppWebView(){
+    const ua = navigator.userAgent || "";
+    // LINE/LIFFなどの判定（ゆるく）
+    return /Line|LIFF|WebView/i.test(ua);
+  }
+
+  async function mountExpressCheckout(stripe, elements){
+    // Express Checkout Element（出せる環境ならボタンが出る）
+    const ece = elements.create("expressCheckout", {
+      buttonHeight: 48,
+      paymentMethods: {
+        googlePay: "auto",
+        applePay: "auto",
+      }
+    });
+
+    // 「出る/出ない」を見てUI制御
+    ece.on("ready", (ev) => {
+      const available = ev && ev.availablePaymentMethods ? ev.availablePaymentMethods : null;
+
+      // available が null/空なら、この環境では何も出せない
+      const hasAny = !!(available && Object.keys(available).length > 0);
+
+      if(hasAny){
+        expressWrap.style.display = "";
+        // in-app っぽいときだけ注意書き（必須ではない）
+        if(isLikelyInAppWebView()){
+          expressNote.style.display = "";
+          expressNote.textContent = "※ LINE内ブラウザではワンタップ決済が表示されない場合があります。";
+        }
+      }else{
+        expressWrap.style.display = "none";
+      }
+    });
+
+    // ボタン押下 → 決済確定
+    // Stripeが必要な追加情報を要求する場合もあるので confirmPayment を使う
+    ece.on("confirm", async () => {
+      payBtn.disabled = true;
+      payBtn.textContent = "処理中…";
+      setErr("");
+
+      try{
+        const { error } = await stripe.confirmPayment({
+          elements,
+          confirmParams: { return_url: RETURN_URL }
+        });
+
+        if(error){
+          throw new Error(error.message || "決済に失敗しました。");
+        }
+        // 成功時はStripeがリダイレクトする（return_urlへ）
+      }catch(e){
+        const msg = e?.message || String(e);
+        setErr("決済を完了できませんでした。\n" + msg);
+        payBtn.disabled = false;
+        payBtn.textContent = "支払う";
+      }
+    });
+
+    ece.mount("#express-checkout");
+  }
+
+  // =========================
   // main
   // =========================
   try{
- 
-
     setStatus("決済情報を確認しています…");
     setErr("");
 
@@ -196,16 +277,25 @@
       throw new Error("Stripe 公開可能キーが未設定です（/api/stripe/config の publishableKey が空です）");
     }
 
-    // appBaseUrl（将来使うなら）：空ならlocation.origin
-    const APP_BASE = cfg.appBaseUrl || location.origin;
-
-    setStatus("カード入力欄を準備しています…");
+    setStatus("入力欄を準備しています…");
     const stripe = Stripe(cfg.publishableKey);
 
     const elements = stripe.elements({
       clientSecret: saved.clientSecret,
+      // appearance を入れたければここに追加OK
+      // appearance: { theme: "stripe" },
     });
 
+    // ✅ 先に Express Checkout を仕込む（出る環境なら上にボタンが出る）
+    try{
+      await mountExpressCheckout(stripe, elements);
+    }catch(e){
+      // Express が失敗してもカード入力は動かす
+      console.warn("[express-checkout] skipped:", e);
+      expressWrap.style.display = "none";
+    }
+
+    // Payment Element（カード入力）
     const paymentElement = elements.create("payment");
     paymentElement.mount("#payment-element");
 
@@ -220,12 +310,7 @@
       try{
         const result = await stripe.confirmPayment({
           elements,
-          confirmParams: {
-            // RETURN_URLは location.origin 前提なので、
-            // もし別オリジンで開くなら APP_BASE を使う形にする
-            return_url: RETURN_URL
-            // return_url: APP_BASE + "/pay-return.html" みたいにしてもOK
-          }
+          confirmParams: { return_url: RETURN_URL }
         });
 
         if(result?.error){
@@ -239,7 +324,7 @@
       }
     };
 
-    setStatus("カード情報を入力して「支払う」を押してください。");
+    setStatus("お支払い方法を選んでください。");
 
   }catch(e){
     console.error(e);

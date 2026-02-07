@@ -70,11 +70,11 @@
   const LIFF_ID_ORDER = "2008406620-G5j1gjzM";
   const KEY_UID ="isoya_userId";
   const KEY_LAST_QUOTE = "isoya_last_quote";
-  const KEY_STRIPE = "isoya_stripe_payment"; // ✅ これが抜けてた
+  const KEY_STRIPE = "isoya_stripe_payment";
 
   const qs = new URLSearchParams(location.search);
   const mode = (qs.get("mode")||"").trim();
-  const v = qs.get("v") || "20260205"; // ✅ キャッシュ避け
+  const v = (qs.get("v") || "20260205").trim();
 
   const yen=n=>(Number(n)||0).toLocaleString("ja-JP")+"円";
   const status=document.getElementById("status");
@@ -141,12 +141,14 @@
 
   const KEY_CART =
     (mode === "original") ? "isoya_cart_original"
-  : (mode === "fukubako") ? "isoya_cart_fukubako"
+  : (mode === "fukubako" || mode === "trial") ? "isoya_cart_fukubako"
+  : (mode === "store") ? "isoya_cart_store"
   : "isoya_cart";
 
   const RETURN_CONFIRM =
-    (mode === "fukubako") ? "/confirm.html?mode=fukubako"
+    (mode === "fukubako" || mode === "trial") ? "/confirm.html?mode=fukubako"
   : (mode === "original") ? "/confirm-original.html"
+  : (mode === "store") ? "/confirm.html?mode=store"
   : "/confirm.html";
 
   try{
@@ -175,7 +177,7 @@
     if(addr){
       const name = pickName(addr);
       const body = `〒${addr.postal||""} ${addr.prefecture||""}${addr.city||""}${addr.address1||""} ${addr.address2||""}`.trim();
-      const tel = (addr.phone || addr.tel || "").trim();
+      const tel = String(addr.phone || addr.tel || "").trim();
 
       shipCard.style.display = "block";
       shipNameEl.textContent = name || "（未入力）";
@@ -189,20 +191,24 @@
     status.classList.add("muted");
     status.textContent="最終確認をお願いします。";
 
-    back.onclick = ()=> location.href = RETURN_CONFIRM + (RETURN_CONFIRM.includes("?") ? "&" : "?") + "v=" + encodeURIComponent(v);
+    back.onclick = ()=> {
+      const u = new URL(RETURN_CONFIRM, location.origin);
+      if(v) u.searchParams.set("v", v);
+      location.href = u.toString();
+    };
 
     submit.onclick = async ()=> {
       submit.disabled = true;
       submit.textContent = "準備中…";
       try{
         const cart = loadJson(KEY_CART) || {items:[]};
-        const items = (cart.items||[]).filter(x=>x?.id && Number(x.qty||0)>0);
+        const items = (Array.isArray(cart.items) ? cart.items : []).filter(x=>x?.id && Number(x.qty||0)>0);
         if(items.length===0) throw new Error("カートが空です。");
 
         const r = await fetch("/api/pay/stripe/intent",{
           method:"POST",
           headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({ uid, checkout:{ items } })
+          body: JSON.stringify({ uid, checkout:{ items }, mode })
         });
 
         const text = await r.text();
@@ -217,12 +223,15 @@
           createdAt: Date.now()
         }));
 
-        location.href = `/pay-card.html?mode=${encodeURIComponent(mode)}&v=${encodeURIComponent(v)}`;
+        const q = new URLSearchParams();
+        if(mode) q.set("mode", mode);     // ✅ mode=（空）を作らない
+        if(v) q.set("v", v);
+        location.href = `/pay-card.html?${q.toString()}`;
 
       }catch(e){
         alert("クレジット決済の準備に失敗しました: " + (e?.message||e));
         submit.disabled = false;
-        submit.textContent = "Stripe決済へ進む";
+        submit.textContent = "クレジット決済へ進む";
       }
     };
 
@@ -234,4 +243,4 @@
 </script>
 </body>
 </html>
-<!-- confirm_card.html v2026-02-05 -->
+<!-- confirm_card.html patched -->

@@ -7,7 +7,7 @@
 
   // ▼ まず「全部埋める」：当面は同じIDでOK（動作優先）
   // ※あとで LIFF を分けたくなったら、それぞれ差し替えるだけ
-  window.LIFF_ID_ORDER_TRIAL    =2008406620-t04YThmO; // 初めてセット（fukubako / trial）
+  window.LIFF_ID_ORDER_TRIAL    =2008406620-yQFRswAu: // 初めてセット（fukubako / trial）
   window.LIFF_ID_ORDER_AKASHA   =2008406620-G5j1gjzM; // 通常（あかしゃ）←暫定で同じにする
   window.LIFF_ID_ORDER_ORIGINAL =2008406620-Bd9Zo9od; // オリジナルセット ←暫定
   window.LIFF_ID_ORDER_STORE    =2008406620-7tSkOcqd; // 店頭 ←暫定

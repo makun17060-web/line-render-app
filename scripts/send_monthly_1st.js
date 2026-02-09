@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * send_monthly_1st.js（@line/bot-sdk 旧式 Client 対応版）
+ * send_monthly_1st.js（@line/bot-sdk 旧式 Client 対応 + Postgres型エラー回避版）
  *
  * 毎月1日 定期配信（友だち追加から21日以上）
  * - 直近24hに何か送ってたらスキップ（簡易ガード）
@@ -118,6 +118,15 @@ async function logSent({ userId }) {
   await pool.query(q, [userId, NOTIFIED_KIND, PRIORITY, MESSAGE_FILE]);
 }
 
+/**
+ * 対象抽出：
+ * - follow_events の最新followed_at（ユーザーごと）
+ * - followed_at から MIN_FOLLOW_DAYS 以上経過
+ * - ONLY_OPENERS=1 の場合は liff_open_logs を直近OPENED_WITHIN_DAYSで起動した人だけ
+ *
+ * ✅ Postgresの型推論エラー(42P18)を避けるため、
+ *    intervalの生成は「param::int * interval '1 day'」方式に統一。
+ */
 async function fetchTargets() {
   const params = [];
   let p = 1;
@@ -136,7 +145,7 @@ async function fetchTargets() {
       INNER JOIN (
         SELECT DISTINCT user_id
         FROM liff_open_logs
-        WHERE opened_at >= now() - (${openedWithinParam} || ' days')::interval
+        WHERE opened_at >= now() - (${openedWithinParam}::int * interval '1 day')
       ) op ON op.user_id = fe.user_id
     `
     : "";
@@ -155,9 +164,9 @@ async function fetchTargets() {
       fe.followed_at
     FROM latest_follow fe
     ${openerJoin}
-    WHERE fe.followed_at <= now() - (${minFollowParam} || ' days')::interval
+    WHERE fe.followed_at <= now() - (${minFollowParam}::int * interval '1 day')
     ORDER BY fe.followed_at ASC
-    LIMIT ${limitParam};
+    LIMIT ${limitParam}::int;
   `;
 
   const { rows } = await pool.query(sql, params);
@@ -181,6 +190,7 @@ async function main() {
 
   console.log("targets=", targets.length);
 
+  let wouldSend = 0;
   let sent = 0;
   let skippedCooldown = 0;
   let failed = 0;
@@ -195,7 +205,7 @@ async function main() {
     }
 
     if (DRY_RUN) {
-      sent++;
+      wouldSend++;
       continue;
     }
 
@@ -211,7 +221,12 @@ async function main() {
     }
   }
 
-  console.log("DONE sent=", sent, "skippedCooldown=", skippedCooldown, "failed=", failed);
+  if (DRY_RUN) {
+    console.log("DRY_RUN=1 so not sending.");
+    console.log("wouldSend=", wouldSend, "skippedCooldown=", skippedCooldown);
+  } else {
+    console.log("DONE sent=", sent, "skippedCooldown=", skippedCooldown, "failed=", failed);
+  }
 }
 
 main()

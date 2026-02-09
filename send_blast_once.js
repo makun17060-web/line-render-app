@@ -523,7 +523,7 @@ async function ensureBlastRows(segmentKey, userIds) {
   const { rows } = await pool.query(unsentSql, [SEGMENT_KEY, slotParam]);
 
   const allTargets = rows.map(r => r.user_id).filter(Boolean);
-  console.log(`unsent_targets=${allTargets.length}`);
+console.log(`roster_total=${allTargets.length}`);
 
   // 5) フィルタ
   let ids = allTargets;

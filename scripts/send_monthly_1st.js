@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
- * send_monthly_1st.js（@line/bot-sdk 旧式 Client 対応 + Postgres型エラー回避版）
+ * send_monthly_1st.js（@line/bot-sdk 旧式 Client 対応 + 42P18完全回避 + FORCE_USER_ID対応）
  *
  * 毎月1日 定期配信（友だち追加から21日以上）
  * - 直近24hに何か送ってたらスキップ（簡易ガード）
  * - DRY_RUN対応
  * - LIMIT対応
+ * - ✅ FORCE_USER_ID で 1人だけ送信テスト可能（本番DRY_RUN=0でも安全に確認できる）
  *
  * 必要ENV:
  *   DATABASE_URL
@@ -21,6 +22,8 @@
  *   PRIORITY=10
  *   ONLY_OPENERS=1|0 (default 0)
  *   OPENED_WITHIN_DAYS=365
+ *   FORCE_USER_ID=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # ✅ これを指定するとその1人だけ対象
+ *   BYPASS_COOLDOWN_FOR_FORCE=1|0 (default 1)        # ✅ FORCE時は24hルールを無視して送れる
  */
 
 const fs = require("fs");
@@ -39,6 +42,9 @@ const PRIORITY = Number(process.env.PRIORITY ?? 10);
 
 const ONLY_OPENERS = String(process.env.ONLY_OPENERS ?? "0") === "1";
 const OPENED_WITHIN_DAYS = Number(process.env.OPENED_WITHIN_DAYS ?? 365);
+
+const FORCE_USER_ID = (process.env.FORCE_USER_ID ?? "").trim() || null;
+const BYPASS_COOLDOWN_FOR_FORCE = String(process.env.BYPASS_COOLDOWN_FOR_FORCE ?? "1") === "1";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
@@ -71,18 +77,18 @@ function resolveTextMessage(filePath) {
 
 async function ensureSendLogTable() {
   const sql = `
-  CREATE TABLE IF NOT EXISTS message_send_logs (
-    id BIGSERIAL PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    priority INTEGER NOT NULL DEFAULT 10,
-    segment_key TEXT NULL,
-    order_id BIGINT NULL,
-    message_file TEXT NULL,
-    sent_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  );
-  CREATE INDEX IF NOT EXISTS message_send_logs_user_sent_at_idx
-    ON message_send_logs (user_id, sent_at DESC);
+    CREATE TABLE IF NOT EXISTS message_send_logs (
+      id BIGSERIAL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      priority INTEGER NOT NULL DEFAULT 10,
+      segment_key TEXT NULL,
+      order_id BIGINT NULL,
+      message_file TEXT NULL,
+      sent_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS message_send_logs_user_sent_at_idx
+      ON message_send_logs (user_id, sent_at DESC);
   `;
   await pool.query(sql);
 }
@@ -119,91 +125,54 @@ async function logSent({ userId }) {
 }
 
 /**
- * 対象抽出：
- * - follow_events の最新followed_at（ユーザーごと）
- * - followed_at から MIN_FOLLOW_DAYS 以上経過
- * - ONLY_OPENERS=1 の場合は liff_open_logs を直近OPENED_WITHIN_DAYSで起動した人だけ
+ * ✅ 42P18 を絶対に起こさない設計：
+ * params を常にSQLで参照する
  *
- * ✅ Postgresの型推論エラー(42P18)を避けるため、
- *    intervalの生成は「param::int * interval '1 day'」方式に統一。
+ * params:
+ *   $1 MIN_FOLLOW_DAYS
+ *   $2 ONLY_OPENERS_FLAG (0/1)
+ *   $3 OPENED_WITHIN_DAYS
+ *   $4 LIMIT
+ *   $5 FORCE_USER_ID (nullable)
  */
 async function fetchTargets() {
-  // ✅ ONLY_OPENERS=0 の場合は OPENED_WITHIN_DAYS を params に入れない
-  // （未使用パラメータがあると Postgres が型推論できず 42P18 になる）
+  const params = [
+    MIN_FOLLOW_DAYS,
+    ONLY_OPENERS ? 1 : 0,
+    OPENED_WITHIN_DAYS,
+    LIMIT,
+    FORCE_USER_ID, // null or userId
+  ];
 
-  if (!ONLY_OPENERS) {
-    const params = [];
-    let p = 1;
+  const sql = `
+    WITH latest_follow AS (
+      SELECT DISTINCT ON (user_id)
+        user_id,
+        followed_at
+      FROM follow_events
+      WHERE followed_at IS NOT NULL
+      ORDER BY user_id, followed_at DESC
+    ),
+    openers AS (
+      SELECT DISTINCT user_id
+      FROM liff_open_logs
+      WHERE opened_at >= now() - ($3::int * interval '1 day')
+    )
+    SELECT
+      fe.user_id,
+      fe.followed_at
+    FROM latest_follow fe
+    LEFT JOIN openers op ON op.user_id = fe.user_id
+    WHERE
+      fe.followed_at <= now() - ($1::int * interval '1 day')
+      AND ($2::int = 0 OR op.user_id IS NOT NULL)
+      AND ($5::text IS NULL OR fe.user_id = $5::text)
+    ORDER BY fe.followed_at ASC
+    LIMIT $4::int;
+  `;
 
-    params.push(MIN_FOLLOW_DAYS);
-    const minFollowParam = `$${p++}`;
-
-    params.push(LIMIT);
-    const limitParam = `$${p++}`;
-
-    const sql = `
-      WITH latest_follow AS (
-        SELECT DISTINCT ON (user_id)
-          user_id,
-          followed_at
-        FROM follow_events
-        WHERE followed_at IS NOT NULL
-        ORDER BY user_id, followed_at DESC
-      )
-      SELECT
-        fe.user_id,
-        fe.followed_at
-      FROM latest_follow fe
-      WHERE fe.followed_at <= now() - (${minFollowParam}::int * interval '1 day')
-      ORDER BY fe.followed_at ASC
-      LIMIT ${limitParam}::int;
-    `;
-
-    const { rows } = await pool.query(sql, params);
-    return rows;
-  }
-
-  // ✅ ONLY_OPENERS=1 の場合（$2をちゃんとSQLで使う）
-  {
-    const params = [];
-    let p = 1;
-
-    params.push(MIN_FOLLOW_DAYS);
-    const minFollowParam = `$${p++}`;
-
-    params.push(OPENED_WITHIN_DAYS);
-    const openedWithinParam = `$${p++}`;
-
-    params.push(LIMIT);
-    const limitParam = `$${p++}`;
-
-    const sql = `
-      WITH latest_follow AS (
-        SELECT DISTINCT ON (user_id)
-          user_id,
-          followed_at
-        FROM follow_events
-        WHERE followed_at IS NOT NULL
-        ORDER BY user_id, followed_at DESC
-      ),
-      openers AS (
-        SELECT DISTINCT user_id
-        FROM liff_open_logs
-        WHERE opened_at >= now() - (${openedWithinParam}::int * interval '1 day')
-      )
-      SELECT
-        fe.user_id,
-        fe.followed_at
-      FROM latest_follow fe
-      INNER JOIN openers op ON op.user_id = fe.user_id
-      WHERE fe.followed_at <= now() - (${minFollowParam}::int * interval '1 day')
-      ORDER BY fe.followed_at ASC
-      LIMIT ${limitParam}::int;
-    `;
-
-    const { rows } = await pool.query(sql, params);
-    return rows;
-  }
+  const { rows } = await pool.query(sql, params);
+  return rows;
 }
 
 async function main() {
@@ -215,6 +184,8 @@ async function main() {
   console.log("LIMIT=", LIMIT);
   console.log("NOTIFIED_KIND=", NOTIFIED_KIND, "PRIORITY=", PRIORITY);
   console.log("MESSAGE_FILE=", MESSAGE_FILE);
+  console.log("FORCE_USER_ID=", FORCE_USER_ID ? `${FORCE_USER_ID.slice(0, 6)}...` : "(none)");
+  console.log("BYPASS_COOLDOWN_FOR_FORCE=", BYPASS_COOLDOWN_FOR_FORCE ? 1 : 0);
 
   await ensureSendLogTable();
 
@@ -231,10 +202,13 @@ async function main() {
   for (const t of targets) {
     const userId = t.user_id;
 
-    const g = await sentWithinCooldown(userId);
-    if (!g.ok) {
-      skippedCooldown++;
-      continue;
+    // 24hガード（ただし FORCE_USER_ID での動作確認はガードを無視できる）
+    if (!(FORCE_USER_ID && BYPASS_COOLDOWN_FOR_FORCE)) {
+      const g = await sentWithinCooldown(userId);
+      if (!g.ok) {
+        skippedCooldown++;
+        continue;
+      }
     }
 
     if (DRY_RUN) {
@@ -243,9 +217,7 @@ async function main() {
     }
 
     try {
-      // ✅ 旧式 pushMessage(to, messages)
       await lineClient.pushMessage(userId, [msg]);
-
       await logSent({ userId });
       sent++;
     } catch (e) {

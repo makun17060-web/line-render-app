@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * send_monthly_1st.js
+ * send_monthly_1st.js（@line/bot-sdk 旧式 Client 対応版）
  *
  * 毎月1日 定期配信（友だち追加から21日以上）
  * - 直近24hに何か送ってたらスキップ（簡易ガード）
@@ -19,10 +19,8 @@
  *   MESSAGE_FILE=./messages/monthly_1st.txt
  *   NOTIFIED_KIND=monthly_1st
  *   PRIORITY=10
- *   ONLY_OPENERS=1|0 (default 0)  ※起動者だけにしたいなら1
- *   OPENED_WITHIN_DAYS=365        ※起動者の定義（直近N日でLIFF起動）
- *
- *   TZはRender/cron側で合わせる（ここはDBのnow()を使う）
+ *   ONLY_OPENERS=1|0 (default 0)
+ *   OPENED_WITHIN_DAYS=365
  */
 
 const fs = require("fs");
@@ -59,7 +57,8 @@ const pool = new Pool({
   ssl: process.env.DATABASE_SSL === "0" ? false : { rejectUnauthorized: false },
 });
 
-const lineClient = new line.messagingApi.MessagingApiClient({
+// ✅ 旧式 @line/bot-sdk: new line.Client({ channelAccessToken })
+const lineClient = new line.Client({
   channelAccessToken: LINE_CHANNEL_ACCESS_TOKEN,
 });
 
@@ -71,7 +70,6 @@ function resolveTextMessage(filePath) {
 }
 
 async function ensureSendLogTable() {
-  // 24hガード用の共通ログ（なければ作る）
   const sql = `
   CREATE TABLE IF NOT EXISTS message_send_logs (
     id BIGSERIAL PRIMARY KEY,
@@ -120,25 +118,16 @@ async function logSent({ userId }) {
   await pool.query(q, [userId, NOTIFIED_KIND, PRIORITY, MESSAGE_FILE]);
 }
 
-/**
- * 対象抽出：
- * - follow_events がある前提（あなたのDBには存在してる）
- * - 友だち追加（followed_at）から MIN_FOLLOW_DAYS 以上経過
- * - ONLY_OPENERS=1 の場合は liff_open_logs にも存在するユーザーだけ
- */
 async function fetchTargets() {
   const params = [];
   let p = 1;
 
-  // MIN_FOLLOW_DAYS
   params.push(MIN_FOLLOW_DAYS);
   const minFollowParam = `$${p++}`;
 
-  // OPENED_WITHIN_DAYS
   params.push(OPENED_WITHIN_DAYS);
   const openedWithinParam = `$${p++}`;
 
-  // LIMIT
   params.push(LIMIT);
   const limitParam = `$${p++}`;
 
@@ -199,7 +188,6 @@ async function main() {
   for (const t of targets) {
     const userId = t.user_id;
 
-    // 24hガード
     const g = await sentWithinCooldown(userId);
     if (!g.ok) {
       skippedCooldown++;
@@ -212,10 +200,8 @@ async function main() {
     }
 
     try {
-      await lineClient.pushMessage({
-        to: userId,
-        messages: [msg],
-      });
+      // ✅ 旧式 pushMessage(to, messages)
+      await lineClient.pushMessage(userId, [msg]);
 
       await logSent({ userId });
       sent++;

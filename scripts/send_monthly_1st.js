@@ -128,49 +128,82 @@ async function logSent({ userId }) {
  *    intervalの生成は「param::int * interval '1 day'」方式に統一。
  */
 async function fetchTargets() {
-  const params = [];
-  let p = 1;
+  // ✅ ONLY_OPENERS=0 の場合は OPENED_WITHIN_DAYS を params に入れない
+  // （未使用パラメータがあると Postgres が型推論できず 42P18 になる）
 
-  params.push(MIN_FOLLOW_DAYS);
-  const minFollowParam = `$${p++}`;
+  if (!ONLY_OPENERS) {
+    const params = [];
+    let p = 1;
 
-  params.push(OPENED_WITHIN_DAYS);
-  const openedWithinParam = `$${p++}`;
+    params.push(MIN_FOLLOW_DAYS);
+    const minFollowParam = `$${p++}`;
 
-  params.push(LIMIT);
-  const limitParam = `$${p++}`;
+    params.push(LIMIT);
+    const limitParam = `$${p++}`;
 
-  const openerJoin = ONLY_OPENERS
-    ? `
-      INNER JOIN (
+    const sql = `
+      WITH latest_follow AS (
+        SELECT DISTINCT ON (user_id)
+          user_id,
+          followed_at
+        FROM follow_events
+        WHERE followed_at IS NOT NULL
+        ORDER BY user_id, followed_at DESC
+      )
+      SELECT
+        fe.user_id,
+        fe.followed_at
+      FROM latest_follow fe
+      WHERE fe.followed_at <= now() - (${minFollowParam}::int * interval '1 day')
+      ORDER BY fe.followed_at ASC
+      LIMIT ${limitParam}::int;
+    `;
+
+    const { rows } = await pool.query(sql, params);
+    return rows;
+  }
+
+  // ✅ ONLY_OPENERS=1 の場合（$2をちゃんとSQLで使う）
+  {
+    const params = [];
+    let p = 1;
+
+    params.push(MIN_FOLLOW_DAYS);
+    const minFollowParam = `$${p++}`;
+
+    params.push(OPENED_WITHIN_DAYS);
+    const openedWithinParam = `$${p++}`;
+
+    params.push(LIMIT);
+    const limitParam = `$${p++}`;
+
+    const sql = `
+      WITH latest_follow AS (
+        SELECT DISTINCT ON (user_id)
+          user_id,
+          followed_at
+        FROM follow_events
+        WHERE followed_at IS NOT NULL
+        ORDER BY user_id, followed_at DESC
+      ),
+      openers AS (
         SELECT DISTINCT user_id
         FROM liff_open_logs
         WHERE opened_at >= now() - (${openedWithinParam}::int * interval '1 day')
-      ) op ON op.user_id = fe.user_id
-    `
-    : "";
+      )
+      SELECT
+        fe.user_id,
+        fe.followed_at
+      FROM latest_follow fe
+      INNER JOIN openers op ON op.user_id = fe.user_id
+      WHERE fe.followed_at <= now() - (${minFollowParam}::int * interval '1 day')
+      ORDER BY fe.followed_at ASC
+      LIMIT ${limitParam}::int;
+    `;
 
-  const sql = `
-    WITH latest_follow AS (
-      SELECT DISTINCT ON (user_id)
-        user_id,
-        followed_at
-      FROM follow_events
-      WHERE followed_at IS NOT NULL
-      ORDER BY user_id, followed_at DESC
-    )
-    SELECT
-      fe.user_id,
-      fe.followed_at
-    FROM latest_follow fe
-    ${openerJoin}
-    WHERE fe.followed_at <= now() - (${minFollowParam}::int * interval '1 day')
-    ORDER BY fe.followed_at ASC
-    LIMIT ${limitParam}::int;
-  `;
-
-  const { rows } = await pool.query(sql, params);
-  return rows;
+    const { rows } = await pool.query(sql, params);
+    return rows;
+  }
 }
 
 async function main() {

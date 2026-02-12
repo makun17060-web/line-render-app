@@ -2021,6 +2021,43 @@ app.get("/api/admin/orders", requireAdmin, async (req, res) => {
     res.status(500).send("failed");
   }
 });
+// ================================
+// B2 CSV download (serve prebuilt file)
+// GET /admin/b2.csv?token=...
+// ================================
+const B2_EXPORT_FILE = (env.B2_EXPORT_FILE || "/var/data/b2.csv").trim();
+const B2_CSV_TOKEN = (env.B2_CSV_TOKEN || "").trim();
+
+function requireB2CsvToken(req, res, next) {
+  // 1) B2_CSV_TOKEN が設定されていればそれを使う
+  // 2) 未設定なら ADMIN_TOKEN（ADMIN_API_TOKEN / ADMIN_CODE）で代用
+  const expect = B2_CSV_TOKEN || ADMIN_TOKEN;
+  if (!expect) return res.status(403).send("token not set");
+
+  const token = String(req.query.token || req.headers["x-admin-token"] || "").trim();
+  if (token !== expect) return res.status(401).send("unauthorized");
+  next();
+}
+
+app.get("/admin/b2.csv", requireB2CsvToken, async (req, res) => {
+  try {
+    // ファイル存在チェック
+    if (!fs.existsSync(B2_EXPORT_FILE)) {
+      return res.status(404).send("b2.csv not found. generate it first.");
+    }
+
+    // ダウンロード名を固定（PADが楽）
+    res.setHeader("Content-Type", "text/csv; charset=Shift_JIS");
+    res.setHeader("Content-Disposition", 'attachment; filename="b2.csv"');
+    res.setHeader("Cache-Control", "no-store");
+
+    // そのまま返す（Shift_JISで作ってる前提。UTF-8ならここはutf-8に変えてOK）
+    return res.sendFile(B2_EXPORT_FILE);
+  } catch (e) {
+    logErr("GET /admin/b2.csv failed", e?.message || e);
+    return res.status(500).send("server_error");
+  }
+});
 
 // 発送通知（管理画面→ユーザーへPush）
 app.post("/api/admin/orders/notify-shipped", requireAdmin, async (req, res) => {

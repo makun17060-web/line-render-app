@@ -2041,18 +2041,31 @@ function requireB2CsvToken(req, res, next) {
 
 app.get("/admin/b2.csv", requireB2CsvToken, async (req, res) => {
   try {
-    // ファイル存在チェック
-    if (!fs.existsSync(B2_EXPORT_FILE)) {
-      return res.status(404).send("b2.csv not found. generate it first.");
-    }
+    const { spawnSync } = require("child_process");
 
-    // ダウンロード名を固定（PADが楽）
-    res.setHeader("Content-Type", "text/csv; charset=Shift_JIS");
-    res.setHeader("Content-Disposition", 'attachment; filename="b2.csv"');
-    res.setHeader("Cache-Control", "no-store");
+const result = spawnSync(
+  process.execPath,
+  ["scripts/export_b2_isoya_csv.js"],
+  {
+    env: { ...process.env },
+    encoding: "utf-8",
+    maxBuffer: 50 * 1024 * 1024
+  }
+);
 
-    // そのまま返す（Shift_JISで作ってる前提。UTF-8ならここはutf-8に変えてOK）
-    return res.sendFile(B2_EXPORT_FILE);
+if (result.error) throw result.error;
+if (result.status !== 0) {
+  throw new Error(result.stderr || "CSV生成失敗");
+}
+
+const csv = result.stdout;
+
+res.setHeader("Content-Type", "text/csv; charset=utf-8");
+res.setHeader("Content-Disposition", 'attachment; filename="b2.csv"');
+res.setHeader("Cache-Control", "no-store");
+
+return res.send(csv);
+
   } catch (e) {
     logErr("GET /admin/b2.csv failed", e?.message || e);
     return res.status(500).send("server_error");

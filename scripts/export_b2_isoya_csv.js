@@ -16,8 +16,7 @@
  *   RECEIVER_TITLE="様"                   // 敬称
  */
 
-import pkg from "pg";
-const { Client } = pkg;
+const { Client } = require("pg");
 
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) {
@@ -68,7 +67,7 @@ function buildItemName(order) {
   } catch {}
 
   const names = items
-    .map((it) => it?.name || it?.title || it?.product_name || "")
+    .map((it) => it && (it.name || it.title || it.product_name) ? (it.name || it.title || it.product_name) : "")
     .filter(Boolean);
 
   const s = names.length ? names.join(" / ") : "磯屋えびせん";
@@ -134,27 +133,25 @@ const COLUMNS = [
 
 function mapOrderToDict(order) {
   const cod = isCodPayment(order);
-
-  // 住所：あなたの orders が pref + address 形式なので合成
   const receiver_addr1 = `${order.pref || ""}${order.address || ""}`;
 
   return {
     ship_date: shipDateStr(),
-    order_no: order.id ?? "",
+    order_no: order.id != null ? order.id : "",
     invoice_type: cod ? 2 : 0,
     cool_type: 0,
 
     receiver_code: "",
-    receiver_tel: order.phone ?? "",
+    receiver_tel: order.phone || "",
     receiver_tel_branch: "",
-    receiver_name: order.name ?? "",
-    receiver_zip: order.zip ?? "",
+    receiver_name: order.name || "",
+    receiver_zip: order.zip || "",
     receiver_addr1,
-    receiver_addr2: order.address2 ?? "",
+    receiver_addr2: order.address2 || "",
 
     receiver_company1: "",
     receiver_company2: "",
-    receiver_kana: order.kana ?? "",
+    receiver_kana: order.kana || "",
     receiver_title: RECEIVER_TITLE,
 
     shipper_code: "",
@@ -177,7 +174,7 @@ function mapOrderToDict(order) {
     delivery_date: "",
     delivery_time: "",
 
-    cod_amount: cod ? (order.total ?? "") : "",
+    cod_amount: cod ? (order.total != null ? order.total : "") : "",
     cod_tax: "",
 
     stop_flag: "",
@@ -196,7 +193,6 @@ async function main() {
     where = `WHERE status = ANY($1)`;
   }
 
-  // orders の列はあなたの現状に合わせた（必要なら SELECT/列名は調整）
   const sql = `
     SELECT
       id, user_id, status, payment_method,
@@ -216,15 +212,14 @@ async function main() {
     return COLUMNS.map((k) => csvEscape(dict[k])).join(",");
   });
 
-  // ヘッダーなし、CRLF
   let out = lines.join("\r\n");
   if (out && !out.endsWith("\r\n")) out += "\r\n";
 
   // SJISが必要なら（iconv-lite が入っている時だけ）
   if (process.env.SHIFT_JIS === "1") {
     try {
-      const iconv = await import("iconv-lite");
-      const buf = iconv.default.encode(out, "Shift_JIS");
+      const iconv = require("iconv-lite");
+      const buf = iconv.encode(out, "Shift_JIS");
       process.stdout.write(buf);
     } catch {
       process.stdout.write(out);

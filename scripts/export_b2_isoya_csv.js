@@ -16,7 +16,16 @@
  *   SHIFT_JIS=1
  *   SHIPPER_NAME="磯屋"
  *   RECEIVER_TITLE="様"
+ *   COOL_TYPE=0   // 0:通常 / 1:冷蔵 / 2:冷凍（B2の設定に合わせて）
+ *   ITEM_MAX=30   // 品名最大文字数（B2の項目制約に合わせる）
+ *
+ * 注意:
+ * - 送り状種類（invoice_type）は B2仕様の数値が必要
+ *   通常:0 / コレクト(代引):2
+ * - CSVはヘッダーなし、CRLF
  */
+
+"use strict";
 
 const { Client } = require("pg");
 
@@ -38,10 +47,14 @@ const SHIPPER_ZIP = process.env.SHIPPER_ZIP || "";
 const SHIPPER_ADDR1 = process.env.SHIPPER_ADDR1 || "";
 const RECEIVER_TITLE = process.env.RECEIVER_TITLE || "様";
 
+const COOL_TYPE = String(process.env.COOL_TYPE ?? "0").trim(); // 基本0
+const ITEM_MAX = Math.max(10, Math.min(60, parseInt(process.env.ITEM_MAX || "30", 10)));
+
 function pad2(n) { return String(n).padStart(2, "0"); }
+
 function shipDateStr() {
-  const v = process.env.SHIP_DATE || "today";
-  if (v !== "today") return v;
+  const v = String(process.env.SHIP_DATE || "today").trim();
+  if (v && v !== "today") return v;
   const d = new Date();
   return `${d.getFullYear()}/${pad2(d.getMonth() + 1)}/${pad2(d.getDate())}`;
 }
@@ -53,9 +66,37 @@ function csvEscape(v) {
   return s;
 }
 
+function digitsOnly(s) {
+  return String(s || "").replace(/[^\d]/g, "");
+}
+
+function normalizeZip(z) {
+  const d = digitsOnly(z);
+  if (d.length === 7) return `${d.slice(0, 3)}-${d.slice(3)}`;
+  return String(z || "").trim();
+}
+
+function normalizeTel(t) {
+  // B2はハイフンありでも通ることが多いが、まず数字のみ→元が空なら空
+  const d = digitsOnly(t);
+  return d || "";
+}
+
 function isCodPayment(order) {
-  const pm = (order.payment_method || "").toLowerCase();
-  return pm.includes("cod") || pm.includes("代引");
+  const pm = String(order.payment_method || "").toLowerCase();
+  return pm === "cod" || pm.includes("cod") || pm.includes("代引");
+}
+
+/**
+ * 住所文字列から B2の「住所1」「住所2」にざっくり分割
+ * - 住所1: 先頭から最大 16〜20 くらいに収まるのが理想だが、画面の列幅は環境差あり
+ * - ここでは “長かったら後半を住所2へ” のシンプル分割
+ */
+function splitAddress(full, max1 = 20) {
+  const s = String(full || "").trim();
+  if (!s) return { a1: "", a2: "" };
+  if (s.length <= max1) return { a1: s, a2: "" };
+  return { a1: s.slice(0, max1), a2: s.slice(max1) };
 }
 
 function buildItemName(order) {
@@ -66,20 +107,24 @@ function buildItemName(order) {
   } catch {}
 
   const names = items
-    .map((it) => (it && (it.name || it.title || it.product_name)) ? (it.name || it.title || it.product_name) : "")
+    .map((it) => {
+      if (!it) return "";
+      return (it.name || it.title || it.product_name || it.productName || "").trim();
+    })
     .filter(Boolean);
 
   const s = names.length ? names.join(" / ") : "磯屋えびせん";
-  return s.length > 30 ? s.slice(0, 30) : s;
+  return s.length > ITEM_MAX ? s.slice(0, ITEM_MAX) : s;
 }
 
 /**
- * 「磯屋発送」列順（B2画面で確認した順）
+ * 「磯屋発送」列順（あなたが使ってる順）
+ * ※ ヘッダーは出さない（B2取り込み用）
  */
 const COLUMNS = [
   "ship_date",
   "order_no",
-  "invoice_type",
+  "invoice_type", // 送り状種類: 通常0 / コレクト2
   "cool_type",
 
   "receiver_code",
@@ -123,33 +168,51 @@ const COLUMNS = [
 
 function mapOrderToDict(order) {
   const cod = isCodPayment(order);
-  const receiver_addr1 = `${order.pref || ""}${order.address || ""}`;
+
+  // ▼B2の「送り状種類」は数値コード必須
+  //   通常:0 / コレクト:2
+  const invoiceType = cod ? "2" : "0";
+
+  const receiverFull = `${String(order.pref || "")}${String(order.address || "")}`.trim();
+  const { a1, a2 } = splitAddress(receiverFull, 20);
+
+  const receiverTel = normalizeTel(order.phone || "");
+  const receiverZip = normalizeZip(order.zip || "");
+
+  const receiverName = String(order.name || "").trim();
+
+  const shipperTel = normalizeTel(SHIPPER_TEL);
+  const shipperZip = normalizeZip(SHIPPER_ZIP);
+
+  // 代引金額：B2の「コレクト代金引換額（税込）」に total を入れる
+  // ※ ここは「代引注文だけ」必須
+  const codAmount = cod ? (order.total != null ? String(order.total) : "") : "";
 
   return {
     ship_date: shipDateStr(),
-    order_no: order.id != null ? order.id : "",
-    invoice_type: cod ? 2 : 0,
-    cool_type: 0,
+    order_no: order.id != null ? String(order.id) : "",
+    invoice_type: invoiceType,
+    cool_type: String(COOL_TYPE || "0"),
 
     receiver_code: "",
-    receiver_tel: order.phone || "",
+    receiver_tel: receiverTel,
     receiver_tel_branch: "",
-    receiver_name: order.name || "",
-    receiver_zip: order.zip || "",
-    receiver_addr1,
-    receiver_addr2: "",          // address2列が無いので常に空
+    receiver_name: receiverName,
+    receiver_zip: receiverZip,
+    receiver_addr1: a1,
+    receiver_addr2: a2,
 
     receiver_company1: "",
     receiver_company2: "",
-    receiver_kana: "",           // kana列が無いので空
+    receiver_kana: "",
     receiver_title: RECEIVER_TITLE,
 
     shipper_code: "",
-    shipper_tel: SHIPPER_TEL,
+    shipper_tel: shipperTel,
     shipper_tel_branch: "",
     shipper_name: SHIPPER_NAME,
-    shipper_zip: SHIPPER_ZIP,
-    shipper_addr1: SHIPPER_ADDR1,
+    shipper_zip: shipperZip,
+    shipper_addr1: String(SHIPPER_ADDR1 || "").trim(),
     shipper_addr2: "",
     shipper_kana: "",
 
@@ -164,7 +227,7 @@ function mapOrderToDict(order) {
     delivery_date: "",
     delivery_time: "",
 
-    cod_amount: cod ? (order.total != null ? order.total : "") : "",
+    cod_amount: codAmount,
     cod_tax: "",
 
     stop_flag: "",
@@ -183,7 +246,6 @@ async function main() {
     where = `WHERE status = ANY($1)`;
   }
 
-  // address2 / kana を SELECT しない（存在しないため）
   const sql = `
     SELECT
       id, user_id, status, payment_method,
@@ -198,7 +260,7 @@ async function main() {
 
   const res = await client.query(sql, params);
 
-  const lines = res.rows.map((order) => {
+  const lines = (res.rows || []).map((order) => {
     const dict = mapOrderToDict(order);
     return COLUMNS.map((k) => csvEscape(dict[k])).join(",");
   });
@@ -211,6 +273,7 @@ async function main() {
       const iconv = require("iconv-lite");
       process.stdout.write(iconv.encode(out, "Shift_JIS"));
     } catch {
+      // iconv-lite無い場合はUTF-8のまま出す
       process.stdout.write(out);
     }
   } else {

@@ -1,20 +1,6 @@
 /**
  * scripts/export_b2_isoya_csv.js
- * Postgres → ヤマトB2「磯屋発送」完全一致CSV（最終版）
- *
- * 使い方:
- *   export DATABASE_URL="..."
- *   export STATUS_LIST="confirmed,paid,pickup"
- *   export LIMIT=200
- *
- *   export SHIPPER_NAME="磯屋"
- *   export SHIPPER_TEL="0569650955"
- *   export SHIPPER_ZIP="470-3412"
- *   export SHIPPER_PREF="愛知県"
- *   export SHIPPER_CITY="知多郡南知多町"
- *   export SHIPPER_ADDR="豊浜字清水谷25-5"
- *
- *   node scripts/export_b2_isoya_csv.js > /tmp/b2.csv
+ * B2「磯屋発送」完全一致CSV（最終版）
  */
 
 const { Client } = require("pg");
@@ -36,58 +22,55 @@ const SHIPPER_PREF = process.env.SHIPPER_PREF || "";
 const SHIPPER_CITY = process.env.SHIPPER_CITY || "";
 const SHIPPER_ADDR = process.env.SHIPPER_ADDR || "";
 
-function pad2(n) { return String(n).padStart(2, "0"); }
-function today() {
+function pad2(n){ return String(n).padStart(2,"0"); }
+function today(){
   const d = new Date();
   return `${d.getFullYear()}/${pad2(d.getMonth()+1)}/${pad2(d.getDate())}`;
 }
 
-function normalizeZip(z) {
-  if (!z) return "";
+function normalizeZip(z){
+  if(!z) return "";
   const s = String(z);
-  if (/^\d{7}$/.test(s)) return s.slice(0,3) + "-" + s.slice(3);
+  if(/^\d{7}$/.test(s)) return s.slice(0,3)+"-"+s.slice(3);
   return s;
 }
 
-function csvEscape(v) {
-  if (v == null) return "";
+function csvEscape(v){
+  if(v==null) return "";
   const s = String(v);
-  if (/[,"\r\n]/.test(s)) return `"${s.replace(/"/g,'""')}"`;
+  if(/[,"\r\n]/.test(s)) return `"${s.replace(/"/g,'""')}"`;
   return s;
 }
 
-function isCod(order) {
-  const pm = (order.payment_method || "").toLowerCase();
+function isCod(o){
+  const pm = (o.payment_method||"").toLowerCase();
   return pm.includes("cod") || pm.includes("代引");
 }
 
-// 🔥 住所分割（最重要）
-function splitAddress(pref, address) {
+// 🔥住所分割
+function splitAddress(pref, address){
   const p = pref || "";
-  let rest = (address || "").replace(p, "");
+  let rest = (address || "").replace(p,"");
 
   const m =
     rest.match(/^(.+?郡.+?[町村])(.*)$/) ||
     rest.match(/^(.+?[市区町村])(.*)$/);
 
-  if (m) {
-    return {
-      pref: p,
-      city: m[1],
-      addr: m[2],
-    };
+  if(m){
+    return { pref:p, city:m[1], addr:m[2] };
   }
 
-  return { pref: p, city: "", addr: rest };
+  return { pref:p, city:"", addr:rest };
 }
 
-// 🔥 列順（完全一致）
+// 🔥完全一致列順（ここが全て）
 const COLUMNS = [
   "invoice_type",
   "cool_type",
   "customer_no",
   "ship_date",
 
+  // ←ここ重要
   "receiver_tel",
   "receiver_tel2",
   "receiver_name",
@@ -113,20 +96,24 @@ const COLUMNS = [
   "cod_amount",
 ];
 
-function map(order) {
-  const cod = isCod(order);
-  const addr = splitAddress(order.pref, order.address);
+function map(o){
+  const cod = isCod(o);
+  const addr = splitAddress(o.pref, o.address);
 
   return {
     invoice_type: cod ? 2 : 0,
     cool_type: 0,
-    customer_no: order.id,
+    customer_no: o.id,
     ship_date: today(),
 
-    receiver_tel: order.phone || "",
+    // 🔥ここ完全修正
+    receiver_tel: o.phone || "",
     receiver_tel2: "",
-    receiver_name: order.name || "",
-    receiver_zip: normalizeZip(order.zip),
+
+    receiver_name: o.name || "",
+
+    receiver_zip: normalizeZip(o.zip),
+
     receiver_pref: addr.pref,
     receiver_city: addr.city,
     receiver_addr: addr.addr,
@@ -145,11 +132,11 @@ function map(order) {
     item_name_2: "磯屋オリジナルセット",
 
     note: "",
-    cod_amount: cod ? order.total : "",
+    cod_amount: cod ? o.total : "",
   };
 }
 
-async function main() {
+async function main(){
   const client = new Client({ connectionString: DATABASE_URL });
   await client.connect();
 
@@ -161,20 +148,19 @@ async function main() {
     WHERE status = ANY($1)
     ORDER BY created_at ASC
     LIMIT $2
-  `, [STATUS_LIST, LIMIT]);
+  `,[STATUS_LIST, LIMIT]);
 
-  const lines = res.rows.map(o => {
+  const lines = res.rows.map(o=>{
     const d = map(o);
     return COLUMNS.map(k => csvEscape(d[k])).join(",");
   });
 
-  let out = lines.join("\r\n") + "\r\n";
-  process.stdout.write(out);
+  process.stdout.write(lines.join("\r\n") + "\r\n");
 
   await client.end();
 }
 
-main().catch(e => {
+main().catch(e=>{
   console.error(e);
   process.exit(1);
 });

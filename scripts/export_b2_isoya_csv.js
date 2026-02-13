@@ -2,16 +2,18 @@
  * scripts/export_b2_isoya_csv.js
  * Postgres(orders) → ヤマトB2「磯屋発送」CSV（ヘッダーなし / CRLF）
  *
- * 使い方（例）:
- *   DATABASE_URL=... \
- *   SHIPPER_TEL="090-xxxx-xxxx" SHIPPER_ZIP="123-4567" SHIPPER_ADDR1="愛知県..." \
+ * 使い方:
+ *   export DATABASE_URL="..."
+ *   export SHIPPER_TEL="090-xxxx-xxxx"
+ *   export SHIPPER_ZIP="123-4567"
+ *   export SHIPPER_ADDR1="愛知県...（住所）"
+ *   export STATUS_LIST="confirmed,paid,pickup"
+ *   export LIMIT=200
  *   node scripts/export_b2_isoya_csv.js > /tmp/isoya.csv
  *
  * 任意env:
- *   LIMIT=200
- *   STATUS_LIST="confirmed,paid,pickup"
  *   SHIP_DATE="today" or "2026/02/13"
- *   SHIFT_JIS=1   // iconv-lite があればSJIS
+ *   SHIFT_JIS=1
  *   SHIPPER_NAME="磯屋"
  *   RECEIVER_TITLE="様"
  */
@@ -71,6 +73,9 @@ function buildItemName(order) {
   return s.length > 30 ? s.slice(0, 30) : s;
 }
 
+/**
+ * 「磯屋発送」列順（B2画面で確認した順）
+ */
 const COLUMNS = [
   "ship_date",
   "order_no",
@@ -132,11 +137,11 @@ function mapOrderToDict(order) {
     receiver_name: order.name || "",
     receiver_zip: order.zip || "",
     receiver_addr1,
-    receiver_addr2: order.address2 || "",
+    receiver_addr2: "",          // address2列が無いので常に空
 
     receiver_company1: "",
     receiver_company2: "",
-    receiver_kana: "",              // kana列が無いので常に空（必要なら後で追加）
+    receiver_kana: "",           // kana列が無いので空
     receiver_title: RECEIVER_TITLE,
 
     shipper_code: "",
@@ -178,11 +183,11 @@ async function main() {
     where = `WHERE status = ANY($1)`;
   }
 
-  // kana列をSELECTから削除
+  // address2 / kana を SELECT しない（存在しないため）
   const sql = `
     SELECT
       id, user_id, status, payment_method,
-      name, phone, zip, pref, address, address2,
+      name, phone, zip, pref, address,
       items, total,
       created_at
     FROM orders

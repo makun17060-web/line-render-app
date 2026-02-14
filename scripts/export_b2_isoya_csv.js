@@ -96,12 +96,14 @@ const COLUMNS = [
   "delivery_time",
   "receiver_code",
   "receiver_tel",
+  "receiver_tel2",   // ←復活（これが超重要）
   "receiver_name",
   "receiver_zip",
   "receiver_pref",
   "receiver_city",
   "receiver_addr",
 ];
+
 
 function mapOrderToDict(order) {
   const cod = isCodPayment(order);
@@ -135,6 +137,8 @@ function mapOrderToDict(order) {
     receiver_pref: pref,
     receiver_city: city,
     receiver_addr: addr,
+    receiver_tel2: "", // 空でOK（でも列は必須）
+
   };
 }
 

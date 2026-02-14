@@ -154,7 +154,6 @@ const COLUMNS = [
   "collect_amount",    // 6 ★代引のみ
   "delivery_date",     // 7
   "delivery_time",     // 8
-  "receiver_code",     // 9
   "receiver_tel",      // 10
   "receiver_tel2",     // 11
   "receiver_name",     // 12

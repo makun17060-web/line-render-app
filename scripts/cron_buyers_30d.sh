@@ -26,6 +26,10 @@ node scripts/prepare_buyers_30d_roster.js
 : "${SLEEP_MS:=200}"
 
 export NOTIFIED_KIND LIMIT BATCH_SIZE SLEEP_MS
+: "${INCLUDE_BOUGHT:=1}"
+: "${SKIP_GLOBAL_EVER_SENT:=1}"
+: "${ONCE_ONLY:=0}"
+export INCLUDE_BOUGHT SKIP_GLOBAL_EVER_SENT ONCE_ONLY
 
 node send_blast_once.js
 

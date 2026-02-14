@@ -3,33 +3,32 @@
  * Postgres(orders) → ヤマトB2 CSV（ヘッダーなし / CRLF）
  *
  * ✅この版（安定版）の目的
- * - まず「出荷予定日ズレ」を確実に潰す（あなたのログで 286,0,0,,,2026/02/14… になっていた）
- * - 列順を固定： 286,0,0,,2026/02/14,... になる（0,0 の後の空欄は slip_no 1個だけ）
+ * - 「出荷予定日ズレ」を確実に潰す（ship_date を必ず 5列目）
+ * - 列順を固定： 74,2,0,,2026/02/14,... の形になる（0,0 の後の空欄は slip_no 1個だけ）
  * - 代引(COD)のときだけ「コレクト金額」を出力（カード等は空欄）
  * - SHIFT_JIS=1 でShift_JIS出力（Excel/B2向け）
  * - STATUS_LIST=""（空文字 or 空白）で status 絞り込み無しにできる
- * - ONLY_ID=286 のように単発検証できる
+ * - ONLY_ID=74 のように単発検証できる
  *
- * ✅列数：17列（カンマ16個）
+ * ✅列数：16列（カンマ15個）
  *
- * ✅列順（これをB2レイアウトでこの順に紐付け）
+ * ✅列順（この順でB2レイアウトを紐付け）
  *  1 お客様管理番号
- *  2 送り状種類               (0:発払い / 2:コレクト)  ※JSがpayment_methodで判定
+ *  2 送り状種類               (0:発払い / 2:コレクト)  ※payment_methodで判定
  *  3 クール区分               (固定 env COOL_TYPE, 既定 0)
  *  4 伝票番号                 (固定 env SLIP_NO, 既定 空)
- *  5 出荷予定日               (env SHIP_DATE or today)  ★ズレ潰し：ここを必ず5列目
+ *  5 出荷予定日               (env SHIP_DATE or today)  ★ズレ潰し：必ず5列目
  *  6 コレクト金額（代引金額） (代引のとき total+shipping_fee、それ以外は空)
  *  7 お届け予定日             (空)
  *  8 配達時間帯               (env DELIVERY_TIME or 空)
- *  9 お届け先コード           (env RECEIVER_CODE or 空)
- * 10 お届け先電話番号
- * 11 お届け先電話番号枝番     (空)
- * 12 お届け先名
- * 13 お届け先郵便番号
- * 14 都道府県
- * 15 市区郡町村
- * 16 町・番地
- * 17 建物名                   (DBになければ空)
+ *  9 お届け先電話番号
+ * 10 お届け先電話番号枝番     (空)
+ * 11 お届け先名
+ * 12 お届け先郵便番号
+ * 13 都道府県
+ * 14 市区郡町村
+ * 15 町・番地
+ * 16 建物名                   (DBになければ空)
  *
  * 使い方:
  *   export DATABASE_URL="..."
@@ -40,13 +39,12 @@
  *   node scripts/export_b2_isoya_csv.js > ./b2.csv
  *
  * 単発検証:
- *   STATUS_LIST=" " ONLY_ID=286 LIMIT=5 SHIFT_JIS=0 node scripts/export_b2_isoya_csv.js | cat -A
- *   → 期待: 286,0,0,,2026/02/14,<金額or空>,...
+ *   STATUS_LIST=" " ONLY_ID=74 LIMIT=1 SHIFT_JIS=0 node scripts/export_b2_isoya_csv.js | cat -A
+ *   → 期待: 74,2,0,,2026/02/14,<金額or空>,...
  *
  * 固定値:
  *   export COOL_TYPE=0
  *   export DELIVERY_TIME=""   # 0812/1416/1618/1820/1921 など。空は指定なし
- *   export RECEIVER_CODE=""   # お届け先コードを固定で入れたいとき
  *   export SLIP_NO=""         # 伝票番号（通常は空でOK）
  */
 
@@ -74,8 +72,7 @@ const STATUS_LIST = String(STATUS_LIST_RAW)
 const SHIFT_JIS = process.env.SHIFT_JIS === "1";
 
 const DELIVERY_TIME = (process.env.DELIVERY_TIME || "").trim(); // 0812/1416/...
-const COOL_TYPE = String(process.env.COOL_TYPE ?? "0").trim();   // 0/1/2
-const RECEIVER_CODE = (process.env.RECEIVER_CODE || "").trim();
+const COOL_TYPE = String(process.env.COOL_TYPE ?? "0").trim(); // 0/1/2
 const SLIP_NO = (process.env.SLIP_NO || "").trim();
 
 function pad2(n) {
@@ -117,7 +114,7 @@ function toIntYen(v) {
 /**
  * 住所分割（pref + address から市区郡町村 / 番地を雑に切る）
  * - pref が address 先頭に入ってたら除去
- * - 最初に「市/区/郡/町/村」で切る（実用寄せ）
+ * - 最初に「市/区/郡」で切る → 残りを「町/村」で切る（実用寄せ）
  */
 function splitCityAndAddr(pref, address) {
   const p = String(pref || "").trim();
@@ -142,8 +139,8 @@ function splitCityAndAddr(pref, address) {
 }
 
 /**
- * ✅B2に合わせた列順（17列）
- * ★重要：出荷予定日が 5列目になるように固定（あなたのズレ原因を根絶）
+ * ✅B2に合わせた列順（16列）
+ * ★重要：出荷予定日が 5列目になるように固定
  */
 const COLUMNS = [
   "customer_no",       // 1
@@ -154,14 +151,14 @@ const COLUMNS = [
   "collect_amount",    // 6 ★代引のみ
   "delivery_date",     // 7
   "delivery_time",     // 8
-  "receiver_tel",      // 10
-  "receiver_tel2",     // 11
-  "receiver_name",     // 12
-  "receiver_zip",      // 13
-  "receiver_pref",     // 14
-  "receiver_city",     // 15
-  "receiver_addr",     // 16
-  "receiver_building", // 17
+  "receiver_tel",      // 9
+  "receiver_tel2",     // 10
+  "receiver_name",     // 11
+  "receiver_zip",      // 12
+  "receiver_pref",     // 13
+  "receiver_city",     // 14
+  "receiver_addr",     // 15
+  "receiver_building", // 16
 ];
 
 function mapOrderToDict(order) {
@@ -197,7 +194,6 @@ function mapOrderToDict(order) {
     collect_amount,
     delivery_date: "",         // 指定なし
     delivery_time: DELIVERY_TIME,
-    receiver_code: RECEIVER_CODE,
 
     receiver_tel: String(order.phone || "").trim(),
     receiver_tel2: "", // 枝番は空でOK（列は必須）

@@ -1,30 +1,13 @@
 /**
  * scripts/export_b2_isoya_csv.js
- * Postgres(orders) → ヤマトB2 CSV（ヘッダーなし / CRLF / 列順固定）
+ * Postgres(orders) → ヤマトB2 CSV（ヘッダーなし / CRLF / Shift_JIS任意）
  *
- * ✅この版の狙い（いまの結論）
- * - 住所分割はDB列（addr_city / addr_line1）を最優先で使う（=安定）
- * - 15列テンプレ（電話番号枝番あり）に固定（カンマ数14個）
- * - addr_city / addr_line1 が未埋めでも “落ちない” フォールバック付き
+ * ✅この「丸ごと版」の目的
+ * - B2は「列名」じゃなく「列位置」で取り込むので、ズレ原因を100%潰す
+ * - まず PROBE=1 で「B2側テンプレの本当の列順」を確定できる
+ * - 通常時は orders の addr_city / addr_line1 を優先しつつ、未埋めはフォールバックで落ちない
  *
- * ✅B2テンプレ（15列）A〜O
- * A お客様管理番号
- * B 送り状種類
- * C クール区分
- * D 伝票番号
- * E 出荷予定日
- * F お届け予定日
- * G 配達時間帯
- * H お届け先コード
- * I お届け先電話番号
- * J お届け先電話番号枝番
- * K お届け先名
- * L お届け先郵便番号
- * M 都道府県
- * N 市区郡町村
- * O 町・番地
- *
- * 使い方:
+ * ✅使い方（ふだんのCSV）
  *   export DATABASE_URL="..."
  *   export STATUS_LIST="confirmed,paid,pickup"
  *   export LIMIT=200
@@ -32,23 +15,23 @@
  *   export SHIFT_JIS=1
  *   node scripts/export_b2_isoya_csv.js > /tmp/b2.csv
  *
+ * ✅使い方（列順確定用：探査CSV）
+ *   SHIFT_JIS=1 PROBE=1 node scripts/export_b2_isoya_csv.js > /tmp/probe.csv
+ *   → B2に取り込むと各セルに "__A_customer_no__" みたいな文字が入る
+ *   → その結果のスクショを見れば「B2の列順」が確定し、ズレが終わる
+ *
  * 任意:
  *   export DELIVERY_TIME=""    # 0812/1416/1618/1820/1921 など。空は指定なし
  *   export COOL_TYPE=0         # 0:通常 1:冷凍 2:冷蔵
  *   export RECEIVER_CODE=""    # 固定で入れたい時
  *   export SLIP_NO=""          # 伝票番号（通常空でOK）
- *
- * 🔎 チェック:
- * - 1行のカンマ数 = 14個（=15列）
  */
 
 const { Client } = require("pg");
 
 const DATABASE_URL = process.env.DATABASE_URL;
-if (!DATABASE_URL) {
-  console.error("ERROR: DATABASE_URL is required");
-  process.exit(1);
-}
+const PROBE = process.env.PROBE === "1";
+const SHIFT_JIS = process.env.SHIFT_JIS === "1";
 
 const LIMIT = parseInt(process.env.LIMIT || "200", 10);
 const STATUS_LIST = (process.env.STATUS_LIST || "confirmed,paid,pickup")
@@ -56,12 +39,15 @@ const STATUS_LIST = (process.env.STATUS_LIST || "confirmed,paid,pickup")
   .map((s) => s.trim())
   .filter(Boolean);
 
-const SHIFT_JIS = process.env.SHIFT_JIS === "1";
-
-const DELIVERY_TIME = (process.env.DELIVERY_TIME || "").trim(); // 0812/1416/...
-const COOL_TYPE = String(process.env.COOL_TYPE ?? "0").trim();   // "0" "1" "2"
+const DELIVERY_TIME = (process.env.DELIVERY_TIME || "").trim();
+const COOL_TYPE = String(process.env.COOL_TYPE ?? "0").trim();
 const RECEIVER_CODE = (process.env.RECEIVER_CODE || "").trim();
 const SLIP_NO = (process.env.SLIP_NO || "").trim();
+
+if (!PROBE && !DATABASE_URL) {
+  console.error("ERROR: DATABASE_URL is required (unless PROBE=1)");
+  process.exit(1);
+}
 
 function pad2(n) {
   return String(n).padStart(2, "0");
@@ -94,47 +80,70 @@ function isCodPayment(order) {
 }
 
 /**
- * 住所分割（フォールバック用）
- * ※本命はDB列 addr_city / addr_line1
+ * フォールバック住所分割（DBに addr_city/addr_line1 が無い/空の時だけ使う）
+ * - pref が address 先頭に付いてたら除去してから分割
+ * - 市/区/町/村 で city を確定
  */
 function splitCityAndAddrFallback(pref, address) {
   const p = String(pref || "").trim();
   let a = String(address || "").trim();
   if (!a) return { city: "", line1: "" };
 
-  // addressが "愛知県..." のように都道府県入りなら除去
   if (p && a.startsWith(p)) a = a.slice(p.length).trim();
 
-  // 市区郡町村を「市/区/町/村」で確定
   const m = a.match(/^(.+?(市|区|町|村))(.+)$/);
   if (m) {
     return { city: (m[1] || "").trim(), line1: (m[3] || "").trim() };
   }
-
-  // 分けられなければ全部を町番地へ（B2赤を減らす）
   return { city: "", line1: a };
 }
 
 /**
- * ✅15列（枝番あり）固定
+ * ✅ここが “列順” の心臓部
+ * いまは「あなたが想定しているB2テンプレ(A〜O / 15列 / 枝番あり)」の並びで置いてある。
+ *
+ * もしB2側テンプレの実列順が違うなら、
+ * 1) PROBE=1 で探査CSVを取り込む
+ * 2) B2画面で各列に入った "__X_key__" を見て
+ * 3) ここ(COLUMNS)の並びを B2の実順に並べ替える
+ *
+ * それで100%ズレが消える。
  */
 const COLUMNS = [
-  "customer_no",     // A
-  "invoice_type",    // B
-  "cool_type",       // C
-  "slip_no",         // D
-  "ship_date",       // E
-  "delivery_date",   // F
-  "delivery_time",   // G
-  "receiver_code",   // H
-  "receiver_tel",    // I
-  "receiver_tel2",   // J
-  "receiver_name",   // K
-  "receiver_zip",    // L
-  "receiver_pref",   // M
-  "receiver_city",   // N
-  "receiver_addr",   // O
+  "customer_no",     // A お客様管理番号
+  "invoice_type",    // B 送り状種類
+  "cool_type",       // C クール区分
+  "slip_no",         // D 伝票番号
+  "ship_date",       // E 出荷予定日
+  "delivery_date",   // F お届け予定日
+  "delivery_time",   // G 配達時間帯
+  "receiver_code",   // H お届け先コード
+  "receiver_tel",    // I お届け先電話番号
+  "receiver_tel2",   // J お届け先電話番号枝番（★ある前提）
+  "receiver_name",   // K お届け先名
+  "receiver_zip",    // L お届け先郵便番号
+  "receiver_pref",   // M 都道府県
+  "receiver_city",   // N 市区郡町村
+  "receiver_addr",   // O 町・番地
 ];
+
+function probeValue(key, idx) {
+  const col = String.fromCharCode("A".charCodeAt(0) + idx);
+  return `__${col}_${key}__`;
+}
+
+function encodeAndWrite(out) {
+  if (SHIFT_JIS) {
+    try {
+      const iconv = require("iconv-lite");
+      process.stdout.write(iconv.encode(out, "Shift_JIS"));
+    } catch {
+      process.stdout.write(out);
+    }
+  } else {
+    process.stdout.write(out);
+  }
+}
 
 function mapOrderToDict(order) {
   const cod = isCodPayment(order);
@@ -142,23 +151,20 @@ function mapOrderToDict(order) {
   const pref = String(order.pref || "").trim();
   const address = String(order.address || "").trim();
 
-  // ✅DB列優先
+  // DB列優先（安定）
   let city = String(order.addr_city || "").trim();
   let line1 = String(order.addr_line1 || "").trim();
 
-  // DB未埋めの時だけフォールバック
+  // 未埋めはフォールバック（落ちないため）
   if (!city || !line1) {
     const fb = splitCityAndAddrFallback(pref, address);
     if (!city) city = fb.city;
     if (!line1) line1 = fb.line1 || address;
   }
 
-  // 送り状種類: 0=発払い / 2=コレクト（代引）
-  const invoice_type = cod ? "2" : "0";
-
   return {
     customer_no: order.id != null ? String(order.id) : "",
-    invoice_type,
+    invoice_type: cod ? "2" : "0",
     cool_type: COOL_TYPE || "0",
     slip_no: SLIP_NO,
     ship_date: shipDateStr(),
@@ -167,7 +173,8 @@ function mapOrderToDict(order) {
     receiver_code: RECEIVER_CODE,
 
     receiver_tel: String(order.phone || "").trim(),
-    receiver_tel2: "", // ★枝番は空でOK（列は必ず出す）
+    receiver_tel2: "", // 枝番は空でOK。ただし列は必ず出す
+
     receiver_name: String(order.name || "").trim(),
     receiver_zip: normalizeZip(order.zip),
 
@@ -178,6 +185,15 @@ function mapOrderToDict(order) {
 }
 
 async function main() {
+  // ✅探査モード：DB不要で「列順確定」できる1行CSVを出す
+  if (PROBE) {
+    const dict = {};
+    COLUMNS.forEach((k, i) => (dict[k] = probeValue(k, i)));
+    const line = COLUMNS.map((k) => csvEscape(dict[k])).join(",");
+    encodeAndWrite(line + "\r\n");
+    return;
+  }
+
   const client = new Client({ connectionString: DATABASE_URL });
   await client.connect();
 
@@ -188,8 +204,7 @@ async function main() {
     where = `WHERE status = ANY($1)`;
   }
 
-  // ✅DB列 addr_city / addr_line1 を使う
-  // ※存在しない環境だとここで落ちるので、既に ALTER 済み前提
+  // ✅DB列 addr_city / addr_line1 を読む（ALTER済み前提）
   const sql = `
     SELECT
       id, status, payment_method,
@@ -212,17 +227,7 @@ async function main() {
   let out = lines.join("\r\n");
   if (out && !out.endsWith("\r\n")) out += "\r\n";
 
-  if (SHIFT_JIS) {
-    try {
-      const iconv = require("iconv-lite");
-      process.stdout.write(iconv.encode(out, "Shift_JIS"));
-    } catch {
-      process.stdout.write(out);
-    }
-  } else {
-    process.stdout.write(out);
-  }
-
+  encodeAndWrite(out);
   await client.end();
 }
 

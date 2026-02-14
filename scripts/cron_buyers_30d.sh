@@ -8,7 +8,7 @@ APP_DIR="/opt/render/project/src"
 cd "$APP_DIR"
 
 : "${DRY_RUN:=1}"
-: "${MESSAGE_FILE:=./messages/buyers_30d_soft.json}"
+: "${MESSAGE_FILE:=./messages/buyers_30d_A_soft.json}"
 
 # JSTで「30日前」の日付をキー化
 TARGET_DATE="$(TZ=Asia/Tokyo date -d "30 days ago" +%F 2>/dev/null || TZ=Asia/Tokyo date -v-30d +%F)"

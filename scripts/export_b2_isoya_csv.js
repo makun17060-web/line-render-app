@@ -2,42 +2,10 @@
  * scripts/export_b2_isoya_csv.js
  * Postgres(orders) → ヤマトB2 CSV（ヘッダーなし / CRLF）
  *
- * ✅この版は「枝番あり（15列）」確定版
- * - いまの画面状態（枝番列が存在して、そこに名前が入ってしまう）を直す
- * - 15列（カンマ14個）に固定
- * - addr_city / addr_line1 を最優先で使用（ズレ＆赤を減らす）
- * - 未埋めはフォールバックで落ちない
+ * ✅確定：末尾の並び（あなたのテンプレ）
+ * 電話 / 枝番 / お届け先名 / 郵便番号 / 都道府県 / 市区郡町村 / 番地 / 建物名
  *
- * ✅列順（15列）A〜O
- * A お客様管理番号
- * B 送り状種類
- * C クール区分
- * D 伝票番号
- * E 出荷予定日
- * F お届け予定日
- * G 配達時間帯
- * H お届け先コード
- * I お届け先電話番号
- * J お届け先電話番号枝番
- * K お届け先名
- * L お届け先郵便番号
- * M 都道府県
- * N 市区郡町村
- * O 町・番地
- *
- * 使い方:
- *   export DATABASE_URL="..."
- *   export STATUS_LIST="confirmed,paid,pickup"
- *   export LIMIT=200
- *   export SHIP_DATE="today" or "2026/02/14"
- *   export SHIFT_JIS=1
- *   node scripts/export_b2_isoya_csv.js > /tmp/b2.csv
- *
- * 任意:
- *   export DELIVERY_TIME=""    # 0812/1416/1618/1820/1921 など。空は指定なし
- *   export COOL_TYPE=0         # 0:通常 1:冷凍 2:冷蔵
- *   export RECEIVER_CODE=""    # 固定で入れたい時
- *   export SLIP_NO=""          # 伝票番号（通常空でOK）
+ * ✅列数：16列（カンマ15個）
  */
 
 const { Client } = require("pg");
@@ -91,43 +59,43 @@ function isCodPayment(order) {
   return pm.includes("cod") || pm.includes("代引");
 }
 
-/**
- * フォールバック住所分割（DB列が空の時だけ）
- */
+// DB列が空の時だけ使うフォールバック
 function splitCityAndAddr(pref, address) {
   const p = String(pref || "").trim();
   let a = String(address || "").trim();
   if (!a) return { city: "", addr: "" };
 
-  // address先頭に都道府県が付いてたら落とす（例: "愛知県..."）
   if (p && a.startsWith(p)) a = a.slice(p.length).trim();
 
   const m = a.match(/^(.+?(市|区|町|村))(.+)$/);
-  if (m) {
-    return { city: m[1].trim(), addr: m[3].trim() };
-  }
+  if (m) return { city: m[1].trim(), addr: m[3].trim() };
   return { city: "", addr: a };
 }
 
 /**
- * ✅15列（枝番あり）固定
+ * ✅あなたのテンプレに合わせた列順（16列）
+ * 末尾8列が
+ *   電話,枝番,お届け先名,郵便番号,都道府県,市区郡町村,番地,建物名
+ * になるように固定
  */
 const COLUMNS = [
-  "customer_no",
-  "invoice_type",
-  "cool_type",
-  "slip_no",
-  "ship_date",
-  "delivery_date",
-  "delivery_time",
-  "receiver_code",
-  "receiver_tel",
-  "receiver_tel2", // ★枝番列
-  "receiver_name",
-  "receiver_zip",
-  "receiver_pref",
-  "receiver_city",
-  "receiver_addr",
+  "customer_no",      // A お客様管理番号
+  "invoice_type",     // B 送り状種類
+  "cool_type",        // C クール区分
+  "slip_no",          // D 伝票番号
+  "ship_date",        // E 出荷予定日
+  "delivery_date",    // F お届け予定日
+  "delivery_time",    // G 配達時間帯
+  "receiver_code",    // H お届け先コード
+
+  "receiver_tel",     // I 電話
+  "receiver_tel2",    // J 枝番
+  "receiver_name",    // K お届け先名
+  "receiver_zip",     // L 郵便番号
+  "receiver_pref",    // M 都道府県
+  "receiver_city",    // N 市区郡町村
+  "receiver_addr",    // O 番地
+  "receiver_building" // P 建物名
 ];
 
 function mapOrderToDict(order) {
@@ -136,11 +104,10 @@ function mapOrderToDict(order) {
   const pref = String(order.pref || "").trim();
   const address = String(order.address || "").trim();
 
-  // ✅DB列優先
+  // DB列優先
   let city = String(order.addr_city || "").trim();
   let addr = String(order.addr_line1 || "").trim();
 
-  // 未埋めはフォールバック（落ちない）
   if (!city || !addr) {
     const fb = splitCityAndAddr(pref, address);
     if (!city) city = fb.city;
@@ -158,14 +125,14 @@ function mapOrderToDict(order) {
     receiver_code: RECEIVER_CODE,
 
     receiver_tel: String(order.phone || "").trim(),
-    receiver_tel2: "", // ★空でOK。ただし列は必須
-
+    receiver_tel2: "", // 枝番は空でOK（列は必須）
     receiver_name: String(order.name || "").trim(),
     receiver_zip: normalizeZip(order.zip),
 
     receiver_pref: pref,
     receiver_city: city,
     receiver_addr: addr,
+    receiver_building: "", // ★建物名列（いったん空）
   };
 }
 

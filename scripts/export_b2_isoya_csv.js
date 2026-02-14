@@ -8,9 +8,9 @@
  * - 代引(COD)のときだけ「コレクト金額」を出力（カード等は空欄）
  * - SHIFT_JIS=1 でShift_JIS出力（Excel/B2向け）
  * - STATUS_LIST=""（空文字 or 空白）で status 絞り込み無しにできる
- * - ONLY_ID=74 のように単発検証できる
+ * - ONLY_ID=284 のように単発検証できる
  *
- * ✅列数：16列（カンマ15個）
+ * ✅列数：16列（カンマ15個）※ customer_code は入れない（請求先はPADで選ぶ）
  *
  * ✅列順（この順でB2レイアウトを紐付け）
  *  1 お客様管理番号
@@ -39,8 +39,7 @@
  *   node scripts/export_b2_isoya_csv.js > ./b2.csv
  *
  * 単発検証:
- *   STATUS_LIST=" " ONLY_ID=74 LIMIT=1 SHIFT_JIS=0 node scripts/export_b2_isoya_csv.js | cat -A
- *   → 期待: 74,2,0,,2026/02/14,<金額or空>,...
+ *   STATUS_LIST=" " ONLY_ID=284 LIMIT=1 SHIFT_JIS=0 node scripts/export_b2_isoya_csv.js | cat -A
  *
  * 固定値:
  *   export COOL_TYPE=0
@@ -191,6 +190,7 @@ function mapOrderToDict(order) {
     cool_type: COOL_TYPE || "0",
     slip_no: SLIP_NO,          // 空でOK
     ship_date: shipDateStr(),  // ★必ずここで出す
+
     collect_amount,
     delivery_date: "",         // 指定なし
     delivery_time: DELIVERY_TIME,
@@ -229,6 +229,7 @@ async function main() {
   const where = whereParts.length ? `WHERE ${whereParts.join(" AND ")}` : "";
 
   // ✅必要最小限 SELECT（列ズレ防止）
+  // ✅発送用途：新しい注文から出したいので DESC
   const sql = `
     SELECT
       id, status, payment_method,
@@ -238,7 +239,7 @@ async function main() {
       created_at
     FROM orders
     ${where}
-    ORDER BY created_at ASC
+    ORDER BY created_at DESC
     LIMIT ${LIMIT}
   `;
 

@@ -90,10 +90,8 @@ const COLUMNS = [
 
   "receiver_tel",
   "receiver_tel2",
-
   "receiver_name",   // ←ここが超重要（ZIPの前）
   "receiver_zip",
-
   "receiver_pref",
   "receiver_city",
   "receiver_addr",

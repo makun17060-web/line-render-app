@@ -6,6 +6,10 @@
  * 電話 / 枝番 / お届け先名 / 郵便番号 / 都道府県 / 市区郡町村 / 番地 / 建物名
  *
  * ✅列数：16列（カンマ15個）
+ *
+ * ✅追加（今回）
+ * - ONLY_ID 対応：特定の注文idだけを1行で吐ける（ズレ検証用）
+ *   例) ONLY_ID=286 SHIFT_JIS=0 node scripts/export_b2_isoya_csv.js
  */
 
 const { Client } = require("pg");
@@ -28,6 +32,9 @@ const DELIVERY_TIME = (process.env.DELIVERY_TIME || "").trim();
 const COOL_TYPE = String(process.env.COOL_TYPE ?? "0").trim();
 const RECEIVER_CODE = (process.env.RECEIVER_CODE || "").trim();
 const SLIP_NO = (process.env.SLIP_NO || "").trim();
+
+// ✅追加：特定IDだけ出す
+const ONLY_ID = (process.env.ONLY_ID || "").trim();
 
 function pad2(n) {
   return String(n).padStart(2, "0");
@@ -90,14 +97,13 @@ const COLUMNS = [
 
   "receiver_tel",
   "receiver_tel2",
-  "receiver_name",   // ←ここが超重要（ZIPの前）
+  "receiver_name", // ZIPの前
   "receiver_zip",
   "receiver_pref",
   "receiver_city",
   "receiver_addr",
   "receiver_building",
 ];
-
 
 function mapOrderToDict(order) {
   const cod = isCodPayment(order);
@@ -133,7 +139,7 @@ function mapOrderToDict(order) {
     receiver_pref: pref,
     receiver_city: city,
     receiver_addr: addr,
-    receiver_building: "", // ★建物名列（いったん空）
+    receiver_building: "", // 建物名（とりあえず空）
   };
 }
 
@@ -142,11 +148,21 @@ async function main() {
   await client.connect();
 
   const params = [];
-  let where = "";
+  const whereParts = [];
+
+  // status 絞り込み
   if (STATUS_LIST.length) {
     params.push(STATUS_LIST);
-    where = `WHERE status = ANY($1)`;
+    whereParts.push(`status = ANY($${params.length})`);
   }
+
+  // ✅追加：特定IDだけ
+  if (ONLY_ID) {
+    params.push(ONLY_ID);
+    whereParts.push(`id = $${params.length}`);
+  }
+
+  const where = whereParts.length ? `WHERE ${whereParts.join(" AND ")}` : "";
 
   const sql = `
     SELECT

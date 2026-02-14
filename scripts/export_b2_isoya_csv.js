@@ -2,11 +2,42 @@
  * scripts/export_b2_isoya_csv.js
  * Postgres(orders) → ヤマトB2 CSV（ヘッダーなし / CRLF）
  *
- * ✅この版の確定仕様
- * - B2は「電話番号枝番を使っていない」前提（実画面ベース）
- * - 14列（カンマ13個）に固定
- * - addr_city / addr_line1 を最優先使用（ズレ防止）
- * - 未分割住所もフォールバックで落ちない
+ * ✅この版は「枝番あり（15列）」確定版
+ * - いまの画面状態（枝番列が存在して、そこに名前が入ってしまう）を直す
+ * - 15列（カンマ14個）に固定
+ * - addr_city / addr_line1 を最優先で使用（ズレ＆赤を減らす）
+ * - 未埋めはフォールバックで落ちない
+ *
+ * ✅列順（15列）A〜O
+ * A お客様管理番号
+ * B 送り状種類
+ * C クール区分
+ * D 伝票番号
+ * E 出荷予定日
+ * F お届け予定日
+ * G 配達時間帯
+ * H お届け先コード
+ * I お届け先電話番号
+ * J お届け先電話番号枝番
+ * K お届け先名
+ * L お届け先郵便番号
+ * M 都道府県
+ * N 市区郡町村
+ * O 町・番地
+ *
+ * 使い方:
+ *   export DATABASE_URL="..."
+ *   export STATUS_LIST="confirmed,paid,pickup"
+ *   export LIMIT=200
+ *   export SHIP_DATE="today" or "2026/02/14"
+ *   export SHIFT_JIS=1
+ *   node scripts/export_b2_isoya_csv.js > /tmp/b2.csv
+ *
+ * 任意:
+ *   export DELIVERY_TIME=""    # 0812/1416/1618/1820/1921 など。空は指定なし
+ *   export COOL_TYPE=0         # 0:通常 1:冷凍 2:冷蔵
+ *   export RECEIVER_CODE=""    # 固定で入れたい時
+ *   export SLIP_NO=""          # 伝票番号（通常空でOK）
  */
 
 const { Client } = require("pg");
@@ -36,7 +67,7 @@ function pad2(n) {
 
 function shipDateStr() {
   const v = (process.env.SHIP_DATE || "today").trim();
-  if (v && v !== "today") return v;
+  if (v && v !== "today") return v; // "YYYY/MM/DD"
   const d = new Date();
   return `${d.getFullYear()}/${pad2(d.getMonth() + 1)}/${pad2(d.getDate())}`;
 }
@@ -50,9 +81,9 @@ function csvEscape(v) {
 
 function normalizeZip(z) {
   if (!z) return "";
-  const digits = String(z).replace(/\D/g, "");
+  const digits = String(z).trim().replace(/\D/g, "");
   if (digits.length === 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-  return z;
+  return String(z).trim();
 }
 
 function isCodPayment(order) {
@@ -61,30 +92,25 @@ function isCodPayment(order) {
 }
 
 /**
- * フォールバック住所分割
+ * フォールバック住所分割（DB列が空の時だけ）
  */
 function splitCityAndAddr(pref, address) {
   const p = String(pref || "").trim();
   let a = String(address || "").trim();
   if (!a) return { city: "", addr: "" };
 
-  if (p && a.startsWith(p)) {
-    a = a.slice(p.length).trim();
-  }
+  // address先頭に都道府県が付いてたら落とす（例: "愛知県..."）
+  if (p && a.startsWith(p)) a = a.slice(p.length).trim();
 
   const m = a.match(/^(.+?(市|区|町|村))(.+)$/);
   if (m) {
-    return {
-      city: m[1].trim(),
-      addr: m[3].trim(),
-    };
+    return { city: m[1].trim(), addr: m[3].trim() };
   }
-
   return { city: "", addr: a };
 }
 
 /**
- * ✅14列（枝番なし）
+ * ✅15列（枝番あり）固定
  */
 const COLUMNS = [
   "customer_no",
@@ -96,7 +122,7 @@ const COLUMNS = [
   "delivery_time",
   "receiver_code",
   "receiver_tel",
-  "receiver_tel2",   // ←復活（これが超重要）
+  "receiver_tel2", // ★枝番列
   "receiver_name",
   "receiver_zip",
   "receiver_pref",
@@ -104,16 +130,17 @@ const COLUMNS = [
   "receiver_addr",
 ];
 
-
 function mapOrderToDict(order) {
   const cod = isCodPayment(order);
 
-  const pref = (order.pref || "").trim();
-  const address = (order.address || "").trim();
+  const pref = String(order.pref || "").trim();
+  const address = String(order.address || "").trim();
 
-  let city = (order.addr_city || "").trim();
-  let addr = (order.addr_line1 || "").trim();
+  // ✅DB列優先
+  let city = String(order.addr_city || "").trim();
+  let addr = String(order.addr_line1 || "").trim();
 
+  // 未埋めはフォールバック（落ちない）
   if (!city || !addr) {
     const fb = splitCityAndAddr(pref, address);
     if (!city) city = fb.city;
@@ -121,7 +148,7 @@ function mapOrderToDict(order) {
   }
 
   return {
-    customer_no: String(order.id || ""),
+    customer_no: order.id != null ? String(order.id) : "",
     invoice_type: cod ? "2" : "0",
     cool_type: COOL_TYPE || "0",
     slip_no: SLIP_NO,
@@ -130,15 +157,15 @@ function mapOrderToDict(order) {
     delivery_time: DELIVERY_TIME,
     receiver_code: RECEIVER_CODE,
 
-    receiver_tel: order.phone || "",
-    receiver_name: order.name || "",
+    receiver_tel: String(order.phone || "").trim(),
+    receiver_tel2: "", // ★空でOK。ただし列は必須
+
+    receiver_name: String(order.name || "").trim(),
     receiver_zip: normalizeZip(order.zip),
 
     receiver_pref: pref,
     receiver_city: city,
     receiver_addr: addr,
-    receiver_tel2: "", // 空でOK（でも列は必須）
-
   };
 }
 
@@ -155,7 +182,7 @@ async function main() {
 
   const sql = `
     SELECT
-      id, payment_method,
+      id, status, payment_method,
       name, phone, zip, pref, address,
       addr_city, addr_line1,
       created_at
@@ -173,7 +200,7 @@ async function main() {
   });
 
   let out = lines.join("\r\n");
-  if (!out.endsWith("\r\n")) out += "\r\n";
+  if (out && !out.endsWith("\r\n")) out += "\r\n";
 
   if (SHIFT_JIS) {
     try {

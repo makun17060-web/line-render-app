@@ -2,33 +2,34 @@
  * scripts/export_b2_isoya_csv.js
  * Postgres(orders) → ヤマトB2 CSV（ヘッダーなし / CRLF）
  *
- * ✅この版のポイント
- * - B2の列順に合わせて “固定列” を必ず出す（空欄は ,, で位置維持）
+ * ✅この版（安定版）の目的
+ * - まず「出荷予定日ズレ」を確実に潰す（あなたのログで 286,0,0,,,2026/02/14… になっていた）
+ * - 列順を固定： 286,0,0,,2026/02/14,... になる（0,0 の後の空欄は slip_no 1個だけ）
  * - 代引(COD)のときだけ「コレクト金額」を出力（カード等は空欄）
  * - SHIFT_JIS=1 でShift_JIS出力（Excel/B2向け）
- * - STATUS_LIST=""（空文字）で「status絞り込み無し」にできる
+ * - STATUS_LIST=""（空文字 or 空白）で status 絞り込み無しにできる
  * - ONLY_ID=286 のように単発検証できる
  *
  * ✅列数：17列（カンマ16個）
  *
- * ✅列順（B2レイアウトでこの順に紐付け）
+ * ✅列順（これをB2レイアウトでこの順に紐付け）
  *  1 お客様管理番号
- *  2 送り状種類            (0:発払い / 2:コレクト)  ※JSがpayment_methodで判定
- *  3 クール区分            (固定 env COOL_TYPE, 既定 0)
- *  4 コレクト金額（代引金額）(代引のとき total+shipping_fee、それ以外は空)
- *  5 伝票番号              (固定 env SLIP_NO, 既定 空)
- *  6 出荷予定日            (env SHIP_DATE or today)
- *  7 お届け予定日          (空)
- *  8 配達時間帯            (env DELIVERY_TIME or 空)
- *  9 お届け先コード        (env RECEIVER_CODE or 空)
+ *  2 送り状種類               (0:発払い / 2:コレクト)  ※JSがpayment_methodで判定
+ *  3 クール区分               (固定 env COOL_TYPE, 既定 0)
+ *  4 伝票番号                 (固定 env SLIP_NO, 既定 空)
+ *  5 出荷予定日               (env SHIP_DATE or today)  ★ズレ潰し：ここを必ず5列目
+ *  6 コレクト金額（代引金額） (代引のとき total+shipping_fee、それ以外は空)
+ *  7 お届け予定日             (空)
+ *  8 配達時間帯               (env DELIVERY_TIME or 空)
+ *  9 お届け先コード           (env RECEIVER_CODE or 空)
  * 10 お届け先電話番号
- * 11 お届け先電話番号枝番  (空)
+ * 11 お届け先電話番号枝番     (空)
  * 12 お届け先名
  * 13 お届け先郵便番号
  * 14 都道府県
  * 15 市区郡町村
  * 16 町・番地
- * 17 建物名                (DBになければ空)
+ * 17 建物名                   (DBになければ空)
  *
  * 使い方:
  *   export DATABASE_URL="..."
@@ -39,10 +40,11 @@
  *   node scripts/export_b2_isoya_csv.js > ./b2.csv
  *
  * 単発検証:
- *   STATUS_LIST=" " ONLY_ID=286 SHIFT_JIS=0 node scripts/export_b2_isoya_csv.js | cat -A
+ *   STATUS_LIST=" " ONLY_ID=286 LIMIT=5 SHIFT_JIS=0 node scripts/export_b2_isoya_csv.js | cat -A
+ *   → 期待: 286,0,0,,2026/02/14,<金額or空>,...
  *
  * 固定値:
- *   export COOL_TYPE=0        # 0:通常 1:冷凍 2:冷蔵
+ *   export COOL_TYPE=0
  *   export DELIVERY_TIME=""   # 0812/1416/1618/1820/1921 など。空は指定なし
  *   export RECEIVER_CODE=""   # お届け先コードを固定で入れたいとき
  *   export SLIP_NO=""         # 伝票番号（通常は空でOK）
@@ -59,7 +61,8 @@ if (!DATABASE_URL) {
 const LIMIT = parseInt(process.env.LIMIT || "200", 10);
 const ONLY_ID = (process.env.ONLY_ID || "").trim();
 
-// ✅ STATUS_LIST=""（空文字）を“無指定”として扱えるようにする
+// ✅ STATUS_LIST: 未設定なら既定 "confirmed,paid,pickup"
+// ✅ 空文字/空白だけなら「絞り込み無し」
 const STATUS_LIST_RAW =
   process.env.STATUS_LIST === undefined ? "confirmed,paid,pickup" : process.env.STATUS_LIST;
 
@@ -105,6 +108,12 @@ function isCodPayment(order) {
   return pm.includes("cod") || pm.includes("代引") || pm.includes("collect");
 }
 
+function toIntYen(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n);
+}
+
 /**
  * 住所分割（pref + address から市区郡町村 / 番地を雑に切る）
  * - pref が address 先頭に入ってたら除去
@@ -132,23 +141,17 @@ function splitCityAndAddr(pref, address) {
   return { city: "", addr: a };
 }
 
-function toIntYen(v) {
-  // total / shipping_fee が number/文字列どっちでも来てもOKにする
-  const n = Number(v);
-  if (!Number.isFinite(n)) return 0;
-  return Math.round(n);
-}
-
 /**
  * ✅B2に合わせた列順（17列）
+ * ★重要：出荷予定日が 5列目になるように固定（あなたのズレ原因を根絶）
  */
 const COLUMNS = [
   "customer_no",       // 1
   "invoice_type",      // 2
   "cool_type",         // 3
-  "collect_amount",    // 4 ★追加：代引金額
-  "slip_no",           // 5
-  "ship_date",         // 6
+  "slip_no",           // 4
+  "ship_date",         // 5 ★ここ
+  "collect_amount",    // 6 ★代引のみ
   "delivery_date",     // 7
   "delivery_time",     // 8
   "receiver_code",     // 9
@@ -190,9 +193,9 @@ function mapOrderToDict(order) {
     customer_no: order.id != null ? String(order.id) : "",
     invoice_type,
     cool_type: COOL_TYPE || "0",
-    collect_amount,
     slip_no: SLIP_NO,          // 空でOK
-    ship_date: shipDateStr(),
+    ship_date: shipDateStr(),  // ★必ずここで出す
+    collect_amount,
     delivery_date: "",         // 指定なし
     delivery_time: DELIVERY_TIME,
     receiver_code: RECEIVER_CODE,
@@ -205,7 +208,7 @@ function mapOrderToDict(order) {
     receiver_pref: pref,
     receiver_city: city,
     receiver_addr: addr,
-    receiver_building: String(order.building || "").trim(), // building列が無ければ空
+    receiver_building: "", // 建物名はDBになければ空（必要なら列追加で対応）
   };
 }
 
@@ -216,14 +219,13 @@ async function main() {
   const whereParts = [];
   const params = [];
 
-  // ✅ ONLY_ID を最優先で絞る（検証用）
+  // ✅ ONLY_ID で絞る（検証用）
   if (ONLY_ID) {
     params.push(Number(ONLY_ID));
     whereParts.push(`id = $${params.length}`);
   }
 
-  // ✅ status 絞り込み（ONLY_ID指定時は付けない方が楽だが、今回は“両立”でOK）
-  // ただし「ONLY_ID検証時にstatusで落ちる」が嫌なら、次のifを「!ONLY_ID && STATUS_LIST.length」にしてOK
+  // ✅ status 絞り込み（空なら無し）
   if (STATUS_LIST.length) {
     params.push(STATUS_LIST);
     whereParts.push(`status = ANY($${params.length})`);
@@ -260,7 +262,6 @@ async function main() {
       const iconv = require("iconv-lite");
       process.stdout.write(iconv.encode(out, "Shift_JIS"));
     } catch {
-      // iconv-lite が無い場合はUTF-8で出る（B2側がSJIS強制なら入れ直し推奨）
       process.stdout.write(out);
     }
   } else {

@@ -79,24 +79,27 @@ function splitCityAndAddr(pref, address) {
  * になるように固定
  */
 const COLUMNS = [
-  "customer_no",      // A お客様管理番号
-  "invoice_type",     // B 送り状種類
-  "cool_type",        // C クール区分
-  "slip_no",          // D 伝票番号
-  "ship_date",        // E 出荷予定日
-  "delivery_date",    // F お届け予定日
-  "delivery_time",    // G 配達時間帯
-  "receiver_code",    // H お届け先コード
+  "customer_no",
+  "invoice_type",
+  "cool_type",
+  "slip_no",
+  "ship_date",
+  "delivery_date",
+  "delivery_time",
+  "receiver_code",
 
-  "receiver_tel",     // I 電話
-  "receiver_tel2",    // J 枝番
-  "receiver_name",    // K お届け先名
-  "receiver_zip",     // L 郵便番号
-  "receiver_pref",    // M 都道府県
-  "receiver_city",    // N 市区郡町村
-  "receiver_addr",    // O 番地
-  "receiver_building" // P 建物名
+  "receiver_tel",
+  "receiver_tel2",
+
+  "receiver_name",   // ←ここが超重要（ZIPの前）
+  "receiver_zip",
+
+  "receiver_pref",
+  "receiver_city",
+  "receiver_addr",
+  "receiver_building",
 ];
+
 
 function mapOrderToDict(order) {
   const cod = isCodPayment(order);

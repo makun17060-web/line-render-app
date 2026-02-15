@@ -181,8 +181,10 @@ function mapOrderToDict(order) {
 
   // ★コレクト金額：代引のときだけ total+shipping_fee
   const totalYen = toIntYen(order.total);
-  const shipYen = toIntYen(order.shipping_fee);
-  const collect_amount = cod ? String(Math.max(0, totalYen + shipYen)) : "";
+  const shipYen = toIntYen(order.shippin
+const collect_amount = cod
+  ? String(Math.max(0, totalYen))
+  : "";
 
   return {
     customer_no: order.id != null ? String(order.id) : "",

@@ -2,12 +2,12 @@
  * scripts/export_b2_isoya_csv.js
  * Postgres(orders) → ヤマトB2 CSV（ヘッダーなし / CRLF）
  *
- * ✅安定版の目的
- * - ship_date を必ず5列目に固定
- * - 列順固定（16列）
- * - 代引(COD)のときだけ「コレクト金額 = total + shipping_fee」
- * - SHIFT_JIS=1 でShift_JIS出力（iconv-lite が入っていれば）
- * - STATUS_LIST="" or " " で status 絞り込み無し
+ * ✅仕様（確定版）
+ * - 列数：16列（B2基本レイアウト）
+ * - 5列目：出荷予定日（固定）
+ * - 6列目：コレクト金額 = DB total（商品＋送料）※代引のみ
+ * - SHIFT_JIS=1 でShift_JIS出力
+ * - STATUS_LIST="" or " " で全件対象
  * - ONLY_ID=284 で単発検証
  */
 
@@ -22,8 +22,6 @@ if (!DATABASE_URL) {
 const LIMIT = parseInt(process.env.LIMIT || "200", 10);
 const ONLY_ID = (process.env.ONLY_ID || "").trim();
 
-// STATUS_LIST: 未設定なら既定 "confirmed,paid,pickup"
-// 空文字/空白だけなら「絞り込み無し」
 const STATUS_LIST_RAW =
   process.env.STATUS_LIST === undefined ? "confirmed,paid,pickup" : process.env.STATUS_LIST;
 
@@ -33,8 +31,8 @@ const STATUS_LIST = String(STATUS_LIST_RAW)
   .filter(Boolean);
 
 const SHIFT_JIS = process.env.SHIFT_JIS === "1";
-const DELIVERY_TIME = (process.env.DELIVERY_TIME || "").trim(); // 0812/1416/...
-const COOL_TYPE = String(process.env.COOL_TYPE ?? "0").trim();  // 0/1/2
+const DELIVERY_TIME = (process.env.DELIVERY_TIME || "").trim();
+const COOL_TYPE = String(process.env.COOL_TYPE ?? "0").trim();
 const SLIP_NO = (process.env.SLIP_NO || "").trim();
 
 function pad2(n) {
@@ -43,7 +41,7 @@ function pad2(n) {
 
 function shipDateStr() {
   const v = (process.env.SHIP_DATE || "today").trim();
-  if (v && v !== "today") return v; // "YYYY/MM/DD"
+  if (v && v !== "today") return v;
   const d = new Date();
   return `${d.getFullYear()}/${pad2(d.getMonth() + 1)}/${pad2(d.getDate())}`;
 }
@@ -57,9 +55,9 @@ function csvEscape(v) {
 
 function normalizeZip(z) {
   if (!z) return "";
-  const digits = String(z).trim().replace(/\D/g, "");
+  const digits = String(z).replace(/\D/g, "");
   if (digits.length === 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-  return String(z).trim();
+  return z;
 }
 
 function isCodPayment(order) {
@@ -73,22 +71,22 @@ function toIntYen(v) {
   return Math.round(n);
 }
 
-/**
- * 住所分割（pref + address から市区郡町村 / 番地を雑に切る）
- */
+// 住所分割
 function splitCityAndAddr(pref, address) {
   const p = String(pref || "").trim();
   let a = String(address || "").trim();
-  if (!a) return { city: "", addr: "" };
 
-  if (p && a.startsWith(p)) a = a.slice(p.length).trim();
+  if (p && a.startsWith(p)) {
+    a = a.slice(p.length).trim();
+  }
 
-  // 例: 知多郡南知多町豊浜清水谷25-5 → city=知多郡南知多町, addr=豊浜清水谷25-5
   const m = a.match(/^(.+?(市|区|郡))(.+)$/);
   if (m) {
     const rest = m[3].trim();
     const m2 = rest.match(/^(.+?(町|村))(.+)$/);
-    if (m2) return { city: (m[1] + m2[1]).trim(), addr: m2[3].trim() };
+    if (m2) {
+      return { city: (m[1] + m2[1]).trim(), addr: m2[3].trim() };
+    }
     return { city: m[1].trim(), addr: rest };
   }
 
@@ -98,27 +96,24 @@ function splitCityAndAddr(pref, address) {
   return { city: "", addr: a };
 }
 
-/**
- * ✅B2に合わせた列順（16列）
- * ★重要：出荷予定日が 5列目
- */
+// 16列固定
 const COLUMNS = [
-  "customer_no",       // 1
-  "invoice_type",      // 2 (0:発払い / 2:コレクト)
-  "cool_type",         // 3
-  "slip_no",           // 4
-  "ship_date",         // 5 ★
-  "collect_amount",    // 6 ★代引のみ total+shipping_fee
-  "delivery_date",     // 7
-  "delivery_time",     // 8
-  "receiver_tel",      // 9
-  "receiver_tel2",     // 10
-  "receiver_name",     // 11
-  "receiver_zip",      // 12
-  "receiver_pref",     // 13
-  "receiver_city",     // 14
-  "receiver_addr",     // 15
-  "receiver_building", // 16
+  "customer_no",
+  "invoice_type",
+  "cool_type",
+  "slip_no",
+  "ship_date",
+  "collect_amount",
+  "delivery_date",
+  "delivery_time",
+  "receiver_tel",
+  "receiver_tel2",
+  "receiver_name",
+  "receiver_zip",
+  "receiver_pref",
+  "receiver_city",
+  "receiver_addr",
+  "receiver_building",
 ];
 
 function mapOrderToDict(order) {
@@ -127,22 +122,16 @@ function mapOrderToDict(order) {
   const pref = String(order.pref || "").trim();
   const address = String(order.address || "").trim();
 
-  const fb = splitCityAndAddr(pref, address);
-  const city = fb.city;
-  const addr = fb.addr || address;
+  const { city, addr } = splitCityAndAddr(pref, address);
 
-  // 送り状種類（0:発払い / 2:コレクト）
-  const invoice_type = cod ? "2" : "0";
-
-  // ★コレクト金額：代引のときだけ total+shipping_fee
+  // ★ここが最重要（DB totalそのまま）
   const totalYen = toIntYen(order.total);
-  const shipYen = toIntYen(order.shipping_fee);
-  const collect_amount = cod ? String(Math.max(0, totalYen + shipYen)) : "";
+  const collect_amount = cod ? String(Math.max(0, totalYen)) : "";
 
   return {
-    customer_no: order.id != null ? String(order.id) : "",
-    invoice_type,
-    cool_type: COOL_TYPE || "0",
+    customer_no: String(order.id || ""),
+    invoice_type: cod ? "2" : "0",
+    cool_type: COOL_TYPE,
     slip_no: SLIP_NO,
     ship_date: shipDateStr(),
 
@@ -150,14 +139,14 @@ function mapOrderToDict(order) {
     delivery_date: "",
     delivery_time: DELIVERY_TIME,
 
-    receiver_tel: String(order.phone || "").trim(),
+    receiver_tel: String(order.phone || ""),
     receiver_tel2: "",
-    receiver_name: String(order.name || "").trim(),
+    receiver_name: String(order.name || ""),
     receiver_zip: normalizeZip(order.zip),
 
     receiver_pref: pref,
     receiver_city: city,
-    receiver_addr: addr,
+    receiver_addr: addr || address,
     receiver_building: "",
   };
 }
@@ -207,8 +196,7 @@ async function main() {
     try {
       const iconv = require("iconv-lite");
       process.stdout.write(iconv.encode(out, "Shift_JIS"));
-    } catch (e) {
-      // iconv-lite が無い/失敗ならUTF-8で出す（B2に入れる前に要注意）
+    } catch {
       process.stdout.write(out);
     }
   } else {

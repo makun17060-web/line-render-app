@@ -1,4 +1,5 @@
-// send_blast_once.js —（名簿自動追加 + 未送信 + 未購入 + キー指定除外 + FORCE_USER_ID + ✅購入者直抽出(BUYER_KIND)）Text/Flex 切替版
+// send_blast_once.js —（名簿自動追加 + 未送信 + 未購入 + キー指定除外 + FORCE_USER_ID +
+// ✅ 注文ID指定(FORCE_ORDER_ID) + ✅購入者直抽出(BUYER_KIND)）Text/Flex 切替版
 //
 // Run:
 //   SEGMENT_KEY=... MESSAGE_FILE=... FUKUBAKO_ID=fukubako-2026 node send_blast_once.js
@@ -12,20 +13,21 @@
 //
 // ✅ 朝/昼/夜 の時間帯ブロック配信（sh/コマンドで渡す）
 //   SLOT=morning|day|night
-//   - JST(Asia/Tokyo) 기준で判定
-//   - ref_ts は opened_at（liff_open_logs）優先、なければ followed_at（follow_events）
-//   - morning: 6-10, day: 11-16, night: その他(17-23,0-5)
 //
 // ✅ お花見など「例外運用」用スイッチ（sh/コマンドで渡す）
-//   SKIP_GLOBAL_EVER_SENT=1    (✅ ONCE_ONLY=1 でも ever_sent(全キー横断)除外をスキップ)
-//   INCLUDE_BOUGHT=1           (✅ FUKUBAKO_ID 購入済み除外をしない＝購入者も含める)
+//   SKIP_GLOBAL_EVER_SENT=1
+//   INCLUDE_BOUGHT=1
 //
-// ✅ 購入者配信（名簿不要：ordersから抽出して送信台帳(segment_blast)だけ残す）
+// ✅ 購入者配信（名簿不要：ordersから抽出）
 //   BUYER_KIND=card|cod|pickup|all
-//   BUYER_DAYS=30     (任意) 直近N日だけに絞る。0/未指定なら無制限
+//   BUYER_DAYS=30
 //
 // ✅ 自分テスト用（強制1ユーザー送信）
 //   FORCE_USER_ID=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//
+// ✅【追加】注文IDで強制1ユーザー送信（最優先）
+//   FORCE_ORDER_ID=284
+//   ※ FORCE_USER_ID も同時に指定された場合は一致チェック。不一致なら停止。
 //
 // Requires: DATABASE_URL, LINE_CHANNEL_ACCESS_TOKEN
 //
@@ -56,7 +58,6 @@ const SLOT = (process.env.SLOT || "").trim(); // "morning" | "day" | "night" | "
 const BUYER_KIND = (process.env.BUYER_KIND || "").trim(); // card | cod | pickup | all | ""
 const BUYER_DAYS = Number(process.env.BUYER_DAYS || 0);   // 0なら絞らない
 
-// ※商品IDは「変更なし」でOK（今まで通り env で指定 or 既定）
 const FUKUBAKO_ID   = (process.env.FUKUBAKO_ID || "fukubako-2026").trim();
 const FUKUBAKO_URL  = (process.env.FUKUBAKO_URL || "").trim();
 
@@ -69,8 +70,11 @@ const EXCLUDE_SENT_KEYS = (process.env.EXCLUDE_SENT_KEYS || "")
   .map(s => s.trim())
   .filter(Boolean);
 
-// ✅ 自分テスト用：強制ターゲット
+// ✅ 自分テスト用：強制ターゲット（user_id）
 const FORCE_USER_ID = (process.env.FORCE_USER_ID || "").trim();
+
+// ✅【追加】注文IDで強制ターゲット（order_id）
+const FORCE_ORDER_ID = (process.env.FORCE_ORDER_ID || "").trim();
 
 // ✅【追加】sh から動的に切り替えるスイッチ
 const SKIP_GLOBAL_EVER_SENT = String(process.env.SKIP_GLOBAL_EVER_SENT || "").trim() === "1";
@@ -119,13 +123,11 @@ function mustString(x, name) {
 
 // ✅ LINE userId 妥当性チェック（事故防止）
 function isValidLineUserId(uid) {
-  // LINE userId は通常 "U" + 32桁hex（計33文字）
   return typeof uid === "string" && /^U[0-9a-f]{32}$/i.test(uid.trim());
 }
 
 // messages を外部JSONから読み込む
 function loadMessages() {
-  // MESSAGE_FILE 未指定ならデフォルト（テキスト）
   if (!MESSAGE_FILE) {
     const text =
 `【ご案内】
@@ -233,7 +235,6 @@ async function autoRosterByFirstSeen(days) {
   const r = await pool.query(
     `
     WITH first_follow AS (
-      -- user_idごとに最初のfollowed_at（友だち追加）を取る
       SELECT DISTINCT ON (fe.user_id)
         fe.user_id,
         fe.followed_at AS first_followed_at
@@ -260,11 +261,10 @@ async function autoRosterByFirstSeen(days) {
   return r.rowCount || 0;
 }
 
-// ✅ FORCE_USER_ID 用：送信記録を必ず segment_blast に残す（なければ作る）
+// ✅ FORCE 用：送信記録を必ず segment_blast に残す（なければ作る）
 async function markSentForForceUser(userId, ok, errMsg) {
   const msg = errMsg ? String(errMsg).slice(0, 500) : null;
 
-  // 1) 行が無ければ作る（created_at）
   await pool.query(
     `
     INSERT INTO segment_blast (segment_key, user_id, created_at)
@@ -274,7 +274,6 @@ async function markSentForForceUser(userId, ok, errMsg) {
     [SEGMENT_KEY, userId]
   );
 
-  // 2) 成否で更新
   if (ok) {
     await pool.query(
       `
@@ -309,7 +308,6 @@ async function loadBuyerIds(kind, days) {
     ? `AND created_at >= NOW() - ($2::text || ' days')::interval`
     : ``;
 
-  // ユーザーごとの「最後の購入」を1件に絞って分類（payment_method 実態に合わせて固定）
   const sql = `
     WITH last_buy AS (
       SELECT DISTINCT ON (user_id)
@@ -344,7 +342,7 @@ async function loadBuyerIds(kind, days) {
   return rows.map(r => r.user_id).filter(Boolean);
 }
 
-// ✅ BUYER_KIND 用：送信台帳（segment_blast）に行を作る（未送信管理のため）
+// ✅ BUYER_KIND 用：送信台帳（segment_blast）に行を作る
 async function ensureBlastRows(segmentKey, userIds) {
   if (!userIds || userIds.length === 0) return 0;
 
@@ -360,6 +358,16 @@ async function ensureBlastRows(segmentKey, userIds) {
   return rowCount || 0;
 }
 
+// ✅【追加】注文ID → user_id 解決（FORCE_ORDER_ID）
+async function resolveUserIdFromOrderId(orderId) {
+  const oid = Number(orderId);
+  if (!Number.isFinite(oid) || oid <= 0) throw new Error(`FORCE_ORDER_ID invalid: ${orderId}`);
+
+  const r = await pool.query(`select user_id from orders where id = $1`, [oid]);
+  const uid = (r.rows?.[0]?.user_id || "").trim();
+  return uid; // 空の可能性あり
+}
+
 (async () => {
   const messages = loadMessages();
 
@@ -372,30 +380,52 @@ async function ensureBlastRows(segmentKey, userIds) {
   console.log(`AUTO_ROSTER_3D=${AUTO_ROSTER_3D ? "1" : "0"} FIRST_SEEN_DAYS=${FIRST_SEEN_DAYS}`);
   console.log(`ONCE_ONLY=${ONCE_ONLY ? "1" : "0"} (global)`);
   console.log(`EXCLUDE_SENT_KEYS=${EXCLUDE_SENT_KEYS.length ? EXCLUDE_SENT_KEYS.join(",") : "(none)"}`);
+
+  console.log(`FORCE_ORDER_ID=${FORCE_ORDER_ID || "(none)"}`);
   console.log(`FORCE_USER_ID=${FORCE_USER_ID || "(none)"}`);
 
   console.log(`BUYER_KIND=${BUYER_KIND || "(none)"} BUYER_DAYS=${BUYER_DAYS || "(none)"}`);
-
-  // ✅ 今回追加：SLOTログ
   console.log(`SLOT=${SLOT || "(none)"}`);
 
-  // ✅ 今回追加：この実行では global ever_sent 除外をスキップするか
   const skipGlobalEverSent = SKIP_GLOBAL_EVER_SENT || SKIP_GLOBAL_EVER_SENT_KEYS.has(SEGMENT_KEY);
   console.log(`SKIP_GLOBAL_EVER_SENT=${skipGlobalEverSent ? "1" : "0"} (keys=${[...SKIP_GLOBAL_EVER_SENT_KEYS].join(",")})`);
-
-  // ✅ これもログで見えるように（お花見など例外運用の確認）
   console.log(`INCLUDE_BOUGHT=${INCLUDE_BOUGHT ? "1" : "0"}`);
 
   console.log(`messages_count=${messages.length}, first_type=${messages[0]?.type}`);
 
-  // ✅ 先に FORCE_USER_ID を処理（フィルタ全部無視でこの人だけ）
-  if (FORCE_USER_ID) {
-    if (!isValidLineUserId(FORCE_USER_ID)) {
-      throw new Error(`FORCE_USER_ID invalid: ${FORCE_USER_ID}`);
+  // ============================================================
+  // ✅ FORCE MODE（最優先）：FORCE_ORDER_ID → user_id → 送信
+  //   優先順位：FORCE_ORDER_ID > FORCE_USER_ID
+  //   両方指定時：不一致なら停止（事故防止）
+  // ============================================================
+  let forceUid = FORCE_USER_ID;
+
+  if (FORCE_ORDER_ID) {
+    console.log("=== FORCE ORDER MODE ===");
+    console.log(`FORCE_ORDER_ID=${FORCE_ORDER_ID}`);
+
+    const uidFromOrder = await resolveUserIdFromOrderId(FORCE_ORDER_ID);
+    if (!uidFromOrder) {
+      console.log(`No user_id for order id=${FORCE_ORDER_ID} (nothing to send).`);
+      await pool.end();
+      return;
+    }
+
+    if (FORCE_USER_ID && uidFromOrder !== FORCE_USER_ID.trim()) {
+      throw new Error(`FORCE mismatch: order(${FORCE_ORDER_ID})=>${uidFromOrder} but FORCE_USER_ID=${FORCE_USER_ID}`);
+    }
+
+    forceUid = uidFromOrder;
+    console.log(`FORCE_ORDER_ID resolved user_id=${forceUid}`);
+  }
+
+  if (forceUid) {
+    if (!isValidLineUserId(forceUid)) {
+      throw new Error(`FORCE user_id invalid: ${forceUid}`);
     }
 
     console.log("=== FORCE MODE ===");
-    console.log(`force_targets=1 (${FORCE_USER_ID})`);
+    console.log(`force_targets=1 (${forceUid})`);
 
     if (DRY_RUN) {
       console.log("DRY_RUN=1 so not sending (FORCE MODE).");
@@ -404,11 +434,11 @@ async function ensureBlastRows(segmentKey, userIds) {
     }
 
     try {
-      await lineMulticast([FORCE_USER_ID], messages);
-      await markSentForForceUser(FORCE_USER_ID, true, null);
+      await lineMulticast([forceUid], messages);
+      await markSentForForceUser(forceUid, true, null);
       console.log("OK force send: 1");
     } catch (e) {
-      await markSentForForceUser(FORCE_USER_ID, false, e?.message || e);
+      await markSentForForceUser(forceUid, false, e?.message || e);
       console.error("NG force send:", e?.message || e);
       throw e;
     }
@@ -416,6 +446,10 @@ async function ensureBlastRows(segmentKey, userIds) {
     await pool.end();
     return;
   }
+
+  // ============================================================
+  // 通常モード（既存のまま）
+  // ============================================================
 
   // 0) AUTO_ROSTER（N日経過を名簿へ）※ BUYER_KIND 時でも動かしてOK
   if (AUTO_ROSTER_3D) {
@@ -452,15 +486,12 @@ async function ensureBlastRows(segmentKey, userIds) {
     const created = await ensureBlastRows(SEGMENT_KEY, buyerIds);
     console.log(`segment_blast_rows_created=${created} (if missing)`);
 
-    console.log(`already_bought_users=(skipped in BUYER MODE)`); // BUYER配信では商品購入除外をしないのが基本
+    console.log(`already_bought_users=(skipped in BUYER MODE)`);
   } else {
-    // 既存どおり：商品「購入済み」は除外用に取得
     const boughtSql = buildAlreadyBoughtSQL();
     const bought = await pool.query(boughtSql, [FUKUBAKO_ID]);
     const boughtSet = new Set(bought.rows.map(r => r.user_id).filter(Boolean));
     console.log(`already_bought_users=${boughtSet.size}`);
-
-    // 後段で使うので閉じない
     globalThis.__boughtSet = boughtSet;
   }
 
@@ -481,7 +512,6 @@ async function ensureBlastRows(segmentKey, userIds) {
   }
 
   // 4) segment_blast から「未送信」を取得（最大20000）
-  // ✅ 変更：SLOTが指定されていれば DB側で朝/昼/夜に絞り込む（JST判定）
   const slotParam = (SLOT === "morning" || SLOT === "day" || SLOT === "night") ? SLOT : null;
 
   const unsentSql = `
@@ -523,22 +553,20 @@ async function ensureBlastRows(segmentKey, userIds) {
   const { rows } = await pool.query(unsentSql, [SEGMENT_KEY, slotParam]);
 
   const allTargets = rows.map(r => r.user_id).filter(Boolean);
-console.log(`roster_total=${allTargets.length}`);
+  console.log(`roster_total=${allTargets.length}`);
 
   // 5) フィルタ
   let ids = allTargets;
 
-  // 未購入配信（従来）だけ：FUKUBAKO_ID 購入済み除外
   if (!BUYER_KIND && !INCLUDE_BOUGHT) {
     const boughtSet = globalThis.__boughtSet || new Set();
     ids = ids.filter(uid => !boughtSet.has(uid));
   }
 
-  // 共通：キー指定送信済み除外・（任意）全キー永久除外
   if (excludeByKeysSet.size) ids = ids.filter(uid => !excludeByKeysSet.has(uid));
   if (ONCE_ONLY) ids = ids.filter(uid => !everSentSet.has(uid));
 
-  // 6) 不正userId（TEST_USERなど）を除外
+  // 6) 不正userId除外
   const invalid = ids.filter(uid => !isValidLineUserId(String(uid).trim()));
   const valid = ids.filter(uid => isValidLineUserId(String(uid).trim()));
 
@@ -576,7 +604,7 @@ console.log(`roster_total=${allTargets.length}`);
     return;
   }
 
-  const batches = chunk(valid, 500); // multicastは最大500
+  const batches = chunk(valid, 500);
   let sent = 0;
   let failed = 0;
 
@@ -611,7 +639,6 @@ console.log(`roster_total=${allTargets.length}`);
       );
     }
 
-    // レート対策（軽く間隔）
     await new Promise((r) => setTimeout(r, 200));
   }
 

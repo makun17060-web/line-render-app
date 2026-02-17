@@ -1,49 +1,65 @@
 /**
  * scripts/import_b2_tracking.js
- * ヤマトB2「外部ファイルに出力」CSV から
- * 送り状番号(伝票番号) を orders.id（お客様管理番号）に紐付けて更新
+ * ヤマトB2「発行済データ（外部ファイルに出力）」CSV から
+ * 送り状番号(伝票番号) を orders.id（お客様管理番号）に紐付けて更新する。
+ *
+ * ✅ 想定（あなたのCSV）
+ * - 1列目: お客様管理番号（= orders.id）
+ * - 4列目: 送り状番号（例: 489804159832 / 4898-0415-9832 等）
  *
  * Run:
- *   FILE=./VMINxxxx.csv node scripts/import_b2_tracking.js
+ *   FILE=./tmp/20260217153717.csv DRY_RUN=1 FORCE_B2_ISSUED=1 node scripts/import_b2_tracking.js
+ *   FILE=./tmp/20260217153717.csv FORCE_B2_ISSUED=1 node scripts/import_b2_tracking.js
  *
  * Options:
- *   DRY_RUN=1                  更新せずプレビュー
- *   SET_SHIPPED_AT=1           shipped_at も now() で埋める（未設定のみ）
+ *   DRY_RUN=1                 更新せずプレビュー
+ *   SET_SHIPPED_AT=1          shipped_at を now() で埋める（未設定のみ）
+ *   FORCE_B2_ISSUED=1         B2「発行済データCSV」用に列を固定（customer=0, tracking=3）
+ *
+ *   (汎用) FORCE_CUSTOMER_COL=0   お客様管理番号の列（0始まり）
+ *   (汎用) FORCE_TRACKING_COL=3   送り状番号の列（0始まり）
+ *
+ * Dependencies:
+ *   npm i csv-parse iconv-lite
  */
 
 const fs = require("fs");
 const path = require("path");
 const { Client } = require("pg");
 const iconv = require("iconv-lite");
-
-// 依存： npm i csv-parse iconv-lite
 const { parse } = require("csv-parse/sync");
 
 const FILE = process.env.FILE;
 if (!FILE) {
-  console.error("ERROR: FILE=... を指定してね 例) FILE=./b2_export.csv node scripts/import_b2_tracking.js");
+  console.error(
+    "ERROR: FILE=... を指定してね 例) FILE=./tmp/20260217153717.csv FORCE_B2_ISSUED=1 node scripts/import_b2_tracking.js"
+  );
   process.exit(1);
 }
 
 const DRY_RUN = process.env.DRY_RUN === "1";
 const SET_SHIPPED_AT = process.env.SET_SHIPPED_AT === "1";
 
+// 強制列指定（0始まり）
+const FORCE_B2_ISSUED = process.env.FORCE_B2_ISSUED === "1";
+const FORCE_CUSTOMER_COL =
+  process.env.FORCE_CUSTOMER_COL != null ? Number(process.env.FORCE_CUSTOMER_COL) : null;
+const FORCE_TRACKING_COL =
+  process.env.FORCE_TRACKING_COL != null ? Number(process.env.FORCE_TRACKING_COL) : null;
+
 function detectAndDecode(buf) {
-  // B2は Shift_JIS のことが多いので、まず SJIS を試し、ダメそうならUTF-8に逃げる
-  // （厳密判定は難しいので、ここは実務寄り）
+  // B2は Shift_JIS が多いのでまずSJISを試す
   const sjis = iconv.decode(buf, "Shift_JIS");
-  // 日本語ヘッダっぽい文字が含まれていればSJIS採用
-  if (sjis.includes("送り状") || sjis.includes("お客様管理番号") || sjis.includes("外部ファイル")) {
+  if (sjis.includes("送り状") || sjis.includes("お客様管理番号") || sjis.includes("発行済")) {
     return sjis;
   }
-  // UTF-8でも読めるならUTF-8にする
-  const utf8 = buf.toString("utf8");
-  return utf8;
+  // それでもダメならUTF-8
+  return buf.toString("utf8");
 }
 
 function toIntSafe(v) {
   if (v == null) return null;
-  const s = String(v).trim();
+  const s = String(v).trim().replace(/^"|"$/g, "");
   if (!s) return null;
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
@@ -51,10 +67,24 @@ function toIntSafe(v) {
 
 function cleanTracking(v) {
   if (v == null) return null;
-  const s = String(v).trim();
+  let s = String(v).trim();
   if (!s) return null;
-  // 送り状番号はハイフン付きで来るのでそのまま保存（空白だけ除去）
-  return s.replace(/\s+/g, "");
+  // 両端のクォート剥がし
+  s = s.replace(/^"|"$/g, "");
+  // 空白除去
+  s = s.replace(/\s+/g, "");
+  if (!s) return null;
+
+  // B2の「4898-0415-9832」も「489804159832」も受けたいので、見た目はそのまま保存
+  // ただし "0" みたいなのは弾く（今回の事故対策）
+  if (s === "0") return null;
+  return s;
+}
+
+function isNonEmptyString(v) {
+  if (v == null) return false;
+  const s = String(v).trim().replace(/^"|"$/g, "");
+  return s.length > 0;
 }
 
 (async () => {
@@ -67,7 +97,6 @@ function cleanTracking(v) {
   const buf = fs.readFileSync(abs);
   const text = detectAndDecode(buf);
 
-  // CSV解析（B2はカンマ区切りが基本。クォートあり得る）
   const records = parse(text, {
     relax_column_count: true,
     skip_empty_lines: true,
@@ -78,17 +107,16 @@ function cleanTracking(v) {
     process.exit(1);
   }
 
-  // 1行目がヘッダーか判定（日本語ヘッダを含むか）
+  // 1行目がヘッダーか判定（日本語ヘッダっぽい文字が含まれていればヘッダー扱い）
   const header = records[0].map((x) => String(x ?? "").trim());
-  const hasHeader =
-    header.some((h) => h.includes("送り状番号") || h.includes("送り状") || h.includes("お客様管理番号"));
+  const hasHeader = header.some((h) => h.includes("送り状") || h.includes("お客様管理番号"));
 
   let rows = records;
   let idxTracking = null;
   let idxCustomer = null;
 
   if (hasHeader) {
-    // ヘッダー名から列位置を探す
+    // ヘッダー名から列位置を探す（環境差あるので「含む」で拾う）
     idxTracking = header.findIndex((h) => h === "送り状番号" || h.includes("送り状番号"));
     if (idxTracking < 0) idxTracking = header.findIndex((h) => h.includes("送り状"));
 
@@ -97,12 +125,7 @@ function cleanTracking(v) {
 
     rows = records.slice(1);
   } else {
-    // ヘッダー無しの可能性もあるので、その場合は
-    // 「左の方に送り状番号」「どこかにお客様管理番号」がある想定で推測する。
-    // ※ここが不安なら、ヘッダー有りで出力する設定にしておくのが安定。
-    // 推測ルール：
-    // - ハイフン付きの長い番号（####-####-####）を tracking とみなす
-    // - 数字だけの比較的小さい値（注文ID）を customer とみなす
+    // ヘッダー無しの場合の推測（保険）
     for (let r = 0; r < Math.min(rows.length, 20); r++) {
       const line = rows[r].map((x) => String(x ?? "").trim());
       for (let c = 0; c < line.length; c++) {
@@ -115,6 +138,14 @@ function cleanTracking(v) {
     }
   }
 
+  // ✅ 強制列指定（優先度高）
+  if (FORCE_B2_ISSUED) {
+    idxCustomer = 0; // 1列目
+    idxTracking = 3; // 4列目
+  }
+  if (Number.isFinite(FORCE_CUSTOMER_COL)) idxCustomer = FORCE_CUSTOMER_COL;
+  if (Number.isFinite(FORCE_TRACKING_COL)) idxTracking = FORCE_TRACKING_COL;
+
   if (idxTracking == null || idxCustomer == null || idxTracking < 0 || idxCustomer < 0) {
     console.error("ERROR: 列位置を特定できなかった");
     console.error("  idxTracking=", idxTracking, "idxCustomer=", idxCustomer);
@@ -125,9 +156,12 @@ function cleanTracking(v) {
   // (order_id, tracking_no) のペアを作る
   const pairs = [];
   for (const row of rows) {
-    const tracking = cleanTracking(row[idxTracking]);
     const orderId = toIntSafe(row[idxCustomer]);
-    if (!tracking || !orderId) continue;
+    const tracking = cleanTracking(row[idxTracking]);
+
+    if (!orderId) continue;
+    if (!tracking) continue;
+
     pairs.push({ orderId, tracking });
   }
 
@@ -140,9 +174,14 @@ function cleanTracking(v) {
   console.log("hasHeader=", hasHeader, "idxTracking=", idxTracking, "idxCustomer=", idxCustomer);
   console.log("rows=", rows.length, "pairs=", pairs.length, "unique_orders=", unique.length);
 
-  // プレビュー
   console.log("sample:");
   unique.slice(0, 10).forEach((p) => console.log(`  order_id=${p.orderId} tracking=${p.tracking}`));
+
+  // もし tracking が全部 "0" とかになったら早期に気付けるように警告
+  if (unique.length === 0 && rows.length > 0) {
+    console.warn("WARN: 取り込み対象が0件。列指定がズレてる可能性あり。");
+    console.warn("      FORCE_B2_ISSUED=1 / FORCE_TRACKING_COL / FORCE_CUSTOMER_COL を確認してね。");
+  }
 
   if (DRY_RUN) {
     console.log("DRY_RUN=1 なので更新しません");
@@ -158,7 +197,14 @@ function cleanTracking(v) {
   try {
     await client.query("begin");
 
-    // 一時テーブルに入れて一括更新（速い＆安全）
+    // 列がない場合に備えて（安全）
+    await client.query(`
+      alter table orders
+        add column if not exists tracking_no text,
+        add column if not exists shipped_at timestamptz;
+    `);
+
+    // 一時テーブルで一括更新
     await client.query(`
       create temporary table tmp_b2_tracking (
         order_id bigint primary key,
@@ -166,16 +212,15 @@ function cleanTracking(v) {
       ) on commit drop;
     `);
 
-    // COPY相当のバルクinsert
-    const values = [];
-    const params = [];
-    let i = 1;
-    for (const p of unique) {
-      params.push(`($${i++}, $${i++})`);
-      values.push(p.orderId, p.tracking);
-    }
+    if (unique.length > 0) {
+      const values = [];
+      const params = [];
+      let i = 1;
+      for (const p of unique) {
+        params.push(`($${i++}, $${i++})`);
+        values.push(p.orderId, p.tracking);
+      }
 
-    if (params.length > 0) {
       await client.query(
         `insert into tmp_b2_tracking(order_id, tracking_no) values ${params.join(",")}
          on conflict (order_id) do update set tracking_no = excluded.tracking_no`,
@@ -183,8 +228,7 @@ function cleanTracking(v) {
       );
     }
 
-    // orders更新：tracking_no をセット（既に入ってるものは上書きするか？）
-    // 方針：B2が正なので上書きOK（不安なら coalesce で未設定のみ）
+    // orders更新（tracking_no はB2が正なので上書きOK）
     const updateSql = SET_SHIPPED_AT
       ? `
         update orders o

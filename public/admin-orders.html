@@ -40,6 +40,7 @@
     .badge-orders { background:#e3f2fd; color:#1565c0; }
     .badge-chat { background:#f3e5f5; color:#6a1b9a; }
     .badge-addr { background:#e8f5e9; color:#2e7d32; }
+    .pill { display:inline-block; padding:2px 6px; border-radius:6px; background:#f2f2f2; font-size:11px; margin-top:4px; }
   </style>
 </head>
 <body>
@@ -76,16 +77,15 @@
             <th>内容</th>
             <th>金額</th>
             <th>住所</th>
-            <th>発送通知 / 明細印字</th>
+            <th>伝票/発送通知</th>
           </tr>
         </thead>
         <tbody id="ordersTbody"></tbody>
       </table>
     </div>
     <div class="info">
-      ・「発送通知」ボタンは1回押すと「通知済み」になり、再読み込みしても有効です（同じブラウザでのみ有効）。<br/>
-      ・「明細印字」ボタンで1件ずつ A4 縦の注文明細書（印刷ダイアログ）が開きます。<br/>
-      ・複数PCで管理する場合は、サーバー側に発送済みフラグを保存するAPIも用意すると安全です。
+      ・通知済み判定は <b>サーバー側の shipped_notified_at（または notified_kind）</b> があればそれを優先します。無い場合は従来どおりブラウザ内（localStorage）で判定します。<br/>
+      ・伝票番号(tracking_no)が入っている注文は、発送通知メッセージに <b>追跡リンク</b> を自動で付けます。<br/>
     </div>
   </div>
 
@@ -126,7 +126,7 @@
       "use strict";
 
       const ADMIN_TOKEN_KEY = "iso-admin-token";
-      const SHIP_STATE_KEY = "iso-ship-state-v1"; // { orderKey: { status, ts, lastError } }
+      const SHIP_STATE_KEY  = "iso-ship-state-v2"; // { orderKey: { status, ts, lastError } }
       const COD_FEE = 330;
 
       const adminTokenInput = document.getElementById("adminToken");
@@ -152,6 +152,7 @@
 
       function loadAdminToken() { return localStorage.getItem(ADMIN_TOKEN_KEY) || ""; }
       function saveAdminToken(v) { localStorage.setItem(ADMIN_TOKEN_KEY, v || ""); }
+
       function loadShipState() {
         try { return JSON.parse(localStorage.getItem(SHIP_STATE_KEY) || "{}") || {}; }
         catch { return {}; }
@@ -163,8 +164,6 @@
 
       function getToken() { return (adminTokenInput.value || "").trim(); }
 
-      // ✅ 修正点：304キャッシュ回避のため _ts を付与
-      // ✅ 修正点：壊れていた構文を完全修復
       async function apiFetch(path, options = {}) {
         const token = getToken();
         if (!token) {
@@ -186,7 +185,6 @@
           throw new Error("API error: " + res.status);
         }
 
-        // res.json() 失敗時のログ（握りつぶさない）
         try {
           return await res.json();
         } catch (e) {
@@ -208,7 +206,15 @@
         return `${y}-${m}-${dd} ${hh}:${mi}`;
       }
 
+      function escapeHtml(str) {
+        return String(str || "")
+          .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+      }
+
       function buildOrderKey(o, index) {
+        // orders.id があるなら最強キー
+        if (o.id != null) return "id:" + o.id;
         if (o.orderNumber != null) return "ord:" + o.orderNumber;
         const ts = o.ts || o.created_at || "";
         const uid = o.userId || o.lineUserId || "";
@@ -297,10 +303,218 @@
         return [zip ? `〒${zip}` : "", (pref + addr) || "", name ? `氏名：${name}` : "", tel ? `TEL：${tel}` : ""].filter(Boolean).join("\n");
       }
 
-      function escapeHtml(str) {
-        return String(str || "")
-          .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+      function getTracking(o) {
+        const t = (o.tracking_no || o.trackingNo || o.slip_no || "").toString().trim();
+        if (!t || t === "0") return "";
+        return t;
+      }
+
+      function trackingLink(tracking) {
+        if (!tracking) return "";
+        // ヤマト追跡
+        return "https://toi.kuronekoyamato.co.jp/cgi-bin/tneko?number=" + encodeURIComponent(tracking);
+      }
+
+      function isNotifiedServerSide(o) {
+        // サーバーが返せるなら、これを最優先で使う
+        // shipped_notified_at / notified_user_at / notified_kind のどれかがあれば「通知済み」扱い
+        if (o.shipped_notified_at) return true;
+        if (o.notified_user_at && String(o.notified_kind || "").includes("shipping")) return true;
+        if (String(o.notified_kind || "") === "shipping_notice") return true;
+        return false;
+      }
+
+      async function loadOrders() {
+        ordersSummaryEl.textContent = "読み込み中…";
+        ordersTbody.innerHTML = "";
+
+        const dateFilter = (dateFilterInput.value || "").replace(/-/g, "");
+        const params = [];
+        if (dateFilter) params.push("date=" + encodeURIComponent(dateFilter));
+        const path = "/api/admin/orders" + (params.length ? "?" + params.join("&") : "");
+
+        let data;
+        try {
+          data = await apiFetch(path);
+        } catch (e) {
+          ordersSummaryEl.textContent = "読み込みエラー：" + e.message;
+          console.error(e);
+          return;
+        }
+
+        const items = Array.isArray(data && data.items) ? data.items : [];
+        ordersSummaryEl.textContent = `取得件数：${items.length} 件`;
+
+        const shipState = loadShipState();
+
+        items.forEach((o, idx) => {
+          const key = buildOrderKey(o, idx);
+
+          // 通知済み判定：サーバー優先 → 無ければローカル
+          const serverNotified = isNotifiedServerSide(o);
+          const localState = shipState[key] || null;
+          const notified = serverNotified || (localState && localState.status === "ok");
+
+          const tr = document.createElement("tr");
+
+          // 状態
+          const tdStatus = document.createElement("td");
+          const label = document.createElement("span");
+          label.classList.add("status-label");
+          if (!notified) { label.classList.add("status-new"); label.textContent = "未通知"; }
+          else { label.classList.add("status-notified"); label.textContent = "通知済み"; }
+          tdStatus.appendChild(label);
+
+          if (!serverNotified && localState && localState.status === "failed" && localState.lastError) {
+            const err = document.createElement("div");
+            err.className = "small muted";
+            err.textContent = localState.lastError;
+            tdStatus.appendChild(err);
+          }
+
+          tr.appendChild(tdStatus);
+
+          // 注文日時
+          const tdTs = document.createElement("td");
+          tdTs.textContent = formatYmd(o.ts || o.created_at);
+          tr.appendChild(tdTs);
+
+          // ユーザー
+          const tdUser = document.createElement("td");
+          const uid = o.userId || o.lineUserId || "";
+          const addrObj = o.address || {};
+          const name = addrObj.name || o.name || "";
+          tdUser.innerHTML =
+            (name ? `<div>${escapeHtml(name)}</div>` : "") +
+            (uid ? `<div class="mono muted">${escapeHtml(uid)}</div>` : "");
+          tr.appendChild(tdUser);
+
+          // 内容
+          const tdItems = document.createElement("td");
+          tdItems.className = "small";
+          tdItems.textContent = orderItemsText(o);
+          tr.appendChild(tdItems);
+
+          // 金額
+          const tdTotal = document.createElement("td");
+          tdTotal.className = "small";
+          tdTotal.textContent = orderTotalText(o);
+          tr.appendChild(tdTotal);
+
+          // 住所
+          const tdAddr = document.createElement("td");
+          tdAddr.className = "small";
+          tdAddr.textContent = orderAddressText(o);
+          tr.appendChild(tdAddr);
+
+          // 伝票/通知
+          const tdNotify = document.createElement("td");
+
+          // 伝票表示
+          const tracking = getTracking(o);
+          const trkDiv = document.createElement("div");
+          trkDiv.className = "small";
+          if (tracking) {
+            const link = trackingLink(tracking);
+            trkDiv.innerHTML =
+              `<div class="pill">伝票：<span class="mono">${escapeHtml(tracking)}</span></div>` +
+              `<div class="small"><a href="${escapeHtml(link)}" target="_blank" rel="noopener">追跡を開く</a></div>`;
+          } else {
+            trkDiv.innerHTML = `<div class="pill muted">伝票：未登録</div>`;
+          }
+          tdNotify.appendChild(trkDiv);
+
+          // 明細印字（必要なら）
+          const printBtn = document.createElement("button");
+          printBtn.className = "btn btn-secondary";
+          printBtn.textContent = "明細印字";
+          printBtn.style.display = "block";
+          printBtn.style.margin = "6px 0 4px";
+          printBtn.addEventListener("click", () => printOrderDetail(o));
+          tdNotify.appendChild(printBtn);
+
+          // 発送通知ボタン
+          const btn = document.createElement("button");
+          btn.className = "btn btn-primary";
+          btn.textContent = notified ? "通知済み" : "発送通知を送る";
+          btn.disabled = notified;
+
+          btn.addEventListener("click", async () => {
+            const uidForNotify = o.lineUserId || o.userId || "";
+            if (!uidForNotify) { alert("ユーザーIDが無いため、LINEに通知できません。"); return; }
+            if (!confirm("この注文の発送通知を送信しますか？")) return;
+
+            btn.disabled = true;
+            btn.textContent = "送信中…";
+
+            const itemsText = orderItemsText(o);
+            const totalText = orderTotalText(o);
+
+            const trackingNow = getTracking(o);
+            const trackingBlock = trackingNow
+              ? ("\n\n▼伝票番号\n" + trackingNow +
+                 "\n追跡：" + trackingLink(trackingNow))
+              : "\n\n※伝票番号が未登録です（必要なら後で追跡番号を追送してください）";
+
+            const msg =
+              "【発送のお知らせ】\n" +
+              "手造りえびせんべい 磯屋です。\n\n" +
+              "ご注文いただいた商品を、本日発送いたしました。\n\n" +
+              "▼ご注文内容\n" + itemsText +
+              "\n\n" + totalText +
+              trackingBlock +
+              "\n\n" +
+              "商品到着まで今しばらくお待ちくださいませ。";
+
+            try {
+              // ここはあなたの既存APIに合わせてる
+              await apiFetch("/api/admin/orders/notify-shipped", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  orderId: o.id,           // orders.id が入ってる前提
+                  userId: uidForNotify,
+                  orderKey: key,
+                  message: msg,
+                  tracking_no: trackingNow // サーバー側で使っても使わなくてもOK
+                }),
+              });
+
+              // ローカルにも記録（サーバーが未対応でもUIが安定）
+              const st = loadShipState();
+              st[key] = { status: "ok", ts: new Date().toISOString() };
+              saveShipState(st);
+
+              btn.textContent = "通知済み";
+              label.classList.remove("status-new", "status-failed");
+              label.classList.add("status-notified");
+              label.textContent = "通知済み";
+            } catch (e) {
+              console.error("notify shipped error:", e);
+              alert("通知送信に失敗しました。サーバー側のAPI実装を確認してください。");
+
+              const st = loadShipState();
+              st[key] = { status: "failed", ts: new Date().toISOString(), lastError: e.message || String(e) };
+              saveShipState(st);
+
+              btn.disabled = false;
+              btn.textContent = "再試行";
+              label.classList.remove("status-new", "status-notified");
+              label.classList.add("status-failed");
+              label.textContent = "エラー";
+            }
+          });
+
+          tdNotify.appendChild(btn);
+
+          const keyDiv = document.createElement("div");
+          keyDiv.className = "mono muted small";
+          keyDiv.textContent = key + (o.id != null ? ` (id:${o.id})` : "");
+          tdNotify.appendChild(keyDiv);
+
+          tr.appendChild(tdNotify);
+          ordersTbody.appendChild(tr);
+        });
       }
 
       function printOrderDetail(o) {
@@ -423,160 +637,6 @@
         w.onload = () => { w.print(); };
       }
 
-      async function loadOrders() {
-        ordersSummaryEl.textContent = "読み込み中…";
-        ordersTbody.innerHTML = "";
-
-        const dateFilter = (dateFilterInput.value || "").replace(/-/g, "");
-        const params = [];
-        if (dateFilter) params.push("date=" + encodeURIComponent(dateFilter));
-        let path = "/api/admin/orders" + (params.length ? "?" + params.join("&") : "");
-path += (path.includes("?") ? "&" : "?") + "_ts=" + Date.now(); // ★304回避
-
-let data;
-try { data = await apiFetch(path); }
-
-        catch (e) {
-          ordersSummaryEl.textContent = "読み込みエラー：" + e.message;
-          console.error(e);
-          return;
-        }
-
-        const items = Array.isArray(data && data.items) ? data.items : [];
-        ordersSummaryEl.textContent = `取得件数：${items.length} 件`;
-
-        const shipState = loadShipState();
-
-        items.forEach((o, idx) => {
-          const key = buildOrderKey(o, idx);
-          const state = shipState[key] || null;
-
-          const tr = document.createElement("tr");
-
-          const tdStatus = document.createElement("td");
-          const label = document.createElement("span");
-          label.classList.add("status-label");
-          if (!state) { label.classList.add("status-new"); label.textContent = "未通知"; }
-          else if (state.status === "ok") { label.classList.add("status-notified"); label.textContent = "通知済み"; }
-          else { label.classList.add("status-failed"); label.textContent = "エラー"; }
-          tdStatus.appendChild(label);
-          if (state && state.lastError) {
-            const err = document.createElement("div");
-            err.className = "small muted";
-            err.textContent = state.lastError;
-            tdStatus.appendChild(err);
-          }
-          tr.appendChild(tdStatus);
-
-          const tdTs = document.createElement("td");
-          tdTs.textContent = formatYmd(o.ts || o.created_at);
-          tr.appendChild(tdTs);
-
-          const tdUser = document.createElement("td");
-          const uid = o.userId || o.lineUserId || "";
-          const addrObj = o.address || {};
-          const name = addrObj.name || o.name || "";
-          tdUser.innerHTML = (name ? `<div>${escapeHtml(name)}</div>` : "") + (uid ? `<div class="mono muted">${escapeHtml(uid)}</div>` : "");
-          tr.appendChild(tdUser);
-
-          const tdItems = document.createElement("td");
-          tdItems.className = "small";
-          tdItems.textContent = orderItemsText(o);
-          tr.appendChild(tdItems);
-
-          const tdTotal = document.createElement("td");
-          tdTotal.className = "small";
-          tdTotal.textContent = orderTotalText(o);
-          tr.appendChild(tdTotal);
-
-          const tdAddr = document.createElement("td");
-          tdAddr.className = "small";
-          tdAddr.textContent = orderAddressText(o);
-          tr.appendChild(tdAddr);
-
-          const tdNotify = document.createElement("td");
-
-          const printBtn = document.createElement("button");
-          printBtn.className = "btn btn-secondary";
-          printBtn.textContent = "明細印字";
-          printBtn.style.display = "block";
-          printBtn.style.marginBottom = "4px";
-          printBtn.addEventListener("click", () => printOrderDetail(o));
-          tdNotify.appendChild(printBtn);
-
-          const btn = document.createElement("button");
-          btn.className = "btn btn-primary";
-          btn.textContent = (state && state.status === "ok") ? "通知済み" : "発送通知を送る";
-          btn.disabled = !!state && state.status === "ok";
-
-          btn.addEventListener("click", async () => {
-            const uidForNotify = o.lineUserId || o.userId || "";
-            if (!uidForNotify) { alert("ユーザーIDが無いため、LINEに通知できません。"); return; }
-            if (!confirm("この注文の発送通知を送信しますか？")) return;
-
-            btn.disabled = true;
-            btn.textContent = "送信中…";
-
-            const itemsText = orderItemsText(o);
-            const totalText = orderTotalText(o);
-
-            const msg =
-              "【発送のお知らせ】\n" +
-              "手造りえびせんべい 磯屋です。\n\n" +
-              "ご注文いただいた商品を、本日発送いたしました。\n\n" +
-              "▼ご注文内容\n" + itemsText +
-              "\n\n" + totalText +
-              "\n\n" +
-              "商品到着まで今しばらくお待ちくださいませ。";
-
-            try {
-              await apiFetch("/api/admin/orders/notify-shipped", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  orderId: o.id,
-                  userId: uidForNotify,
-                  orderKey: key,
-                  message: msg
-                }),
-              });
-
-              const st = loadShipState();
-              st[key] = { status: "ok", ts: new Date().toISOString() };
-              saveShipState(st);
-
-              btn.textContent = "通知済み";
-              label.classList.remove("status-new", "status-failed");
-              label.classList.add("status-notified");
-              label.textContent = "通知済み";
-            } catch (e) {
-              console.error("notify shipped error:", e);
-              alert("通知送信に失敗しました。サーバー側のAPI実装を確認してください。");
-
-              const st = loadShipState();
-              st[key] = { status: "failed", ts: new Date().toISOString(), lastError: e.message || String(e) };
-              saveShipState(st);
-
-              btn.disabled = false;
-              btn.textContent = "再試行";
-              label.classList.remove("status-new", "status-notified");
-              label.classList.add("status-failed");
-              label.textContent = "エラー";
-            }
-          });
-
-          tdNotify.appendChild(btn);
-
-          const keyDiv = document.createElement("div");
-          keyDiv.className = "mono muted small";
-          keyDiv.textContent = key + (o.id != null ? ` (id:${o.id})` : "");
-          tdNotify.appendChild(keyDiv);
-
-          tr.appendChild(tdNotify);
-          ordersTbody.appendChild(tr);
-        });
-      }
-
       async function previewSegment() {
         const type = segmentTypeSelect.value;
         const date = (segmentDateInput.value || "").replace(/-/g, "");
@@ -659,7 +719,7 @@ try { data = await apiFetch(path); }
         const t = loadAdminToken();
         if (t) adminTokenInput.value = t;
 
-        adminTokenInput.addEventListener("change", () => saveAdminToken(adminTokenInput.value || ""));
+        adminTokenInput.addEventListener("change", () => saveAdminToken(adminTokenInput.value || ""انية"));
         reloadBtn.addEventListener("click", loadOrders);
         dateFilterInput.addEventListener("change", loadOrders);
 

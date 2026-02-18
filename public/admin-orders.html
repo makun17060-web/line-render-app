@@ -719,7 +719,8 @@
         const t = loadAdminToken();
         if (t) adminTokenInput.value = t;
 
-        adminTokenInput.addEventListener("change", () => saveAdminToken(adminTokenInput.value || ""انية"));
+        adminTokenInput.addEventListener("change", () => saveAdminToken(adminTokenInput.value || ""));
+
         reloadBtn.addEventListener("click", loadOrders);
         dateFilterInput.addEventListener("change", loadOrders);
 

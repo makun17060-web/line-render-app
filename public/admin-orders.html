@@ -472,7 +472,7 @@
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  orderId: o.id,           // orders.id が入ってる前提
+                  orderId: o.orderNumber,         // orders.id が入ってる前提
                   userId: uidForNotify,
                   orderKey: key,
                   message: msg,

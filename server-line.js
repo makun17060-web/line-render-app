@@ -1952,9 +1952,14 @@ app.get("/api/admin/orders", requireAdmin, async (req, res) => {
   try {
     let sql = `
       SELECT
-        id, user_id, items, total, shipping_fee, payment_method, status,
-        name, zip, pref, address, created_at
-      FROM orders
+  id, user_id, items, total, shipping_fee, payment_method, status,
+  name, zip, pref, address, created_at,
+  tracking_no,
+  shipped_notified_at,
+  notified_kind,
+  notified_user_at
+FROM orders
+
       ORDER BY created_at DESC
       LIMIT 500
     `;
@@ -2007,6 +2012,11 @@ app.get("/api/admin/orders", requireAdmin, async (req, res) => {
         subtotal,
         shipping: Number(row.shipping_fee || 0),
         codFee,
+        tracking_no: row.tracking_no || "",
+shipped_notified_at: row.shipped_notified_at || null,
+notified_kind: row.notified_kind || "",
+notified_user_at: row.notified_user_at || null,
+
         finalTotal: Number(row.total || 0),
         payment: row.payment_method || "",
         method: (row.status === "pickup" ? "pickup" : "delivery"),
@@ -2073,15 +2083,69 @@ return res.send(csv);
 });
 
 // 発送通知（管理画面→ユーザーへPush）
+// - orderId を必須にしてDBに通知済みを保存（PC変えても二重送信しない）
+// - すでに通知済みなら送らずに {already:true} を返す（冪等）
 app.post("/api/admin/orders/notify-shipped", requireAdmin, async (req, res) => {
+  const client = await pool.connect();
   try {
-    const { userId, message } = req.body || {};
-    if (!userId || !message) return res.status(400).send("bad_request");
+    const { orderId, userId, message } = req.body || {};
+    const oid = Number(orderId);
+
+    if (!oid || !userId || !message) {
+      return res.status(400).json({ ok:false, error:"bad_request", need:["orderId","userId","message"] });
+    }
+
+    await client.query("begin");
+
+    const r = await client.query(
+      `
+      SELECT id, user_id, tracking_no, shipped_notified_at
+      FROM orders
+      WHERE id = $1
+      FOR UPDATE
+      `,
+      [oid]
+    );
+
+    if (r.rowCount === 0) {
+      await client.query("rollback");
+      return res.status(404).json({ ok:false, error:"order_not_found" });
+    }
+
+    const row = r.rows[0];
+
+    if (String(row.user_id) !== String(userId)) {
+      await client.query("rollback");
+      return res.status(400).json({ ok:false, error:"user_mismatch" });
+    }
+
+    if (row.shipped_notified_at) {
+      await client.query("commit");
+      return res.json({ ok:true, already:true });
+    }
+
     await lineClient.pushMessage(String(userId), { type: "text", text: String(message) });
-    res.json({ ok: true });
+
+    await client.query(
+      `
+      UPDATE orders
+      SET shipped_notified_at = now(),
+          notified_kind = 'shipping_notice',
+          notified_user_at = now()
+      WHERE id = $1
+      `,
+      [oid]
+    );
+
+    await client.query("commit");
+    return res.json({ ok:true, updated:true });
+
   } catch (e) {
+    try { await client.query("rollback"); } catch {}
     console.error("[api/admin/orders/notify-shipped] failed", e?.stack || e);
-    res.status(500).json({ ok:false, error:"failed" });
+    return res.status(500).json({ ok:false, error:"failed" });
+  } finally {
+    client.release();
   }
 });
 

@@ -126,12 +126,12 @@ function readFileSmart(p) {
   try {
     for (const p of pairs) {
       const res = await client.query(
-        `update orders
-           set tracking_no = $1,
-               tracking_updated_at = now()
-         where id = $2`,
-        [p.trackingNo, p.orderId]
-      );
+  `update orders
+     set tracking_no = $1
+   where id = $2`,
+  [p.trackingNo, p.orderId]
+);
+
       updated += res.rowCount;
     }
     await client.query("commit");

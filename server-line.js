@@ -1965,18 +1965,22 @@ FROM orders
     `;
     let params = [];
 
-    if (date && /^\d{8}$/.test(date)) {
-      sql = `
-        SELECT
-          id, user_id, items, total, shipping_fee, payment_method, status,
-          name, zip, pref, address, created_at
-        FROM orders
-        WHERE to_char((created_at AT TIME ZONE 'Asia/Tokyo'), 'YYYYMMDD') = $1
-        ORDER BY created_at DESC
-        LIMIT 500
-      `;
-      params = [date];
-    }
+  if (date && /^\d{8}$/.test(date)) {
+  sql = `
+    SELECT
+      id, user_id, items, total, shipping_fee, payment_method, status,
+      name, zip, pref, address, created_at,
+      tracking_no,
+      shipped_notified_at,
+      notified_kind,
+      notified_user_at
+    FROM orders
+    WHERE to_char((created_at AT TIME ZONE 'Asia/Tokyo'), 'YYYYMMDD') = $1
+    ORDER BY created_at DESC
+    LIMIT 500
+  `;
+  params = [date];
+}
 
     const r = await pool.query(sql, params);
 

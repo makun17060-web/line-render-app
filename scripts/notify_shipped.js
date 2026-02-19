@@ -12,6 +12,7 @@
  *  - ONLY_ORDER_ID=123    => 1件だけ（検証用）
  *  - SAFE_USER_ID=Uxxxx   => この user_id 以外は送らない（事故防止）
  */
+require("dotenv").config();
 
 const { Client } = require("pg");
 

@@ -7,9 +7,19 @@
  * - 5列目：出荷予定日（固定）
  * - 6列目：コレクト金額 = DB total（商品＋送料）※代引のみ
  * - SHIFT_JIS=1 でShift_JIS出力
- * - STATUS_LIST="" or " " で全件対象
- * - ONLY_ID=284 で単発検証
+ * - STATUS_LIST="" or " " で全件対象（ただし ONLY_UNSHIPPED=1 なら未発送のみ）
+ * - ONLY_ID=284 で単発検証（この場合は未発送縛りを無効化）
+ *
+ * ✅今回追加（重要）
+ * - デフォルトで「未発送だけ」出す：tracking_no が空の注文のみ
+ *   - ONLY_UNSHIPPED=1（デフォ）: 未発送のみ
+ *   - ONLY_UNSHIPPED=0          : 旧挙動（status絞りのみ / 全件も可）
+ *
+ * ✅.env対応
+ * - .env を使うならプロジェクト直下に置いて dotenv で読み込み
  */
+
+require("dotenv").config();
 
 const { Client } = require("pg");
 
@@ -34,6 +44,9 @@ const SHIFT_JIS = process.env.SHIFT_JIS === "1";
 const DELIVERY_TIME = (process.env.DELIVERY_TIME || "").trim();
 const COOL_TYPE = String(process.env.COOL_TYPE ?? "0").trim();
 const SLIP_NO = (process.env.SLIP_NO || "").trim();
+
+// ✅ 追加：未発送だけ出す（デフォルトON）
+const ONLY_UNSHIPPED = String(process.env.ONLY_UNSHIPPED || "1") === "1";
 
 function pad2(n) {
   return String(n).padStart(2, "0");
@@ -152,20 +165,27 @@ function mapOrderToDict(order) {
 }
 
 async function main() {
-  const client = new Client({ connectionString: DATABASE_URL });
+  const client = new Client({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
   await client.connect();
 
   const whereParts = [];
   const params = [];
 
+  // 単発検証（この場合は未発送縛りを外す）
   if (ONLY_ID) {
     params.push(Number(ONLY_ID));
     whereParts.push(`id = $${params.length}`);
-  }
+  } else {
+    // ✅ デフォ：未発送だけ（tracking_no が空のものだけ）
+    if (ONLY_UNSHIPPED) {
+      whereParts.push(`(tracking_no IS NULL OR tracking_no = '')`);
+    }
 
-  if (STATUS_LIST.length) {
-    params.push(STATUS_LIST);
-    whereParts.push(`status = ANY($${params.length})`);
+    // ステータス絞り
+    if (STATUS_LIST.length) {
+      params.push(STATUS_LIST);
+      whereParts.push(`status = ANY($${params.length})`);
+    }
   }
 
   const where = whereParts.length ? `WHERE ${whereParts.join(" AND ")}` : "";
@@ -175,7 +195,8 @@ async function main() {
       id, status, payment_method,
       name, phone, zip, pref, address,
       total, shipping_fee,
-      created_at
+      created_at,
+      tracking_no
     FROM orders
     ${where}
     ORDER BY created_at DESC

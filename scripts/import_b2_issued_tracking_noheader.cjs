@@ -98,7 +98,11 @@ function readFileSmart(p) {
     process.exit(1);
   }
 
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
+ const client = new Client({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
+
   await client.connect();
 
   // 事故防止：サンプル存在チェック

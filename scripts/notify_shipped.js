@@ -98,21 +98,18 @@ async function main() {
     // LIMIT
     params.push(LIMIT);
 
-    const sql = `
-      SELECT
-        id,
-        user_id,
-        tracking_no,
-        status,
-        -- 名前は addresses か orders にある想定が分からないので、
-        -- まず orders.name があればそれ、無ければ addresses.name を使うなどに調整してください。
-        COALESCE(o.name, a.name, '') AS name
-      FROM orders o
-      LEFT JOIN addresses a ON a.id = o.address_id
-      WHERE ${where.join(" AND ")}
-      ORDER BY id ASC
-      LIMIT $${params.length}
-    `;
+const sql = `
+  SELECT
+    id,
+    user_id,
+    tracking_no,
+    status,
+    COALESCE(name, '') AS name
+  FROM orders
+  WHERE ${where.join(" AND ")}
+  ORDER BY id ASC
+  LIMIT $${params.length}
+`;
 
     const { rows } = await client.query(sql, params);
 

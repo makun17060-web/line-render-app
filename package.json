@@ -10,7 +10,10 @@
     "start-phone": "node server-phone.js",
     "start-phone-cod": "node server-phone-cod.js",
     "testpush": "node scripts/test-push.js",
-    "testpush:flex": "node scripts/test-push-flex.js"
+    "testpush:flex": "node scripts/test-push-flex.js",
+
+    "ship:notify": "node scripts/notify_shipped.js",
+    "ship:all": "node scripts/import_yamato_tracking_csv.js && node scripts/notify_shipped.js"
   },
   "dependencies": {
     "@line/bot-sdk": "^7.6.0",

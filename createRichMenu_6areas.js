@@ -82,49 +82,41 @@ const shippingUrl = (SHIPPING_URL || `${baseUrl}/public/shipping.html`).trim();
       name: "磯屋_3x2_6areas",
       chatBarText: "メニュー",
       areas: [
-        // 1行目
-        {
-          // 左上：ご注文はこちら（注文LIFF）
-          bounds: { x: 0, y: 0, width: 833, height: 843 },
-          action: { type: "uri", label: "ご注文はこちら", uri: "https://liff.line.me/2008406620-8CWfgEKh" },
-        },
-        {
-          // 中央上：ECショップ
-          bounds: { x: 833, y: 0, width: 834, height: 843 },
-          action: { type: "uri", label: "ECショップ", uri: "https://isoya-shop.com" },
-        },
-        {
-          // 右上：ご利用方法
-          bounds: { x: 1667, y: 0, width: 833, height: 843 },
-          action: { type: "uri", label: "ご利用方法", uri: "https://liff.line.me/2008406620-QQFfWP1w" },
-        },
+  // 1行目
+  {
+    bounds: { x: 0, y: 0, width: 833, height: 843 },
+    action: { type: "uri", label: "ご注文はこちら", uri: ORDER_LIFF_URL },
+  },
+  {
+    bounds: { x: 833, y: 0, width: 834, height: 843 },
+    action: { type: "uri", label: "ECショップ", uri: productsUrl },
+  },
+  {
+    bounds: { x: 1667, y: 0, width: 833, height: 843 },
+    action: { type: "uri", label: "ご利用方法", uri: howtoUrl },
+  },
 
-        // 2行目
-        {
-          // 左下：店頭受取（★ここを LIFF で開く）
-          bounds: { x: 0, y: 843, width: 833, height: 843 },
-          action: { type: "uri", label: "店頭受取", uri: STORE_LIFF_URL },
-        },
-        {
-         
-       {
-  // 中央下：おまかせ便（定期案内）
-  bounds: { x: 833, y: 843, width: 834, height: 843 },
-  action: {
-    type: "postback",
-    data: "action=sub_view",
-    displayText: "おまかせ便"
+  // 2行目
+  {
+    bounds: { x: 0, y: 843, width: 833, height: 843 },
+    action: { type: "uri", label: "店頭受取", uri: STORE_LIFF_URL },
+  },
+  {
+    bounds: { x: 833, y: 843, width: 834, height: 843 },
+    action: {
+      type: "postback",
+      data: "action=sub_view",
+      displayText: "おまかせ便"
+    }
+  },
+  {
+    bounds: { x: 1667, y: 843, width: 833, height: 843 },
+    action: { type: "uri", label: "お問い合わせ", uri: "https://liff.line.me/2008406620-LUJ3dURd" },
   }
-},
+],
+ };
 
-        {
-          //右下：お問い合わせ
-          bounds: { x: 1667, y: 843, width: 833, height: 843 },
-          action: { type: "uri", label: "お問い合わせ", uri: "https://liff.line.me/2008406620-LUJ3dURd" },
-        }
-      ],
-    };
-
+ 
     console.log("=== createRichMenu start ===");
     console.log("BASE:", baseUrl);
     console.log("ORDER(LIFF):", ORDER_LIFF_URL);

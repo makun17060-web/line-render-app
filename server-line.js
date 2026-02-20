@@ -3370,7 +3370,7 @@ async function onPostback(ev) {
     // それ以外は無視
     return;
   }
-}
+
 
 /* =========================
  * Text message（キーワード / 直接注文 / 住所誘導）

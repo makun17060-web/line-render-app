@@ -106,12 +106,19 @@ const shippingUrl = (SHIPPING_URL || `${baseUrl}/public/shipping.html`).trim();
           action: { type: "uri", label: "店頭受取", uri: STORE_LIFF_URL },
         },
         {
-          // 中央下：配送・送料
-          bounds: { x: 833, y: 843, width: 834, height: 843 },
-          action: { type: "uri", label: "配送・送料", uri: "https://line-render-app-1.onrender.com/public/shipping-calc.html" },
-        },
+         
+       {
+  // 中央下：おまかせ便（定期案内）
+  bounds: { x: 833, y: 843, width: 834, height: 843 },
+  action: {
+    type: "postback",
+    data: "action=sub_view",
+    displayText: "おまかせ便"
+  }
+},
+
         {
-          // 右下：お問い合わせ
+          //右下：お問い合わせ
           bounds: { x: 1667, y: 843, width: 833, height: 843 },
           action: { type: "uri", label: "お問い合わせ", uri: "https://liff.line.me/2008406620-LUJ3dURd" },
         },

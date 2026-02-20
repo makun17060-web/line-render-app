@@ -3233,6 +3233,47 @@ async function onUnfollow(ev) {
  * Postback handlers（reorder）
  * ========================= */
 async function onPostback(ev) {
+    const action = parseAction(data);
+
+  if (action === "sub_view") {
+    await lineClient.replyMessage(replyToken, [FLEX_SUB_VIEW]);
+    return;
+  }
+
+  // Flex内ボタン（sub:cycle:xx / sub:off）
+  if (data.startsWith("sub:")) {
+    const parts = data.split(":"); // sub:cycle:30
+    const subAction = parts[1] || "";
+    const days = Number(parts[2] || 0);
+
+    if (subAction === "cycle" && [30,45,60].includes(days)) {
+      const intervalStr = `${days} days`;
+      await pool.query(
+        `
+        INSERT INTO reorder_reminders (user_id, cycle_days, next_remind_at, active, updated_at)
+        VALUES ($1, $2, now() + $3::interval, true, now())
+        ON CONFLICT (user_id)
+        DO UPDATE SET
+          cycle_days = EXCLUDED.cycle_days,
+          next_remind_at = EXCLUDED.next_remind_at,
+          active = true,
+          updated_at = now()
+        `,
+        [userId, days, intervalStr]
+      );
+      await replyTextSafe(replyToken, `おまかせ便のご案内を「${days}日ごと」で設定しました。`);
+      return;
+    }
+
+    if (data === "sub:off") {
+      await pool.query(`UPDATE reorder_reminders SET active=false, updated_at=now() WHERE user_id=$1`, [userId]);
+      await replyTextSafe(replyToken, "おまかせ便のご案内を停止しました。");
+      return;
+    }
+
+    await replyTextSafe(replyToken, "設定に失敗しました。もう一度お試しください。");
+    return;
+  }
   const userId = ev?.source?.userId || "";
   const replyToken = ev?.replyToken || "";
   const data = String(ev?.postback?.data || "").trim();
@@ -3240,6 +3281,69 @@ async function onPostback(ev) {
 
   // reorder:sub:30:orderId
   // reorder:unsub::orderId
+  // --- richmenu: おまかせ便（sub_view） ---
+function parseAction(data){
+  const m = String(data || "").match(/(?:^|[&?])action=([^&]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+const FLEX_SUB_VIEW = {
+  type: "flex",
+  altText: "おまかせ便のご案内",
+  contents: {
+    type: "bubble",
+    size: "mega",
+    header: {
+      type: "box",
+      layout: "vertical",
+      paddingAll: "16px",
+      backgroundColor: "#111111",
+      contents: [
+        { type: "text", text: "おまかせ便", size: "xl", weight: "bold", color: "#FFFFFF" },
+        { type: "text", text: "毎月 / 45日 / 60日 などで自動ご案内", size: "sm", color: "#DDDDDD", wrap: true, margin: "6px" }
+      ]
+    },
+    body: {
+      type: "box",
+      layout: "vertical",
+      paddingAll: "16px",
+      spacing: "10px",
+      contents: [
+        { type: "text", text: "内容は季節や在庫に合わせておすすめをお届けします。", wrap: true },
+        { type: "separator", margin: "12px" },
+        { type: "text", text: "まずは案内だけ受け取る設定ができます👇", size: "sm", color: "#555555", wrap: true }
+      ]
+    },
+    footer: {
+      type: "box",
+      layout: "vertical",
+      paddingAll: "16px",
+      spacing: "10px",
+      contents: [
+        {
+          type: "button",
+          style: "primary",
+          action: { type: "postback", label: "30日ごと", data: "sub:cycle:30" }
+        },
+        {
+          type: "button",
+          style: "primary",
+          action: { type: "postback", label: "45日ごと", data: "sub:cycle:45" }
+        },
+        {
+          type: "button",
+          style: "primary",
+          action: { type: "postback", label: "60日ごと", data: "sub:cycle:60" }
+        },
+        {
+          type: "button",
+          style: "secondary",
+          action: { type: "postback", label: "案内しない", data: "sub:off" }
+        }
+      ]
+    }
+  }
+};
   if (data.startsWith("reorder:")) {
     const parts = data.split(":");
     const action = parts[1] || "";

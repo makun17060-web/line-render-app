@@ -49,9 +49,8 @@
         "layout": "vertical",
         "spacing": "sm",
         "contents": [
-          { "type": "button", "style": "primary", "height": "md", "action": { "type": "uri", "label": "オリジナルセットを見る", "uri": "https://line-render-app-1.onrender.com/public
-/original-set.html" } },
-          { "type": "button", "style": "secondary", "height": "md", "action": { "type": "uri", "label": "商品一覧を見る", "uri": "SHOP_URL" } },
+          { "type": "button", "style": "primary", "height": "md", "action": { "type": "uri", "label": "オリジナルセットを見る", "uri": "https://line-render-app-1.onrender.com/public/original-set.html" } },
+          { "type": "button", "style": "secondary", "height": "md", "action": { "type": "uri", "label": "商品一覧を見る", "uri": "https://line-render-app-1.onrender.com/public/index.html" } },
           { "type": "text", "text": "※この案内は「7日間起動がない方」にだけ送っています", "size": "xs", "color": "#888888", "wrap": true, "margin": "md" }
         ]
       }

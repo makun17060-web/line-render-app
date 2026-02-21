@@ -49,7 +49,7 @@
         "layout": "vertical",
         "spacing": "sm",
         "contents": [
-          { "type": "button", "style": "primary", "height": "md", "action": { "type": "uri", "label": "初めてセットを見る", "uri": "https://line-render-app-1.onrender.com/public/fukubako.html"} },
+          { "type": "button", "style": "primary", "height": "md", "action": { "type": "uri", "label": "初めてセットを見る", "uri": "https://line-render-app-1.onrender.com/fukubako.html"} },
           { "type": "button", "style": "secondary", "height": "md", "action": { "type": "uri", "label": "商品一覧を見る", "uri": "https://line-render-app-1.onrender.com/public/index.html" } },
           { "type": "text", "text": "※この案内は「7日間起動がない方」にだけ送っています", "size": "xs", "color": "#888888", "wrap": true, "margin": "md" }
         ]

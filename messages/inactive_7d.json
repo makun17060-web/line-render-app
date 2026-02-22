@@ -22,28 +22,51 @@
         "layout": "vertical",
         "spacing": "md",
         "contents": [
-          { "type": "text", "text": "まだ見てない人だけに", "weight": "bold", "size": "sm", "color": "#111111" },
-         {
-  "type": "text",
-  "text": "【限定案内】\n初めてセット",
-  "weight": "bold",
-  "size": "sm"
-}
           {
-  "type": "text",
-  "text": "見逃し防止で再案内します。",
-  "size": "sm",
-  "color": "#555555"
-}
-          { "type": "separator", "margin": "lg" },
+            "type": "text",
+            "text": "まだ見てない人だけに",
+            "weight": "bold",
+            "size": "sm",
+            "color": "#111111"
+          },
+          {
+            "type": "text",
+            "text": "【限定案内】\n“オリジナルセット” そのまま使えます",
+            "weight": "bold",
+            "size": "xl",
+            "wrap": true
+          },
+          {
+            "type": "text",
+            "text": "見逃し防止で再案内します。",
+            "size": "sm",
+            "color": "#555555",
+            "wrap": true
+          },
+          {
+            "type": "separator",
+            "margin": "lg"
+          },
           {
             "type": "box",
             "layout": "vertical",
             "spacing": "sm",
             "margin": "lg",
             "contents": [
-              { "type": "text", "text": "✅ 初めてセット（人気）", "weight": "bold", "size": "md", "wrap": true },
-              { "type": "text", "text": "・到着が早い（最短）", "size": "sm", "color": "#444444", "wrap": true }
+              {
+                "type": "text",
+                "text": "✅ 初めてセット（人気）",
+                "weight": "bold",
+                "size": "md",
+                "wrap": true
+              },
+              {
+                "type": "text",
+                "text": "・送料込みで試しやすい\n・割れにくい梱包\n・到着が早い（最短）",
+                "size": "sm",
+                "color": "#444444",
+                "wrap": true
+              }
             ]
           },
           {
@@ -52,8 +75,19 @@
             "spacing": "sm",
             "margin": "md",
             "contents": [
-              { "type": "text", "text": "✅ こんな人におすすめ", "weight": "bold", "size": "md" },
-              { "type": "text", "text": "・甘すぎないえびせんが好き\n・軽いおつまみが欲しい\\n・家族でつまめるものが欲しい", "size": "sm", "color": "#444444", "wrap": true }
+              {
+                "type": "text",
+                "text": "✅ こんな人におすすめ",
+                "weight": "bold",
+                "size": "md"
+              },
+              {
+                "type": "text",
+                "text": "・甘すぎないえびせんが好き\n・軽いおつまみが欲しい\n・家族でつまめるものが欲しい",
+                "size": "sm",
+                "color": "#444444",
+                "wrap": true
+              }
             ]
           }
         ]
@@ -63,9 +97,34 @@
         "layout": "vertical",
         "spacing": "sm",
         "contents": [
-          { "type": "button", "style": "primary", "height": "md", "action": { "type": "uri", "label": "初めてセットを見る", "uri": "https://line-render-app-1.onrender.com/fukubako.html" } },
-          { "type": "button", "style": "secondary", "height": "md", "action": { "type": "uri", "label": "商品一覧を見る", "uri": "https://line-render-app-1.onrender.com/index.html" } },
-          { "type": "text", "text": "※この案内は「7日間起動がない方」にだけ送っています", "size": "xs", "color": "#888888", "wrap": true, "margin": "md" }
+          {
+            "type": "button",
+            "style": "primary",
+            "height": "md",
+            "action": {
+              "type": "uri",
+              "label": "初めてセットを見る",
+              "uri": "https://line-render-app-1.onrender.com/fukubako.html"
+            }
+          },
+          {
+            "type": "button",
+            "style": "secondary",
+            "height": "md",
+            "action": {
+              "type": "uri",
+              "label": "商品一覧を見る",
+              "uri": "https://line-render-app-1.onrender.com/index.html"
+            }
+          },
+          {
+            "type": "text",
+            "text": "※この案内は「7日間起動がない方」にだけ送っています",
+            "size": "xs",
+            "color": "#888888",
+            "wrap": true,
+            "margin": "md"
+          }
         ]
       }
     }

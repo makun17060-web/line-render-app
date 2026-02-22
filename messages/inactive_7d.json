@@ -33,7 +33,7 @@
             "margin": "lg",
             "contents": [
               { "type": "text", "text": "✅ 初めてセット（人気）", "weight": "bold", "size": "md", "wrap": true },
-              { "type": "text", "text": "・送料込みで試しやすい\\n・割れにくい梱包\\n・到着が早い（最短）", "size": "sm", "color": "#444444", "wrap": true }
+              { "type": "text", "text": "・到着が早い（最短）", "size": "sm", "color": "#444444", "wrap": true }
             ]
           },
           {
@@ -43,7 +43,7 @@
             "margin": "md",
             "contents": [
               { "type": "text", "text": "✅ こんな人におすすめ", "weight": "bold", "size": "md" },
-              { "type": "text", "text": "・甘すぎないえびせんが好き\\n・軽いおつまみが欲しい\\n・家族でつまめるものが欲しい", "size": "sm", "color": "#444444", "wrap": true }
+              { "type": "text", "text": "・甘すぎないえびせんが好き\n・軽いおつまみが欲しい\\n・家族でつまめるものが欲しい", "size": "sm", "color": "#444444", "wrap": true }
             ]
           }
         ]

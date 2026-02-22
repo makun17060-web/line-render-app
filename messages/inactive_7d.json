@@ -23,7 +23,7 @@
         "spacing": "md",
         "contents": [
           { "type": "text", "text": "まだ見てない人だけに", "weight": "bold", "size": "sm", "color": "#111111" },
-          { "type": "text", "text": "【限定案内】\\n“オリジナルセット” そのまま使えます", "weight": "bold", "size": "xl", "wrap": true },
+          { "type": "text", "text": "【限定案内】\n“オリジナルセット” そのまま使えます", "weight": "bold", "size": "xl", "wrap": true },
           { "type": "text", "text": "見逃し防止で再案内します。", "size": "sm", "color": "#555555", "wrap": true },
           { "type": "separator", "margin": "lg" },
           {

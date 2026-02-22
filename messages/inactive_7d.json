@@ -11,7 +11,11 @@
         "size": "full",
         "aspectMode": "cover",
         "aspectRatio": "1:1",
-        "action": { "type": "uri", "label": "今すぐ見る", "uri": "https://line-render-app-1.onrender.com/public/fukubako.html" }
+        "action": {
+          "type": "uri",
+          "label": "今すぐ見る",
+          "uri": "https://line-render-app-1.onrender.com/fukubako.html"
+        }
       },
       "body": {
         "type": "box",
@@ -19,7 +23,7 @@
         "spacing": "md",
         "contents": [
           { "type": "text", "text": "まだ見てない人だけに", "weight": "bold", "size": "sm", "color": "#111111" },
-          { "type": "text", "text": "【限定案内】/n“オリジナルセット” そのまま使えます", "weight": "bold", "size": "xl", "wrap": true },
+          { "type": "text", "text": "【限定案内】\\n“オリジナルセット” そのまま使えます", "weight": "bold", "size": "xl", "wrap": true },
           { "type": "text", "text": "見逃し防止で再案内します。", "size": "sm", "color": "#555555", "wrap": true },
           { "type": "separator", "margin": "lg" },
           {
@@ -49,8 +53,8 @@
         "layout": "vertical",
         "spacing": "sm",
         "contents": [
-          { "type": "button", "style": "primary", "height": "md", "action": { "type": "uri", "label": "初めてセットを見る", "uri": "https://line-render-app-1.onrender.com/fukubako.html"} },
-          { "type": "button", "style": "secondary", "height": "md", "action": { "type": "uri", "label": "商品一覧を見る", "uri": "https://line-render-app-1.onrender.com/public/index.html" } },
+          { "type": "button", "style": "primary", "height": "md", "action": { "type": "uri", "label": "初めてセットを見る", "uri": "https://line-render-app-1.onrender.com/fukubako.html" } },
+          { "type": "button", "style": "secondary", "height": "md", "action": { "type": "uri", "label": "商品一覧を見る", "uri": "https://line-render-app-1.onrender.com/index.html" } },
           { "type": "text", "text": "※この案内は「7日間起動がない方」にだけ送っています", "size": "xs", "color": "#888888", "wrap": true, "margin": "md" }
         ]
       }

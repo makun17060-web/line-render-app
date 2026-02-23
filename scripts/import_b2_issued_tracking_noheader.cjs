@@ -1,11 +1,18 @@
 /**
- * scripts/import_b2_issued_tracking_noheader.cjs
+ * scripts/import_b2_issued_tracking_noheader.cjs  — 丸ごと版（事故らないSSL自動判定つき）
+ *
  * ヤマトB2 発行済データCSV（ヘッダー無し）から
  * 1列目=お客様管理番号（orders.id想定）, 4列目=伝票番号 を取り出して tracking_no 更新
  *
  * 使い方:
  *   DRY_RUN=1 CSV_PATH=C:\temp\b2\result.csv node scripts/import_b2_issued_tracking_noheader.cjs
  *   DRY_RUN=0 CSV_PATH=C:\temp\b2\result.csv node scripts/import_b2_issued_tracking_noheader.cjs
+ *
+ * ✅この版の改善点
+ * - Render内部DB(dpg-...-a みたいなドメイン無し) → ssl:false
+ * - ローカル(localhost等) → ssl:false
+ * - 外部URL(ドメイン付き) → ssl:{rejectUnauthorized:false}
+ * - host / sslモードをログに出す（URL丸見えにしない）
  */
 
 const fs = require("fs");
@@ -13,6 +20,11 @@ const iconv = require("iconv-lite");
 const { parse } = require("csv-parse/sync");
 const pg = require("pg");
 const { Client } = pg;
+
+// dotenv はあれば読む（Renderでもローカルでも邪魔しない）
+try {
+  require("dotenv").config();
+} catch (_) {}
 
 const DRY_RUN = (process.env.DRY_RUN ?? "1") !== "0";
 const CSV_PATH = process.env.CSV_PATH ?? "C:\\temp\\b2\\result.csv";
@@ -32,6 +44,36 @@ function readFileSmart(p) {
   if (!hasManyReplacement) return { text: utf8, encoding: "utf8" };
   const sjis = iconv.decode(buf, "Shift_JIS");
   return { text: sjis, encoding: "shift_jis" };
+}
+
+/**
+ * Render/ローカル/外部URLでSSLを自動切替
+ * - Render内部: host が "dpg-..." かつ "." を含まない → ssl:false
+ * - ローカル: localhost/127.0.0.1/host.docker.internal → ssl:false
+ * - 外部: それ以外 → ssl:{rejectUnauthorized:false}
+ */
+function buildPgConfig() {
+  const cs = process.env.DATABASE_URL || "";
+  if (!cs) throw new Error("DATABASE_URL is empty");
+
+  const u = new URL(cs);
+  const host = u.hostname;
+
+  const isLocal =
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "host.docker.internal";
+
+  // Render内部のDBホストは dpg-xxxxx-a みたいにドメイン無しのことが多い
+  const isRenderInternal = host.startsWith("dpg-") && !host.includes(".");
+
+  const ssl = (isLocal || isRenderInternal) ? false : { rejectUnauthorized: false };
+
+  return {
+    connectionString: cs,
+    ssl,
+    __meta: { host, sslMode: ssl === false ? "off" : "on(relax)" },
+  };
 }
 
 (async () => {
@@ -68,7 +110,11 @@ function readFileSmart(p) {
     const row = rows[i];
     const orderId = digitsOnly(row[COL_ORDER_ID]);
     const trackingNo = digitsOnly(row[COL_TRACKING]);
-    console.log({ i, orderId: orderId || row[COL_ORDER_ID], trackingNo: trackingNo || row[COL_TRACKING] });
+    console.log({
+      i,
+      orderId: orderId || row[COL_ORDER_ID],
+      trackingNo: trackingNo || row[COL_TRACKING],
+    });
   }
   console.log("");
 
@@ -98,10 +144,16 @@ function readFileSmart(p) {
     process.exit(1);
   }
 
- const client = new Client({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-});
+  // DB接続（SSL自動判定）
+  const cfg = buildPgConfig();
+  console.log("=== DB target (safe) ===");
+  console.log({ host: cfg.__meta.host, ssl: cfg.__meta.sslMode });
+  console.log("");
+
+  const client = new Client({
+    connectionString: cfg.connectionString,
+    ssl: cfg.ssl,
+  });
 
   await client.connect();
 
@@ -126,12 +178,11 @@ function readFileSmart(p) {
   try {
     for (const p of pairs) {
       const res = await client.query(
-  `update orders
-     set tracking_no = $1
-   where id = $2`,
-  [p.trackingNo, p.orderId]
-);
-
+        `update orders
+            set tracking_no = $1
+          where id = $2`,
+        [p.trackingNo, p.orderId]
+      );
       updated += res.rowCount;
     }
     await client.query("commit");

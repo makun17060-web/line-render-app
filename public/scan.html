@@ -15,7 +15,6 @@
       --ok:#35c759;
       --line:#2a2a2d;
       --btn:#1f1f22;
-      --btn2:#2a2a2d;
       --accent:#4da3ff;
 
       --safe-top: env(safe-area-inset-top, 0px);
@@ -305,7 +304,7 @@
       <div class="status">
         <span id="camPill" class="pill">camera: idle</span>
         <span id="netPill" class="pill">api: -</span>
-        <span id="zxPill" class="pill">zxing: -</span>
+        <span id="zxPill"  class="pill">zxing: -</span>
       </div>
     </div>
 
@@ -350,7 +349,7 @@
             <div>Host</div><div><code id="diagHost">-</code></div>
           </div>
           <div class="hint" style="margin-top:8px;">
-            ※ ZXing が <code>missing</code> の場合、CDNがブロック/不達です（ローカル配信に切替推奨）。
+            ※ ZXing が <code>missing</code> の場合、ライブラリファイルの配置/パスを確認してください。
           </div>
         </details>
       </div>
@@ -390,8 +389,13 @@
     <button id="toastBtn" class="btn" type="button" style="min-height:40px; padding:10px 12px;">OK</button>
   </div></div>
 
-  <!-- ZXing (Barcode/QR) -->
-  <script src="https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js"></script>
+  <!-- ✅ ローカル配信ZXing（CDNブロック対策） -->
+  <!-- public/vendor/zxing/zxing-browser.min.js を置いた前提 -->
+  <script src="/vendor/zxing/zxing-browser.min.js"></script>
+  <!-- ✅ 既存コード互換：ZXingBrowser を ZXing としても参照できるようにする -->
+  <script>
+    window.ZXing = window.ZXing || window.ZXingBrowser;
+  </script>
 
   <script>
     // Android Chrome のアドレスバーで高さが変わる対策（100dvh補助）
@@ -501,21 +505,17 @@
       return cams;
     }
 
-    // ZXingを「読めるように」する：tryHarder + 可能フォーマット絞り
+    // ZXingを「読めるように」する：tryHarder + 可能フォーマット絞り（対応していない環境は自動fallback）
     function buildReader(){
-      // ZXingが無ければダメ
       if(typeof ZXing === 'undefined' || !ZXing.BrowserMultiFormatReader){
         return null;
       }
-
-      // UMDで enum が取れない環境もあるので、存在チェックしてから使う
       try{
         const hasHints = ZXing.DecodeHintType && ZXing.BarcodeFormat;
         if(!hasHints){
           log('ZXing enums missing, use default reader');
-          return new ZXing.BrowserMultiFormatReader(); // fallback
+          return new ZXing.BrowserMultiFormatReader();
         }
-
         const hints = new Map();
         hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
         hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
@@ -525,8 +525,6 @@
           ZXing.BarcodeFormat.EAN_8,
           ZXing.BarcodeFormat.QR_CODE,
         ]);
-
-        // 第二引数は timeBetweenScans（ms）
         return new ZXing.BrowserMultiFormatReader(hints, 500);
       }catch(e){
         log('buildReader failed -> fallback', e?.message || e);
@@ -537,10 +535,10 @@
     async function startCamera(preferredDeviceId=null){
       if(scanning) return;
 
-      if(typeof ZXing === 'undefined' || !ZXing.BrowserMultiFormatReader){
-        setZxStatus('missing', false);
-        showToast('ZXingが読み込めていません', 'CDNがブロック/不達の可能性。ネット/社内Wi-Fi/広告ブロッカーを確認してください');
-        log('ZXing missing');
+      const zxOk = (typeof ZXing !== 'undefined' && !!ZXing.BrowserMultiFormatReader);
+      setZxStatus(zxOk ? 'ok' : 'missing', zxOk);
+      if(!zxOk){
+        showToast('ZXingが読み込めていません', 'public/vendor/zxing/ の配置と、script src を確認してください');
         return;
       }
 
@@ -552,7 +550,6 @@
       setCamStatus('starting...', null);
       log('startCamera...');
 
-      // 画質は高めを指定（端末が落とす場合もある）
       const baseConstraints = {
         audio: false,
         video: {
@@ -569,7 +566,6 @@
       try{
         stream = await navigator.mediaDevices.getUserMedia(baseConstraints);
       }catch(e){
-        // iOS/一部環境：deviceId exact が失敗することがある → fallback
         log('getUserMedia failed, fallback', e && e.name ? e.name : String(e));
         try{
           stream = await navigator.mediaDevices.getUserMedia({
@@ -590,7 +586,6 @@
       const tracks = stream.getVideoTracks();
       currentVideoTrack = tracks[0] || null;
 
-      // 現在の deviceId 推定（取れないこともある）
       try{
         const settings = currentVideoTrack ? currentVideoTrack.getSettings() : {};
         usingDeviceId = settings.deviceId || preferredDeviceId || null;
@@ -624,9 +619,8 @@
       }catch{}
 
       setCamStatus('running', true);
-      setZxStatus('ready', true);
 
-      // decode loop（重要：errもログに出す）
+      // decode loop（errもログに出す）
       reader.decodeFromVideoElement(video, (result, err) => {
         if(!scanning) return;
 
@@ -644,7 +638,7 @@
           if(now - lastScanAt < 1200) return;
           lastScanAt = now;
 
-          // 同じコードを短時間で何度も拾うのを抑制（3秒）
+          // 同一コード連打抑制（3秒）
           if(code === lastCode && (now - lastCodeAt) < 3000) return;
           lastCode = code;
           lastCodeAt = now;
@@ -661,7 +655,6 @@
 
         if(err){
           const name = err.name || err.constructor?.name || '';
-          // NotFoundException は「見つからない」なので無視（ログが埋まる）
           if(name !== 'NotFoundException'){
             log('decode err:', name, err.message || String(err));
           }
@@ -807,7 +800,6 @@
           body: JSON.stringify({ tracking_no })
         });
 
-        // JSONが返らない（HTML 500など）でも落ちないようにする
         const text = await r.text();
         let j = null;
         try{ j = text ? JSON.parse(text) : null; }catch{ j = { raw: text }; }

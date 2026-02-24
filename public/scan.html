@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>発送スキャン（カメラ対応 / 磯屋）</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif; margin: 0; padding: 16px; }
+    h1 { font-size: 18px; margin: 0 0 12px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
+    label { font-size: 12px; color: #444; display:block; margin-bottom: 6px; }
+    input, button {
+      width: 100%; box-sizing: border-box;
+      font-size: 16px; padding: 12px;
+      border-radius: 10px; border: 1px solid #ccc;
+    }
+    button { border: 0; cursor: pointer; }
+    .row { display:flex; gap: 8px; }
+    .row > * { flex: 1; }
+    .btn { background: #111; color: #fff; }
+    .btn2 { background: #f1f1f1; }
+    .ok { color: #0a7; font-weight: 700; }
+    .ng { color: #c00; font-weight: 700; }
+    .muted { color:#666; font-size: 12px; }
+    .log { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+    .badge { display:inline-block; padding: 4px 8px; border-radius: 999px; font-size: 12px; background:#eee; }
+    #reader { width: 100%; border-radius: 12px; overflow: hidden; }
+    .small { font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>発送スキャン（カメラ読み取り → shipped → 通知）</h1>
+
+  <div class="card">
+    <label>Admin Token（初回だけ入力・端末に保存）</label>
+    <input id="token" type="password" placeholder="X-Admin-Token" autocomplete="off" />
+    <div class="row" style="margin-top:8px;">
+      <button class="btn2" id="saveToken">保存</button>
+      <button class="btn2" id="clearToken">消去</button>
+    </div>
+    <div class="muted">※共有端末では保存しないでください（localStorageに保存）。</div>
+  </div>
+
+  <div class="card">
+    <label>カメラ読み取り</label>
+    <div class="row" style="margin-bottom:8px;">
+      <button class="btn" id="startCam">カメラ開始</button>
+      <button class="btn2" id="stopCam">停止</button>
+    </div>
+
+    <div class="row" style="margin-bottom:8px;">
+      <button class="btn2" id="toggleTorch">ライト切替</button>
+      <button class="btn2" id="switchCam">カメラ切替</button>
+    </div>
+
+    <div id="reader"></div>
+    <div class="muted small" style="margin-top:8px;">
+      ・HTTPS必須（Render本番URLならOK）<br/>
+      ・読み取った値から「数字だけ」を抽出して伝票番号にします<br/>
+      ・8〜16桁に合うものだけ送信します
+    </div>
+  </div>
+
+  <div class="card">
+    <label>伝票番号（手入力もOK）</label>
+    <input id="tracking" inputmode="numeric" placeholder="例）489518570015" />
+    <div class="row" style="margin-top:8px;">
+      <button class="btn" id="send">scan-and-notify 実行</button>
+      <button class="btn2" id="clear">クリア</button>
+    </div>
+    <div class="muted" style="margin-top:8px;">
+      ・同じ番号を再送しても <span class="badge">already_notified</span> で冪等動作
+    </div>
+  </div>
+
+  <div class="card">
+    <div id="status" class="muted">待機中</div>
+    <div id="result" class="log" style="margin-top:8px;"></div>
+  </div>
+
+  <!-- html5-qrcode (CDN) -->
+  <script src="https://unpkg.com/html5-qrcode@2.3.10/html5-qrcode.min.js"></script>
+
+<script>
+(function(){
+  const $ = (id) => document.getElementById(id);
+
+  const tokenEl = $("token");
+  const trackingEl = $("tracking");
+  const statusEl = $("status");
+  const resultEl = $("result");
+
+  const TOKEN_KEY = "isoya_admin_token_v1";
+
+  function flash(msg, ok) {
+    statusEl.innerHTML = ok ? `<span class="ok">${msg}</span>` : `<span class="ng">${msg}</span>`;
+  }
+  function show(obj) {
+    resultEl.textContent = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
+  }
+  function normTracking(raw) {
+    const s = String(raw || "");
+    return s.replace(/\s+/g, "").replace(/\D/g, "");
+  }
+
+  function loadToken() {
+    const t = localStorage.getItem(TOKEN_KEY) || "";
+    tokenEl.value = t;
+  }
+  function saveToken() {
+    localStorage.setItem(TOKEN_KEY, tokenEl.value.trim());
+    flash("token を保存しました。", true);
+  }
+  function clearToken() {
+    localStorage.removeItem(TOKEN_KEY);
+    tokenEl.value = "";
+    flash("token を消去しました。", true);
+  }
+
+  $("saveToken").addEventListener("click", saveToken);
+  $("clearToken").addEventListener("click", clearToken);
+
+  async function scanAndNotify() {
+    const token = tokenEl.value.trim();
+    const tracking_no = normTracking(trackingEl.value);
+
+    if (!token) { flash("Admin Token が未入力です", false); return; }
+    if (!tracking_no) { flash("伝票番号が空です", false); return; }
+
+    if (!/^\d{8,16}$/.test(tracking_no)) {
+      flash("伝票番号が不正です（8〜16桁の数字）", false);
+      return;
+    }
+
+    flash("送信中…", true);
+    show("");
+
+    try {
+      const r = await fetch("/api/admin/ship/scan-and-notify", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Token": token,
+        },
+        body: JSON.stringify({ tracking_no })
+      });
+
+      const text = await r.text();
+      let data = null;
+      try { data = JSON.parse(text); } catch { data = { raw: text }; }
+
+      if (!r.ok) {
+        flash(`NG: HTTP ${r.status}`, false);
+        show(data);
+        return;
+      }
+
+      if (data.already_notified) {
+        flash(`OK（既に通知済み） orderId=${data.orderId}`, true);
+      } else {
+        flash(`OK（通知送信） orderId=${data.orderId}`, true);
+      }
+      show(data);
+
+      trackingEl.focus();
+      trackingEl.select();
+    } catch (e) {
+      flash("通信エラー", false);
+      show(String(e && e.stack ? e.stack : e));
+    }
+  }
+
+  $("send").addEventListener("click", scanAndNotify);
+  $("clear").addEventListener("click", () => {
+    trackingEl.value = "";
+    trackingEl.focus();
+    show("");
+    flash("待機中", true);
+  });
+  trackingEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      scanAndNotify();
+    }
+  });
+
+  // =========================
+  // Camera Scanner
+  // =========================
+  let html5Qr = null;
+  let cameras = [];
+  let camIndex = 0;
+  let torchOn = false;
+
+  async function listCameras() {
+    try {
+      cameras = await Html5Qrcode.getCameras();
+      return cameras;
+    } catch (e) {
+      cameras = [];
+      throw e;
+    }
+  }
+
+  async function startCamera() {
+    if (!window.Html5Qrcode) {
+      flash("スキャナライブラリ読み込み失敗", false);
+      return;
+    }
+    if (!html5Qr) html5Qr = new Html5Qrcode("reader");
+
+    try {
+      await listCameras();
+      if (!cameras.length) {
+        flash("カメラが見つかりません", false);
+        return;
+      }
+
+      const camId = cameras[camIndex]?.id || cameras[0].id;
+
+      // 読み取り成功時
+      const onSuccess = (decodedText) => {
+        const digits = normTracking(decodedText);
+        if (/^\d{8,16}$/.test(digits)) {
+          trackingEl.value = digits;
+          flash(`読取OK: ${digits}`, true);
+          // 読んだら即送る（不要なら次行をコメントアウト）
+          scanAndNotify();
+        } else {
+          // 読めたが番号としては不採用
+          flash(`読取: ${decodedText}（数字8-16桁に合わず）`, false);
+        }
+      };
+
+      const onFailure = () => {}; // 毎フレーム呼ばれるので何もしない
+
+      flash("カメラ開始中…", true);
+
+      await html5Qr.start(
+        { deviceId: { exact: camId } },
+        {
+          fps: 12,
+          qrbox: { width: 260, height: 140 }, // 横長バーコード寄り
+          aspectRatio: 1.777,
+          disableFlip: false,
+        },
+        onSuccess,
+        onFailure
+      );
+
+      flash("カメラ起動中（バーコードを枠内へ）", true);
+    } catch (e) {
+      flash("カメラ開始に失敗（権限/HTTPS/ブラウザ）", false);
+      show(String(e && e.stack ? e.stack : e));
+    }
+  }
+
+  async function stopCamera() {
+    torchOn = false;
+    try {
+      if (html5Qr && html5Qr.isScanning) {
+        await html5Qr.stop();
+        await html5Qr.clear();
+      }
+      flash("カメラ停止", true);
+    } catch (e) {
+      flash("停止に失敗", false);
+      show(String(e && e.stack ? e.stack : e));
+    }
+  }
+
+  async function switchCamera() {
+    try {
+      await listCameras();
+      if (cameras.length <= 1) {
+        flash("カメラが1つしかありません", false);
+        return;
+      }
+      camIndex = (camIndex + 1) % cameras.length;
+      await stopCamera();
+      await startCamera();
+    } catch (e) {
+      flash("カメラ切替失敗", false);
+      show(String(e && e.stack ? e.stack : e));
+    }
+  }
+
+  // Torch（ライト）は端末/ブラウザ依存。対応してるときだけ効く。
+  async function toggleTorch() {
+    try {
+      if (!html5Qr || !html5Qr.isScanning) {
+        flash("先にカメラを開始してください", false);
+        return;
+      }
+      const track = html5Qr.getRunningTrack && html5Qr.getRunningTrack();
+      if (!track) {
+        flash("ライト非対応（track取得不可）", false);
+        return;
+      }
+      const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+      if (!capabilities.torch) {
+        flash("ライト非対応（capabilities.torchなし）", false);
+        return;
+      }
+      torchOn = !torchOn;
+      await track.applyConstraints({ advanced: [{ torch: torchOn }] });
+      flash(torchOn ? "ライトON" : "ライトOFF", true);
+    } catch (e) {
+      flash("ライト切替失敗（非対応の可能性）", false);
+      show(String(e && e.stack ? e.stack : e));
+    }
+  }
+
+  $("startCam").addEventListener("click", startCamera);
+  $("stopCam").addEventListener("click", stopCamera);
+  $("switchCam").addEventListener("click", switchCamera);
+  $("toggleTorch").addEventListener("click", toggleTorch);
+
+  // init
+  loadToken();
+  trackingEl.focus();
+})();
+</script>
+</body>
+</html>

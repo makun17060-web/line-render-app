@@ -2,23 +2,15 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>発送スキャン</title>
 
 <style>
-:root{
-  --pad: 14px;
-  --gap: 12px;
-  --radius: 14px;
-  --btnH: 64px;
-  --font: 20px;
-}
-
 body{
   margin:0;
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   background:#000;
   color:#fff;
+  font-family:sans-serif;
 }
 
 /* カメラ */
@@ -28,66 +20,46 @@ body{
   width:100%;
   height:100%;
   object-fit:cover;
-  background:#000;
 }
 
-/* 下パネル */
+/* 上部パネル（ここがポイント🔥） */
 .panel{
   position:fixed;
+  top:0;
   left:0;
-  right:0;
-  bottom:0;
-  padding: var(--pad);
-  padding-bottom: calc(var(--pad) + env(safe-area-inset-bottom));
-  background:rgba(0,0,0,0.72);
-  backdrop-filter: blur(10px);
+  width:100%;
+  padding:10px;
+  background:rgba(0,0,0,0.7);
 }
 
 /* 入力 */
 input{
   width:100%;
-  padding:16px;
-  font-size:18px;
-  border-radius:var(--radius);
+  padding:12px;
+  font-size:16px;
+  border-radius:8px;
   border:none;
-  margin-bottom:var(--gap);
+  margin-bottom:8px;
 }
 
 /* ボタン */
 button{
   width:100%;
-  height:var(--btnH);
-  font-size:var(--font);
+  padding:16px;
+  font-size:18px;
   border:none;
-  border-radius:var(--radius);
-  margin-bottom:var(--gap);
-  font-weight:800;
-  touch-action: manipulation;
+  border-radius:10px;
+  margin-bottom:8px;
+  font-weight:bold;
 }
 
-button:active{
-  transform:scale(0.97);
-}
-
-.start{ background:#00c853; color:#fff; }
-.stop{ background:#d50000; color:#fff; }
-.send{ background:#2962ff; color:#fff; }
+.start{ background:#00c853; }
+.stop{ background:#d50000; }
+.send{ background:#2962ff; }
 
 .status{
   text-align:center;
   font-size:14px;
-}
-
-/* スキャン枠 */
-.scan-box{
-  position:fixed;
-  top:20%;
-  left:10%;
-  width:80%;
-  height:200px;
-  border:3px solid rgba(255,255,255,0.6);
-  border-radius:10px;
-  pointer-events:none;
 }
 </style>
 </head>
@@ -95,14 +67,13 @@ button:active{
 <body>
 
 <video id="video" autoplay playsinline></video>
-<div class="scan-box"></div>
 
 <div class="panel">
-  <input id="code" placeholder="スキャン結果 / 手入力">
+  <input id="code" placeholder="伝票番号">
 
-  <button class="start" onclick="startCamera()">📷 カメラ開始</button>
-  <button class="stop" onclick="stopCamera()">■ 停止</button>
-  <button class="send" onclick="send()">🚚 発送確定＆通知</button>
+  <button class="start" onclick="startCamera()">📷 カメラ</button>
+  <button class="send" onclick="send()">🚚 確定</button>
+  <button class="stop" onclick="stopCamera()">停止</button>
 
   <div class="status" id="status">待機中</div>
 </div>
@@ -110,65 +81,49 @@ button:active{
 <script src="https://unpkg.com/@zxing/library@latest"></script>
 
 <script>
-const video = document.getElementById("video");
-const codeInput = document.getElementById("code");
-const statusEl = document.getElementById("status");
-
-let codeReader = null;
+let reader = null;
 let active = false;
 
-/* ===== カメラ開始 ===== */
+function setStatus(t){
+  document.getElementById("status").innerText = t;
+}
+
 async function startCamera(){
   try{
-    statusEl.textContent = "カメラ起動中...";
+    reader = new ZXing.BrowserMultiFormatReader();
 
-    codeReader = new ZXing.BrowserMultiFormatReader();
-
-    await codeReader.decodeFromVideoDevice(
-      null,
-      video,
-      (result, err) => {
-        if(result && active){
-          const text = result.getText();
-          codeInput.value = text;
-          statusEl.textContent = "読み取り成功：" + text;
-
-          vibrate();
-          send(); // ★即送信
-        }
+    await reader.decodeFromVideoDevice(null, "video", (res)=>{
+      if(res && active){
+        const code = res.getText();
+        document.getElementById("code").value = code;
+        setStatus("読取：" + code);
+        send(); // 自動送信🔥
       }
-    );
+    });
 
     active = true;
-    statusEl.textContent = "スキャン中...";
+    setStatus("スキャン中");
   }catch(e){
-    console.error(e);
-    statusEl.textContent = "カメラ起動失敗";
-    alert("カメラを許可してください");
+    alert("カメラ許可してください");
   }
 }
 
-/* ===== 停止 ===== */
 function stopCamera(){
-  if(codeReader){
-    codeReader.reset();
+  if(reader){
+    reader.reset();
     active = false;
-    statusEl.textContent = "停止しました";
+    setStatus("停止");
   }
 }
 
-/* ===== 送信 ===== */
 async function send(){
-  const code = codeInput.value.trim();
-  if(!code){
-    alert("コードが空");
-    return;
-  }
+  const code = document.getElementById("code").value.trim();
+  if(!code) return;
+
+  setStatus("送信中");
 
   try{
-    statusEl.textContent = "送信中...";
-
-    const res = await fetch("/api/admin/ship/scan-and-notify", {
+    const res = await fetch("/api/admin/ship/scan-and-notify",{
       method:"POST",
       headers:{
         "Content-Type":"application/json",
@@ -180,23 +135,13 @@ async function send(){
     const data = await res.json();
 
     if(data.ok){
-      statusEl.textContent = "発送通知OK：" + code;
-      codeInput.value = "";
-      vibrate();
+      setStatus("完了");
+      document.getElementById("code").value="";
     }else{
-      statusEl.textContent = "エラー：" + data.error;
+      setStatus("エラー");
     }
-
   }catch(e){
-    console.error(e);
-    statusEl.textContent = "通信エラー";
-  }
-}
-
-/* ===== 振動 ===== */
-function vibrate(){
-  if(navigator.vibrate){
-    navigator.vibrate(100);
+    setStatus("通信エラー");
   }
 }
 </script>

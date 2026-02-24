@@ -429,7 +429,12 @@
 
     let reader = null;
     let scanning = false;
-    let lastSentAt = 0;
+
+    // ★クールダウンは役割別に分ける（読めたのに送られない事故を防ぐ）
+    let lastScanAt = 0;      // 読み取り暴発防止
+    let lastApiAt  = 0;      // 二重送信防止
+    let lastCode   = '';     // 同一コード連打防止
+    let lastCodeAt = 0;
 
     function normalizeTracking(v){
       return String(v || '').replace(/\s+/g,'').replace(/\D/g,'');
@@ -445,8 +450,41 @@
       return cams;
     }
 
+    function isZxingReady(){
+      return (typeof ZXing !== 'undefined') && !!ZXing?.BrowserMultiFormatReader;
+    }
+
+    function makeReader(){
+      // できれば hints で 1D を強化（端末差の吸収）
+      try{
+        if(ZXing?.DecodeHintType && ZXing?.BarcodeFormat){
+          const hints = new Map();
+          hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+          hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+            ZXing.BarcodeFormat.CODE_128,
+            ZXing.BarcodeFormat.ITF,
+            ZXing.BarcodeFormat.EAN_13,
+            ZXing.BarcodeFormat.EAN_8,
+            ZXing.BarcodeFormat.QR_CODE,
+          ]);
+          return new ZXing.BrowserMultiFormatReader(hints, 500); // 500ms
+        }
+      }catch(e){
+        log('makeReader(hints) failed', e?.message || e);
+      }
+      // fallback（hints 未対応でも動く）
+      return new ZXing.BrowserMultiFormatReader();
+    }
+
     async function startCamera(preferredDeviceId=null){
       if(scanning) return;
+
+      if(!isZxingReady()){
+        log('ZXing loaded?', typeof ZXing, ZXing?.BrowserMultiFormatReader ? 'ok' : 'missing');
+        showToast('ZXingが読み込めていません', 'CDNがブロック/不達の可能性。ネットワークか配信方法を確認してください');
+        return;
+      }
+
       if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
         showToast('この端末ではカメラが使えません', '別の端末/ブラウザで試してください');
         return;
@@ -504,7 +542,7 @@
       await refreshCapabilities();
 
       // ZXing Reader
-      reader = new ZXing.BrowserMultiFormatReader();
+      reader = makeReader();
 
       scanning = true;
       btnStart.disabled = true;
@@ -523,6 +561,7 @@
       // decode loop
       reader.decodeFromVideoElement(video, (result, err) => {
         if(!scanning) return;
+
         if(result){
           const raw = result.getText();
           const code = normalizeTracking(raw);
@@ -532,20 +571,34 @@
           codeEl.value = code;
           log('scanned:', raw, '->', code);
 
-          // 連続で暴発しないように（1.2秒クールダウン）
           const now = Date.now();
-          if(now - lastSentAt < 1200) return;
+
+          // スキャン暴発防止（1.2秒）
+          if(now - lastScanAt < 1200) return;
+          lastScanAt = now;
+
+          // 同じコードを短時間で何度も拾うのを抑制（3秒）
+          if(code === lastCode && (now - lastCodeAt) < 3000) return;
+          lastCode = code;
+          lastCodeAt = now;
 
           // バリデーション
           if(!isValidTracking(code)){
             showToast('読み取りはできたが桁が違う', `取得: ${code}（8〜16桁のみ送信）`);
-            lastSentAt = now;
             return;
           }
 
           // 自動送信（現場用）
-          lastSentAt = now;
           sendScan(code).catch(()=>{});
+          return;
+        }
+
+        // ★エラーをログに出す（NotFoundは「見つからない」なので無視）
+        if(err){
+          const name = err.name || err.constructor?.name || '';
+          if(name !== 'NotFoundException'){
+            log('decode err:', name, err.message || String(err));
+          }
         }
       });
     }
@@ -672,13 +725,13 @@
         return;
       }
 
+      // 同一送信の連打防止（0.8秒）※スキャン側とは別で持つ
+      const now = Date.now();
+      if(now - lastApiAt < 800) return;
+      lastApiAt = now;
+
       setNetStatus('sending...', null);
       log('POST /api/admin/ship/scan-and-notify', tracking_no);
-
-      // 同一コードの連打防止（0.8秒）
-      const now = Date.now();
-      if(now - lastSentAt < 800) return;
-      lastSentAt = now;
 
       try{
         const r = await fetch('/api/admin/ship/scan-and-notify', {
@@ -690,11 +743,14 @@
           body: JSON.stringify({ tracking_no })
         });
 
-        const j = await r.json().catch(()=>null);
+        // JSONじゃない時も落ちないように
+        const text = await r.text();
+        let j = null;
+        try{ j = text ? JSON.parse(text) : null; }catch{ j = null; }
 
         if(!r.ok){
           setNetStatus(`error ${r.status}`, false);
-          log('api error', r.status, j || '(no json)');
+          log('api error', r.status, j || text || '(no body)');
 
           const msg =
             (j && j.error === 'order_not_found') ? 'DBにこの追跡番号の注文がありません' :
@@ -713,8 +769,8 @@
           showToast('通知済み', `注文ID: ${j.orderId} はすでに発送通知済み`);
         }else{
           setNetStatus('sent', true);
-          log('sent ok', j);
-          showToast('OK', `発送通知しました（注文ID: ${j.orderId}）`);
+          log('sent ok', j || text);
+          showToast('OK', `発送通知しました（注文ID: ${(j && j.orderId) ? j.orderId : '-'}）`);
         }
 
         // 次に備えて
@@ -751,6 +807,7 @@
 
     // 初期ログ
     log('scan.html ready');
+    log('ZXing loaded?', typeof ZXing, ZXing?.BrowserMultiFormatReader ? 'ok' : 'missing');
     setCamStatus('idle', null);
     setNetStatus('-', null);
 

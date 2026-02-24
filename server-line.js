@@ -697,7 +697,12 @@ async function ensureDb() {
   try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS notified_user_at TIMESTAMPTZ;`); } catch {}
   try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS notified_admin_at TIMESTAMPTZ;`); } catch {}
   try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS notified_kind TEXT;`); } catch {}
-
+// 発送・追跡系（スキャン運用に必須）
+try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS tracking_no TEXT;`); } catch {}
+try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipped_at TIMESTAMPTZ;`); } catch {}
+try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipped_notified_at TIMESTAMPTZ;`); } catch {}
+// 🔥 ここに追加（インデックス）
+try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_orders_tracking_no ON orders(tracking_no);`); } catch {}
   // Payment Element（PaymentIntent）用
   try { await pool.query(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_intent_id TEXT;`); } catch {}
   try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_orders_payment_intent_id ON orders(payment_intent_id);`); } catch {}
@@ -1928,7 +1933,112 @@ function requireAdmin(req, res, next) {
   if (token !== ADMIN_TOKEN) return res.status(401).json({ ok:false, error:"unauthorized" });
   next();
 }
+/* =========================
+ * Admin：スキャン → shipped確定 → 即通知（A案）
+ * POST /api/admin/ship/scan-and-notify
+ * body: { tracking_no }
+ * header: X-Admin-Token: <ADMIN_TOKEN>
+ * ========================= */
+app.post("/api/admin/ship/scan-and-notify", requireAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const trackingNoRaw = String(req.body?.tracking_no || "").trim();
+    const tracking_no = trackingNoRaw.replace(/\s+/g, "").replace(/\D/g, ""); // 数字だけに寄せる
+    if (!tracking_no) {
+      return res.status(400).json({ ok:false, error:"tracking_no_required" });
+    }
+    if (!/^\d{8,16}$/.test(tracking_no)) {
+      return res.status(400).json({ ok:false, error:"tracking_no_invalid", tracking_no });
+    }
 
+    await client.query("BEGIN");
+
+    // 追跡番号で注文をロックして取得（同時二重送信防止）
+    const r = await client.query(
+      `
+      SELECT id, user_id, status, tracking_no, shipped_at, shipped_notified_at
+      FROM orders
+      WHERE tracking_no = $1
+      FOR UPDATE
+      `,
+      [tracking_no]
+    );
+
+    if (r.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ ok:false, error:"order_not_found", tracking_no });
+    }
+    if (r.rowCount > 1) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        ok:false,
+        error:"tracking_no_duplicated",
+        tracking_no,
+        ids: r.rows.map(x => x.id),
+      });
+    }
+
+    const row = r.rows[0];
+
+    // すでに通知済みなら送らない（冪等）
+    if (row.shipped_notified_at) {
+      await client.query("COMMIT");
+      return res.json({
+        ok:true,
+        already_notified:true,
+        orderId: row.id,
+        userId: row.user_id,
+        shipped_notified_at: row.shipped_notified_at,
+      });
+    }
+
+    // shipped確定（通知前に確定させる：現場の真実を優先）
+    await client.query(
+      `
+      UPDATE orders
+      SET status='shipped',
+          shipped_at = COALESCE(shipped_at, now())
+      WHERE id=$1
+      `,
+      [row.id]
+    );
+
+    // 通知文（必要なら文言はここで調整）
+    const trackingLink = `https://toi.kuronekoyamato.co.jp/cgi-bin/tneko?number=${encodeURIComponent(tracking_no)}`;
+    const msg =
+      "【発送のお知らせ】\n" +
+      "手造りえびせんべい 磯屋です。\n\n" +
+      "ご注文の商品を発送しました。\n\n" +
+      "▼伝票番号\n" + tracking_no + "\n" +
+      "追跡：" + trackingLink + "\n\n" +
+      "到着まで今しばらくお待ちください。";
+
+    // LINE Push
+    await lineClient.pushMessage(String(row.user_id), { type: "text", text: msg });
+
+    // 通知済み確定（二重送信防止の本丸）
+    await client.query(
+      `
+      UPDATE orders
+      SET shipped_notified_at = now(),
+          notified_kind = 'shipping_notice',
+          notified_user_at = COALESCE(notified_user_at, now())
+      WHERE id=$1
+      `,
+      [row.id]
+    );
+
+    await client.query("COMMIT");
+    return res.json({ ok:true, already_notified:false, orderId: row.id, userId: row.user_id, tracking_no });
+
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch {}
+    console.error("[scan-and-notify] failed", e?.stack || e);
+    return res.status(500).json({ ok:false, error:"server_error" });
+  } finally {
+    client.release();
+  }
+});
 /* =========================
  * Admin：orders
  * ========================= */

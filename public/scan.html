@@ -561,8 +561,15 @@
 
       await refreshCapabilities();
 
-      // ✅ フィルタ無し（なんでも読むモード）＋ decodeFromVideoDevice（精度UP）
-      reader = new ZXing.BrowserMultiFormatReader();
+     // 使えるReaderを自動選択（この順で試す）
+reader =
+  (ZXing.BrowserBarcodeReader ? new ZXing.BrowserBarcodeReader() : null) ||
+  (ZXing.BrowserCodeReader ? new ZXing.BrowserCodeReader() : null);
+
+if(!reader){
+  showToast('ZXingのReaderが見つかりません', '読み込んだファイルに必要なクラスが入っていません');
+  return;
+}
 
       scanning = true;
       lastScanAt = 0;

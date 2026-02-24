@@ -1,150 +1,763 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>発送スキャン</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#111111" />
+  <title>Scan（発送通知）</title>
+  <style>
+    :root{
+      --bg:#0b0b0c;
+      --card:#141416;
+      --muted:#9aa0a6;
+      --text:#f5f5f7;
+      --danger:#ff4d4f;
+      --ok:#35c759;
+      --line:#2a2a2d;
+      --btn:#1f1f22;
+      --btn2:#2a2a2d;
+      --accent:#4da3ff;
 
-<style>
-body{
-  margin:0;
-  background:#000;
-  color:#fff;
-  font-family:sans-serif;
-}
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --safe-left: env(safe-area-inset-left, 0px);
+      --safe-right: env(safe-area-inset-right, 0px);
 
-/* カメラ */
-#video{
-  position:fixed;
-  inset:0;
-  width:100%;
-  height:100%;
-  object-fit:cover;
-}
+      /* Android Chromeの下アドレスバー対策 */
+      --vh: 1dvh;
+    }
+    *{ box-sizing:border-box; }
+    html,body{
+      margin:0; padding:0;
+      background:var(--bg);
+      color:var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif;
+      overscroll-behavior: none;
+    }
+    body{
+      min-height: calc(var(--vh) * 100);
+      padding: calc(12px + var(--safe-top)) calc(12px + var(--safe-left)) calc(14px + var(--safe-bottom)) calc(12px + var(--safe-right));
+    }
 
-/* 上部パネル（ここがポイント🔥） */
-.panel{
-  position:fixed;
-  top:0;
-  left:0;
-  width:100%;
-  padding:10px;
-  background:rgba(0,0,0,0.7);
-}
+    .wrap{
+      max-width: 920px;
+      margin: 0 auto;
+      display:flex;
+      flex-direction: column;
+      gap: 12px;
+    }
 
-/* 入力 */
-input{
-  width:100%;
-  padding:12px;
-  font-size:16px;
-  border-radius:8px;
-  border:none;
-  margin-bottom:8px;
-}
+    .header{
+      display:flex;
+      align-items:center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .title{
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: .3px;
+    }
+    .sub{
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
 
-/* ボタン */
-button{
-  width:100%;
-  padding:16px;
-  font-size:18px;
-  border:none;
-  border-radius:10px;
-  margin-bottom:8px;
-  font-weight:bold;
-}
+    .card{
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 12px;
+      box-shadow: 0 10px 22px rgba(0,0,0,.25);
+    }
 
-.start{ background:#00c853; }
-.stop{ background:#d50000; }
-.send{ background:#2962ff; }
+    .videoWrap{
+      position: relative;
+      border-radius: 16px;
+      overflow:hidden;
+      background:#000;
+      border: 1px solid var(--line);
+      /* 画面がPC用で見にくい → スマホ優先で縦を広く */
+      height: clamp(280px, 52dvh, 560px);
+    }
+    video{
+      width:100%;
+      height:100%;
+      object-fit: cover; /* 伸びボケ防止 */
+      background:#000;
+    }
 
-.status{
-  text-align:center;
-  font-size:14px;
-}
-</style>
+    /* 狙う枠（見やすく） */
+    .reticle{
+      pointer-events:none;
+      position:absolute;
+      inset:0;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+    }
+    .reticle > div{
+      width: min(76vw, 520px);
+      height: min(38vh, 260px);
+      border: 2px solid rgba(255,255,255,.65);
+      border-radius: 14px;
+      box-shadow: 0 0 0 9999px rgba(0,0,0,.25);
+      position:relative;
+    }
+    .reticle > div:before, .reticle > div:after{
+      content:"";
+      position:absolute;
+      inset:-2px;
+      border-radius: 14px;
+      border: 2px solid rgba(77,163,255,.55);
+      filter: drop-shadow(0 0 10px rgba(77,163,255,.25));
+      opacity:.7;
+    }
+
+    .row{
+      display:flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .btn{
+      appearance:none;
+      border:1px solid var(--line);
+      background: var(--btn);
+      color: var(--text);
+      padding: 14px 14px;
+      border-radius: 14px;
+      font-weight: 700;
+      font-size: 14px;
+      min-height: 48px; /* 押しやすい */
+      cursor:pointer;
+      user-select:none;
+      touch-action: manipulation;
+    }
+    .btn:active{ transform: translateY(1px); }
+    .btn.primary{
+      background: linear-gradient(180deg, #2a6dff, #2a50ff);
+      border-color: rgba(77,163,255,.35);
+    }
+    .btn.danger{
+      background: #2a1212;
+      border-color: rgba(255,77,79,.35);
+      color: #ffd7d7;
+    }
+    .btn.ghost{
+      background: transparent;
+    }
+    .btn:disabled{
+      opacity:.45;
+      cursor:not-allowed;
+    }
+
+    .input{
+      width: 100%;
+      padding: 14px 14px;
+      border-radius: 14px;
+      border:1px solid var(--line);
+      background:#0f0f11;
+      color: var(--text);
+      font-size: 16px; /* iOSズーム防止 */
+      outline: none;
+      min-height: 48px;
+    }
+    .hint{
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+    .status{
+      font-size: 12px;
+      color: var(--muted);
+      display:flex;
+      gap:10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .pill{
+      padding: 6px 10px;
+      border-radius: 999px;
+      background:#0f0f11;
+      border:1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .pill.ok{ color: #caffd8; border-color: rgba(53,199,89,.35); }
+    .pill.bad{ color: #ffd0d0; border-color: rgba(255,77,79,.35); }
+
+    .grid2{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+    @media (min-width: 760px){
+      .grid2{
+        grid-template-columns: 1.2fr .8fr;
+        align-items: start;
+      }
+      .videoWrap{
+        height: clamp(420px, 62dvh, 620px);
+      }
+    }
+
+    .controls{
+      display:flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .log{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      background:#0f0f11;
+      border:1px solid var(--line);
+      border-radius: 14px;
+      padding: 10px;
+      max-height: 240px;
+      overflow:auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .toast{
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      bottom: calc(12px + var(--safe-bottom));
+      display:flex;
+      justify-content:center;
+      pointer-events:none;
+      z-index: 9999;
+    }
+    .toast > div{
+      pointer-events:auto;
+      max-width: 920px;
+      width: 100%;
+      background: rgba(20,20,22,.96);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px 12px;
+      box-shadow: 0 12px 28px rgba(0,0,0,.35);
+      font-size: 13px;
+      display:flex;
+      align-items:center;
+      justify-content: space-between;
+      gap: 10px;
+      opacity: 0;
+      transform: translateY(10px);
+      transition: .18s ease;
+    }
+    .toast.show > div{
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .toast strong{ color: var(--text); }
+    .toast .small{ color: var(--muted); font-size: 12px; }
+
+    .sliderRow{
+      display:flex;
+      align-items:center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    input[type="range"]{
+      width: 180px;
+      accent-color: var(--accent);
+    }
+  </style>
 </head>
 
 <body>
+  <div class="wrap">
+    <div class="header">
+      <div>
+        <div class="title">発送スキャン（追跡番号 → shipped → 即通知）</div>
+        <div class="sub">QR/バーコードを読む → <code>/api/admin/ship/scan-and-notify</code> に送る</div>
+      </div>
+      <div class="status">
+        <span id="camPill" class="pill">camera: idle</span>
+        <span id="netPill" class="pill">api: -</span>
+      </div>
+    </div>
 
-<video id="video" autoplay playsinline></video>
+    <div class="grid2">
+      <div class="card">
+        <div class="videoWrap">
+          <video id="video" playsinline muted></video>
+          <div class="reticle"><div></div></div>
+        </div>
 
-<div class="panel">
-  <input id="code" placeholder="伝票番号">
+        <div style="height:10px"></div>
 
-  <button class="start" onclick="startCamera()">📷 カメラ</button>
-  <button class="send" onclick="send()">🚚 確定</button>
-  <button class="stop" onclick="stopCamera()">停止</button>
+        <div class="row">
+          <button id="btnStart" class="btn primary" type="button">カメラ開始</button>
+          <button id="btnStop" class="btn danger" type="button" disabled>停止</button>
+          <button id="btnTorch" class="btn" type="button" disabled>ライト</button>
+          <button id="btnSwitch" class="btn" type="button" disabled>カメラ切替</button>
+        </div>
 
-  <div class="status" id="status">待機中</div>
-</div>
+        <div style="height:8px"></div>
 
-<script src="https://unpkg.com/@zxing/library@latest"></script>
+        <div class="sliderRow">
+          <div class="hint">ズーム</div>
+          <input id="zoom" type="range" min="1" max="1" step="0.1" value="1" disabled />
+          <span id="zoomLabel" class="pill">x1.0</span>
+          <span class="hint">※端末が対応している場合のみ</span>
+        </div>
 
-<script>
-let reader = null;
-let active = false;
+        <div style="height:8px"></div>
+        <div class="hint">
+          画質が悪い時は、<b>ライトON</b>＋<b>被写体を明るく</b>が一番効きます。<br/>
+          また、バーコードは枠の中で <b>水平</b> にすると一瞬で通ります。
+        </div>
+      </div>
 
-function setStatus(t){
-  document.getElementById("status").innerText = t;
-}
+      <div class="card controls">
+        <div>
+          <div style="font-weight:700; margin-bottom:6px;">管理トークン</div>
+          <input id="token" class="input" type="password" placeholder="X-Admin-Token（必須）" autocomplete="off" />
+          <div class="hint">サーバの <code>ADMIN_API_TOKEN</code> / <code>ADMIN_CODE</code> と同じ値</div>
+        </div>
 
-async function startCamera(){
-  try{
-    reader = new ZXing.BrowserMultiFormatReader();
+        <div>
+          <div style="font-weight:700; margin-bottom:6px;">追跡番号（手入力もOK）</div>
+          <input id="code" class="input" inputmode="numeric" placeholder="例：489518570015" />
+          <div class="hint">数字以外は自動で除去して送ります（8〜16桁チェック）</div>
+        </div>
 
-    await reader.decodeFromVideoDevice(null, "video", (res)=>{
-      if(res && active){
-        const code = res.getText();
-        document.getElementById("code").value = code;
-        setStatus("読取：" + code);
-        send(); // 自動送信🔥
+        <div class="row">
+          <button id="btnSend" class="btn primary" type="button">送信（通知）</button>
+          <button id="btnClear" class="btn ghost" type="button">クリア</button>
+        </div>
+
+        <div class="hint">
+          成功すると：<b>status='shipped'</b> に更新 → <b>LINE通知</b> → <b>shipped_notified_at</b> が入る（冪等）。
+        </div>
+
+        <div style="font-weight:700;">ログ</div>
+        <div id="log" class="log"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"><div>
+    <div>
+      <strong id="toastTitle">-</strong><div class="small" id="toastMsg">-</div>
+    </div>
+    <button id="toastBtn" class="btn" type="button" style="min-height:40px; padding:10px 12px;">OK</button>
+  </div></div>
+
+  <!-- ZXing (Barcode/QR) -->
+  <script src="https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js"></script>
+
+  <script>
+    // Android Chrome のアドレスバーで高さが変わる対策（100dvh補助）
+    (function setVh(){
+      const v = window.visualViewport;
+      const h = v ? v.height : window.innerHeight;
+      document.documentElement.style.setProperty('--vh', (h * 0.01) + 'px');
+    })();
+    window.addEventListener('resize', () => {
+      const v = window.visualViewport;
+      const h = v ? v.height : window.innerHeight;
+      document.documentElement.style.setProperty('--vh', (h * 0.01) + 'px');
+    });
+
+    const $ = (id) => document.getElementById(id);
+
+    const logEl = $("log");
+    const video = $("video");
+
+    const btnStart  = $("btnStart");
+    const btnStop   = $("btnStop");
+    const btnTorch  = $("btnTorch");
+    const btnSwitch = $("btnSwitch");
+    const btnSend   = $("btnSend");
+    const btnClear  = $("btnClear");
+
+    const tokenEl = $("token");
+    const codeEl  = $("code");
+
+    const camPill = $("camPill");
+    const netPill = $("netPill");
+
+    const zoomEl = $("zoom");
+    const zoomLabel = $("zoomLabel");
+
+    const toast = $("toast");
+    const toastTitle = $("toastTitle");
+    const toastMsg = $("toastMsg");
+    const toastBtn = $("toastBtn");
+
+    function log(...args){
+      const line = args.map(x => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ');
+      const t = new Date();
+      const ts = t.toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' }).replace('T',' ');
+      logEl.textContent = `[${ts}] ${line}\n` + logEl.textContent;
+    }
+
+    function showToast(title, msg){
+      toastTitle.textContent = title;
+      toastMsg.textContent = msg || '';
+      toast.classList.add('show');
+    }
+    toastBtn.addEventListener('click', () => toast.classList.remove('show'));
+
+    function setCamStatus(text, ok=null){
+      camPill.textContent = `camera: ${text}`;
+      camPill.classList.remove('ok','bad');
+      if(ok === true) camPill.classList.add('ok');
+      if(ok === false) camPill.classList.add('bad');
+    }
+    function setNetStatus(text, ok=null){
+      netPill.textContent = `api: ${text}`;
+      netPill.classList.remove('ok','bad');
+      if(ok === true) netPill.classList.add('ok');
+      if(ok === false) netPill.classList.add('bad');
+    }
+
+    // ====== Camera state ======
+    let stream = null;
+    let currentVideoTrack = null;
+    let usingDeviceId = null;
+    let deviceIds = [];
+    let torchOn = false;
+
+    let reader = null;
+    let scanning = false;
+    let lastSentAt = 0;
+
+    function normalizeTracking(v){
+      return String(v || '').replace(/\s+/g,'').replace(/\D/g,'');
+    }
+    function isValidTracking(v){
+      return /^\d{8,16}$/.test(v);
+    }
+
+    async function listVideoDevices(){
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter(d => d.kind === 'videoinput');
+      deviceIds = cams.map(c => c.deviceId).filter(Boolean);
+      return cams;
+    }
+
+    async function startCamera(preferredDeviceId=null){
+      if(scanning) return;
+      if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+        showToast('この端末ではカメラが使えません', '別の端末/ブラウザで試してください');
+        return;
+      }
+
+      setCamStatus('starting...', null);
+      log('startCamera...');
+
+      const baseConstraints = {
+        audio: false,
+        video: {
+          facingMode: { ideal: "environment" },
+          // 画質アップ（ここが本丸）
+          width:  { ideal: 1920 },
+          height: { ideal: 1080 }
+        }
+      };
+      if(preferredDeviceId){
+        baseConstraints.video.deviceId = { exact: preferredDeviceId };
+        delete baseConstraints.video.facingMode;
+      }
+
+      try{
+        stream = await navigator.mediaDevices.getUserMedia(baseConstraints);
+      }catch(e){
+        // iOS/一部環境：deviceId exact が失敗することがある → fallback
+        log('getUserMedia failed, fallback', e && e.name ? e.name : String(e));
+        try{
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio:false,
+            video:{ facingMode:{ ideal:"environment" } }
+          });
+        }catch(e2){
+          setCamStatus('permission denied', false);
+          log('getUserMedia failed', e2 && e2.name ? e2.name : String(e2));
+          showToast('カメラを許可してください', 'ブラウザの権限設定でカメラを「許可」にしてください');
+          return;
+        }
+      }
+
+      video.srcObject = stream;
+      await video.play().catch(()=>{});
+
+      const tracks = stream.getVideoTracks();
+      currentVideoTrack = tracks[0] || null;
+
+      // 現在の deviceId 推定（取れないこともある）
+      try{
+        const settings = currentVideoTrack ? currentVideoTrack.getSettings() : {};
+        usingDeviceId = settings.deviceId || preferredDeviceId || null;
+        log('camera settings', settings);
+      }catch{}
+
+      // Torch / Zoom capability
+      await refreshCapabilities();
+
+      // ZXing Reader
+      reader = new ZXing.BrowserMultiFormatReader();
+
+      scanning = true;
+      btnStart.disabled = true;
+      btnStop.disabled = false;
+
+      btnSwitch.disabled = true;
+      try{
+        const cams = await listVideoDevices();
+        if((cams || []).length >= 2){
+          btnSwitch.disabled = false;
+        }
+      }catch{}
+
+      setCamStatus('running', true);
+
+      // decode loop
+      reader.decodeFromVideoElement(video, (result, err) => {
+        if(!scanning) return;
+        if(result){
+          const raw = result.getText();
+          const code = normalizeTracking(raw);
+          if(!code) return;
+
+          // 表示
+          codeEl.value = code;
+          log('scanned:', raw, '->', code);
+
+          // 連続で暴発しないように（1.2秒クールダウン）
+          const now = Date.now();
+          if(now - lastSentAt < 1200) return;
+
+          // バリデーション
+          if(!isValidTracking(code)){
+            showToast('読み取りはできたが桁が違う', `取得: ${code}（8〜16桁のみ送信）`);
+            lastSentAt = now;
+            return;
+          }
+
+          // 自動送信（現場用）
+          lastSentAt = now;
+          sendScan(code).catch(()=>{});
+        }
+      });
+    }
+
+    async function stopCamera(){
+      scanning = false;
+      try{ if(reader) reader.reset(); }catch{}
+      reader = null;
+
+      if(stream){
+        for(const t of stream.getTracks()){
+          try{ t.stop(); }catch{}
+        }
+      }
+      stream = null;
+      currentVideoTrack = null;
+      usingDeviceId = null;
+      torchOn = false;
+
+      btnStart.disabled = false;
+      btnStop.disabled = true;
+      btnTorch.disabled = true;
+      btnSwitch.disabled = true;
+      zoomEl.disabled = true;
+      setCamStatus('stopped', null);
+      log('camera stopped');
+    }
+
+    async function refreshCapabilities(){
+      btnTorch.disabled = true;
+      zoomEl.disabled = true;
+      zoomEl.min = 1; zoomEl.max = 1; zoomEl.value = 1;
+      zoomLabel.textContent = 'x1.0';
+
+      if(!currentVideoTrack) return;
+
+      try{
+        const caps = currentVideoTrack.getCapabilities ? currentVideoTrack.getCapabilities() : {};
+        const settings = currentVideoTrack.getSettings ? currentVideoTrack.getSettings() : {};
+        log('capabilities', caps);
+
+        // Torch
+        if(caps && 'torch' in caps){
+          btnTorch.disabled = false;
+        }
+
+        // Zoom
+        if(caps && caps.zoom){
+          zoomEl.disabled = false;
+          zoomEl.min = caps.zoom.min || 1;
+          zoomEl.max = caps.zoom.max || 1;
+          zoomEl.step = caps.zoom.step || 0.1;
+
+          const z = settings.zoom || 1;
+          zoomEl.value = z;
+          zoomLabel.textContent = `x${Number(z).toFixed(1)}`;
+        }
+      }catch(e){
+        log('refreshCapabilities failed', e?.message || e);
+      }
+    }
+
+    async function toggleTorch(){
+      if(!currentVideoTrack) return;
+      try{
+        const caps = currentVideoTrack.getCapabilities ? currentVideoTrack.getCapabilities() : {};
+        if(!caps || !('torch' in caps)){
+          showToast('ライト非対応', 'この端末はtorch制御に対応していません');
+          return;
+        }
+        torchOn = !torchOn;
+        await currentVideoTrack.applyConstraints({ advanced: [{ torch: torchOn }] });
+        btnTorch.textContent = torchOn ? 'ライトON' : 'ライト';
+        log('torch', torchOn ? 'on' : 'off');
+      }catch(e){
+        log('torch failed', e?.message || e);
+        showToast('ライト切替失敗', '端末の制限で制御できない場合があります');
+      }
+    }
+
+    async function switchCamera(){
+      try{
+        const cams = await listVideoDevices();
+        if((cams || []).length < 2){
+          showToast('カメラが1つしかありません', '');
+          return;
+        }
+        const idx = deviceIds.indexOf(usingDeviceId);
+        const nextId = deviceIds[(idx >= 0 ? idx+1 : 0) % deviceIds.length];
+        log('switch camera', usingDeviceId, '->', nextId);
+        await stopCamera();
+        await startCamera(nextId);
+      }catch(e){
+        log('switchCamera failed', e?.message || e);
+        showToast('カメラ切替失敗', 'いったん停止してから試してください');
+      }
+    }
+
+    async function setZoom(z){
+      if(!currentVideoTrack) return;
+      try{
+        const val = Number(z);
+        if(!Number.isFinite(val)) return;
+        await currentVideoTrack.applyConstraints({ advanced: [{ zoom: val }] });
+        zoomLabel.textContent = `x${val.toFixed(1)}`;
+      }catch(e){
+        log('zoom failed', e?.message || e);
+      }
+    }
+
+    // ====== API ======
+    async function sendScan(code){
+      const token = String(tokenEl.value || '').trim();
+      if(!token){
+        setNetStatus('token required', false);
+        showToast('トークンが必要', 'X-Admin-Token を入力してください');
+        return;
+      }
+
+      const tracking_no = normalizeTracking(codeEl.value || code);
+      if(!isValidTracking(tracking_no)){
+        setNetStatus('invalid tracking', false);
+        showToast('追跡番号が不正', '8〜16桁の数字のみ送信できます');
+        return;
+      }
+
+      setNetStatus('sending...', null);
+      log('POST /api/admin/ship/scan-and-notify', tracking_no);
+
+      // 同一コードの連打防止（0.8秒）
+      const now = Date.now();
+      if(now - lastSentAt < 800) return;
+      lastSentAt = now;
+
+      try{
+        const r = await fetch('/api/admin/ship/scan-and-notify', {
+          method:'POST',
+          headers:{
+            'Content-Type':'application/json',
+            'X-Admin-Token': token
+          },
+          body: JSON.stringify({ tracking_no })
+        });
+
+        const j = await r.json().catch(()=>null);
+
+        if(!r.ok){
+          setNetStatus(`error ${r.status}`, false);
+          log('api error', r.status, j || '(no json)');
+
+          const msg =
+            (j && j.error === 'order_not_found') ? 'DBにこの追跡番号の注文がありません' :
+            (j && j.error === 'tracking_no_duplicated') ? '同じ追跡番号が複数注文に入っています（要修正）' :
+            (j && j.error === 'tracking_no_invalid') ? '追跡番号の形式が違います' :
+            'サーバエラー';
+
+          showToast('送信失敗', msg);
+          return;
+        }
+
+        // 成功
+        if(j && j.already_notified){
+          setNetStatus('already notified', true);
+          log('already notified', j);
+          showToast('通知済み', `注文ID: ${j.orderId} はすでに発送通知済み`);
+        }else{
+          setNetStatus('sent', true);
+          log('sent ok', j);
+          showToast('OK', `発送通知しました（注文ID: ${j.orderId}）`);
+        }
+
+        // 次に備えて
+        codeEl.select();
+      }catch(e){
+        setNetStatus('network error', false);
+        log('fetch failed', e?.message || e);
+        showToast('通信失敗', 'ネットワーク or トークンを確認してください');
+      }
+    }
+
+    // ====== UI events ======
+    btnStart.addEventListener('click', () => startCamera());
+    btnStop.addEventListener('click',  () => stopCamera());
+    btnTorch.addEventListener('click', () => toggleTorch());
+    btnSwitch.addEventListener('click', () => switchCamera());
+
+    btnSend.addEventListener('click', () => sendScan(codeEl.value));
+    btnClear.addEventListener('click', () => {
+      codeEl.value = '';
+      codeEl.focus();
+      setNetStatus('-', null);
+    });
+
+    zoomEl.addEventListener('input', (e) => setZoom(e.target.value));
+
+    // Enterで送信
+    codeEl.addEventListener('keydown', (e) => {
+      if(e.key === 'Enter'){
+        e.preventDefault();
+        sendScan(codeEl.value);
       }
     });
 
-    active = true;
-    setStatus("スキャン中");
-  }catch(e){
-    alert("カメラ許可してください");
-  }
-}
+    // 初期ログ
+    log('scan.html ready');
+    setCamStatus('idle', null);
+    setNetStatus('-', null);
 
-function stopCamera(){
-  if(reader){
-    reader.reset();
-    active = false;
-    setStatus("停止");
-  }
-}
-
-async function send(){
-  const code = document.getElementById("code").value.trim();
-  if(!code) return;
-
-  setStatus("送信中");
-
-  try{
-    const res = await fetch("/api/admin/ship/scan-and-notify",{
-      method:"POST",
-      headers:{
-        "Content-Type":"application/json",
-        "x-admin-token":"YOUR_ADMIN_TOKEN"
-      },
-      body: JSON.stringify({ tracking_no: code })
-    });
-
-    const data = await res.json();
-
-    if(data.ok){
-      setStatus("完了");
-      document.getElementById("code").value="";
-    }else{
-      setStatus("エラー");
+    // HTTPSじゃないとカメラが出ない（localhost以外）
+    if(location.protocol !== 'https:' && location.hostname !== 'localhost'){
+      showToast('注意', 'カメラはHTTPS必須です（localhost除く）');
     }
-  }catch(e){
-    setStatus("通信エラー");
-  }
-}
-</script>
-
+  </script>
 </body>
 </html>

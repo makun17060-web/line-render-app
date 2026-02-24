@@ -1,253 +1,162 @@
 <!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>scan.html（修正版・丸ごと）</title>
-  <style>
-    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif; margin: 0; padding: 16px; }
-    h1 { font-size: 18px; margin: 0 0 12px; }
-    .card { border: 1px solid #ddd; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
-    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-    button {
-      padding: 10px 12px;
-      border-radius: 10px;
-      border: 1px solid #333;
-      background: #fff;
-      cursor: pointer;
-      font-size: 14px;
-    }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    #startBtn { position: relative; z-index: 9999; pointer-events: auto; } /* 被さり対策 */
-    #videoWrap { position: relative; }
-    video {
-      width: 100%;
-      max-width: 560px;
-      background: #000;
-      border-radius: 12px;
-    }
-    #log {
-      background: #111;
-      color: #0f0;
-      padding: 10px;
-      border-radius: 10px;
-      white-space: pre-wrap;
-      font-size: 12px;
-      line-height: 1.4;
-      max-height: 220px;
-      overflow: auto;
-    }
-    .hint { font-size: 12px; color: #444; }
-    .pill { display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid #ccc; font-size:12px; }
-    input[type="text"]{
-      padding: 10px 12px; border-radius: 10px; border:1px solid #ccc; width: 100%;
-      max-width: 560px; font-size: 14px;
-    }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>発送スキャン</title>
+
+<style>
+body {
+  margin:0;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  background:#000;
+  color:#fff;
+}
+
+/* カメラ全画面 */
+#video {
+  position:fixed;
+  top:0;
+  left:0;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  background:#000;
+}
+
+/* 下部操作パネル */
+.panel {
+  position:fixed;
+  bottom:0;
+  left:0;
+  width:100%;
+  padding:12px;
+  background:rgba(0,0,0,0.7);
+  backdrop-filter:blur(10px);
+}
+
+/* 入力欄 */
+input {
+  width:100%;
+  padding:14px;
+  font-size:18px;
+  border-radius:10px;
+  border:none;
+  margin-bottom:10px;
+}
+
+/* ボタン */
+button {
+  width:100%;
+  padding:16px;
+  font-size:18px;
+  border:none;
+  border-radius:10px;
+  margin-bottom:8px;
+  font-weight:bold;
+}
+
+/* 色分け */
+.start { background:#00c853; color:#fff; }
+.stop  { background:#d50000; color:#fff; }
+.send  { background:#2962ff; color:#fff; }
+
+/* 状態表示 */
+.status {
+  text-align:center;
+  font-size:14px;
+  margin-top:6px;
+}
+</style>
 </head>
+
 <body>
-  <h1>scan.html（修正版・丸ごと）</h1>
 
-  <div class="card">
-    <div class="row">
-      <span class="pill" id="ctxPill">context: ?</span>
-      <span class="pill" id="uaPill">ua: ?</span>
-    </div>
-    <p class="hint" style="margin:8px 0 0;">
-      ※ カメラは <b>HTTPS</b>（または localhost）でのみ動きます。LINE内ブラウザでもHTTPSならOK。
-    </p>
-  </div>
+<video id="video" playsinline muted></video>
 
-  <div class="card">
-    <div class="row">
-      <button id="startBtn" type="button">カメラ開始</button>
-      <button id="stopBtn" type="button" disabled>停止</button>
-      <button id="clearLogBtn" type="button">ログ消去</button>
-    </div>
+<div class="panel">
+  <input id="tracking" placeholder="伝票番号（自動入力）">
 
-    <div id="videoWrap" style="margin-top:12px;">
-      <video id="video" playsinline muted></video>
-    </div>
+  <button id="startBtn" class="start">カメラ開始</button>
+  <button id="stopBtn" class="stop">停止</button>
+  <button id="sendBtn" class="send">発送確定＆通知</button>
 
-    <p class="hint" style="margin:10px 0 6px;">ログ（ここに原因が出る）</p>
-    <pre id="log"></pre>
-  </div>
+  <div id="status" class="status">待機中</div>
+</div>
 
-  <div class="card">
-    <p class="hint" style="margin:0 0 6px;">読み取り結果（手動貼り付け欄：バーコード/追跡番号など）</p>
-    <input id="resultInput" type="text" placeholder="ここに結果が入る（または手で貼る）" />
-    <div class="row" style="margin-top:8px;">
-      <button id="copyBtn" type="button">コピー</button>
-      <button id="pasteBtn" type="button">貼り付け</button>
-    </div>
-    <p class="hint" style="margin:8px 0 0;">
-      ※ ここは「スキャン結果を次の処理に渡す」ための置き場。<br>
-      「QR/バーコード読み取り実装」は次の“読み取り付き版”で追加できる。
-    </p>
-  </div>
+<script>
+let stream = null;
 
-  <script>
-    "use strict";
+function setStatus(msg){
+  document.getElementById("status").innerText = msg;
+}
 
-    // ========= ログ =========
-    function log(msg) {
-      const el = document.getElementById("log");
-      const line = `[${new Date().toISOString()}] ${msg}`;
-      el.textContent += line + "\n";
-      el.scrollTop = el.scrollHeight;
-      console.log(line);
-    }
-    function setPills(){
-      const isSecure = window.isSecureContext;
-      document.getElementById("ctxPill").textContent = "context: " + (isSecure ? "secure ✅" : "NOT secure ❌");
-      const ua = navigator.userAgent || "";
-      document.getElementById("uaPill").textContent = "ua: " + (ua.includes("Line") || ua.includes("LINE") ? "LINE" : "browser");
-    }
-
-    // ========= カメラ =========
-    let stream = null;
-
-    async function startCamera() {
-      log("startCamera() called");
-
-      // Secure Context チェック（https/localhost）
-      if (!window.isSecureContext) {
-        log("ERROR: Not a secure context. Use HTTPS (or localhost).");
-        alert("HTTPSじゃないとカメラは使えません（Secure Contextが必要）");
-        return;
-      }
-
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        log("ERROR: mediaDevices.getUserMedia not supported");
-        alert("この環境はカメラAPIに未対応です");
-        return;
-      }
-
-      const video = document.getElementById("video");
-
-      // すでに起動してたら止めてから
-      if (stream) {
-        log("stream exists -> stopping first");
-        stopCamera();
-      }
-
-      try {
-        // できるだけ「背面カメラ」優先
-        const constraints = {
-          audio: false,
-          video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          }
-        };
-
-        log("requesting getUserMedia...");
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-
-        log("got stream ✅");
-        video.srcObject = stream;
-
-        // iOS/LINE対策：muted + playsinline + user gesture直後に play
-        // （play失敗はcatchでログに出す）
-        try {
-          await video.play();
-          log("video.play() success ✅");
-        } catch (e) {
-          log("video.play() failed ❌: " + (e?.name || "") + " " + (e?.message || e));
-          alert("カメラは取得できたが、再生できませんでした（iOS/LINE権限/設定の可能性）\nログを確認してください");
-        }
-
-        document.getElementById("startBtn").disabled = true;
-        document.getElementById("stopBtn").disabled = false;
-
-      } catch (e) {
-        const name = e?.name || "UnknownError";
-        const msg  = e?.message || String(e);
-        log(`getUserMedia failed ❌: ${name} / ${msg}`);
-
-        // 典型エラーの案内
-        if (name === "NotAllowedError" || name === "SecurityError") {
-          alert("カメラ権限が拒否されています。ブラウザ/LINEの権限設定でカメラを許可してください。");
-        } else if (name === "NotFoundError" || name === "OverconstrainedError") {
-          alert("カメラデバイスが見つからない/条件が厳しすぎます。別端末で試すか条件を緩めます。");
-        } else {
-          alert("カメラ起動に失敗しました。\nログを貼ってください。");
-        }
-      }
-    }
-
-    function stopCamera() {
-      log("stopCamera() called");
-      const video = document.getElementById("video");
-      try {
-        if (video) video.pause();
-      } catch {}
-      if (stream) {
-        stream.getTracks().forEach(t => t.stop());
-        stream = null;
-        log("stream stopped");
-      }
-      if (video) video.srcObject = null;
-
-      document.getElementById("startBtn").disabled = false;
-      document.getElementById("stopBtn").disabled = true;
-    }
-
-    // ========= クリップボード =========
-    async function copyResult() {
-      const v = document.getElementById("resultInput").value || "";
-      try {
-        await navigator.clipboard.writeText(v);
-        log("copied to clipboard ✅");
-      } catch (e) {
-        log("copy failed ❌: " + (e?.message || e));
-        alert("コピーできませんでした（ブラウザ制限の可能性）。");
-      }
-    }
-
-    async function pasteResult() {
-      try {
-        const t = await navigator.clipboard.readText();
-        document.getElementById("resultInput").value = t || "";
-        log("pasted from clipboard ✅");
-      } catch (e) {
-        log("paste failed ❌: " + (e?.message || e));
-        alert("貼り付けできませんでした（権限/ブラウザ制限の可能性）。");
-      }
-    }
-
-    function clearLog() {
-      document.getElementById("log").textContent = "";
-      log("log cleared");
-    }
-
-    // ========= 初期化：DOMができてから bind（これが“ボタン無反応”の本丸対策） =========
-    document.addEventListener("DOMContentLoaded", () => {
-      setPills();
-      log("DOM loaded");
-
-      const startBtn = document.getElementById("startBtn");
-      const stopBtn  = document.getElementById("stopBtn");
-      const clearBtn = document.getElementById("clearLogBtn");
-      const copyBtn  = document.getElementById("copyBtn");
-      const pasteBtn = document.getElementById("pasteBtn");
-
-      // まずクリックイベントが生きてるか確実化
-      startBtn.addEventListener("click", () => {
-        log("startBtn clicked");
-        startCamera();
-      });
-      stopBtn.addEventListener("click", () => stopCamera());
-      clearBtn.addEventListener("click", () => clearLog());
-      copyBtn.addEventListener("click", () => copyResult());
-      pasteBtn.addEventListener("click", () => pasteResult());
-
-      // ページ離脱時に止める
-      window.addEventListener("beforeunload", () => {
-        try { stopCamera(); } catch {}
-      });
+// カメラ開始
+async function startCamera(){
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:"environment" },
+      audio:false
     });
-  </script>
+
+    const video = document.getElementById("video");
+    video.srcObject = stream;
+    await video.play();
+
+    setStatus("カメラ起動中");
+  }catch(e){
+    setStatus("カメラエラー：" + e.name);
+  }
+}
+
+// 停止
+function stopCamera(){
+  if(stream){
+    stream.getTracks().forEach(t=>t.stop());
+    stream=null;
+    setStatus("停止");
+  }
+}
+
+// 通知API
+async function send(){
+  const tracking = document.getElementById("tracking").value.trim();
+
+  if(!tracking){
+    setStatus("番号未入力");
+    return;
+  }
+
+  setStatus("送信中…");
+
+  try{
+    const res = await fetch("/api/admin/ship/scan-and-notify",{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "X-Admin-Token": localStorage.getItem("token") || ""
+      },
+      body:JSON.stringify({ tracking_no:tracking })
+    });
+
+    const data = await res.json();
+
+    if(data.already_notified){
+      setStatus("通知済み");
+    }else{
+      setStatus("通知完了");
+    }
+
+  }catch(e){
+    setStatus("エラー");
+  }
+}
+
+// ボタン
+document.getElementById("startBtn").onclick = startCamera;
+document.getElementById("stopBtn").onclick = stopCamera;
+document.getElementById("sendBtn").onclick = send;
+</script>
+
 </body>
 </html>

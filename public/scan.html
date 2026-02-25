@@ -16,38 +16,33 @@
       --vh: 1dvh;
     }
     *{ box-sizing:border-box; }
-    html,body{
-      margin:0; padding:0; background:var(--bg); color:var(--text);
-      font-family: system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif;
-      overscroll-behavior:none;
-    }
-    body{
-      min-height: calc(var(--vh) * 100);
-      padding: calc(12px + var(--safe-top)) calc(12px + var(--safe-left)) calc(14px + var(--safe-bottom)) calc(12px + var(--safe-right));
-    }
-    .wrap{ max-width:920px; margin:0 auto; display:flex; flex-direction:column; gap:12px; }
+    html,body{ margin:0; padding:0; background:var(--bg); color:var(--text);
+      font-family: system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif; overscroll-behavior:none; }
+    body{ min-height: calc(var(--vh) * 100);
+      padding: calc(12px + var(--safe-top)) calc(12px + var(--safe-left)) calc(14px + var(--safe-bottom)) calc(12px + var(--safe-right)); }
+
+    .wrap{ max-width: 920px; margin:0 auto; display:flex; flex-direction:column; gap:12px; }
     .header{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
     .title{ font-size:16px; font-weight:700; letter-spacing:.3px; }
     .sub{ font-size:12px; color:var(--muted); margin-top:2px; }
+
     .card{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:12px; box-shadow:0 10px 22px rgba(0,0,0,.25); }
-    .videoWrap{ position:relative; border-radius:16px; overflow:hidden; background:#000; border:1px solid var(--line); height: clamp(280px, 52dvh, 560px); }
-    video{ width:100%; height:100%; object-fit:cover; background:#000; }
+
+    .videoWrap{ position:relative; border-radius:16px; overflow:hidden; background:#000; border:1px solid var(--line);
+      height: clamp(280px, 52dvh, 560px); }
+    /* ✅ coverだと切れることがあるので contain（解析に有利） */
+    video{ width:100%; height:100%; object-fit: contain; background:#000; }
+
     .reticle{ pointer-events:none; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
-    /* CODE128向け：横長・薄め */
+    /* ✅ 線バーコード用：横長・薄め */
     .reticle > div{
-      width: min(70vw, 520px);
+      width: min(78vw, 620px);
       height: min(16vh, 120px);
-      border: 2px solid rgba(255,255,255,.65);
-      border-radius: 14px;
-      box-shadow: 0 0 0 9999px rgba(0,0,0,.25);
-      position:relative;
+      border:2px solid rgba(255,255,255,.65);
+      border-radius:14px;
+      box-shadow:0 0 0 9999px rgba(0,0,0,.25);
     }
-    .reticle > div:before, .reticle > div:after{
-      content:""; position:absolute; inset:-2px; border-radius:14px;
-      border:2px solid rgba(77,163,255,.55);
-      filter: drop-shadow(0 0 10px rgba(77,163,255,.25));
-      opacity:.7;
-    }
+
     .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
     .btn{
       appearance:none; border:1px solid var(--line); background:var(--btn); color:var(--text);
@@ -59,20 +54,19 @@
     .btn.danger{ background:#2a1212; border-color: rgba(255,77,79,.35); color:#ffd7d7; }
     .btn.ghost{ background:transparent; }
     .btn:disabled{ opacity:.45; cursor:not-allowed; }
+
     .input{
       width:100%; padding:14px 14px; border-radius:14px; border:1px solid var(--line);
       background:#0f0f11; color:var(--text); font-size:16px; outline:none; min-height:48px;
     }
     .hint{ font-size:12px; color:var(--muted); line-height:1.35; }
     .status{ font-size:12px; color:var(--muted); display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-    .pill{
-      padding:6px 10px; border-radius:999px; background:#0f0f11; border:1px solid var(--line);
-      color:var(--muted); font-size:12px; display:inline-flex; align-items:center; gap:6px;
-    }
+    .pill{ padding:6px 10px; border-radius:999px; background:#0f0f11; border:1px solid var(--line); color:var(--muted); font-size:12px; }
     .pill.ok{ color:#caffd8; border-color: rgba(53,199,89,.35); }
     .pill.bad{ color:#ffd0d0; border-color: rgba(255,77,79,.35); }
+
     .grid2{ display:grid; grid-template-columns:1fr; gap:12px; }
-    @media (min-width:760px){
+    @media (min-width: 760px){
       .grid2{ grid-template-columns: 1.2fr .8fr; align-items:start; }
       .videoWrap{ height: clamp(420px, 62dvh, 620px); }
     }
@@ -82,36 +76,30 @@
       font-size:12px; background:#0f0f11; border:1px solid var(--line); border-radius:14px;
       padding:10px; max-height:260px; overflow:auto; white-space:pre-wrap; word-break:break-word;
     }
-    .toast{
-      position:fixed; left:12px; right:12px; bottom: calc(12px + var(--safe-bottom));
-      display:flex; justify-content:center; pointer-events:none; z-index:9999;
-    }
+
+    .toast{ position:fixed; left:12px; right:12px; bottom: calc(12px + var(--safe-bottom));
+      display:flex; justify-content:center; pointer-events:none; z-index:9999; }
     .toast > div{
       pointer-events:auto; max-width:920px; width:100%;
-      background: rgba(20,20,22,.96); border:1px solid var(--line); border-radius:14px; padding:12px 12px;
-      box-shadow: 0 12px 28px rgba(0,0,0,.35);
-      font-size:13px; display:flex; align-items:center; justify-content:space-between; gap:10px;
+      background: rgba(20,20,22,.96); border:1px solid var(--line); border-radius:14px; padding:12px;
+      box-shadow:0 12px 28px rgba(0,0,0,.35);
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
       opacity:0; transform: translateY(10px); transition:.18s ease;
     }
     .toast.show > div{ opacity:1; transform: translateY(0); }
     .toast strong{ color:var(--text); }
     .toast .small{ color:var(--muted); font-size:12px; }
+
     .sliderRow{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
     input[type="range"]{ width:180px; accent-color: var(--accent); }
-    details{ border:1px solid var(--line); border-radius:14px; padding:10px 12px; background:#0f0f11; }
-    details summary{ cursor:pointer; color:var(--text); font-weight:700; list-style:none; }
-    details summary::-webkit-details-marker{ display:none; }
-    .kv{ display:grid; grid-template-columns:110px 1fr; gap:8px 10px; margin-top:10px; font-size:12px; color:var(--muted); }
-    .kv code{ color:var(--text); }
   </style>
 </head>
-
 <body>
   <div class="wrap">
     <div class="header">
       <div>
         <div class="title">発送スキャン（追跡番号 → shipped → 即通知）</div>
-        <div class="sub">バーコード（CODE128想定） → <code>/api/admin/ship/scan-and-notify</code></div>
+        <div class="sub">バーコード → <code>/api/admin/ship/scan-and-notify</code></div>
       </div>
       <div class="status">
         <span id="camPill" class="pill">camera: idle</span>
@@ -142,24 +130,13 @@
           <div class="hint">ズーム</div>
           <input id="zoom" type="range" min="1" max="1" step="0.1" value="1" disabled />
           <span id="zoomLabel" class="pill">x1.0</span>
-          <span class="hint">※端末が対応している場合のみ</span>
+          <span class="hint">※対応端末のみ</span>
         </div>
 
         <div style="height:8px"></div>
         <div class="hint">
-          コツ：<b>距離20cm</b>＋<b>水平</b>＋<b>0.5秒止める</b>。反射は<b>少し斜め</b>。
+          線バーコードは <b>枠いっぱいに横長</b>＋<b>20〜25cm</b>＋<b>0.5秒静止</b> が一番通る。反射は少し斜め。
         </div>
-
-        <div style="height:10px"></div>
-        <details>
-          <summary>診断（読めない時）</summary>
-          <div class="kv">
-            <div>HTTPS</div><div><code id="diagHttps">-</code></div>
-            <div>ZXing</div><div><code id="diagZxing">-</code></div>
-            <div>UA</div><div><code id="diagUA">-</code></div>
-            <div>Host</div><div><code id="diagHost">-</code></div>
-          </div>
-        </details>
       </div>
 
       <div class="card controls">
@@ -172,16 +149,12 @@
         <div>
           <div style="font-weight:700; margin-bottom:6px;">追跡番号（手入力もOK）</div>
           <input id="code" class="input" inputmode="numeric" placeholder="例：489518570015" />
-          <div class="hint">数字以外は自動で除去して送ります（8〜16桁チェック）</div>
+          <div class="hint">数字以外は自動で除去（8〜16桁）</div>
         </div>
 
         <div class="row">
           <button id="btnSend" class="btn primary" type="button">送信（通知）</button>
           <button id="btnClear" class="btn ghost" type="button">クリア</button>
-        </div>
-
-        <div class="hint">
-          成功すると：<b>status='shipped'</b> に更新 → <b>LINE通知</b> → <b>shipped_notified_at</b> が入る（冪等）。
         </div>
 
         <div style="font-weight:700;">ログ</div>
@@ -197,7 +170,7 @@
     <button id="toastBtn" class="btn" type="button" style="min-height:40px; padding:10px 12px;">OK</button>
   </div></div>
 
-  <!-- ✅ ZXing（ローカル配信） -->
+  <!-- ✅ ZXing（ローカル） -->
   <script src="/vendor/zxing/library.min.js"></script>
   <script src="/vendor/zxing/browser.min.js"></script>
   <script>window.ZXing = window.ZXing || window.ZXingBrowser;</script>
@@ -241,11 +214,6 @@
     const toastMsg = $("toastMsg");
     const toastBtn = $("toastBtn");
 
-    const diagHttps = $("diagHttps");
-    const diagZxing = $("diagZxing");
-    const diagUA = $("diagUA");
-    const diagHost = $("diagHost");
-
     function log(...args){
       const line = args.map(x => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ');
       const t = new Date();
@@ -260,35 +228,25 @@
     }
     toastBtn.addEventListener('click', () => toast.classList.remove('show'));
 
-    function setCamStatus(text, ok=null){
-      camPill.textContent = `camera: ${text}`;
-      camPill.classList.remove('ok','bad');
-      if(ok === true) camPill.classList.add('ok');
-      if(ok === false) camPill.classList.add('bad');
+    function setPill(el, label, ok=null){
+      el.textContent = label;
+      el.classList.remove('ok','bad');
+      if(ok === true) el.classList.add('ok');
+      if(ok === false) el.classList.add('bad');
     }
-    function setNetStatus(text, ok=null){
-      netPill.textContent = `api: ${text}`;
-      netPill.classList.remove('ok','bad');
-      if(ok === true) netPill.classList.add('ok');
-      if(ok === false) netPill.classList.add('bad');
-    }
-    function setZxStatus(text, ok=null){
-      zxPill.textContent = `zxing: ${text}`;
-      zxPill.classList.remove('ok','bad');
-      if(ok === true) zxPill.classList.add('ok');
-      if(ok === false) zxPill.classList.add('bad');
-    }
+    const setCam = (t, ok=null) => setPill(camPill, `camera: ${t}`, ok);
+    const setNet = (t, ok=null) => setPill(netPill, `api: ${t}`, ok);
+    const setZx  = (t, ok=null) => setPill(zxPill,  `zxing: ${t}`, ok);
 
-    // ====== state ======
+    // ===== state =====
     let stream = null;
-    let currentVideoTrack = null;
+    let track  = null;
     let usingDeviceId = null;
     let deviceIds = [];
     let torchOn = false;
 
     let reader = null;
     let scanning = false;
-
     let lastScanAt = 0;
     let lastApiAt  = 0;
 
@@ -300,35 +258,21 @@
     }
 
     function zxingReady(){
-      return (typeof window.ZXing !== 'undefined')
-        && !!(ZXing.BrowserMultiFormatReader || ZXing.BrowserBarcodeReader);
+      return (typeof window.ZXing !== 'undefined') && !!ZXing.BrowserMultiFormatReader;
     }
 
     function makeReader(){
-      // ✅ CODE128中心に絞る（速度・精度）
       const hints = new Map();
-      try{
-        if(ZXing.DecodeHintType && ZXing.BarcodeFormat){
-          hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-            ZXing.BarcodeFormat.CODE_128,
-            ZXing.BarcodeFormat.ITF,
-            ZXing.BarcodeFormat.EAN_13,
-            ZXing.BarcodeFormat.EAN_8,
-            ZXing.BarcodeFormat.QR_CODE,
-          ]);
-          hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-          hints.set(ZXing.DecodeHintType.ALSO_INVERTED, true);
-        }
-      }catch{}
+      // ✅ ヤマト系：CODE128/ITFを最優先（絞るほど強い）
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+        ZXing.BarcodeFormat.CODE_128,
+        ZXing.BarcodeFormat.ITF
+      ]);
+      hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+      hints.set(ZXing.DecodeHintType.ALSO_INVERTED, true);
 
-      if(ZXing.BrowserMultiFormatReader){
-        // delayBetweenScanAttempts を少し長め（ブレ耐性）
-        return new ZXing.BrowserMultiFormatReader(hints, 200);
-      }
-      if(ZXing.BrowserBarcodeReader){
-        return new ZXing.BrowserBarcodeReader();
-      }
-      return null;
+      // delayBetweenScanAttempts: 250〜350 がブレ耐性良い
+      return new ZXing.BrowserMultiFormatReader(hints, 300);
     }
 
     async function listVideoDevices(){
@@ -338,112 +282,149 @@
       return cams;
     }
 
+    async function applyBestConstraints(){
+      if(!track) return;
+
+      // ✅ 可能なら「連続オートフォーカス/露出」を有効化
+      try{
+        const caps = track.getCapabilities ? track.getCapabilities() : {};
+        const adv = [];
+
+        // focusMode が取れる端末だけ
+        if(caps.focusMode && Array.isArray(caps.focusMode)){
+          if(caps.focusMode.includes('continuous')) adv.push({ focusMode: 'continuous' });
+          else if(caps.focusMode.includes('auto'))   adv.push({ focusMode: 'auto' });
+        }
+        if(caps.exposureMode && Array.isArray(caps.exposureMode)){
+          if(caps.exposureMode.includes('continuous')) adv.push({ exposureMode: 'continuous' });
+        }
+        if(caps.whiteBalanceMode && Array.isArray(caps.whiteBalanceMode)){
+          if(caps.whiteBalanceMode.includes('continuous')) adv.push({ whiteBalanceMode: 'continuous' });
+        }
+
+        if(adv.length){
+          await track.applyConstraints({ advanced: adv });
+          log('applied advanced constraints', adv);
+        }
+      }catch(e){
+        log('applyBestConstraints failed', e?.message || e);
+      }
+
+      // ✅ 初期ズーム（最大3.0まで：線バーコードに効く）
+      try{
+        const caps = track.getCapabilities ? track.getCapabilities() : {};
+        if(caps.zoom){
+          const z = Math.min(3.0, caps.zoom.max || 3.0);
+          await track.applyConstraints({ advanced: [{ zoom: z }] });
+          zoomLabel.textContent = `x${Number(z).toFixed(1)}`;
+        }
+      }catch{}
+    }
+
+    async function refreshZoomUI(){
+      zoomEl.disabled = true;
+      zoomEl.min = 1; zoomEl.max = 1; zoomEl.value = 1;
+      zoomLabel.textContent = 'x1.0';
+
+      btnTorch.disabled = true;
+
+      if(!track) return;
+
+      try{
+        const caps = track.getCapabilities ? track.getCapabilities() : {};
+        const settings = track.getSettings ? track.getSettings() : {};
+
+        if(caps && caps.zoom){
+          zoomEl.disabled = false;
+          zoomEl.min = caps.zoom.min || 1;
+          zoomEl.max = caps.zoom.max || 1;
+          zoomEl.step = caps.zoom.step || 0.1;
+          const z = settings.zoom || 1;
+          zoomEl.value = z;
+          zoomLabel.textContent = `x${Number(z).toFixed(1)}`;
+        }
+        if(caps && 'torch' in caps){
+          btnTorch.disabled = false;
+        }
+      }catch(e){
+        log('refreshZoomUI failed', e?.message || e);
+      }
+    }
+
     async function startCamera(preferredDeviceId=null){
       if(scanning) return;
 
       const zxOk = zxingReady();
-      setZxStatus(zxOk ? 'ok' : 'missing', zxOk);
+      setZx(zxOk ? 'ok' : 'missing', zxOk);
       if(!zxOk){
-        showToast('ZXingが読み込めていません', 'public/vendor/zxing の配置と script src を確認してください');
+        showToast('ZXingが読み込めていません', 'library.min.js / browser.min.js の配置とパスを確認して');
         return;
       }
 
-      if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-        showToast('この端末ではカメラが使えません', '別の端末/ブラウザで試してください');
+      if(!navigator.mediaDevices?.getUserMedia){
+        showToast('この端末ではカメラが使えません', '別の端末/ブラウザで試して');
         return;
       }
 
-      setCamStatus('starting...', null);
+      setCam('starting...', null);
       log('startCamera...');
 
-      const baseConstraints = {
+      const constraints = {
         audio:false,
         video:{
-          facingMode:{ ideal:"environment" },
-          width:  { min: 1280, ideal: 1920, max: 2560 },
-          height: { min: 720,  ideal: 1080, max: 1440 }
+          facingMode:{ ideal:'environment' },
+          width:  { ideal: 1920 },
+          height: { ideal: 1080 }
         }
       };
       if(preferredDeviceId){
-        baseConstraints.video.deviceId = { exact: preferredDeviceId };
-        delete baseConstraints.video.facingMode;
+        constraints.video.deviceId = { exact: preferredDeviceId };
+        delete constraints.video.facingMode;
       }
 
       try{
-        stream = await navigator.mediaDevices.getUserMedia(baseConstraints);
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
       }catch(e){
-        log('getUserMedia failed, fallback', e?.name || String(e));
-        try{
-          stream = await navigator.mediaDevices.getUserMedia({
-            audio:false,
-            video:{ facingMode:{ ideal:"environment" } }
-          });
-        }catch(e2){
-          setCamStatus('permission denied', false);
-          log('getUserMedia failed', e2?.name || String(e2));
-          showToast('カメラを許可してください', 'ブラウザの権限設定でカメラを「許可」にしてください');
-          return;
-        }
-      }
-
-      video.srcObject = stream;
-      try{ await video.play(); }catch(e){ log('video.play failed', e?.name || '', e?.message || e); }
-
-      const tracks = stream.getVideoTracks();
-      currentVideoTrack = tracks[0] || null;
-
-      try{
-        const settings = currentVideoTrack ? currentVideoTrack.getSettings() : {};
-        usingDeviceId = settings.deviceId || preferredDeviceId || null;
-        log('camera settings', settings);
-      }catch{}
-
-      await refreshCapabilities();
-
-      // ✅ 初期ズーム（最大2.5）
-      setTimeout(async () => {
-        try{
-          const tr = video.srcObject.getVideoTracks()[0];
-          const caps = tr.getCapabilities ? tr.getCapabilities() : {};
-          if(caps.zoom){
-            const z = Math.min(2.5, caps.zoom.max || 2.5);
-            await tr.applyConstraints({ advanced: [{ zoom: z }] });
-            zoomLabel.textContent = `x${Number(z).toFixed(1)}`;
-          }
-        }catch{}
-      }, 500);
-
-      reader = makeReader();
-      if(!reader || typeof reader.decodeFromVideoDevice !== 'function'){
-        showToast('ZXing Reader互換エラー', 'decodeFromVideoDevice がありません（UMD取り違えの可能性）');
-        await stopCamera();
+        log('getUserMedia failed', e?.name || String(e));
+        showToast('カメラ開始に失敗', '権限/HTTPS/別ブラウザを確認して');
+        setCam('failed', false);
         return;
       }
 
-      scanning = true;
-      lastScanAt = 0;
-      lastApiAt  = 0;
+      video.srcObject = stream;
+      video.setAttribute('autoplay','');
+      video.setAttribute('playsinline','');
 
-      btnStart.disabled = true;
-      btnStop.disabled = false;
+      try{ await video.play(); }catch(e){ log('video.play failed', e?.message || e); }
 
-      btnSwitch.disabled = true;
+      track = stream.getVideoTracks()[0] || null;
+      if(!track){
+        showToast('カメラトラックが取れない', '');
+        setCam('no track', false);
+        return;
+      }
+
       try{
-        const cams = await listVideoDevices();
-        if((cams || []).length >= 2) btnSwitch.disabled = false;
+        const s = track.getSettings ? track.getSettings() : {};
+        usingDeviceId = s.deviceId || preferredDeviceId || null;
+        log('camera settings', s);
       }catch{}
 
-      setCamStatus('running', true);
-      setZxStatus('zxing-only', true);
+      await applyBestConstraints();
+      await refreshZoomUI();
 
-      // ✅ ここが修正ポイント：Promiseをcatchして NotFound を握り潰す
-      reader.decodeFromVideoDevice(null, video, (result, err) => {
+      reader = makeReader();
+      scanning = true;
+      setCam('running', true);
+      setZx('zxing-only', true);
+
+      // ✅ 連続デコード（video element）
+      reader.decodeFromVideoElementContinuously(video, (result, err) => {
         if(!scanning) return;
 
         if(result){
-          const raw = (typeof result.getText === 'function') ? result.getText() : String(result.text || result);
+          const raw = result.getText();
           const code = normalizeTracking(raw);
-          if(!code) return;
 
           const now = Date.now();
           if(now - lastScanAt < 800) return;
@@ -453,7 +434,7 @@
           log('scanned:', raw, '->', code);
 
           if(!isValidTracking(code)){
-            showToast('読み取りはできたが桁が違う', `取得: ${code}（8〜16桁のみ送信）`);
+            showToast('桁が違う', `取得: ${code}（8〜16桁のみ）`);
             return;
           }
 
@@ -462,25 +443,29 @@
           return;
         }
 
-        // NotFoundは普通なのでログしない
+        // NotFoundは通常（無視）
         if(err){
           const name = err.name || err.constructor?.name || '';
           if(name && name !== 'NotFoundException'){
             log('decode err:', name, err.message || String(err));
           }
         }
-      }).catch((e) => {
-        // ✅ これがないと「no multi format...」が未処理で出る
-        const name = e?.name || e?.constructor?.name || '';
-        if(name && name !== 'NotFoundException'){
-          log('decode promise error:', name, e?.message || String(e));
-        }
       });
+
+      btnStart.disabled = true;
+      btnStop.disabled = false;
+
+      btnSwitch.disabled = true;
+      try{
+        const cams = await listVideoDevices();
+        if((cams || []).length >= 2) btnSwitch.disabled = false;
+      }catch{}
     }
 
     async function stopCamera(){
       scanning = false;
-      try{ if(reader && reader.reset) reader.reset(); }catch{}
+
+      try{ reader && reader.reset && reader.reset(); }catch{}
       reader = null;
 
       if(stream){
@@ -489,7 +474,7 @@
         }
       }
       stream = null;
-      currentVideoTrack = null;
+      track = null;
       usingDeviceId = null;
       torchOn = false;
 
@@ -498,53 +483,20 @@
       btnTorch.disabled = true;
       btnSwitch.disabled = true;
       zoomEl.disabled = true;
-      setCamStatus('stopped', null);
+
+      setCam('stopped', null);
       log('camera stopped');
     }
 
-    async function refreshCapabilities(){
-      btnTorch.disabled = true;
-      zoomEl.disabled = true;
-      zoomEl.min = 1; zoomEl.max = 1; zoomEl.value = 1;
-      zoomLabel.textContent = 'x1.0';
-
-      if(!currentVideoTrack) return;
-
-      try{
-        const caps = currentVideoTrack.getCapabilities ? currentVideoTrack.getCapabilities() : {};
-        const settings = currentVideoTrack.getSettings ? currentVideoTrack.getSettings() : {};
-        log('capabilities', caps);
-
-        if(caps && 'torch' in caps){
-          btnTorch.disabled = false;
-        }
-
-        if(caps && caps.zoom){
-          zoomEl.disabled = false;
-          zoomEl.min = caps.zoom.min || 1;
-          zoomEl.max = caps.zoom.max || 1;
-          zoomEl.step = caps.zoom.step || 0.1;
-
-          const z = settings.zoom || 1;
-          zoomEl.value = z;
-          zoomLabel.textContent = `x${Number(z).toFixed(1)}`;
-        }
-      }catch(e){
-        log('refreshCapabilities failed', e?.message || e);
-      }
-    }
-
     async function toggleTorch(){
-      const s = video.srcObject;
-      const track = s && s.getVideoTracks ? s.getVideoTracks()[0] : null;
       if(!track){
-        showToast('カメラが未開始', '先に「カメラ開始」を押してください');
+        showToast('カメラが未開始', '先に「カメラ開始」');
         return;
       }
       try{
         const caps = track.getCapabilities ? track.getCapabilities() : {};
         if(!caps || !('torch' in caps)){
-          showToast('ライト非対応', 'この端末/ブラウザはライト制御に対応していません');
+          showToast('ライト非対応', 'この端末/ブラウザはtorch制御できない');
           return;
         }
         torchOn = !torchOn;
@@ -553,7 +505,7 @@
         log('torch', torchOn ? 'on' : 'off');
       }catch(e){
         log('torch failed', e?.message || e);
-        showToast('ライト切替失敗', '端末の制限で制御できない場合があります');
+        showToast('ライト切替失敗', '端末制限でできない場合あり');
       }
     }
 
@@ -561,7 +513,7 @@
       try{
         const cams = await listVideoDevices();
         if((cams || []).length < 2){
-          showToast('カメラが1つしかありません', '');
+          showToast('カメラが1つしかない', '');
           return;
         }
         const idx = deviceIds.indexOf(usingDeviceId);
@@ -571,35 +523,33 @@
         await startCamera(nextId);
       }catch(e){
         log('switchCamera failed', e?.message || e);
-        showToast('カメラ切替失敗', 'いったん停止してから試してください');
+        showToast('カメラ切替失敗', '停止→開始で試して');
       }
     }
 
-    async function setZoom(z){
-      if(!currentVideoTrack) return;
+    async function setZoom(val){
+      if(!track) return;
       try{
-        const val = Number(z);
-        if(!Number.isFinite(val)) return;
-        await currentVideoTrack.applyConstraints({ advanced: [{ zoom: val }] });
-        zoomLabel.textContent = `x${val.toFixed(1)}`;
+        const z = Number(val);
+        await track.applyConstraints({ advanced: [{ zoom: z }] });
+        zoomLabel.textContent = `x${z.toFixed(1)}`;
       }catch(e){
         log('zoom failed', e?.message || e);
       }
     }
 
-    // ====== API ======
     async function sendScan(code){
       const token = String(tokenEl.value || '').trim();
       if(!token){
-        setNetStatus('token required', false);
-        showToast('トークンが必要', 'X-Admin-Token を入力してください');
+        setNet('token required', false);
+        showToast('トークン必要', 'X-Admin-Token を入力して');
         return;
       }
 
       const tracking_no = normalizeTracking(codeEl.value || code);
       if(!isValidTracking(tracking_no)){
-        setNetStatus('invalid tracking', false);
-        showToast('追跡番号が不正', '8〜16桁の数字のみ送信できます');
+        setNet('invalid tracking', false);
+        showToast('追跡番号不正', '8〜16桁の数字のみ');
         return;
       }
 
@@ -607,16 +557,13 @@
       if(now - lastApiAt < 800) return;
       lastApiAt = now;
 
-      setNetStatus('sending...', null);
+      setNet('sending...', null);
       log('POST /api/admin/ship/scan-and-notify', tracking_no);
 
       try{
         const r = await fetch('/api/admin/ship/scan-and-notify', {
           method:'POST',
-          headers:{
-            'Content-Type':'application/json',
-            'X-Admin-Token': token
-          },
+          headers:{ 'Content-Type':'application/json', 'X-Admin-Token': token },
           body: JSON.stringify({ tracking_no })
         });
 
@@ -625,76 +572,41 @@
         try{ j = text ? JSON.parse(text) : null; }catch{ j = { raw: text }; }
 
         if(!r.ok){
-          setNetStatus(`error ${r.status}`, false);
+          setNet(`error ${r.status}`, false);
           log('api error', r.status, j || '(no json)');
-
-          const msg =
-            (j && j.error === 'order_not_found') ? 'DBにこの追跡番号の注文がありません' :
-            (j && j.error === 'tracking_no_duplicated') ? '同じ追跡番号が複数注文に入っています（要修正）' :
-            (j && j.error === 'tracking_no_invalid') ? '追跡番号の形式が違います' :
-            'サーバエラー';
-
-          showToast('送信失敗', msg);
+          showToast('送信失敗', (j && j.error) ? j.error : 'server error');
           return;
         }
 
         if(j && j.already_notified){
-          setNetStatus('already notified', true);
-          log('already_notified', j);
-          showToast('通知済み', `注文ID: ${j.orderId} はすでに発送通知済み`);
+          setNet('already notified', true);
+          showToast('通知済み', `注文ID: ${j.orderId}`);
         }else{
-          setNetStatus('sent', true);
-          log('sent ok', j);
+          setNet('sent', true);
           showToast('OK', `発送通知しました（注文ID: ${j.orderId}）`);
         }
-
         codeEl.select();
       }catch(e){
-        setNetStatus('network error', false);
+        setNet('network error', false);
         log('fetch failed', e?.message || e);
-        showToast('通信失敗', 'ネットワーク or トークンを確認してください');
+        showToast('通信失敗', 'ネットワーク/トークン確認');
       }
     }
 
-    // ====== UI events ======
+    // UI
     btnStart.addEventListener('click', () => startCamera());
     btnStop.addEventListener('click',  () => stopCamera());
     btnTorch.addEventListener('click', () => toggleTorch());
     btnSwitch.addEventListener('click', () => switchCamera());
-
     btnSend.addEventListener('click', () => sendScan(codeEl.value));
-    btnClear.addEventListener('click', () => {
-      codeEl.value = '';
-      codeEl.focus();
-      setNetStatus('-', null);
-    });
-
+    btnClear.addEventListener('click', () => { codeEl.value=''; codeEl.focus(); setNet('-', null); });
     zoomEl.addEventListener('input', (e) => setZoom(e.target.value));
 
-    codeEl.addEventListener('keydown', (e) => {
-      if(e.key === 'Enter'){
-        e.preventDefault();
-        sendScan(codeEl.value);
-      }
-    });
-
-    // ====== 初期ログ & 診断 ======
+    // init
     log('scan.html ready');
-    setCamStatus('idle', null);
-    setNetStatus('-', null);
-
-    const zxOk = zxingReady();
-    log('ZXing ready?', zxOk);
-    setZxStatus(zxOk ? 'ok' : 'missing', zxOk);
-
-    diagHttps.textContent = (location.protocol === 'https:' || location.hostname === 'localhost') ? 'OK' : 'NG';
-    diagZxing.textContent = zxOk ? 'ok' : 'missing';
-    diagUA.textContent = navigator.userAgent;
-    diagHost.textContent = location.host;
-
-    if(location.protocol !== 'https:' && location.hostname !== 'localhost'){
-      showToast('注意', 'カメラはHTTPS必須です（localhost除く）');
-    }
+    setCam('idle', null);
+    setNet('-', null);
+    setZx(zxingReady() ? 'ok' : 'missing', zxingReady());
   </script>
 </body>
 </html>

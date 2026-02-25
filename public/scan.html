@@ -18,7 +18,8 @@
     .videoWrap{position:relative;border-radius:16px;overflow:hidden;background:#000;border:1px solid var(--line);height: min(62dvh, 620px)}
     video{width:100%;height:100%;object-fit: cover;background:#000}
     .reticle{pointer-events:none;position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
-    .reticle>div{width:min(82vw,640px);height:min(16vh,120px);border:2px solid rgba(255,255,255,.65);border-radius:14px;box-shadow:0 0 0 9999px rgba(0,0,0,.25)}
+    /* ✅ 枠を少し大きめに（複数バーコードでも追跡番号が入りやすい） */
+    .reticle>div{width:min(86vw,700px);height:min(22vh,160px);border:2px solid rgba(255,255,255,.65);border-radius:14px;box-shadow:0 0 0 9999px rgba(0,0,0,.25)}
     .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
     .btn{appearance:none;border:1px solid var(--line);background:var(--btn);color:var(--text);padding:14px 14px;border-radius:14px;font-weight:800;font-size:14px;min-height:48px;cursor:pointer}
     .btn.primary{background:linear-gradient(180deg,#2a6dff,#2a50ff);border-color:rgba(77,163,255,.35)}
@@ -29,6 +30,7 @@
     .input{width:100%;padding:14px 14px;border-radius:14px;border:1px solid var(--line);background:#0f0f11;color:var(--text);font-size:16px;outline:none;min-height:48px}
     .hint{font-size:12px;color:var(--muted);line-height:1.35}
     .log{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-size:12px;background:#0f0f11;border:1px solid var(--line);border-radius:14px;padding:10px;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+    canvas.preview{width:100%;border:1px solid var(--line);border-radius:14px;background:#000}
   </style>
 </head>
 <body>
@@ -48,7 +50,7 @@
     <div class="card">
       <div class="videoWrap" id="videoWrap">
         <video id="video" playsinline muted></video>
-        <div class="reticle" id="reticle"><div id="reticleBox"></div></div>
+        <div class="reticle"><div id="reticleBox"></div></div>
       </div>
       <div style="height:10px"></div>
       <div class="row">
@@ -57,15 +59,21 @@
       </div>
       <div style="height:8px"></div>
       <div class="hint">
-        反射が強いときは「少し斜め」。<br>
-        どうしても読めないときは、画面いっぱいまで近づけて “静止” が最強。
+        反射が強いときは「少し斜め」。どうしても読めないときは、画面いっぱいまで近づけて “静止” が最強。<br>
+        ✅ 追跡番号は 12桁のみ確定（8桁などは捨てる）
       </div>
     </div>
 
     <div class="card">
       <div style="font-weight:800;margin-bottom:6px">結果（追跡番号）</div>
       <input id="code" class="input" inputmode="numeric" placeholder="ここに入る（12桁のみ確定）" />
-      <div class="hint">12桁だけ確定。成功時だけ長い振動。</div>
+      <div class="hint">成功時だけ長い振動。誤読対策：同じ12桁が2回連続で出たら確定。</div>
+      <div style="height:10px"></div>
+
+      <div style="font-weight:800;margin-bottom:6px">ROIプレビュー（枠内切り出し）</div>
+      <canvas id="roiPreview" class="preview"></canvas>
+      <div class="hint">ここに枠内だけが表示される。バーコードが入ってなければ読めない＝ROIズレ。</div>
+
       <div style="height:10px"></div>
       <div style="font-weight:800">ログ</div>
       <div id="log" class="log"></div>
@@ -78,6 +86,7 @@
   <script>window.ZXing = window.ZXing || window.ZXingBrowser;</script>
 
   <script>
+    // ===== vh fix =====
     (function setVh(){
       const v = window.visualViewport;
       const h = v ? v.height : window.innerHeight;
@@ -93,6 +102,7 @@
     const video = $("video");
     const videoWrap = $("videoWrap");
     const reticleBox = $("reticleBox");
+    const roiPreview = $("roiPreview");
     const logEl = $("log");
     const codeEl = $("code");
     const btnStart = $("btnStart");
@@ -115,7 +125,7 @@
       if(ok===false) el.classList.add('bad');
     }
 
-    // ===== 追跡番号：12桁のみ採用 =====
+    // ===== 追跡番号は 12桁のみ =====
     const valid12 = (v)=>/^\d{12}$/.test(String(v||''));
     function pick12(raw){
       const s = String(raw || '');
@@ -128,13 +138,16 @@
     let detector=null;
     let zxingReader=null;
 
-    // ROI canvas（枠内切り出し用）
+    // ROI canvas
     const roiCanvas = document.createElement('canvas');
     const roiCtx = roiCanvas.getContext('2d', { willReadFrequently:true });
 
-    // 爆速設定（端末により 10〜15fps が安定）
+    // Preview canvas
+    const prevCtx = roiPreview.getContext('2d');
+
+    // 爆速（端末差あるので 12fps くらいが安定）
     const TARGET_FPS = 12;
-    const FRAME_INTERVAL = Math.round(1000 / TARGET_FPS);
+    const FRAME_INTERVAL = Math.max(40, Math.round(1000 / TARGET_FPS));
     let timerId=0;
 
     // 誤読ゼロ寄せ：2回連続一致で確定 + 確定後ロック
@@ -142,9 +155,9 @@
     let pendingCount = 0;
     let pendingAt = 0;
     let lastHit = 0;
-    const HIT_LOCK_MS = 900; // 確定後のロック
+    const HIT_LOCK_MS = 900;
 
-    // fps計測
+    // fps表示
     let fpsCount=0, fpsTs=Date.now();
 
     function stopAll(){
@@ -192,9 +205,9 @@
           log('applied advanced constraints', adv);
         }
 
-        // ズーム（やりすぎるとブレるので控えめ）
+        // ✅ ズームは控えめ（上げすぎるとブレ/欠け）
         if(caps.zoom){
-          const z = Math.min(2.2, caps.zoom.max || 2.2);
+          const z = Math.min(1.6, caps.zoom.max || 1.6);
           await track.applyConstraints({advanced:[{zoom:z}]});
           log('zoom set', z);
         }
@@ -203,7 +216,7 @@
       }
     }
 
-    // ===== 枠（reticleBox）の内側を video ピクセル座標へ変換して切り出し =====
+    // ===== reticleBox の表示座標 -> video実ピクセル座標へ（object-fit: cover対応）=====
     function computeRoiOnVideo(){
       const vw = video.videoWidth || 0;
       const vh = video.videoHeight || 0;
@@ -212,36 +225,30 @@
       const wrapRect = videoWrap.getBoundingClientRect();
       const boxRect = reticleBox.getBoundingClientRect();
 
-      // boxRect を videoWrap 内の相対座標へ
       const relX = boxRect.left - wrapRect.left;
       const relY = boxRect.top  - wrapRect.top;
       const relW = boxRect.width;
       const relH = boxRect.height;
 
-      // videoは object-fit: cover なので、表示領域→実ピクセルのマッピングが必要
       const dispW = wrapRect.width;
       const dispH = wrapRect.height;
 
       const videoAR = vw / vh;
       const dispAR = dispW / dispH;
 
-      // cover: 表示領域を覆うように拡大 → 余った分がクロップされる
       let scale, offsetX, offsetY;
       if(videoAR > dispAR){
-        // 横長動画：高さに合わせる（左右がはみ出す）
-        scale = dispH / vh;
+        scale = dispH / vh;                 // height fit
         const scaledW = vw * scale;
-        offsetX = (scaledW - dispW) / 2; // 表示からはみ出した分
+        offsetX = (scaledW - dispW) / 2;    // left crop
         offsetY = 0;
       }else{
-        // 縦長/同等：幅に合わせる（上下がはみ出す）
-        scale = dispW / vw;
+        scale = dispW / vw;                 // width fit
         const scaledH = vh * scale;
         offsetX = 0;
-        offsetY = (scaledH - dispH) / 2;
+        offsetY = (scaledH - dispH) / 2;    // top crop
       }
 
-      // 表示座標(rel) -> スケール後座標 -> 実動画座標へ
       const xOnScaled = relX + offsetX;
       const yOnScaled = relY + offsetY;
 
@@ -250,8 +257,8 @@
       let sw = relW / scale;
       let sh = relH / scale;
 
-      // 余白を少し増やす（枠ギリだと欠ける事がある）
-      const pad = 0.10; // 10%
+      // 余白を少し追加（ギリギリ欠け防止）
+      const pad = 0.12;
       const px = sw * pad, py = sh * pad;
       sx -= px; sy -= py; sw += px*2; sh += py*2;
 
@@ -261,10 +268,9 @@
       sw = Math.max(1, Math.min(vw - sx, sw));
       sh = Math.max(1, Math.min(vh - sy, sh));
 
-      // ROI canvas サイズ（小さいほど速いが小さすぎると読めない）
-      // 横バーコードなので横長で確保
-      const outW = Math.min(960, Math.round(sw));
-      const outH = Math.min(240, Math.round(sh));
+      // ROI出力サイズ（速度と精度のバランス）
+      const outW = Math.min(980, Math.round(sw));
+      const outH = Math.min(260, Math.round(sh));
 
       return { sx, sy, sw, sh, outW, outH };
     }
@@ -285,30 +291,30 @@
       if(code === pendingCode) pendingCount++;
       else { pendingCode = code; pendingCount = 1; }
 
-      if(pendingCount < 2) return false; // 2回連続一致で確定
-
-      lastHit = now;
-      pendingCount = 0; // 次の読み取りに備えリセット
-      return true;
+      return (pendingCount >= 2);
     }
 
     function vibrateSuccess(){
       try{ navigator.vibrate && navigator.vibrate([120,60,220]); }catch{}
     }
-    function vibrateFailShort(){
-      try{ navigator.vibrate && navigator.vibrate(25); }catch{}
-    }
+
+    // ✅ ZXingは重いので「BarcodeDetectorが拾えない時だけ」動かす
+    let zxingCooldownUntil = 0;
 
     async function scanTick(){
       if(!scanning) return;
-      if(video.readyState < 2) return;
 
-      // fps表示
+      // fps
       fpsCount++;
       const now = Date.now();
       if(now - fpsTs >= 1000){
         pill(fpsPill, `fps: ${fpsCount}`, true);
         fpsCount=0; fpsTs=now;
+      }
+
+      if(video.readyState < 2){
+        pill(roiPill, 'roi: waiting video', null);
+        return;
       }
 
       const roi = computeRoiOnVideo();
@@ -318,61 +324,73 @@
       }
       pill(roiPill, `roi: ${Math.round(roi.sw)}x${Math.round(roi.sh)}`, true);
 
-      // roiCanvasに枠内だけ描画
+      // ROI描画
       roiCanvas.width = roi.outW;
       roiCanvas.height = roi.outH;
-
       try{
         roiCtx.drawImage(video, roi.sx, roi.sy, roi.sw, roi.sh, 0, 0, roi.outW, roi.outH);
       }catch{
         return;
       }
 
-      // ===== 1) BarcodeDetector（枠内画像で） =====
+      // ROIプレビュー（見える化）
+      roiPreview.width = roiCanvas.width;
+      roiPreview.height = roiCanvas.height;
+      prevCtx.drawImage(roiCanvas, 0, 0);
+
+      // ===== 1) BarcodeDetector（枠内）=====
+      let foundByBD = false;
       if(detector){
         try{
           const bmp = await createImageBitmap(roiCanvas);
           const res = await detector.detect(bmp);
           try{ bmp.close && bmp.close(); }catch{}
           if(res && res.length){
-            // 複数拾ったら全部試す（短いコードは12桁フィルタで落ちる）
             for(const r of res){
               const code = pick12(r.rawValue || '');
               if(!code) continue;
 
+              foundByBD = true;
               log('SEEN_12', '(BD)', r.format || '-', r.rawValue, '->', code);
 
-              const ok = valid12(code);
-              if(!ok){ vibrateFailShort(); continue; }
-
-              if(commitIfStable(code)){
+              if(valid12(code) && commitIfStable(code)){
+                lastHit = Date.now();
+                pendingCount = 0;
                 codeEl.value = code;
                 log('HIT_OK', code);
                 vibrateSuccess();
-                return; // 1tickで1確定だけ（安定）
+                return;
               }
             }
           }
         }catch(e){
-          // 端末差で例外が出ることがあるので黙殺
+          // 端末差で例外出ることあり
         }
       }
 
-      // ===== 2) ZXing（保険：枠内画像で） =====
+      // BDで拾えない時だけ、ZXingを一定間隔で試す（重くて止まる回避）
+      if(foundByBD){
+        zxingCooldownUntil = Date.now() + 350; // BDが動いてる間はZXing抑制
+        return;
+      }
+      if(Date.now() < zxingCooldownUntil) return;
+
+      // ===== 2) ZXing（枠内・保険）=====
       if(zxingReader && typeof ZXing !== 'undefined'){
         try{
-          // ZXing は canvas から BinaryBitmap を作るルートが安定
           const imgData = roiCtx.getImageData(0,0,roiCanvas.width,roiCanvas.height);
           const source = new ZXing.RGBLuminanceSource(imgData.data, imgData.width, imgData.height);
           const bitmap = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(source));
 
-          const r = zxingReader.decode(bitmap); // NotFound は例外
+          const r = zxingReader.decode(bitmap); // NotFoundは例外
           const text = r && (r.getText ? r.getText() : '');
           const code = pick12(text);
 
           if(code && valid12(code)){
             log('SEEN_12', '(ZX)', '->', code);
             if(commitIfStable(code)){
+              lastHit = Date.now();
+              pendingCount = 0;
               codeEl.value = code;
               log('HIT_OK', code);
               vibrateSuccess();
@@ -381,6 +399,8 @@
           }
         }catch(e){
           // NotFoundException は通常
+        }finally{
+          zxingCooldownUntil = Date.now() + 220; // ZXingは少し休ませる
         }
       }
     }
@@ -407,6 +427,13 @@
       });
 
       video.srcObject = stream;
+
+      // ✅ metadata待ち（videoWidth が0のまま問題対策）
+      await new Promise((resolve)=>{
+        const t = setTimeout(resolve, 1200);
+        video.onloadedmetadata = ()=>{ clearTimeout(t); resolve(); };
+      });
+
       await video.play().catch(()=>{});
 
       track = stream.getVideoTracks()[0] || null;
@@ -417,11 +444,10 @@
       btnStop.disabled=false;
       pill(camPill, 'camera: running', true);
 
-      // ===== 1) BarcodeDetector（枠内） =====
+      // ===== BarcodeDetector =====
       detector = null;
       if('BarcodeDetector' in window){
         try{
-          // 1D中心（ヤマトの伝票は Code128/ITF が多い）
           detector = new BarcodeDetector({
             formats: ['code_128','itf','ean_13','ean_8','code_39','qr_code']
           });
@@ -436,7 +462,7 @@
         log('BarcodeDetector not supported');
       }
 
-      // ===== 2) ZXing（枠内保険） =====
+      // ===== ZXing =====
       const zxOk = (typeof ZXing !== 'undefined' && ZXing.MultiFormatReader);
       pill(zxPill, zxOk ? 'zxing: ready' : 'zxing: missing', !!zxOk);
       if(zxOk){
@@ -460,7 +486,7 @@
         }
       }
 
-      // ===== 爆速：固定fpsで回す（安定＆速い）=====
+      // ===== loop =====
       fpsCount=0; fpsTs=Date.now();
       pill(fpsPill, `fps: ${TARGET_FPS}(target)`, true);
 

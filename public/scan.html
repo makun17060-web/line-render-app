@@ -1,124 +1,302 @@
 <!doctype html>
 <html lang="ja">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<title>Scan</title>
-
-<style>
-body{margin:0;background:#000;color:#fff;font-family:sans-serif}
-.videoWrap{position:relative;height:60vh}
-video{
-  width:100%;
-  height:100%;
-  object-fit: cover; /* ←ここ重要（戻した） */
-}
-.reticle{
-  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-}
-.reticle div{
-  width:80%;height:120px;border:2px solid #fff;border-radius:12px;
-}
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#111111" />
+  <title>Scan（発送通知）</title>
+  <style>
+    :root{--bg:#0b0b0c;--card:#141416;--muted:#9aa0a6;--text:#f5f5f7;--line:#2a2a2d;--btn:#1f1f22;--accent:#4da3ff;
+      --safe-top: env(safe-area-inset-top, 0px);--safe-bottom: env(safe-area-inset-bottom, 0px);--vh: 1dvh;}
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif;overscroll-behavior:none}
+    body{min-height: calc(var(--vh) * 100); padding: calc(12px + var(--safe-top)) 12px calc(14px + var(--safe-bottom)) 12px;}
+    .wrap{max-width:920px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px}
+    .title{font-weight:800;font-size:16px}
+    .sub{font-size:12px;color:var(--muted);margin-top:4px}
+    .videoWrap{position:relative;border-radius:16px;overflow:hidden;background:#000;border:1px solid var(--line);height: min(62dvh, 620px)}
+    video{width:100%;height:100%;object-fit: cover;background:#000}
+    .reticle{pointer-events:none;position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+    .reticle>div{width:min(82vw,640px);height:min(16vh,120px);border:2px solid rgba(255,255,255,.65);border-radius:14px;box-shadow:0 0 0 9999px rgba(0,0,0,.25)}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .btn{appearance:none;border:1px solid var(--line);background:var(--btn);color:var(--text);padding:14px 14px;border-radius:14px;font-weight:800;font-size:14px;min-height:48px;cursor:pointer}
+    .btn.primary{background:linear-gradient(180deg,#2a6dff,#2a50ff);border-color:rgba(77,163,255,.35)}
+    .btn:disabled{opacity:.45;cursor:not-allowed}
+    .pill{padding:6px 10px;border-radius:999px;background:#0f0f11;border:1px solid var(--line);color:var(--muted);font-size:12px}
+    .pill.ok{color:#caffd8;border-color:rgba(53,199,89,.35)}
+    .pill.bad{color:#ffd0d0;border-color:rgba(255,77,79,.35)}
+    .input{width:100%;padding:14px 14px;border-radius:14px;border:1px solid var(--line);background:#0f0f11;color:var(--text);font-size:16px;outline:none;min-height:48px}
+    .hint{font-size:12px;color:var(--muted);line-height:1.35}
+    .log{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-size:12px;background:#0f0f11;border:1px solid var(--line);border-radius:14px;padding:10px;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+  </style>
 </head>
-
 <body>
+  <div class="wrap">
+    <div class="card">
+      <div class="title">発送スキャン（BarcodeDetector優先 + ZXing保険）</div>
+      <div class="sub">線バーコードは「横いっぱい＋20〜30cm＋0.5秒静止」が一番効く</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">
+        <span id="camPill" class="pill">camera: idle</span>
+        <span id="detPill" class="pill">detector: -</span>
+        <span id="zxPill"  class="pill">zxing: -</span>
+      </div>
+    </div>
 
-<div class="videoWrap">
-  <video id="video" playsinline></video>
-  <div class="reticle"><div></div></div>
-</div>
+    <div class="card">
+      <div class="videoWrap">
+        <video id="video" playsinline muted></video>
+        <div class="reticle"><div></div></div>
+      </div>
+      <div style="height:10px"></div>
+      <div class="row">
+        <button id="btnStart" class="btn primary" type="button">カメラ開始</button>
+        <button id="btnStop"  class="btn" type="button" disabled>停止</button>
+      </div>
+      <div style="height:8px"></div>
+      <div class="hint">
+        反射が強いときは「少し斜め」。<br>
+        どうしても読めないときは、画面いっぱいまで近づけて “静止” が最強。
+      </div>
+    </div>
 
-<div style="padding:10px">
-  <button onclick="start()">開始</button>
-  <button onclick="stop()">停止</button>
-  <input id="code" placeholder="結果">
-</div>
+    <div class="card">
+      <div style="font-weight:800;margin-bottom:6px">結果（追跡番号）</div>
+      <input id="code" class="input" inputmode="numeric" placeholder="ここに入る" />
+      <div class="hint">数字以外は自動除去。読めた瞬間にバイブ。</div>
+      <div style="height:10px"></div>
+      <div style="font-weight:800">ログ</div>
+      <div id="log" class="log"></div>
+    </div>
+  </div>
 
-<script src="/vendor/zxing/library.min.js"></script>
-<script src="/vendor/zxing/browser.min.js"></script>
-<script>
-window.ZXing = window.ZXing || window.ZXingBrowser;
+  <!-- ZXing（保険） -->
+  <script src="/vendor/zxing/library.min.js"></script>
+  <script src="/vendor/zxing/browser.min.js"></script>
+  <script>window.ZXing = window.ZXing || window.ZXingBrowser;</script>
 
-let stream, reader, scanning=false;
+  <script>
+    (function setVh(){
+      const v = window.visualViewport;
+      const h = v ? v.height : window.innerHeight;
+      document.documentElement.style.setProperty('--vh', (h * 0.01) + 'px');
+    })();
+    window.addEventListener('resize', () => {
+      const v = window.visualViewport;
+      const h = v ? v.height : window.innerHeight;
+      document.documentElement.style.setProperty('--vh', (h * 0.01) + 'px');
+    });
 
-function log(...a){console.log(...a)}
+    const $ = (id)=>document.getElementById(id);
+    const video = $("video");
+    const logEl = $("log");
+    const codeEl = $("code");
+    const btnStart = $("btnStart");
+    const btnStop = $("btnStop");
+    const camPill = $("camPill");
+    const detPill = $("detPill");
+    const zxPill  = $("zxPill");
 
-function normalize(v){
-  return String(v||'').replace(/\D/g,'');
-}
-
-async function start(){
-  if(scanning) return;
-
-  stream = await navigator.mediaDevices.getUserMedia({
-    video:{
-      facingMode:"environment",
-      width:{ideal:1920},
-      height:{ideal:1080}
+    function log(...args){
+      const line = args.map(x => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ');
+      const ts = new Date().toLocaleString('sv-SE', { timeZone:'Asia/Tokyo' }).replace('T',' ');
+      logEl.textContent = `[${ts}] ${line}\n` + logEl.textContent;
     }
-  });
-
-  const video = document.getElementById('video');
-  video.srcObject = stream;
-  await video.play();
-
-  const track = stream.getVideoTracks()[0];
-
-  // ✅ 強制ズーム
-  try{
-    const caps = track.getCapabilities();
-    if(caps.zoom){
-      await track.applyConstraints({
-        advanced:[{zoom: Math.min(3, caps.zoom.max)}]
-      });
+    function pill(el, text, ok=null){
+      el.textContent = text;
+      el.classList.remove('ok','bad');
+      if(ok===true) el.classList.add('ok');
+      if(ok===false) el.classList.add('bad');
     }
-  }catch(e){}
+    const norm = (v)=>String(v||'').replace(/\s+/g,'').replace(/\D/g,'');
+    const valid = (v)=>/^\d{8,16}$/.test(v);
 
-  // ✅ ヒント拡張（ここ重要）
-  const hints = new Map();
-  hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-    ZXing.BarcodeFormat.CODE_128,
-    ZXing.BarcodeFormat.ITF,
-    ZXing.BarcodeFormat.CODE_39,
-    ZXing.BarcodeFormat.EAN_13,
-    ZXing.BarcodeFormat.EAN_8,
-    ZXing.BarcodeFormat.QR_CODE
-  ]);
-  hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-  hints.set(ZXing.DecodeHintType.ALSO_INVERTED, true);
+    let stream=null, track=null, scanning=false;
+    let detector=null;
+    let zxingReader=null;
+    let rafId=0;
+    let lastHit=0;
 
-  reader = new ZXing.BrowserMultiFormatReader(hints, 300);
-
-  scanning = true;
-
-  reader.decodeFromVideoElementContinuously(video, (result, err)=>{
-    if(!scanning) return;
-
-    if(result){
-      const raw = result.getText();
-      const code = normalize(raw);
-
-      document.getElementById('code').value = code;
-      log("READ:", raw);
-
-      navigator.vibrate?.(50);
+    function stopAll(){
       scanning=false;
-      return;
+      try{ if(zxingReader && zxingReader.reset) zxingReader.reset(); }catch{}
+      zxingReader=null;
+
+      if(rafId) cancelAnimationFrame(rafId);
+      rafId=0;
+
+      if(stream){
+        stream.getTracks().forEach(t=>{ try{t.stop()}catch{} });
+      }
+      stream=null; track=null;
+      btnStart.disabled=false;
+      btnStop.disabled=true;
+      pill(camPill, 'camera: stopped', null);
+      log('stopped');
     }
 
-    if(err && err.name !== "NotFoundException"){
-      log(err);
+    async function applyQualityHints(){
+      if(!track) return;
+      try{
+        const caps = track.getCapabilities ? track.getCapabilities() : {};
+        const adv = [];
+
+        if(caps.focusMode && Array.isArray(caps.focusMode)){
+          if(caps.focusMode.includes('continuous')) adv.push({focusMode:'continuous'});
+          else if(caps.focusMode.includes('auto')) adv.push({focusMode:'auto'});
+        }
+        if(caps.exposureMode && Array.isArray(caps.exposureMode)){
+          if(caps.exposureMode.includes('continuous')) adv.push({exposureMode:'continuous'});
+        }
+        if(caps.whiteBalanceMode && Array.isArray(caps.whiteBalanceMode)){
+          if(caps.whiteBalanceMode.includes('continuous')) adv.push({whiteBalanceMode:'continuous'});
+        }
+        if(adv.length){
+          await track.applyConstraints({advanced: adv});
+          log('applied advanced constraints', adv);
+        }
+
+        if(caps.zoom){
+          const z = Math.min(3.0, caps.zoom.max || 3.0);
+          await track.applyConstraints({advanced:[{zoom:z}]});
+          log('zoom set', z);
+        }
+      }catch(e){
+        log('quality hints failed', e?.message || String(e));
+      }
     }
-  });
-}
 
-function stop(){
-  scanning=false;
-  reader?.reset();
-  stream?.getTracks().forEach(t=>t.stop());
-}
-</script>
+    function hit(raw){
+      const code = norm(raw);
+      if(!code) return;
 
+      const now=Date.now();
+      if(now-lastHit < 800) return;
+      lastHit=now;
+
+      codeEl.value = code;
+      log('HIT', raw, '->', code);
+      try{ navigator.vibrate && navigator.vibrate(40); }catch{}
+      // 自動停止したいなら↓ON
+      // stopAll();
+    }
+
+    async function start(){
+      if(scanning) return;
+
+      if(!navigator.mediaDevices?.getUserMedia){
+        pill(camPill, 'camera: unsupported', false);
+        log('getUserMedia unsupported');
+        return;
+      }
+
+      pill(camPill, 'camera: starting...', null);
+      log('startCamera');
+
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio:false,
+        video:{
+          facingMode:{ideal:'environment'},
+          width:{ideal:1920},
+          height:{ideal:1080}
+        }
+      });
+
+      video.srcObject = stream;
+      await video.play().catch(()=>{});
+
+      track = stream.getVideoTracks()[0] || null;
+      await applyQualityHints();
+
+      scanning=true;
+      btnStart.disabled=true;
+      btnStop.disabled=false;
+      pill(camPill, 'camera: running', true);
+
+      // ===== 1) BarcodeDetector 優先 =====
+      detector = null;
+      if('BarcodeDetector' in window){
+        try{
+          // 1Dに寄せる（全部許すより強いこと多い）
+          detector = new BarcodeDetector({
+            formats: ['code_128','itf','ean_13','ean_8','code_39','qr_code']
+          });
+          pill(detPill, 'detector: BarcodeDetector', true);
+          log('BarcodeDetector enabled');
+        }catch(e){
+          pill(detPill, 'detector: failed', false);
+          log('BarcodeDetector init failed', e?.message || String(e));
+        }
+      }else{
+        pill(detPill, 'detector: not supported', false);
+        log('BarcodeDetector not supported');
+      }
+
+      // ===== 2) ZXing フォールバック =====
+      const zxOk = (typeof ZXing !== 'undefined' && ZXing.BrowserMultiFormatReader);
+      pill(zxPill, zxOk ? 'zxing: ready' : 'zxing: missing', !!zxOk);
+      if(zxOk){
+        try{
+          const hints = new Map();
+          hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+            ZXing.BarcodeFormat.CODE_128,
+            ZXing.BarcodeFormat.ITF,
+            ZXing.BarcodeFormat.CODE_39,
+            ZXing.BarcodeFormat.EAN_13,
+            ZXing.BarcodeFormat.EAN_8,
+            ZXing.BarcodeFormat.QR_CODE,
+          ]);
+          hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+          hints.set(ZXing.DecodeHintType.ALSO_INVERTED, true);
+          zxingReader = new ZXing.BrowserMultiFormatReader(hints, 250);
+        }catch(e){
+          zxingReader=null;
+          log('ZXing init failed', e?.message || String(e));
+        }
+      }
+
+      // ===== ループ：Detector→ZXing の順に試す =====
+      const loop = async ()=>{
+        if(!scanning) return;
+
+        // BarcodeDetector
+        if(detector){
+          try{
+            const res = await detector.detect(video);
+            if(res && res.length){
+              const v = res[0].rawValue || '';
+              if(v) hit(v);
+            }
+          }catch(e){
+            // たまに端末で例外出るので黙殺
+          }
+        }
+
+        // ZXing（Detectorが拾えない時の保険）
+        if(zxingReader){
+          try{
+            // decodeOnceFromVideoElement はビルド差があるので try/catch
+            if(typeof zxingReader.decodeOnceFromVideoElement === 'function'){
+              const r = await zxingReader.decodeOnceFromVideoElement(video);
+              if(r && typeof r.getText === 'function') hit(r.getText());
+            }
+          }catch(e){
+            // NotFound系は通常なので黙殺
+          }
+        }
+
+        rafId = requestAnimationFrame(loop);
+      };
+      rafId = requestAnimationFrame(loop);
+    }
+
+    btnStart.addEventListener('click', start);
+    btnStop.addEventListener('click', stopAll);
+
+    log('ready');
+    pill(camPill, 'camera: idle', null);
+    pill(detPill, 'detector: -', null);
+    pill(zxPill,  'zxing: -', null);
+  </script>
 </body>
 </html>

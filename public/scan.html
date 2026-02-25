@@ -7,96 +7,28 @@
   <title>Scan（発送通知）</title>
   <style>
     :root{
-      --bg:#0b0b0c;
-      --card:#141416;
-      --muted:#9aa0a6;
-      --text:#f5f5f7;
-      --danger:#ff4d4f;
-      --ok:#35c759;
-      --line:#2a2a2d;
-      --btn:#1f1f22;
-      --accent:#4da3ff;
-
+      --bg:#0b0b0c; --card:#141416; --muted:#9aa0a6; --text:#f5f5f7;
+      --danger:#ff4d4f; --ok:#35c759; --line:#2a2a2d; --btn:#1f1f22; --accent:#4da3ff;
       --safe-top: env(safe-area-inset-top, 0px);
       --safe-bottom: env(safe-area-inset-bottom, 0px);
       --safe-left: env(safe-area-inset-left, 0px);
       --safe-right: env(safe-area-inset-right, 0px);
-
-      /* Android Chromeの下アドレスバー対策 */
       --vh: 1dvh;
     }
     *{ box-sizing:border-box; }
-    html,body{
-      margin:0; padding:0;
-      background:var(--bg);
-      color:var(--text);
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif;
-      overscroll-behavior: none;
-    }
-    body{
-      min-height: calc(var(--vh) * 100);
-      padding: calc(12px + var(--safe-top)) calc(12px + var(--safe-left)) calc(14px + var(--safe-bottom)) calc(12px + var(--safe-right));
-    }
-
-    .wrap{
-      max-width: 920px;
-      margin: 0 auto;
-      display:flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-
-    .header{
-      display:flex;
-      align-items:center;
-      justify-content: space-between;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-    .title{
-      font-size: 16px;
-      font-weight: 700;
-      letter-spacing: .3px;
-    }
-    .sub{
-      font-size: 12px;
-      color: var(--muted);
-      margin-top: 2px;
-    }
-
-    .card{
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 16px;
-      padding: 12px;
-      box-shadow: 0 10px 22px rgba(0,0,0,.25);
-    }
-
-    .videoWrap{
-      position: relative;
-      border-radius: 16px;
-      overflow:hidden;
-      background:#000;
-      border: 1px solid var(--line);
-      height: clamp(280px, 52dvh, 560px);
-    }
-    video{
-      width:100%;
-      height:100%;
-      object-fit: cover;
-      background:#000;
-    }
-
-    .reticle{
-      pointer-events:none;
-      position:absolute;
-      inset:0;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-    }
-
-    /* ✅ 枠を小さくしてピント/読取を安定させる */
+    html,body{ margin:0; padding:0; background:var(--bg); color:var(--text);
+      font-family: system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif; overscroll-behavior:none; }
+    body{ min-height: calc(var(--vh) * 100);
+      padding: calc(12px + var(--safe-top)) calc(12px + var(--safe-left)) calc(14px + var(--safe-bottom)) calc(12px + var(--safe-right)); }
+    .wrap{ max-width:920px; margin:0 auto; display:flex; flex-direction:column; gap:12px; }
+    .header{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+    .title{ font-size:16px; font-weight:700; letter-spacing:.3px; }
+    .sub{ font-size:12px; color:var(--muted); margin-top:2px; }
+    .card{ background:var(--card); border:1px solid var(--line); border-radius:16px; padding:12px; box-shadow:0 10px 22px rgba(0,0,0,.25); }
+    .videoWrap{ position:relative; border-radius:16px; overflow:hidden; background:#000; border:1px solid var(--line); height: clamp(280px, 52dvh, 560px); }
+    video{ width:100%; height:100%; object-fit:cover; background:#000; }
+    .reticle{ pointer-events:none; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+    /* 枠小さめ（ピント/検出安定） */
     .reticle > div{
       width: min(60vw, 400px);
       height: min(22vh, 160px);
@@ -106,193 +38,55 @@
       position:relative;
     }
     .reticle > div:before, .reticle > div:after{
-      content:"";
-      position:absolute;
-      inset:-2px;
-      border-radius: 14px;
-      border: 2px solid rgba(77,163,255,.55);
-      filter: drop-shadow(0 0 10px rgba(77,163,255,.25));
-      opacity:.7;
+      content:""; position:absolute; inset:-2px; border-radius:14px;
+      border:2px solid rgba(77,163,255,.55);
+      filter: drop-shadow(0 0 10px rgba(77,163,255,.25)); opacity:.7;
     }
-
-    .row{
-      display:flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      align-items: center;
-    }
-
-    .btn{
-      appearance:none;
-      border:1px solid var(--line);
-      background: var(--btn);
-      color: var(--text);
-      padding: 14px 14px;
-      border-radius: 14px;
-      font-weight: 700;
-      font-size: 14px;
-      min-height: 48px;
-      cursor:pointer;
-      user-select:none;
-      touch-action: manipulation;
-    }
+    .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .btn{ appearance:none; border:1px solid var(--line); background:var(--btn); color:var(--text);
+      padding:14px 14px; border-radius:14px; font-weight:700; font-size:14px; min-height:48px;
+      cursor:pointer; user-select:none; touch-action:manipulation; }
     .btn:active{ transform: translateY(1px); }
-    .btn.primary{
-      background: linear-gradient(180deg, #2a6dff, #2a50ff);
-      border-color: rgba(77,163,255,.35);
+    .btn.primary{ background: linear-gradient(180deg, #2a6dff, #2a50ff); border-color: rgba(77,163,255,.35); }
+    .btn.danger{ background:#2a1212; border-color: rgba(255,77,79,.35); color:#ffd7d7; }
+    .btn.ghost{ background:transparent; }
+    .btn:disabled{ opacity:.45; cursor:not-allowed; }
+    .input{ width:100%; padding:14px 14px; border-radius:14px; border:1px solid var(--line);
+      background:#0f0f11; color:var(--text); font-size:16px; outline:none; min-height:48px; }
+    .hint{ font-size:12px; color:var(--muted); line-height:1.35; }
+    .status{ font-size:12px; color:var(--muted); display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .pill{ padding:6px 10px; border-radius:999px; background:#0f0f11; border:1px solid var(--line);
+      color:var(--muted); font-size:12px; display:inline-flex; align-items:center; gap:6px; }
+    .pill.ok{ color:#caffd8; border-color: rgba(53,199,89,.35); }
+    .pill.bad{ color:#ffd0d0; border-color: rgba(255,77,79,.35); }
+    .grid2{ display:grid; grid-template-columns:1fr; gap:12px; }
+    @media (min-width:760px){
+      .grid2{ grid-template-columns: 1.2fr .8fr; align-items:start; }
+      .videoWrap{ height: clamp(420px, 62dvh, 620px); }
     }
-    .btn.danger{
-      background: #2a1212;
-      border-color: rgba(255,77,79,.35);
-      color: #ffd7d7;
-    }
-    .btn.ghost{
-      background: transparent;
-    }
-    .btn:disabled{
-      opacity:.45;
-      cursor:not-allowed;
-    }
-
-    .input{
-      width: 100%;
-      padding: 14px 14px;
-      border-radius: 14px;
-      border:1px solid var(--line);
-      background:#0f0f11;
-      color: var(--text);
-      font-size: 16px;
-      outline: none;
-      min-height: 48px;
-    }
-    .hint{
-      font-size: 12px;
-      color: var(--muted);
-      line-height: 1.35;
-    }
-    .status{
-      font-size: 12px;
-      color: var(--muted);
-      display:flex;
-      gap:10px;
-      flex-wrap: wrap;
-      align-items: center;
-    }
-    .pill{
-      padding: 6px 10px;
-      border-radius: 999px;
-      background:#0f0f11;
-      border:1px solid var(--line);
-      color: var(--muted);
-      font-size: 12px;
-      display:inline-flex;
-      align-items:center;
-      gap:6px;
-    }
-    .pill.ok{ color: #caffd8; border-color: rgba(53,199,89,.35); }
-    .pill.bad{ color: #ffd0d0; border-color: rgba(255,77,79,.35); }
-
-    .grid2{
-      display:grid;
-      grid-template-columns: 1fr;
-      gap: 12px;
-    }
-    @media (min-width: 760px){
-      .grid2{
-        grid-template-columns: 1.2fr .8fr;
-        align-items: start;
-      }
-      .videoWrap{
-        height: clamp(420px, 62dvh, 620px);
-      }
-    }
-
-    .controls{
-      display:flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    .log{
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-      font-size: 12px;
-      background:#0f0f11;
-      border:1px solid var(--line);
-      border-radius: 14px;
-      padding: 10px;
-      max-height: 260px;
-      overflow:auto;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-
-    .toast{
-      position: fixed;
-      left: 12px;
-      right: 12px;
-      bottom: calc(12px + var(--safe-bottom));
-      display:flex;
-      justify-content:center;
-      pointer-events:none;
-      z-index: 9999;
-    }
+    .controls{ display:flex; flex-direction:column; gap:10px; }
+    .log{ font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;
+      font-size:12px; background:#0f0f11; border:1px solid var(--line); border-radius:14px;
+      padding:10px; max-height:260px; overflow:auto; white-space:pre-wrap; word-break:break-word; }
+    .toast{ position:fixed; left:12px; right:12px; bottom: calc(12px + var(--safe-bottom));
+      display:flex; justify-content:center; pointer-events:none; z-index:9999; }
     .toast > div{
-      pointer-events:auto;
-      max-width: 920px;
-      width: 100%;
-      background: rgba(20,20,22,.96);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 12px 12px;
+      pointer-events:auto; max-width:920px; width:100%;
+      background: rgba(20,20,22,.96); border:1px solid var(--line); border-radius:14px; padding:12px 12px;
       box-shadow: 0 12px 28px rgba(0,0,0,.35);
-      font-size: 13px;
-      display:flex;
-      align-items:center;
-      justify-content: space-between;
-      gap: 10px;
-      opacity: 0;
-      transform: translateY(10px);
-      transition: .18s ease;
+      font-size:13px; display:flex; align-items:center; justify-content:space-between; gap:10px;
+      opacity:0; transform: translateY(10px); transition:.18s ease;
     }
-    .toast.show > div{
-      opacity: 1;
-      transform: translateY(0);
-    }
-    .toast strong{ color: var(--text); }
-    .toast .small{ color: var(--muted); font-size: 12px; }
-
-    .sliderRow{
-      display:flex;
-      align-items:center;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-    input[type="range"]{
-      width: 180px;
-      accent-color: var(--accent);
-    }
-    details{
-      border:1px solid var(--line);
-      border-radius: 14px;
-      padding: 10px 12px;
-      background:#0f0f11;
-    }
-    details summary{
-      cursor:pointer;
-      color: var(--text);
-      font-weight: 700;
-      list-style: none;
-    }
+    .toast.show > div{ opacity:1; transform: translateY(0); }
+    .toast strong{ color:var(--text); }
+    .toast .small{ color:var(--muted); font-size:12px; }
+    .sliderRow{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    input[type="range"]{ width:180px; accent-color: var(--accent); }
+    details{ border:1px solid var(--line); border-radius:14px; padding:10px 12px; background:#0f0f11; }
+    details summary{ cursor:pointer; color:var(--text); font-weight:700; list-style:none; }
     details summary::-webkit-details-marker{ display:none; }
-    .kv{
-      display:grid;
-      grid-template-columns: 110px 1fr;
-      gap: 8px 10px;
-      margin-top: 10px;
-      font-size: 12px;
-      color: var(--muted);
-    }
-    .kv code{ color: var(--text); }
+    .kv{ display:grid; grid-template-columns:110px 1fr; gap:8px 10px; margin-top:10px; font-size:12px; color:var(--muted); }
+    .kv code{ color:var(--text); }
   </style>
 </head>
 
@@ -337,8 +131,8 @@
 
         <div style="height:8px"></div>
         <div class="hint">
-          読み取りが弱い時は、<b>ライトON</b>＋<b>バーコードを水平</b>＋<b>距離を少し変える</b>が一番効きます。<br/>
-          ビニール反射は厳しいので、<b>角度を少し付ける</b>と通ります。
+          読み取りが弱い時は、<b>バーコードを中央</b>＋<b>距離15〜25cm</b>＋<b>一瞬止める</b>が効きます。<br/>
+          ビニール反射は、<b>少し斜め</b>が最強です。
         </div>
 
         <div style="height:10px"></div>
@@ -388,13 +182,12 @@
     <button id="toastBtn" class="btn" type="button" style="min-height:40px; padding:10px 12px;">OK</button>
   </div></div>
 
-  <!-- ✅ ローカル配信ZXing -->
+  <!-- ZXing（フォールバック用） -->
   <script src="/vendor/zxing/library.min.js"></script>
   <script src="/vendor/zxing/browser.min.js"></script>
   <script>window.ZXing = window.ZXing || window.ZXingBrowser;</script>
 
   <script>
-    // Android Chrome のアドレスバーで高さが変わる対策（100dvh補助）
     (function setVh(){
       const v = window.visualViewport;
       const h = v ? v.height : window.innerHeight;
@@ -444,7 +237,6 @@
       const ts = t.toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' }).replace('T',' ');
       logEl.textContent = `[${ts}] ${line}\n` + logEl.textContent;
     }
-
     function showToast(title, msg){
       toastTitle.textContent = title;
       toastMsg.textContent = msg || '';
@@ -471,16 +263,22 @@
       if(ok === false) zxPill.classList.add('bad');
     }
 
-    // ====== Camera state ======
     let stream = null;
     let currentVideoTrack = null;
     let usingDeviceId = null;
     let deviceIds = [];
     let torchOn = false;
 
+    // ZXing fallback
     let reader = null;
-    let scanning = false;
 
+    // BarcodeDetector loop
+    let detector = null;
+    let detectTimer = null;
+    let canvas = null;
+    let ctx = null;
+
+    let scanning = false;
     let lastScanAt = 0;
     let lastApiAt  = 0;
 
@@ -491,12 +289,19 @@
       return /^\d{8,16}$/.test(v);
     }
 
+    async function listVideoDevices(){
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter(d => d.kind === 'videoinput');
+      deviceIds = cams.map(c => c.deviceId).filter(Boolean);
+      return cams;
+    }
+
     function zxingReady(){
       if(typeof window.ZXing === 'undefined') return false;
       return !!(ZXing.BrowserMultiFormatReader || ZXing.BrowserBarcodeReader);
     }
 
-    function makeReader(){
+    function makeZxingReader(){
       if(ZXing.BrowserMultiFormatReader && ZXing.DecodeHintType && ZXing.BarcodeFormat){
         const hints = new Map();
         hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
@@ -515,22 +320,138 @@
       return null;
     }
 
-    async function listVideoDevices(){
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const cams = devices.filter(d => d.kind === 'videoinput');
-      deviceIds = cams.map(c => c.deviceId).filter(Boolean);
-      return cams;
+    function hasBarcodeDetector(){
+      return typeof window.BarcodeDetector !== 'undefined';
+    }
+
+    function makeBarcodeDetector(){
+      // Android Chrome の対応 formats 名（実装差があるので広めに）
+      const formats = [
+        'code_128','itf','ean_13','ean_8','qr_code','code_39','upc_a','upc_e'
+      ];
+      try{
+        return new BarcodeDetector({ formats });
+      }catch{
+        return new BarcodeDetector();
+      }
+    }
+
+    function stopDetectorLoop(){
+      if(detectTimer){
+        clearInterval(detectTimer);
+        detectTimer = null;
+      }
+      detector = null;
+      canvas = null;
+      ctx = null;
+    }
+
+    async function startDetectorLoop(){
+      // BarcodeDetector優先
+      if(!hasBarcodeDetector()) return false;
+
+      detector = makeBarcodeDetector();
+      canvas = document.createElement('canvas');
+      ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+      // 12fpsくらい（重ければ下げる）
+      detectTimer = setInterval(async () => {
+        try{
+          if(!scanning) return;
+          if(!video.videoWidth || !video.videoHeight) return;
+
+          const vw = video.videoWidth;
+          const vh = video.videoHeight;
+
+          // 画質維持しつつ中央付近だけ見る（軽く＆安定）
+          const cropW = Math.floor(vw * 0.72);
+          const cropH = Math.floor(vh * 0.38);
+          const sx = Math.floor((vw - cropW) / 2);
+          const sy = Math.floor((vh - cropH) / 2);
+
+          canvas.width = cropW;
+          canvas.height = cropH;
+          ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, cropW, cropH);
+
+          const codes = await detector.detect(canvas);
+          if(!codes || !codes.length) return;
+
+          const raw = codes[0].rawValue || '';
+          const code = normalizeTracking(raw);
+          if(!code) return;
+
+          const now = Date.now();
+          if(now - lastScanAt < 800) return;
+          lastScanAt = now;
+
+          codeEl.value = code;
+          log('detected(native):', raw, '->', code);
+
+          if(!isValidTracking(code)){
+            showToast('読み取りはできたが桁が違う', `取得: ${code}（8〜16桁のみ送信）`);
+            return;
+          }
+
+          try{ navigator.vibrate && navigator.vibrate(30); }catch{}
+          sendScan(code).catch(()=>{});
+        }catch(e){
+          // ここは静かに（端末差がある）
+        }
+      }, 80);
+
+      log('BarcodeDetector: enabled');
+      return true;
+    }
+
+    async function startZxingLoop(){
+      const zxOk = zxingReady();
+      setZxStatus(zxOk ? 'ok' : 'missing', zxOk);
+      if(!zxOk) return false;
+
+      reader = makeZxingReader();
+      if(!reader) return false;
+
+      if(typeof reader.decodeFromVideoDevice !== 'function') return false;
+
+      reader.decodeFromVideoDevice(null, video, (result, err) => {
+        if(!scanning) return;
+
+        if(result){
+          const raw = (typeof result.getText === 'function') ? result.getText() : String(result.text || result);
+          const code = normalizeTracking(raw);
+          if(!code) return;
+
+          const now = Date.now();
+          if(now - lastScanAt < 800) return;
+          lastScanAt = now;
+
+          codeEl.value = code;
+          log('scanned(zxing):', raw, '->', code);
+
+          if(!isValidTracking(code)){
+            showToast('読み取りはできたが桁が違う', `取得: ${code}（8〜16桁のみ送信）`);
+            return;
+          }
+
+          try{ navigator.vibrate && navigator.vibrate(30); }catch{}
+          sendScan(code).catch(()=>{});
+          return;
+        }
+
+        if(err){
+          const name = err.name || err.constructor?.name || '';
+          if(name !== 'NotFoundException'){
+            log('decode err:', name, err.message || String(err));
+          }
+        }
+      });
+
+      log('ZXing: enabled (fallback)');
+      return true;
     }
 
     async function startCamera(preferredDeviceId=null){
       if(scanning) return;
-
-      const zxOk = zxingReady();
-      setZxStatus(zxOk ? 'ok' : 'missing', zxOk);
-      if(!zxOk){
-        showToast('ZXingが読み込めていません', 'public/vendor/zxing/ の配置と script src を確認してください');
-        return;
-      }
 
       if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
         showToast('この端末ではカメラが使えません', '別の端末/ブラウザで試してください');
@@ -540,7 +461,6 @@
       setCamStatus('starting...', null);
       log('startCamera...');
 
-      // ✅ 画質UP（ideal だけだと低解像度になる端末がある）
       const baseConstraints = {
         audio: false,
         video: {
@@ -557,22 +477,18 @@
       try{
         stream = await navigator.mediaDevices.getUserMedia(baseConstraints);
       }catch(e){
-        log('getUserMedia failed, fallback', e && e.name ? e.name : String(e));
+        log('getUserMedia failed, fallback', e?.name || String(e));
         try{
-          stream = await navigator.mediaDevices.getUserMedia({
-            audio:false,
-            video:{ facingMode:{ ideal:"environment" } }
-          });
+          stream = await navigator.mediaDevices.getUserMedia({ audio:false, video:{ facingMode:{ ideal:"environment" } } });
         }catch(e2){
           setCamStatus('permission denied', false);
-          log('getUserMedia failed', e2 && e2.name ? e2.name : String(e2));
+          log('getUserMedia failed', e2?.name || String(e2));
           showToast('カメラを許可してください', 'ブラウザの権限設定でカメラを「許可」にしてください');
           return;
         }
       }
 
       video.srcObject = stream;
-
       try{ await video.play(); }catch(e){ log('video.play failed', e?.name || '', e?.message || e); }
 
       const tracks = stream.getVideoTracks();
@@ -586,27 +502,18 @@
 
       await refreshCapabilities();
 
-      // ✅ 初期ズームを自動で少し上げる（バーコードが大きいほど勝つ）
+      // 初期ズームちょい上げ
       setTimeout(async () => {
         try{
-          const s = video.srcObject;
-          const tr = s && s.getVideoTracks ? s.getVideoTracks()[0] : null;
-          if(!tr) return;
+          const tr = video.srcObject.getVideoTracks()[0];
           const caps = tr.getCapabilities ? tr.getCapabilities() : {};
-          if(caps && caps.zoom){
+          if(caps.zoom){
             const z = Math.min(2.0, caps.zoom.max || 2.0);
             await tr.applyConstraints({ advanced: [{ zoom: z }] });
             zoomLabel.textContent = `x${Number(z).toFixed(1)}`;
           }
         }catch{}
       }, 500);
-
-      reader = makeReader();
-      if(!reader){
-        showToast('ZXingのReaderが見つかりません', '読み込んだファイルに必要なクラスが入っていません');
-        await stopCamera();
-        return;
-      }
 
       scanning = true;
       lastScanAt = 0;
@@ -623,47 +530,23 @@
 
       setCamStatus('running', true);
 
-      if(typeof reader.decodeFromVideoDevice === 'function'){
-        reader.decodeFromVideoDevice(null, video, (result, err) => {
-          if(!scanning) return;
-
-          if(result){
-            const raw = (typeof result.getText === 'function') ? result.getText() : String(result.text || result);
-            const code = normalizeTracking(raw);
-            if(!code) return;
-
-            codeEl.value = code;
-            log('scanned:', raw, '->', code);
-
-            const now = Date.now();
-            if(now - lastScanAt < 800) return;
-            lastScanAt = now;
-
-            if(!isValidTracking(code)){
-              showToast('読み取りはできたが桁が違う', `取得: ${code}（8〜16桁のみ送信）`);
-              return;
-            }
-
-            try{ navigator.vibrate && navigator.vibrate(30); }catch{}
-            sendScan(code).catch(()=>{});
-            return;
-          }
-
-          if(err){
-            const name = err.name || err.constructor?.name || '';
-            if(name !== 'NotFoundException'){
-              log('decode err:', name, err.message || String(err));
-            }
-          }
-        });
+      // ✅ 優先：BarcodeDetector → ダメならZXing
+      let ok = await startDetectorLoop();
+      if(ok){
+        setZxStatus('native(detector)', true);
       }else{
-        showToast('Reader互換エラー', 'decodeFromVideoDevice が見つかりません');
-        log('reader has no decodeFromVideoDevice');
+        ok = await startZxingLoop();
+        setZxStatus(ok ? 'ok' : 'missing', ok);
+        if(!ok){
+          showToast('読み取りエンジンが使えません', 'BarcodeDetector未対応 + ZXing読み込み不備の可能性');
+        }
       }
     }
 
     async function stopCamera(){
       scanning = false;
+
+      stopDetectorLoop();
       try{ if(reader && reader.reset) reader.reset(); }catch{}
       reader = null;
 
@@ -718,7 +601,6 @@
       }
     }
 
-    // ✅ ライト：null事故防止（毎回 video.srcObject から track 取り直し）
     async function toggleTorch(){
       const s = video.srcObject;
       const track = s && s.getVideoTracks ? s.getVideoTracks()[0] : null;
@@ -772,7 +654,6 @@
       }
     }
 
-    // ====== API ======
     async function sendScan(code){
       const token = String(tokenEl.value || '').trim();
       if(!token){
@@ -781,8 +662,8 @@
         return;
       }
 
-      const tracking_no = String(code || '').replace(/\s+/g,'').replace(/\D/g,'');
-      if(!/^\d{8,16}$/.test(tracking_no)){
+      const tracking_no = normalizeTracking(codeEl.value || code);
+      if(!isValidTracking(tracking_no)){
         setNetStatus('invalid tracking', false);
         showToast('追跡番号が不正', '8〜16桁の数字のみ送信できます');
         return;
@@ -841,37 +722,21 @@
       }
     }
 
-    // ====== UI events ======
     btnStart.addEventListener('click', () => startCamera());
     btnStop.addEventListener('click',  () => stopCamera());
     btnTorch.addEventListener('click', () => toggleTorch());
     btnSwitch.addEventListener('click', () => switchCamera());
-
     btnSend.addEventListener('click', () => sendScan(codeEl.value));
-    btnClear.addEventListener('click', () => {
-      codeEl.value = '';
-      codeEl.focus();
-      setNetStatus('-', null);
-    });
-
+    btnClear.addEventListener('click', () => { codeEl.value=''; codeEl.focus(); setNetStatus('-', null); });
     zoomEl.addEventListener('input', (e) => setZoom(e.target.value));
+    codeEl.addEventListener('keydown', (e) => { if(e.key === 'Enter'){ e.preventDefault(); sendScan(codeEl.value); } });
 
-    codeEl.addEventListener('keydown', (e) => {
-      if(e.key === 'Enter'){
-        e.preventDefault();
-        sendScan(codeEl.value);
-      }
-    });
-
-    // ====== 初期ログ & 診断 ======
     log('scan.html ready');
     setCamStatus('idle', null);
     setNetStatus('-', null);
 
     const zxOk = zxingReady();
-    log('ZXing loaded?', typeof ZXing, zxOk ? 'ok' : 'missing');
-    setZxStatus(zxOk ? 'ok' : 'missing', zxOk);
-
+    setZxStatus((hasBarcodeDetector() ? 'native possible' : (zxOk ? 'ok' : 'missing')), zxOk || hasBarcodeDetector());
     diagHttps.textContent = (location.protocol === 'https:' || location.hostname === 'localhost') ? 'OK' : 'NG';
     diagZxing.textContent = zxOk ? 'ok' : 'missing';
     diagUA.textContent = navigator.userAgent;

@@ -33,11 +33,10 @@
     .videoWrap{ position:relative; border-radius:16px; overflow:hidden; background:#000; border:1px solid var(--line); height: clamp(280px, 52dvh, 560px); }
     video{ width:100%; height:100%; object-fit:cover; background:#000; }
     .reticle{ pointer-events:none; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
-
-    /* ✅ 枠小さめ：中央に寄せてピント/検出安定 */
+    /* CODE128向け：枠小さめ */
     .reticle > div{
-      width: min(60vw, 400px);
-      height: min(22vh, 160px);
+      width: min(62vw, 420px);
+      height: min(20vh, 150px);
       border: 2px solid rgba(255,255,255,.65);
       border-radius: 14px;
       box-shadow: 0 0 0 9999px rgba(0,0,0,.25);
@@ -49,7 +48,6 @@
       filter: drop-shadow(0 0 10px rgba(77,163,255,.25));
       opacity:.7;
     }
-
     .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
     .btn{
       appearance:none; border:1px solid var(--line); background:var(--btn); color:var(--text);
@@ -98,7 +96,6 @@
     .toast.show > div{ opacity:1; transform: translateY(0); }
     .toast strong{ color:var(--text); }
     .toast .small{ color:var(--muted); font-size:12px; }
-
     .sliderRow{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
     input[type="range"]{ width:180px; accent-color: var(--accent); }
     details{ border:1px solid var(--line); border-radius:14px; padding:10px 12px; background:#0f0f11; }
@@ -114,7 +111,7 @@
     <div class="header">
       <div>
         <div class="title">発送スキャン（追跡番号 → shipped → 即通知）</div>
-        <div class="sub">QR/バーコードを読む → <code>/api/admin/ship/scan-and-notify</code> に送る</div>
+        <div class="sub">バーコードを読む → <code>/api/admin/ship/scan-and-notify</code> に送る</div>
       </div>
       <div class="status">
         <span id="camPill" class="pill">camera: idle</span>
@@ -150,7 +147,7 @@
 
         <div style="height:8px"></div>
         <div class="hint">
-          読めない時：<b>距離15〜25cm</b>＋<b>一瞬止める</b>＋<b>反射は少し斜め</b> が効きます。
+          CODE128は <b>距離20cm前後</b>＋<b>水平</b>＋<b>一瞬止める</b> が最強です。反射は少し斜め。
         </div>
 
         <div style="height:10px"></div>
@@ -200,7 +197,7 @@
     <button id="toastBtn" class="btn" type="button" style="min-height:40px; padding:10px 12px;">OK</button>
   </div></div>
 
-  <!-- ZXing（フォールバック用） -->
+  <!-- ✅ ZXing（ローカル配信） -->
   <script src="/vendor/zxing/library.min.js"></script>
   <script src="/vendor/zxing/browser.min.js"></script>
   <script>window.ZXing = window.ZXing || window.ZXingBrowser;</script>
@@ -255,6 +252,7 @@
       const ts = t.toLocaleString('sv-SE', { timeZone: 'Asia/Tokyo' }).replace('T',' ');
       logEl.textContent = `[${ts}] ${line}\n` + logEl.textContent;
     }
+
     function showToast(title, msg){
       toastTitle.textContent = title;
       toastMsg.textContent = msg || '';
@@ -281,22 +279,17 @@
       if(ok === false) zxPill.classList.add('bad');
     }
 
+    // ====== Camera state ======
     let stream = null;
     let currentVideoTrack = null;
     let usingDeviceId = null;
     let deviceIds = [];
     let torchOn = false;
 
-    // ZXing fallback
+    // ZXing
     let reader = null;
-
-    // BarcodeDetector loop
-    let detector = null;
-    let detectTimer = null;
-    let canvas = null;
-    let ctx = null;
-
     let scanning = false;
+
     let lastScanAt = 0;
     let lastApiAt  = 0;
 
@@ -307,21 +300,16 @@
       return /^\d{8,16}$/.test(v);
     }
 
-    async function listVideoDevices(){
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const cams = devices.filter(d => d.kind === 'videoinput');
-      deviceIds = cams.map(c => c.deviceId).filter(Boolean);
-      return cams;
-    }
-
     function zxingReady(){
-      if(typeof window.ZXing === 'undefined') return false;
-      return !!(ZXing.BrowserMultiFormatReader || ZXing.BrowserBarcodeReader);
+      return (typeof window.ZXing !== 'undefined')
+        && !!(ZXing.BrowserMultiFormatReader || ZXing.BrowserBarcodeReader)
+        && !!(ZXing.DecodeHintType && ZXing.BarcodeFormat);
     }
 
-    function makeZxingReader(){
-      if(ZXing.BrowserMultiFormatReader && ZXing.DecodeHintType && ZXing.BarcodeFormat){
-        const hints = new Map();
+    function makeReader(){
+      // ✅ CODE128中心に絞る（精度/速度UP）
+      const hints = new Map();
+      try{
         hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
           ZXing.BarcodeFormat.CODE_128,
           ZXing.BarcodeFormat.ITF,
@@ -329,133 +317,36 @@
           ZXing.BarcodeFormat.EAN_8,
           ZXing.BarcodeFormat.QR_CODE,
         ]);
-        hints.set(ZXing.DecodeHintType.ALSO_INVERTED, true);
         hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-        return new ZXing.BrowserMultiFormatReader(hints, 250);
+        hints.set(ZXing.DecodeHintType.ALSO_INVERTED, true);
+      }catch{}
+
+      if(ZXing.BrowserMultiFormatReader){
+        // delayBetweenScanAttempts は小さすぎるとブレで不利
+        return new ZXing.BrowserMultiFormatReader(hints, 200);
       }
-      if(ZXing.BrowserMultiFormatReader) return new ZXing.BrowserMultiFormatReader();
-      if(ZXing.BrowserBarcodeReader) return new ZXing.BrowserBarcodeReader();
+      if(ZXing.BrowserBarcodeReader){
+        return new ZXing.BrowserBarcodeReader();
+      }
       return null;
     }
 
-    function hasBarcodeDetector(){
-      return typeof window.BarcodeDetector !== 'undefined';
-    }
-
-    // ✅ formats を指定しない（端末差を吸収）
-    function makeBarcodeDetector(){
-      return new BarcodeDetector();
-    }
-
-    function stopDetectorLoop(){
-      if(detectTimer){
-        clearInterval(detectTimer);
-        detectTimer = null;
-      }
-      detector = null;
-      canvas = null;
-      ctx = null;
-    }
-
-    async function startDetectorLoop(){
-      if(!hasBarcodeDetector()) return false;
-
-      detector = makeBarcodeDetector();
-      canvas = document.createElement('canvas');
-      ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-      // ✅ fpsを落としてブレ耐性UP
-      detectTimer = setInterval(async () => {
-        try{
-          if(!scanning) return;
-          if(!video.videoWidth || !video.videoHeight) return;
-
-          const vw = video.videoWidth;
-          const vh = video.videoHeight;
-
-          // ✅ まずは全画面で検出（cropが外れてる問題を潰す）
-          canvas.width = vw;
-          canvas.height = vh;
-          ctx.drawImage(video, 0, 0, vw, vh);
-
-          const codes = await detector.detect(canvas);
-          if(!codes || !codes.length) return;
-
-          const raw = codes[0].rawValue || '';
-          const code = normalizeTracking(raw);
-          if(!code) return;
-
-          const now = Date.now();
-          if(now - lastScanAt < 800) return;
-          lastScanAt = now;
-
-          codeEl.value = code;
-          log('detected(native):', raw, '->', code);
-
-          if(!isValidTracking(code)){
-            showToast('読み取りはできたが桁が違う', `取得: ${code}（8〜16桁のみ送信）`);
-            return;
-          }
-
-          try{ navigator.vibrate && navigator.vibrate(30); }catch{}
-          sendScan(code).catch(()=>{});
-        }catch(e){
-          // 静かに（端末差）
-        }
-      }, 120);
-
-      log('BarcodeDetector: enabled');
-      return true;
-    }
-
-    async function startZxingLoop(){
-      const zxOk = zxingReady();
-      setZxStatus(zxOk ? 'ok' : 'missing', zxOk);
-      if(!zxOk) return false;
-
-      reader = makeZxingReader();
-      if(!reader) return false;
-      if(typeof reader.decodeFromVideoDevice !== 'function') return false;
-
-      reader.decodeFromVideoDevice(null, video, (result, err) => {
-        if(!scanning) return;
-
-        if(result){
-          const raw = (typeof result.getText === 'function') ? result.getText() : String(result.text || result);
-          const code = normalizeTracking(raw);
-          if(!code) return;
-
-          const now = Date.now();
-          if(now - lastScanAt < 800) return;
-          lastScanAt = now;
-
-          codeEl.value = code;
-          log('scanned(zxing):', raw, '->', code);
-
-          if(!isValidTracking(code)){
-            showToast('読み取りはできたが桁が違う', `取得: ${code}（8〜16桁のみ送信）`);
-            return;
-          }
-
-          try{ navigator.vibrate && navigator.vibrate(30); }catch{}
-          sendScan(code).catch(()=>{});
-          return;
-        }
-
-        if(err){
-          const name = err.name || err.constructor?.name || '';
-          if(name !== 'NotFoundException'){
-            log('decode err:', name, err.message || String(err));
-          }
-        }
-      });
-
-      log('ZXing: enabled (fallback)');
-      return true;
+    async function listVideoDevices(){
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter(d => d.kind === 'videoinput');
+      deviceIds = cams.map(c => c.deviceId).filter(Boolean);
+      return cams;
     }
 
     async function startCamera(preferredDeviceId=null){
       if(scanning) return;
+
+      const zxOk = zxingReady();
+      setZxStatus(zxOk ? 'ok' : 'missing', zxOk);
+      if(!zxOk){
+        showToast('ZXingが読み込めていません', 'public/vendor/zxing の配置と script src を確認してください');
+        return;
+      }
 
       if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
         showToast('この端末ではカメラが使えません', '別の端末/ブラウザで試してください');
@@ -465,10 +356,11 @@
       setCamStatus('starting...', null);
       log('startCamera...');
 
+      // ✅ 高画質寄せ（端末が許す範囲）
       const baseConstraints = {
-        audio: false,
-        video: {
-          facingMode: { ideal: "environment" },
+        audio:false,
+        video:{
+          facingMode:{ ideal:"environment" },
           width:  { min: 1280, ideal: 1920, max: 2560 },
           height: { min: 720,  ideal: 1080, max: 1440 }
         }
@@ -483,7 +375,10 @@
       }catch(e){
         log('getUserMedia failed, fallback', e?.name || String(e));
         try{
-          stream = await navigator.mediaDevices.getUserMedia({ audio:false, video:{ facingMode:{ ideal:"environment" } } });
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio:false,
+            video:{ facingMode:{ ideal:"environment" } }
+          });
         }catch(e2){
           setCamStatus('permission denied', false);
           log('getUserMedia failed', e2?.name || String(e2));
@@ -506,7 +401,7 @@
 
       await refreshCapabilities();
 
-      // 初期ズーム（最大2倍）
+      // ✅ 初期ズームを少し上げる（CODE128に効く）
       setTimeout(async () => {
         try{
           const tr = video.srcObject.getVideoTracks()[0];
@@ -518,6 +413,13 @@
           }
         }catch{}
       }, 500);
+
+      reader = makeReader();
+      if(!reader || typeof reader.decodeFromVideoDevice !== 'function'){
+        showToast('ZXing Reader互換エラー', 'decodeFromVideoDevice がありません（UMD取り違えの可能性）');
+        await stopCamera();
+        return;
+      }
 
       scanning = true;
       lastScanAt = 0;
@@ -533,24 +435,44 @@
       }catch{}
 
       setCamStatus('running', true);
+      setZxStatus('zxing-only', true);
 
-      // ✅ 優先：BarcodeDetector → ダメならZXing
-      let ok = await startDetectorLoop();
-      if(ok){
-        setZxStatus('native(detector)', true);
-      }else{
-        ok = await startZxingLoop();
-        setZxStatus(ok ? 'ok' : 'missing', ok);
-        if(!ok){
-          showToast('読み取りエンジンが使えません', 'BarcodeDetector未対応 + ZXing読み込み不備の可能性');
+      reader.decodeFromVideoDevice(null, video, (result, err) => {
+        if(!scanning) return;
+
+        if(result){
+          const raw = (typeof result.getText === 'function') ? result.getText() : String(result.text || result);
+          const code = normalizeTracking(raw);
+          if(!code) return;
+
+          const now = Date.now();
+          if(now - lastScanAt < 800) return;
+          lastScanAt = now;
+
+          codeEl.value = code;
+          log('scanned:', raw, '->', code);
+
+          if(!isValidTracking(code)){
+            showToast('読み取りはできたが桁が違う', `取得: ${code}（8〜16桁のみ送信）`);
+            return;
+          }
+
+          try{ navigator.vibrate && navigator.vibrate(30); }catch{}
+          sendScan(code).catch(()=>{});
+          return;
         }
-      }
+
+        if(err){
+          const name = err.name || err.constructor?.name || '';
+          if(name !== 'NotFoundException'){
+            log('decode err:', name, err.message || String(err));
+          }
+        }
+      });
     }
 
     async function stopCamera(){
       scanning = false;
-
-      stopDetectorLoop();
       try{ if(reader && reader.reset) reader.reset(); }catch{}
       reader = null;
 
@@ -605,6 +527,7 @@
       }
     }
 
+    // ✅ ライト：毎回 track を取り直す（null事故防止）
     async function toggleTorch(){
       const s = video.srcObject;
       const track = s && s.getVideoTracks ? s.getVideoTracks()[0] : null;
@@ -658,6 +581,7 @@
       }
     }
 
+    // ====== API ======
     async function sendScan(code){
       const token = String(tokenEl.value || '').trim();
       if(!token){
@@ -726,21 +650,39 @@
       }
     }
 
+    // ====== UI events ======
     btnStart.addEventListener('click', () => startCamera());
     btnStop.addEventListener('click',  () => stopCamera());
     btnTorch.addEventListener('click', () => toggleTorch());
     btnSwitch.addEventListener('click', () => switchCamera());
-    btnSend.addEventListener('click', () => sendScan(codeEl.value));
-    btnClear.addEventListener('click', () => { codeEl.value=''; codeEl.focus(); setNetStatus('-', null); });
-    zoomEl.addEventListener('input', (e) => setZoom(e.target.value));
-    codeEl.addEventListener('keydown', (e) => { if(e.key === 'Enter'){ e.preventDefault(); sendScan(codeEl.value); } });
 
+    btnSend.addEventListener('click', () => sendScan(codeEl.value));
+    btnClear.addEventListener('click', () => {
+      codeEl.value = '';
+      codeEl.focus();
+      setNetStatus('-', null);
+    });
+
+    zoomEl.addEventListener('input', (e) => setZoom(e.target.value));
+
+    codeEl.addEventListener('keydown', (e) => {
+      if(e.key === 'Enter'){
+        e.preventDefault();
+        sendScan(codeEl.value);
+      }
+    });
+
+    // ====== 初期ログ & 診断 ======
     log('scan.html ready');
     setCamStatus('idle', null);
     setNetStatus('-', null);
 
+    const zxOk = zxingReady();
+    log('ZXing ready?', zxOk);
+    setZxStatus(zxOk ? 'ok' : 'missing', zxOk);
+
     diagHttps.textContent = (location.protocol === 'https:' || location.hostname === 'localhost') ? 'OK' : 'NG';
-    diagZxing.textContent = zxingReady() ? 'ok' : 'missing';
+    diagZxing.textContent = zxOk ? 'ok' : 'missing';
     diagUA.textContent = navigator.userAgent;
     diagHost.textContent = location.host;
 

@@ -385,12 +385,9 @@
     <button id="toastBtn" class="btn" type="button" style="min-height:40px; padding:10px 12px;">OK</button>
   </div></div>
 
-  <!-- ✅ ローカル配信ZXing（あなたの配置に合わせる） -->
-  <!-- public/vendor/zxing/library.min.js / browser.min.js -->
+  <!-- ✅ ローカル配信ZXing -->
   <script src="/vendor/zxing/library.min.js"></script>
   <script src="/vendor/zxing/browser.min.js"></script>
-
-  <!-- ✅ 互換：ZXingBrowser を ZXing として参照できるようにする -->
   <script>
     window.ZXing = window.ZXing || window.ZXingBrowser;
   </script>
@@ -499,9 +496,23 @@
     }
 
     function makeReader(){
-      // 優先：BrowserMultiFormatReader（@zxing/browser想定）
+      // ✅ 読み取り精度UP：追跡番号でよくある形式に絞る + 反転も見る
+      if(ZXing.BrowserMultiFormatReader && ZXing.DecodeHintType && ZXing.BarcodeFormat){
+        const hints = new Map();
+        hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+          ZXing.BarcodeFormat.CODE_128,
+          ZXing.BarcodeFormat.ITF,
+          ZXing.BarcodeFormat.EAN_13,
+          ZXing.BarcodeFormat.EAN_8,
+          ZXing.BarcodeFormat.QR_CODE, // QRも読むなら
+        ]);
+        hints.set(ZXing.DecodeHintType.ALSO_INVERTED, true);
+
+        // 2nd arg は timeBetweenScans(ms) として扱われるビルドが多い
+        return new ZXing.BrowserMultiFormatReader(hints, 300);
+      }
+
       if(ZXing.BrowserMultiFormatReader) return new ZXing.BrowserMultiFormatReader();
-      // 互換：BrowserBarcodeReader（ビルドによってはこちら）
       if(ZXing.BrowserBarcodeReader) return new ZXing.BrowserBarcodeReader();
       return null;
     }
@@ -563,7 +574,14 @@
       }
 
       video.srcObject = stream;
-      await video.play().catch(()=>{});
+      log('srcObject set?', !!video.srcObject);
+
+      try{
+        await video.play();
+        log('video.play ok');
+      }catch(e){
+        log('video.play failed', e?.name || '', e?.message || e);
+      }
 
       const tracks = stream.getVideoTracks();
       currentVideoTrack = tracks[0] || null;
@@ -579,6 +597,7 @@
       reader = makeReader();
       if(!reader){
         showToast('ZXingのReaderが見つかりません', '読み込んだファイルに必要なクラスが入っていません');
+        await stopCamera(); // ✅ ここ重要：起動途中で放置しない
         return;
       }
 
@@ -621,12 +640,16 @@
               return;
             }
 
+            // ✅ 成功時：軽い通知（無音が良ければ消してOK）
+            try{ navigator.vibrate && navigator.vibrate(30); }catch{}
+
             sendScan(code).catch(()=>{});
             return;
           }
 
           if(err){
             const name = err.name || err.constructor?.name || '';
+            // ✅ NotFoundException は「見つからない」だけなので静かにする
             if(name !== 'NotFoundException'){
               log('decode err:', name, err.message || String(err));
             }
@@ -694,16 +717,23 @@
       }
     }
 
+    // ✅ ライト：currentVideoTrack null 事故を防ぐ（毎回 video.srcObject から取り直す）
     async function toggleTorch(){
-      if(!currentVideoTrack) return;
+      const s = video.srcObject;
+      const track = s && s.getVideoTracks ? s.getVideoTracks()[0] : null;
+      if(!track){
+        showToast('カメラが未開始', '先に「カメラ開始」を押してください');
+        return;
+      }
+
       try{
-        const caps = currentVideoTrack.getCapabilities ? currentVideoTrack.getCapabilities() : {};
+        const caps = track.getCapabilities ? track.getCapabilities() : {};
         if(!caps || !('torch' in caps)){
-          showToast('ライト非対応', 'この端末はtorch制御に対応していません');
+          showToast('ライト非対応', 'この端末/ブラウザはライト制御に対応していません');
           return;
         }
         torchOn = !torchOn;
-        await currentVideoTrack.applyConstraints({ advanced: [{ torch: torchOn }] });
+        await track.applyConstraints({ advanced: [{ torch: torchOn }] });
         btnTorch.textContent = torchOn ? 'ライトON' : 'ライト';
         log('torch', torchOn ? 'on' : 'off');
       }catch(e){

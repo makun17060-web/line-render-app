@@ -3,255 +3,213 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <meta name="theme-color" content="#111111" />
-  <title>発送通知（コピー→貼り付け→送信）</title>
+  <title>発送通知（貼り付け専用）</title>
   <style>
-    :root{--bg:#0b0b0c;--card:#141416;--muted:#9aa0a6;--text:#f5f5f7;--line:#2a2a2d;--btn:#1f1f22;--accent:#2a6dff;
-      --safe-top: env(safe-area-inset-top, 0px);--safe-bottom: env(safe-area-inset-bottom, 0px);--vh:1dvh;}
-    *{box-sizing:border-box}
-    html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
-      font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif;overscroll-behavior:none}
-    body{min-height: calc(var(--vh)*100); padding: calc(12px + var(--safe-top)) 12px calc(14px + var(--safe-bottom)) 12px;}
-    .wrap{max-width:920px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
-    .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px}
-    .title{font-weight:900;font-size:16px}
-    .sub{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.35}
-    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-    .btn{appearance:none;border:1px solid var(--line);background:var(--btn);color:var(--text);
-      padding:14px 14px;border-radius:14px;font-weight:900;font-size:14px;min-height:48px;cursor:pointer}
-    .btn.primary{background:linear-gradient(180deg,#2a6dff,#2a50ff);border-color:rgba(77,163,255,.35)}
-    .btn.danger{background:linear-gradient(180deg,#ff3b30,#d92c24);border-color:rgba(255,59,48,.35)}
-    .btn:disabled{opacity:.45;cursor:not-allowed}
-    .pill{padding:6px 10px;border-radius:999px;background:#0f0f11;border:1px solid var(--line);color:var(--muted);font-size:12px}
-    .pill.ok{color:#caffd8;border-color:rgba(53,199,89,.35)}
-    .pill.bad{color:#ffd0d0;border-color:rgba(255,77,79,.35)}
-    .input{width:100%;padding:14px 14px;border-radius:14px;border:1px solid var(--line);background:#0f0f11;color:var(--text);
-      font-size:18px;outline:none;min-height:54px;letter-spacing:1px}
-    .hint{font-size:12px;color:var(--muted);line-height:1.35}
-    .log{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-size:12px;
-      background:#0f0f11;border:1px solid var(--line);border-radius:14px;padding:10px;max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-word}
-    .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;padding:2px 6px;border:1px solid var(--line);
-      border-radius:8px;background:#0f0f11;color:#cfd3d7}
+    :root { --bg:#0b0f14; --card:#121a23; --text:#eaf2ff; --muted:#9fb0c3; --ok:#45d483; --ng:#ff5d5d; --bd:#243244; }
+    body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif; background:var(--bg); color:var(--text); }
+    .wrap { max-width:720px; margin:0 auto; padding:16px 14px 40px; }
+    .card { background:var(--card); border:1px solid var(--bd); border-radius:16px; padding:14px; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+    h1 { margin:6px 0 8px; font-size:18px; letter-spacing:.02em; }
+    .hint { color:var(--muted); font-size:13px; line-height:1.5; margin:0 0 12px; }
+    label { display:block; font-size:13px; color:var(--muted); margin:10px 0 6px; }
+    input, button { width:100%; box-sizing:border-box; border-radius:14px; border:1px solid var(--bd); background:#0e1520; color:var(--text); padding:14px 12px; font-size:18px; outline:none; }
+    input:focus { border-color:#3d5a7a; }
+    .row { display:flex; gap:10px; }
+    .row > * { flex:1; }
+    button { background:#1b2a3a; cursor:pointer; font-weight:700; }
+    button:active { transform: translateY(1px); }
+    .btn-ok { background:#173225; border-color:#1f5a3a; }
+    .btn-ng { background:#3a1b1b; border-color:#6a2b2b; }
+    .small { font-size:12px; padding:10px 10px; border-radius:12px; }
+    .log { margin-top:12px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; white-space:pre-wrap; background:#0a1018; border:1px solid var(--bd); border-radius:14px; padding:12px; color:#d7e6ff; min-height:84px; }
+    .pill { display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; border:1px solid var(--bd); color:var(--muted); margin-left:6px; }
+    .status-ok { color:var(--ok); border-color:rgba(69,212,131,.35); }
+    .status-ng { color:var(--ng); border-color:rgba(255,93,93,.35); }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
-      <div class="title">発送通知（コピー → 貼り付け → 送信）</div>
-      <div class="sub">
-        追跡番号は<strong>12桁</strong>のみ受け付け。貼り付けるだけで自動整形＆確定。<br>
-        送信は「送信」ボタン（または自動送信ONなら確定後に自動）。
-      </div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">
-        <span id="statePill" class="pill">state: idle</span>
-        <span id="autoPill" class="pill">auto: off</span>
-      </div>
-    </div>
+      <h1>発送通知（貼り付け専用） <span id="status" class="pill">待機</span></h1>
+      <p class="hint">
+        ・追跡番号を貼り付けた瞬間に送信します（EnterでもOK）<br>
+        ・数字以外は自動で消します<br>
+        ・<b>8桁はヤマト伝票番号ではない事が多い</b>ので弾きます（8〜16桁の範囲チェック）
+      </p>
 
-    <div class="card">
-      <div style="font-weight:900;margin-bottom:6px">追跡番号（12桁）</div>
-      <input id="code" class="input" inputmode="numeric" placeholder="ここに貼り付け（12桁）" />
-      <div class="hint">
-        例：他アプリでスキャン → コピー → ここを長押しで貼り付け / 下の「貼り付け」ボタン。<br>
-        PCなら <span class="kbd">Ctrl</span>+<span class="kbd">V</span>（Macは ⌘+V）
+      <label>Admin Token（X-Admin-Token）</label>
+      <input id="token" type="password" autocomplete="off" placeholder="ADMIN_API_TOKEN / ADMIN_CODE" />
+
+      <label>追跡番号（貼り付け）</label>
+      <input id="code" inputmode="numeric" autocomplete="off" placeholder="ここに貼り付け（例: 12桁）" />
+
+      <div class="row" style="margin-top:10px">
+        <button id="send" class="btn-ok">送信（Enter）</button>
+        <button id="clear" class="small">クリア</button>
       </div>
 
       <div class="row" style="margin-top:10px">
-        <button id="btnPaste" class="btn" type="button">貼り付け（クリップボード）</button>
-        <button id="btnSend" class="btn primary" type="button" disabled>送信</button>
-        <button id="btnClear" class="btn" type="button">クリア</button>
-        <button id="btnToggleAuto" class="btn" type="button">自動送信: OFF</button>
+        <button id="paste" class="small">📋 クリップボード貼り付け</button>
+        <button id="ping" class="small">/api/ping</button>
       </div>
 
-      <div class="hint">
-        ※「貼り付け（クリップボード）」は<strong>HTTPS</strong>＋ボタン押下が必要。使えない場合は手動貼り付けでOK。<br>
-        ※ 送信先APIは下の <span class="kbd">API_URL</span> をあなたのエンドポイントに変更して使う。
-      </div>
-    </div>
-
-    <div class="card">
-      <div style="font-weight:900;margin-bottom:6px">ログ</div>
-      <div id="log" class="log"></div>
+      <div id="log" class="log">ready</div>
     </div>
   </div>
 
-  <script>
-    // ===== vh fix =====
-    (function setVh(){
-      const v = window.visualViewport;
-      const h = v ? v.height : window.innerHeight;
-      document.documentElement.style.setProperty('--vh', (h * 0.01) + 'px');
-    })();
-    window.addEventListener('resize', () => {
-      const v = window.visualViewport;
-      const h = v ? v.height : window.innerHeight;
-      document.documentElement.style.setProperty('--vh', (h * 0.01) + 'px');
-    });
+<script>
+(() => {
+  const API = '/api/admin/ship/scan-and-notify';
 
-    const $ = (id)=>document.getElementById(id);
-    const codeEl = $("code");
-    const btnPaste = $("btnPaste");
-    const btnSend = $("btnSend");
-    const btnClear = $("btnClear");
-    const btnToggleAuto = $("btnToggleAuto");
-    const logEl = $("log");
-    const statePill = $("statePill");
-    const autoPill = $("autoPill");
+  const $ = (id) => document.getElementById(id);
+  const elToken = $('token');
+  const elCode  = $('code');
+  const elSend  = $('send');
+  const elClear = $('clear');
+  const elPaste = $('paste');
+  const elPing  = $('ping');
+  const elLog   = $('log');
+  const elStatus= $('status');
 
-    // ====== ★あなたの送信先APIに変更 ======
-    // 例）'/api/shipping/notify' など
-    const API_URL = '/api/shipped'; // ←ここを変更
-    const METHOD = 'POST';
+  let busy = false;
+  let lastSent = '';
 
-    // payload はサーバ実装に合わせて変更
-    function buildPayload(tracking12){
-      return { tracking_no: tracking12 };
+  const setStatus = (text, ok=null) => {
+    elStatus.textContent = text;
+    elStatus.classList.remove('status-ok','status-ng');
+    if (ok === true) elStatus.classList.add('status-ok');
+    if (ok === false) elStatus.classList.add('status-ng');
+  };
+  const log = (s) => { elLog.textContent = String(s); };
+
+  const normDigits = (s) => String(s || '').replace(/\s+/g,'').replace(/\D/g,'');
+
+  async function postTracking(tracking) {
+    const token = String(elToken.value || '').trim();
+    if (!token) {
+      setStatus('token未入力', false);
+      log('X-Admin-Token を入れてください');
+      return;
     }
 
-    function log(...args){
-      const line = args.map(x => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ');
-      const ts = new Date().toLocaleString('sv-SE', { timeZone:'Asia/Tokyo' }).replace('T',' ');
-      logEl.textContent = `[${ts}] ${line}\n` + logEl.textContent;
-    }
-    function pill(el, text, ok=null){
-      el.textContent = text;
-      el.classList.remove('ok','bad');
-      if(ok===true) el.classList.add('ok');
-      if(ok===false) el.classList.add('bad');
+    const tracking_no = normDigits(tracking);
+    if (!tracking_no) {
+      setStatus('番号なし', false);
+      log('追跡番号が空です');
+      return;
     }
 
-    const digits = (v)=>String(v||'').replace(/\D/g,'');
-    const valid12 = (v)=>/^\d{12}$/.test(String(v||''));
-
-    function vibrateOK(){ try{ navigator.vibrate && navigator.vibrate([120,60,220]); }catch{} }
-    function vibrateNG(){ try{ navigator.vibrate && navigator.vibrate(25); }catch{} }
-
-    let autoSend = false;
-    let lastSent = { code:'', at:0 };
-    const SENT_COOLDOWN_MS = 1200;
-
-    function setAuto(on){
-      autoSend = !!on;
-      btnToggleAuto.textContent = `自動送信: ${autoSend ? 'ON' : 'OFF'}`;
-      pill(autoPill, `auto: ${autoSend ? 'on' : 'off'}`, autoSend ? true : null);
+    // サーバ側は 8〜16 桁許可だが、8桁が誤読の温床ならここで強めに弾くのもアリ
+    // いったんサーバ仕様に合わせて 8〜16 桁
+    if (!/^\d{8,16}$/.test(tracking_no)) {
+      setStatus('桁数NG', false);
+      log(`桁数が変です: ${tracking_no}（8〜16桁のみ）`);
+      return;
     }
-    setAuto(false);
 
-    function normalizeAndUpdate(raw, source){
-      const s = digits(raw);
-      if(codeEl.value !== s) codeEl.value = s;
+    if (busy) return;
+    busy = true;
+    setStatus('送信中…');
+    elSend.disabled = true;
 
-      if(valid12(s)){
-        pill(statePill, `state: ready (${source})`, true);
-        btnSend.disabled = false;
-        log('READY', source, s);
-        vibrateOK();
+    try {
+      const res = await fetch(API, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Token': token,
+        },
+        body: JSON.stringify({ tracking_no })
+      });
 
-        if(autoSend){
-          // 自動送信（連打防止）
-          const now = Date.now();
-          if(lastSent.code === s && (now - lastSent.at) < SENT_COOLDOWN_MS){
-            log('AUTO_SKIP cooldown', s);
-            return;
-          }
-          sendNow();
-        }
-      }else{
-        pill(statePill, s ? 'state: invalid (need 12 digits)' : 'state: idle', s ? false : null);
-        btnSend.disabled = true;
-        if(s) { log('INVALID', source, raw, '->', s); vibrateNG(); }
+      const txt = await res.text();
+      let data = null;
+      try { data = JSON.parse(txt); } catch { data = { raw: txt }; }
+
+      if (!res.ok || data.ok === false) {
+        setStatus('失敗', false);
+        log(`HTTP ${res.status}\n` + JSON.stringify(data, null, 2));
+        return;
       }
-    }
 
-    async function readClipboard(){
+      // 成功
+      setStatus(data.already_notified ? '通知済み（再送なし）' : '送信OK', true);
+      lastSent = tracking_no;
+      log(JSON.stringify(data, null, 2));
+
+      // 次の貼り付けに備えて選択状態へ
+      elCode.value = '';
+      elCode.focus();
+
+    } catch (e) {
+      setStatus('通信エラー', false);
+      log(String(e && e.stack ? e.stack : e));
+    } finally {
+      busy = false;
+      elSend.disabled = false;
+    }
+  }
+
+  // 貼り付けた瞬間に送信（爆速）
+  elCode.addEventListener('paste', async (ev) => {
+    // paste直後は value に反映されないので少し待つ
+    setTimeout(() => {
+      const v = normDigits(elCode.value);
+      elCode.value = v;
+      if (v && v !== lastSent) postTracking(v);
+    }, 0);
+  });
+
+  // 入力中も数字に寄せる
+  elCode.addEventListener('input', () => {
+    const v = normDigits(elCode.value);
+    if (elCode.value !== v) elCode.value = v;
+  });
+
+  // Enterで送信
+  elCode.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      postTracking(elCode.value);
+    }
+  });
+
+  elSend.addEventListener('click', () => postTracking(elCode.value));
+
+  elClear.addEventListener('click', () => {
+    elCode.value = '';
+    setStatus('待機');
+    log('cleared');
+    elCode.focus();
+  });
+
+  elPaste.addEventListener('click', async () => {
+    try {
       const t = await navigator.clipboard.readText();
-      return t || '';
+      const v = normDigits(t);
+      elCode.value = v;
+      if (v) postTracking(v);
+    } catch (e) {
+      setStatus('貼り付け不可', false);
+      log('ブラウザがクリップボード読み取りを拒否しました。\n手動で貼り付けてください。');
     }
+  });
 
-    btnPaste.addEventListener('click', async ()=>{
-      try{
-        const t = await readClipboard();
-        if(!t) throw new Error('clipboard empty');
-        normalizeAndUpdate(t, 'CLIP');
-      }catch(e){
-        log('clipboard failed', e?.message || String(e));
-        alert('クリップボードが読めません（HTTPS/権限/ブラウザ制限）。\n入力欄を長押し→貼り付け でOK。');
-      }
-    });
-
-    btnClear.addEventListener('click', ()=>{
-      codeEl.value = '';
-      btnSend.disabled = true;
-      pill(statePill, 'state: idle', null);
-      log('clear');
-      try{ navigator.vibrate && navigator.vibrate(15); }catch{}
-      codeEl.focus();
-    });
-
-    btnToggleAuto.addEventListener('click', ()=> setAuto(!autoSend));
-
-    // 手動ペースト/入力
-    codeEl.addEventListener('paste', (ev)=>{
-      const t = (ev.clipboardData || window.clipboardData).getData('text');
-      setTimeout(()=>normalizeAndUpdate(t, 'PASTE'), 0);
-    });
-    codeEl.addEventListener('input', ()=>{
-      normalizeAndUpdate(codeEl.value, 'INPUT');
-    });
-
-    async function sendNow(){
-      const code = digits(codeEl.value);
-      if(!valid12(code)){
-        pill(statePill, 'state: invalid', false);
-        btnSend.disabled = true;
-        vibrateNG();
-        return;
-      }
-
-      // 連打防止
-      const now = Date.now();
-      if(lastSent.code === code && (now - lastSent.at) < SENT_COOLDOWN_MS){
-        log('SEND_SKIP cooldown', code);
-        return;
-      }
-
-      btnSend.disabled = true;
-      pill(statePill, 'state: sending...', null);
-      log('SEND start', code, '->', API_URL);
-
-      try{
-        const payload = buildPayload(code);
-        const r = await fetch(API_URL, {
-          method: METHOD,
-          headers: { 'Content-Type':'application/json' },
-          body: JSON.stringify(payload),
-        });
-
-        const text = await r.text().catch(()=> '');
-        if(!r.ok){
-          pill(statePill, `state: failed (${r.status})`, false);
-          log('SEND failed', r.status, text);
-          vibrateNG();
-          btnSend.disabled = false;
-          return;
-        }
-
-        lastSent = { code, at: Date.now() };
-        pill(statePill, 'state: sent ✅', true);
-        log('SEND ok', text || '(no body)');
-        vibrateOK();
-      }catch(e){
-        pill(statePill, 'state: error', false);
-        log('SEND error', e?.message || String(e));
-        vibrateNG();
-        btnSend.disabled = false;
-      }
+  elPing.addEventListener('click', async () => {
+    try {
+      const res = await fetch('/api/ping');
+      const j = await res.json().catch(()=>({}));
+      setStatus('ping OK', true);
+      log(JSON.stringify(j, null, 2));
+    } catch (e) {
+      setStatus('ping NG', false);
+      log(String(e));
     }
+  });
 
-    btnSend.addEventListener('click', sendNow);
-
-    log('ready', { API_URL, METHOD });
-    pill(statePill, 'state: idle', null);
-  </script>
+  // 初期フォーカス
+  elCode.focus();
+})();
+</script>
 </body>
 </html>

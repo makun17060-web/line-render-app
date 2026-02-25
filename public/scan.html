@@ -33,10 +33,10 @@
     .videoWrap{ position:relative; border-radius:16px; overflow:hidden; background:#000; border:1px solid var(--line); height: clamp(280px, 52dvh, 560px); }
     video{ width:100%; height:100%; object-fit:cover; background:#000; }
     .reticle{ pointer-events:none; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
-    /* CODE128向け：枠小さめ */
+    /* CODE128向け：横長・薄め */
     .reticle > div{
-      width: min(62vw, 420px);
-      height: min(20vh, 150px);
+      width: min(70vw, 520px);
+      height: min(16vh, 120px);
       border: 2px solid rgba(255,255,255,.65);
       border-radius: 14px;
       box-shadow: 0 0 0 9999px rgba(0,0,0,.25);
@@ -111,7 +111,7 @@
     <div class="header">
       <div>
         <div class="title">発送スキャン（追跡番号 → shipped → 即通知）</div>
-        <div class="sub">バーコードを読む → <code>/api/admin/ship/scan-and-notify</code> に送る</div>
+        <div class="sub">バーコード（CODE128想定） → <code>/api/admin/ship/scan-and-notify</code></div>
       </div>
       <div class="status">
         <span id="camPill" class="pill">camera: idle</span>
@@ -147,7 +147,7 @@
 
         <div style="height:8px"></div>
         <div class="hint">
-          CODE128は <b>距離20cm前後</b>＋<b>水平</b>＋<b>一瞬止める</b> が最強です。反射は少し斜め。
+          コツ：<b>距離20cm</b>＋<b>水平</b>＋<b>0.5秒止める</b>。反射は<b>少し斜め</b>。
         </div>
 
         <div style="height:10px"></div>
@@ -279,14 +279,13 @@
       if(ok === false) zxPill.classList.add('bad');
     }
 
-    // ====== Camera state ======
+    // ====== state ======
     let stream = null;
     let currentVideoTrack = null;
     let usingDeviceId = null;
     let deviceIds = [];
     let torchOn = false;
 
-    // ZXing
     let reader = null;
     let scanning = false;
 
@@ -302,27 +301,28 @@
 
     function zxingReady(){
       return (typeof window.ZXing !== 'undefined')
-        && !!(ZXing.BrowserMultiFormatReader || ZXing.BrowserBarcodeReader)
-        && !!(ZXing.DecodeHintType && ZXing.BarcodeFormat);
+        && !!(ZXing.BrowserMultiFormatReader || ZXing.BrowserBarcodeReader);
     }
 
     function makeReader(){
-      // ✅ CODE128中心に絞る（精度/速度UP）
+      // ✅ CODE128中心に絞る（速度・精度）
       const hints = new Map();
       try{
-        hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-          ZXing.BarcodeFormat.CODE_128,
-          ZXing.BarcodeFormat.ITF,
-          ZXing.BarcodeFormat.EAN_13,
-          ZXing.BarcodeFormat.EAN_8,
-          ZXing.BarcodeFormat.QR_CODE,
-        ]);
-        hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-        hints.set(ZXing.DecodeHintType.ALSO_INVERTED, true);
+        if(ZXing.DecodeHintType && ZXing.BarcodeFormat){
+          hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+            ZXing.BarcodeFormat.CODE_128,
+            ZXing.BarcodeFormat.ITF,
+            ZXing.BarcodeFormat.EAN_13,
+            ZXing.BarcodeFormat.EAN_8,
+            ZXing.BarcodeFormat.QR_CODE,
+          ]);
+          hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+          hints.set(ZXing.DecodeHintType.ALSO_INVERTED, true);
+        }
       }catch{}
 
       if(ZXing.BrowserMultiFormatReader){
-        // delayBetweenScanAttempts は小さすぎるとブレで不利
+        // delayBetweenScanAttempts を少し長め（ブレ耐性）
         return new ZXing.BrowserMultiFormatReader(hints, 200);
       }
       if(ZXing.BrowserBarcodeReader){
@@ -356,7 +356,6 @@
       setCamStatus('starting...', null);
       log('startCamera...');
 
-      // ✅ 高画質寄せ（端末が許す範囲）
       const baseConstraints = {
         audio:false,
         video:{
@@ -401,13 +400,13 @@
 
       await refreshCapabilities();
 
-      // ✅ 初期ズームを少し上げる（CODE128に効く）
+      // ✅ 初期ズーム（最大2.5）
       setTimeout(async () => {
         try{
           const tr = video.srcObject.getVideoTracks()[0];
           const caps = tr.getCapabilities ? tr.getCapabilities() : {};
           if(caps.zoom){
-            const z = Math.min(2.0, caps.zoom.max || 2.0);
+            const z = Math.min(2.5, caps.zoom.max || 2.5);
             await tr.applyConstraints({ advanced: [{ zoom: z }] });
             zoomLabel.textContent = `x${Number(z).toFixed(1)}`;
           }
@@ -437,6 +436,7 @@
       setCamStatus('running', true);
       setZxStatus('zxing-only', true);
 
+      // ✅ ここが修正ポイント：Promiseをcatchして NotFound を握り潰す
       reader.decodeFromVideoDevice(null, video, (result, err) => {
         if(!scanning) return;
 
@@ -462,11 +462,18 @@
           return;
         }
 
+        // NotFoundは普通なのでログしない
         if(err){
           const name = err.name || err.constructor?.name || '';
-          if(name !== 'NotFoundException'){
+          if(name && name !== 'NotFoundException'){
             log('decode err:', name, err.message || String(err));
           }
+        }
+      }).catch((e) => {
+        // ✅ これがないと「no multi format...」が未処理で出る
+        const name = e?.name || e?.constructor?.name || '';
+        if(name && name !== 'NotFoundException'){
+          log('decode promise error:', name, e?.message || String(e));
         }
       });
     }
@@ -527,7 +534,6 @@
       }
     }
 
-    // ✅ ライト：毎回 track を取り直す（null事故防止）
     async function toggleTorch(){
       const s = video.srcObject;
       const track = s && s.getVideoTracks ? s.getVideoTracks()[0] : null;

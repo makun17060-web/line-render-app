@@ -22,6 +22,7 @@
       --safe-left: env(safe-area-inset-left, 0px);
       --safe-right: env(safe-area-inset-right, 0px);
 
+      /* Android Chromeの下アドレスバー対策 */
       --vh: 1dvh;
     }
     *{ box-sizing:border-box; }
@@ -94,9 +95,11 @@
       align-items:center;
       justify-content:center;
     }
+
+    /* ✅ 枠を小さくしてピント/読取を安定させる */
     .reticle > div{
-      width: min(76vw, 520px);
-      height: min(38vh, 260px);
+      width: min(60vw, 400px);
+      height: min(22vh, 160px);
       border: 2px solid rgba(255,255,255,.65);
       border-radius: 14px;
       box-shadow: 0 0 0 9999px rgba(0,0,0,.25);
@@ -388,9 +391,7 @@
   <!-- ✅ ローカル配信ZXing -->
   <script src="/vendor/zxing/library.min.js"></script>
   <script src="/vendor/zxing/browser.min.js"></script>
-  <script>
-    window.ZXing = window.ZXing || window.ZXingBrowser;
-  </script>
+  <script>window.ZXing = window.ZXing || window.ZXingBrowser;</script>
 
   <script>
     // Android Chrome のアドレスバーで高さが変わる対策（100dvh補助）
@@ -496,7 +497,6 @@
     }
 
     function makeReader(){
-      // ✅ 読み取り精度UP：追跡番号でよくある形式に絞る + 反転も見る
       if(ZXing.BrowserMultiFormatReader && ZXing.DecodeHintType && ZXing.BarcodeFormat){
         const hints = new Map();
         hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
@@ -504,14 +504,12 @@
           ZXing.BarcodeFormat.ITF,
           ZXing.BarcodeFormat.EAN_13,
           ZXing.BarcodeFormat.EAN_8,
-          ZXing.BarcodeFormat.QR_CODE, // QRも読むなら
+          ZXing.BarcodeFormat.QR_CODE,
         ]);
         hints.set(ZXing.DecodeHintType.ALSO_INVERTED, true);
-
-        // 2nd arg は timeBetweenScans(ms) として扱われるビルドが多い
-        return new ZXing.BrowserMultiFormatReader(hints, 300);
+        hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+        return new ZXing.BrowserMultiFormatReader(hints, 250);
       }
-
       if(ZXing.BrowserMultiFormatReader) return new ZXing.BrowserMultiFormatReader();
       if(ZXing.BrowserBarcodeReader) return new ZXing.BrowserBarcodeReader();
       return null;
@@ -529,7 +527,6 @@
 
       const zxOk = zxingReady();
       setZxStatus(zxOk ? 'ok' : 'missing', zxOk);
-
       if(!zxOk){
         showToast('ZXingが読み込めていません', 'public/vendor/zxing/ の配置と script src を確認してください');
         return;
@@ -543,12 +540,13 @@
       setCamStatus('starting...', null);
       log('startCamera...');
 
+      // ✅ 画質UP（ideal だけだと低解像度になる端末がある）
       const baseConstraints = {
         audio: false,
         video: {
           facingMode: { ideal: "environment" },
-          width:  { ideal: 1920 },
-          height: { ideal: 1080 }
+          width:  { min: 1280, ideal: 1920, max: 2560 },
+          height: { min: 720,  ideal: 1080, max: 1440 }
         }
       };
       if(preferredDeviceId){
@@ -574,14 +572,8 @@
       }
 
       video.srcObject = stream;
-      log('srcObject set?', !!video.srcObject);
 
-      try{
-        await video.play();
-        log('video.play ok');
-      }catch(e){
-        log('video.play failed', e?.name || '', e?.message || e);
-      }
+      try{ await video.play(); }catch(e){ log('video.play failed', e?.name || '', e?.message || e); }
 
       const tracks = stream.getVideoTracks();
       currentVideoTrack = tracks[0] || null;
@@ -594,10 +586,25 @@
 
       await refreshCapabilities();
 
+      // ✅ 初期ズームを自動で少し上げる（バーコードが大きいほど勝つ）
+      setTimeout(async () => {
+        try{
+          const s = video.srcObject;
+          const tr = s && s.getVideoTracks ? s.getVideoTracks()[0] : null;
+          if(!tr) return;
+          const caps = tr.getCapabilities ? tr.getCapabilities() : {};
+          if(caps && caps.zoom){
+            const z = Math.min(2.0, caps.zoom.max || 2.0);
+            await tr.applyConstraints({ advanced: [{ zoom: z }] });
+            zoomLabel.textContent = `x${Number(z).toFixed(1)}`;
+          }
+        }catch{}
+      }, 500);
+
       reader = makeReader();
       if(!reader){
         showToast('ZXingのReaderが見つかりません', '読み込んだファイルに必要なクラスが入っていません');
-        await stopCamera(); // ✅ ここ重要：起動途中で放置しない
+        await stopCamera();
         return;
       }
 
@@ -611,14 +618,11 @@
       btnSwitch.disabled = true;
       try{
         const cams = await listVideoDevices();
-        if((cams || []).length >= 2){
-          btnSwitch.disabled = false;
-        }
+        if((cams || []).length >= 2) btnSwitch.disabled = false;
       }catch{}
 
       setCamStatus('running', true);
 
-      // decodeFromVideoDevice は MultiFormatReader系が持つ
       if(typeof reader.decodeFromVideoDevice === 'function'){
         reader.decodeFromVideoDevice(null, video, (result, err) => {
           if(!scanning) return;
@@ -640,23 +644,20 @@
               return;
             }
 
-            // ✅ 成功時：軽い通知（無音が良ければ消してOK）
             try{ navigator.vibrate && navigator.vibrate(30); }catch{}
-
             sendScan(code).catch(()=>{});
             return;
           }
 
           if(err){
             const name = err.name || err.constructor?.name || '';
-            // ✅ NotFoundException は「見つからない」だけなので静かにする
             if(name !== 'NotFoundException'){
               log('decode err:', name, err.message || String(err));
             }
           }
         });
       }else{
-        showToast('Reader互換エラー', 'decodeFromVideoDevice が見つかりません（読み込んだUMDが想定と違う可能性）');
+        showToast('Reader互換エラー', 'decodeFromVideoDevice が見つかりません');
         log('reader has no decodeFromVideoDevice');
       }
     }
@@ -717,7 +718,7 @@
       }
     }
 
-    // ✅ ライト：currentVideoTrack null 事故を防ぐ（毎回 video.srcObject から取り直す）
+    // ✅ ライト：null事故防止（毎回 video.srcObject から track 取り直し）
     async function toggleTorch(){
       const s = video.srcObject;
       const track = s && s.getVideoTracks ? s.getVideoTracks()[0] : null;
@@ -725,7 +726,6 @@
         showToast('カメラが未開始', '先に「カメラ開始」を押してください');
         return;
       }
-
       try{
         const caps = track.getCapabilities ? track.getCapabilities() : {};
         if(!caps || !('torch' in caps)){
@@ -781,8 +781,8 @@
         return;
       }
 
-      const tracking_no = normalizeTracking(codeEl.value || code);
-      if(!isValidTracking(tracking_no)){
+      const tracking_no = String(code || '').replace(/\s+/g,'').replace(/\D/g,'');
+      if(!/^\d{8,16}$/.test(tracking_no)){
         setNetStatus('invalid tracking', false);
         showToast('追跡番号が不正', '8〜16桁の数字のみ送信できます');
         return;

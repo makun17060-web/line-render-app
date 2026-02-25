@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#111111" />
   <title>Scan（発送通知）</title>
   <style>
-    :root{--bg:#0b0b0c;--card:#141416;--muted:#9aa0a6;--text:#f5f5f7;--line:#2a2a2d;--btn:#1f1f22;
+    :root{--bg:#0b0b0c;--card:#141416;--muted:#9aa0a6;--text:#f5f5f7;--line:#2a2a2d;--btn:#1f1f22;--accent:#4da3ff;
       --safe-top: env(safe-area-inset-top, 0px);--safe-bottom: env(safe-area-inset-bottom, 0px);--vh: 1dvh;}
     *{box-sizing:border-box}
     html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif;overscroll-behavior:none}
@@ -15,10 +15,9 @@
     .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px}
     .title{font-weight:800;font-size:16px}
     .sub{font-size:12px;color:var(--muted);margin-top:4px}
-    .videoWrap{position:relative;border-radius:16px;overflow:hidden;background:#000;border:1px solid var(--line);height:min(62dvh,620px)}
+    .videoWrap{position:relative;border-radius:16px;overflow:hidden;background:#000;border:1px solid var(--line);height:min(55dvh,560px)}
     video{width:100%;height:100%;object-fit:cover;background:#000}
     .reticle{pointer-events:none;position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
-    /* 枠を少し大きめに */
     .reticle>div{width:min(86vw,700px);height:min(22vh,160px);border:2px solid rgba(255,255,255,.65);border-radius:14px;box-shadow:0 0 0 9999px rgba(0,0,0,.25)}
     .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
     .btn{appearance:none;border:1px solid var(--line);background:var(--btn);color:var(--text);padding:14px 14px;border-radius:14px;font-weight:800;font-size:14px;min-height:48px;cursor:pointer}
@@ -27,7 +26,7 @@
     .pill{padding:6px 10px;border-radius:999px;background:#0f0f11;border:1px solid var(--line);color:var(--muted);font-size:12px}
     .pill.ok{color:#caffd8;border-color:rgba(53,199,89,.35)}
     .pill.bad{color:#ffd0d0;border-color:rgba(255,77,79,.35)}
-    .input{width:100%;padding:14px 14px;border-radius:14px;border:1px solid var(--line);background:#0f0f11;color:var(--text);font-size:16px;outline:none;min-height:48px}
+    .input{width:100%;padding:14px 14px;border-radius:14px;border:1px solid var(--line);background:#0f0f11;color:var(--text);font-size:18px;outline:none;min-height:54px;letter-spacing:1px}
     .hint{font-size:12px;color:var(--muted);line-height:1.35}
     .log{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-size:12px;background:#0f0f11;border:1px solid var(--line);border-radius:14px;padding:10px;max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-word}
   </style>
@@ -35,12 +34,11 @@
 <body>
   <div class="wrap">
     <div class="card">
-      <div class="title">発送スキャン（枠内だけ採用 / 12桁専用 / 爆速）</div>
-      <div class="sub">コツ：枠に横いっぱい＋20〜30cm＋0.5秒静止。反射は少し斜め。</div>
+      <div class="title">発送スキャン（カメラ + 貼り付け対応 / 12桁専用）</div>
+      <div class="sub">読めない時は「他アプリで読んでコピー → この画面で貼り付け」が最強</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">
         <span id="camPill" class="pill">camera: idle</span>
         <span id="detPill" class="pill">detector: -</span>
-        <span id="roiPill" class="pill">reticle: -</span>
         <span id="fpsPill" class="pill">fps: -</span>
       </div>
     </div>
@@ -56,12 +54,25 @@
         <button id="btnStop"  class="btn" type="button" disabled>停止</button>
       </div>
       <div style="height:8px"></div>
-      <div class="hint">✅ 追跡番号は 12桁のみ確定（8桁などは捨てる）／成功時だけ長振動</div>
+      <div class="hint">
+        追跡番号は<strong>12桁</strong>。8桁などは別バーコードの可能性が高いので捨てる。<br>
+        成功時だけ長い振動。
+      </div>
     </div>
 
     <div class="card">
-      <div style="font-weight:800;margin-bottom:6px">結果（追跡番号）</div>
-      <input id="code" class="input" inputmode="numeric" placeholder="ここに入る（12桁のみ確定）" />
+      <div style="font-weight:800;margin-bottom:6px">結果（追跡番号 12桁）</div>
+      <input id="code" class="input" inputmode="numeric" placeholder="ここに貼る / 入力する（12桁のみ確定）" />
+      <div class="hint">ペースト/入力変更で自動整形。12桁になった瞬間に確定。</div>
+
+      <div class="row" style="margin-top:10px">
+        <button id="btnPaste" class="btn" type="button">貼り付け（クリップボード）</button>
+        <button id="btnClear" class="btn" type="button">クリア</button>
+      </div>
+      <div class="hint">
+        ※ クリップボード読取りは「HTTPS」＋「ボタン押下」が必要。ダメなら入力欄に手動で貼り付けOK。
+      </div>
+
       <div style="height:10px"></div>
       <div style="font-weight:800">ログ</div>
       <div id="log" class="log"></div>
@@ -82,15 +93,14 @@
 
     const $ = (id)=>document.getElementById(id);
     const video = $("video");
-    const videoWrap = $("videoWrap");
-    const reticleBox = $("reticleBox");
     const logEl = $("log");
     const codeEl = $("code");
     const btnStart = $("btnStart");
     const btnStop  = $("btnStop");
+    const btnPaste = $("btnPaste");
+    const btnClear = $("btnClear");
     const camPill = $("camPill");
     const detPill = $("detPill");
-    const roiPill = $("roiPill");
     const fpsPill = $("fpsPill");
 
     function log(...args){
@@ -105,7 +115,8 @@
       if(ok===false) el.classList.add('bad');
     }
 
-    // 12桁だけ採用
+    // ===== 12桁のみ =====
+    const digits = (v)=>String(v||'').replace(/\D/g,'');
     const valid12 = (v)=>/^\d{12}$/.test(String(v||''));
     function pick12(raw){
       const s = String(raw || '');
@@ -113,20 +124,74 @@
       return m[0] || '';
     }
 
+    // 成功フィードバック
+    function vibrateSuccess(){
+      try{ navigator.vibrate && navigator.vibrate([120,60,220]); }catch{}
+    }
+    function vibrateFail(){
+      try{ navigator.vibrate && navigator.vibrate(25); }catch{}
+    }
+
+    // 確定処理（貼り付け/手入力/スキャン 共通）
+    let lastCommit = 0;
+    function commitCode(raw, source){
+      const s = digits(raw);
+      codeEl.value = s;
+
+      if(!valid12(s)){
+        log('NG', source, raw, '->', s);
+        vibrateFail();
+        return false;
+      }
+
+      const now = Date.now();
+      if(now - lastCommit < 600) return false; // 連打防止
+      lastCommit = now;
+
+      log('OK', source, s);
+      vibrateSuccess();
+      return true;
+    }
+
+    // ===== クリップボード貼り付け =====
+    btnPaste.addEventListener('click', async ()=>{
+      try{
+        const t = await navigator.clipboard.readText();
+        if(!t) throw new Error('clipboard empty');
+        commitCode(t, 'CLIP');
+      }catch(e){
+        log('clipboard failed', e?.message || String(e));
+        alert('クリップボードが読めません（HTTPS/権限/ブラウザ制限）。\n入力欄を長押し→貼り付け でOK。');
+      }
+    });
+
+    btnClear.addEventListener('click', ()=>{
+      codeEl.value = '';
+      log('clear');
+      try{ navigator.vibrate && navigator.vibrate(15); }catch{}
+      codeEl.focus();
+    });
+
+    // 入力欄に貼り付け/編集した瞬間に確定を狙う
+    codeEl.addEventListener('paste', (ev)=>{
+      const t = (ev.clipboardData || window.clipboardData).getData('text');
+      setTimeout(()=>commitCode(t, 'PASTE'), 0);
+    });
+    codeEl.addEventListener('input', ()=>{
+      // 入力途中でも12桁になった瞬間に確定
+      const s = digits(codeEl.value);
+      if(codeEl.value !== s) codeEl.value = s;
+      if(s.length === 12) commitCode(s, 'INPUT');
+    });
+
+    // ===== カメラ（BarcodeDetector） =====
     let stream=null, track=null, scanning=false;
     let detector=null;
 
-    // 爆速：固定fps
     const TARGET_FPS = 12;
-    const FRAME_INTERVAL = Math.max(50, Math.round(1000 / TARGET_FPS));
-    let timerId = 0;
+    const FRAME_INTERVAL = Math.max(60, Math.round(1000 / TARGET_FPS));
+    let timerId=0;
 
-    // 誤読ゼロ寄せ：2連続一致＋確定後ロック
-    let pendingCode='', pendingCount=0, pendingAt=0;
-    let lastHit=0;
-    const HIT_LOCK_MS = 900;
-
-    // fps計測
     let fpsCount=0, fpsTs=Date.now();
 
     async function applyQualityHints(){
@@ -139,15 +204,16 @@
           if(caps.focusMode.includes('continuous')) adv.push({focusMode:'continuous'});
           else if(caps.focusMode.includes('auto')) adv.push({focusMode:'auto'});
         }
-        if(caps.exposureMode && Array.isArray(caps.exposureMode)){
-          if(caps.exposureMode.includes('continuous')) adv.push({exposureMode:'continuous'});
+        if(caps.exposureMode && Array.isArray(caps.exposureMode) && caps.exposureMode.includes('continuous')){
+          adv.push({exposureMode:'continuous'});
         }
-        if(caps.whiteBalanceMode && Array.isArray(caps.whiteBalanceMode)){
-          if(caps.whiteBalanceMode.includes('continuous')) adv.push({whiteBalanceMode:'continuous'});
+        if(caps.whiteBalanceMode && Array.isArray(caps.whiteBalanceMode) && caps.whiteBalanceMode.includes('continuous')){
+          adv.push({whiteBalanceMode:'continuous'});
         }
-        if(adv.length) await track.applyConstraints({advanced: adv});
-
-        // ズームは上げない（誤読/ブレの元）
+        if(adv.length){
+          await track.applyConstraints({advanced: adv});
+          log('applied advanced', adv);
+        }
       }catch(e){
         log('quality hints failed', e?.message || String(e));
       }
@@ -167,97 +233,13 @@
       btnStop.disabled=true;
 
       pill(camPill, 'camera: stopped', null);
-      pill(roiPill, 'reticle: -', null);
-      pill(fpsPill, 'fps: -', null);
       log('stopped');
-    }
-
-    // reticle（画面座標）→ videoのピクセル座標へ変換（object-fit: cover 対応）
-    function getReticleRectOnVideo(){
-      const vw = video.videoWidth || 0;
-      const vh = video.videoHeight || 0;
-      if(!vw || !vh) return null;
-
-      const wrapRect = videoWrap.getBoundingClientRect();
-      const boxRect = reticleBox.getBoundingClientRect();
-
-      const relX = boxRect.left - wrapRect.left;
-      const relY = boxRect.top  - wrapRect.top;
-      const relW = boxRect.width;
-      const relH = boxRect.height;
-
-      const dispW = wrapRect.width;
-      const dispH = wrapRect.height;
-
-      const videoAR = vw / vh;
-      const dispAR = dispW / dispH;
-
-      let scale, offsetX, offsetY;
-      if(videoAR > dispAR){
-        scale = dispH / vh;
-        const scaledW = vw * scale;
-        offsetX = (scaledW - dispW) / 2;
-        offsetY = 0;
-      }else{
-        scale = dispW / vw;
-        const scaledH = vh * scale;
-        offsetX = 0;
-        offsetY = (scaledH - dispH) / 2;
-      }
-
-      const xOnScaled = relX + offsetX;
-      const yOnScaled = relY + offsetY;
-
-      let sx = xOnScaled / scale;
-      let sy = yOnScaled / scale;
-      let sw = relW / scale;
-      let sh = relH / scale;
-
-      // 少し広げる（枠ギリ欠け防止）
-      const pad = 0.10;
-      const px = sw * pad, py = sh * pad;
-      sx -= px; sy -= py; sw += px*2; sh += py*2;
-
-      // clamp
-      sx = Math.max(0, Math.min(vw-1, sx));
-      sy = Math.max(0, Math.min(vh-1, sy));
-      sw = Math.max(1, Math.min(vw - sx, sw));
-      sh = Math.max(1, Math.min(vh - sy, sh));
-
-      return {sx, sy, sw, sh};
-    }
-
-    function intersects(a, b){
-      const ax2 = a.x + a.w, ay2 = a.y + a.h;
-      const bx2 = b.x + b.w, by2 = b.y + b.h;
-      return (a.x < bx2 && ax2 > b.x && a.y < by2 && ay2 > b.y);
-    }
-
-    function commitIfStable(code){
-      const now = Date.now();
-
-      if(now - lastHit < HIT_LOCK_MS) return false;
-
-      if(now - pendingAt > 1200){
-        pendingCode=''; pendingCount=0;
-      }
-      pendingAt = now;
-
-      if(code === pendingCode) pendingCount++;
-      else { pendingCode = code; pendingCount = 1; }
-
-      return pendingCount >= 2;
-    }
-
-    function vibrateSuccess(){
-      try{ navigator.vibrate && navigator.vibrate([120,60,220]); }catch{}
     }
 
     async function scanTick(){
       if(!scanning) return;
       if(video.readyState < 2) return;
 
-      // fps表示
       fpsCount++;
       const now = Date.now();
       if(now - fpsTs >= 1000){
@@ -265,45 +247,22 @@
         fpsCount=0; fpsTs=now;
       }
 
-      const rr = getReticleRectOnVideo();
-      if(!rr){
-        pill(roiPill, 'reticle: waiting video', null);
-        return;
-      }
-      pill(roiPill, `reticle: ${Math.round(rr.sw)}x${Math.round(rr.sh)}`, true);
-
       if(!detector) return;
 
       try{
-        // ✅ 切り出さず video 全体で検出（最も読みやすい）
         const res = await detector.detect(video);
         if(!res || !res.length) return;
 
-        const roi = { x: rr.sx, y: rr.sy, w: rr.sw, h: rr.sh };
-
+        // 複数読めても「12桁だけ」確定
         for(const r of res){
-          // boundingBoxが取れない端末もあるので rawValue だけで拾える時も拾う
-          const bb = r.boundingBox ? { x:r.boundingBox.x, y:r.boundingBox.y, w:r.boundingBox.width, h:r.boundingBox.height } : null;
-
-          // ✅ 枠と重ならない検出は捨てる
-          if(bb && !intersects(roi, bb)) continue;
-
           const code = pick12(r.rawValue || '');
           if(!code) continue;
 
           log('SEEN_12', r.format || '-', '->', code);
-
-          if(valid12(code) && commitIfStable(code)){
-            lastHit = Date.now();
-            pendingCount = 0;
-            codeEl.value = code;
-            log('HIT_OK', code);
-            vibrateSuccess();
-            return;
-          }
+          if(commitCode(code, 'CAM')) return;
         }
       }catch(e){
-        // 端末差例外は黙殺
+        // 黙殺
       }
     }
 
@@ -330,7 +289,6 @@
 
       video.srcObject = stream;
 
-      // metadata待ち（videoWidth 0対策）
       await new Promise((resolve)=>{
         const t = setTimeout(resolve, 1200);
         video.onloadedmetadata = ()=>{ clearTimeout(t); resolve(); };
@@ -363,7 +321,6 @@
         log('BarcodeDetector not supported');
       }
 
-      // loop
       fpsCount=0; fpsTs=Date.now();
       pill(fpsPill, `fps: ${TARGET_FPS}(target)`, true);
 
@@ -378,7 +335,6 @@
     log('ready');
     pill(camPill, 'camera: idle', null);
     pill(detPill, 'detector: -', null);
-    pill(roiPill, 'reticle: -', null);
     pill(fpsPill, 'fps: -', null);
   </script>
 </body>

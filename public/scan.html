@@ -22,7 +22,6 @@
       --safe-left: env(safe-area-inset-left, 0px);
       --safe-right: env(safe-area-inset-right, 0px);
 
-      /* Android Chromeの下アドレスバー対策 */
       --vh: 1dvh;
     }
     *{ box-sizing:border-box; }
@@ -386,9 +385,11 @@
     <button id="toastBtn" class="btn" type="button" style="min-height:40px; padding:10px 12px;">OK</button>
   </div></div>
 
-  <!-- ✅ ローカル配信ZXing（CDNブロック対策） -->
-  <!-- public/vendor/zxing/zxing-browser.min.js を置いた前提 -->
-  <script src="/vendor/zxing/zxing-browser.min.js"></script>
+  <!-- ✅ ローカル配信ZXing（あなたの配置に合わせる） -->
+  <!-- public/vendor/zxing/library.min.js / browser.min.js -->
+  <script src="/vendor/zxing/library.min.js"></script>
+  <script src="/vendor/zxing/browser.min.js"></script>
+
   <!-- ✅ 互換：ZXingBrowser を ZXing として参照できるようにする -->
   <script>
     window.ZXing = window.ZXing || window.ZXingBrowser;
@@ -492,6 +493,19 @@
       return /^\d{8,16}$/.test(v);
     }
 
+    function zxingReady(){
+      if(typeof window.ZXing === 'undefined') return false;
+      return !!(ZXing.BrowserMultiFormatReader || ZXing.BrowserBarcodeReader);
+    }
+
+    function makeReader(){
+      // 優先：BrowserMultiFormatReader（@zxing/browser想定）
+      if(ZXing.BrowserMultiFormatReader) return new ZXing.BrowserMultiFormatReader();
+      // 互換：BrowserBarcodeReader（ビルドによってはこちら）
+      if(ZXing.BrowserBarcodeReader) return new ZXing.BrowserBarcodeReader();
+      return null;
+    }
+
     async function listVideoDevices(){
       const devices = await navigator.mediaDevices.enumerateDevices();
       const cams = devices.filter(d => d.kind === 'videoinput');
@@ -502,10 +516,11 @@
     async function startCamera(preferredDeviceId=null){
       if(scanning) return;
 
-      const zxOk = (typeof ZXing !== 'undefined' && !!ZXing.BrowserMultiFormatReader);
+      const zxOk = zxingReady();
       setZxStatus(zxOk ? 'ok' : 'missing', zxOk);
+
       if(!zxOk){
-        showToast('ZXingが読み込めていません', 'ライブラリの配置とscript srcを確認してください');
+        showToast('ZXingが読み込めていません', 'public/vendor/zxing/ の配置と script src を確認してください');
         return;
       }
 
@@ -561,15 +576,11 @@
 
       await refreshCapabilities();
 
-     // 使えるReaderを自動選択（この順で試す）
-reader =
-  (ZXing.BrowserBarcodeReader ? new ZXing.BrowserBarcodeReader() : null) ||
-  (ZXing.BrowserCodeReader ? new ZXing.BrowserCodeReader() : null);
-
-if(!reader){
-  showToast('ZXingのReaderが見つかりません', '読み込んだファイルに必要なクラスが入っていません');
-  return;
-}
+      reader = makeReader();
+      if(!reader){
+        showToast('ZXingのReaderが見つかりません', '読み込んだファイルに必要なクラスが入っていません');
+        return;
+      }
 
       scanning = true;
       lastScanAt = 0;
@@ -588,42 +599,48 @@ if(!reader){
 
       setCamStatus('running', true);
 
-      reader.decodeFromVideoDevice(null, video, (result, err) => {
-        if(!scanning) return;
+      // decodeFromVideoDevice は MultiFormatReader系が持つ
+      if(typeof reader.decodeFromVideoDevice === 'function'){
+        reader.decodeFromVideoDevice(null, video, (result, err) => {
+          if(!scanning) return;
 
-        if(result){
-          const raw = result.getText();
-          const code = normalizeTracking(raw);
-          if(!code) return;
+          if(result){
+            const raw = (typeof result.getText === 'function') ? result.getText() : String(result.text || result);
+            const code = normalizeTracking(raw);
+            if(!code) return;
 
-          codeEl.value = code;
-          log('scanned:', raw, '->', code);
+            codeEl.value = code;
+            log('scanned:', raw, '->', code);
 
-          const now = Date.now();
-          if(now - lastScanAt < 800) return;
-          lastScanAt = now;
+            const now = Date.now();
+            if(now - lastScanAt < 800) return;
+            lastScanAt = now;
 
-          if(!isValidTracking(code)){
-            showToast('読み取りはできたが桁が違う', `取得: ${code}（8〜16桁のみ送信）`);
+            if(!isValidTracking(code)){
+              showToast('読み取りはできたが桁が違う', `取得: ${code}（8〜16桁のみ送信）`);
+              return;
+            }
+
+            sendScan(code).catch(()=>{});
             return;
           }
 
-          sendScan(code).catch(()=>{});
-          return;
-        }
-
-        if(err){
-          const name = err.name || err.constructor?.name || '';
-          if(name !== 'NotFoundException'){
-            log('decode err:', name, err.message || String(err));
+          if(err){
+            const name = err.name || err.constructor?.name || '';
+            if(name !== 'NotFoundException'){
+              log('decode err:', name, err.message || String(err));
+            }
           }
-        }
-      });
+        });
+      }else{
+        showToast('Reader互換エラー', 'decodeFromVideoDevice が見つかりません（読み込んだUMDが想定と違う可能性）');
+        log('reader has no decodeFromVideoDevice');
+      }
     }
 
     async function stopCamera(){
       scanning = false;
-      try{ if(reader) reader.reset(); }catch{}
+      try{ if(reader && reader.reset) reader.reset(); }catch{}
       reader = null;
 
       if(stream){
@@ -821,7 +838,7 @@ if(!reader){
     setCamStatus('idle', null);
     setNetStatus('-', null);
 
-    const zxOk = (typeof ZXing !== 'undefined' && !!ZXing.BrowserMultiFormatReader);
+    const zxOk = zxingReady();
     log('ZXing loaded?', typeof ZXing, zxOk ? 'ok' : 'missing');
     setZxStatus(zxOk ? 'ok' : 'missing', zxOk);
 

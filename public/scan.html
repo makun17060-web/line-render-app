@@ -4,95 +4,73 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="theme-color" content="#111111" />
-  <title>Scan（発送通知）</title>
+  <title>発送通知（コピー→貼り付け→送信）</title>
   <style>
-    :root{--bg:#0b0b0c;--card:#141416;--muted:#9aa0a6;--text:#f5f5f7;--line:#2a2a2d;--btn:#1f1f22;
-      --safe-top: env(safe-area-inset-top, 0px);--safe-bottom: env(safe-area-inset-bottom, 0px);--vh: 1dvh;}
+    :root{--bg:#0b0b0c;--card:#141416;--muted:#9aa0a6;--text:#f5f5f7;--line:#2a2a2d;--btn:#1f1f22;--accent:#2a6dff;
+      --safe-top: env(safe-area-inset-top, 0px);--safe-bottom: env(safe-area-inset-bottom, 0px);--vh:1dvh;}
     *{box-sizing:border-box}
-    html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif;overscroll-behavior:none}
-    body{min-height: calc(var(--vh) * 100); padding: calc(12px + var(--safe-top)) 12px calc(14px + var(--safe-bottom)) 12px;}
+    html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+      font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif;overscroll-behavior:none}
+    body{min-height: calc(var(--vh)*100); padding: calc(12px + var(--safe-top)) 12px calc(14px + var(--safe-bottom)) 12px;}
     .wrap{max-width:920px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
     .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px}
-    .title{font-weight:800;font-size:16px}
-    .sub{font-size:12px;color:var(--muted);margin-top:4px}
-    .videoWrap{position:relative;border-radius:16px;overflow:hidden;background:#000;border:1px solid var(--line);height:min(55dvh,560px)}
-    video{width:100%;height:100%;object-fit:cover;background:#000}
-    .reticle{pointer-events:none;position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
-    .reticle>div{width:min(86vw,700px);height:min(22vh,160px);border:2px solid rgba(255,255,255,.65);border-radius:14px;box-shadow:0 0 0 9999px rgba(0,0,0,.25)}
+    .title{font-weight:900;font-size:16px}
+    .sub{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.35}
     .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-    .btn{appearance:none;border:1px solid var(--line);background:var(--btn);color:var(--text);padding:14px 14px;border-radius:14px;font-weight:800;font-size:14px;min-height:48px;cursor:pointer}
+    .btn{appearance:none;border:1px solid var(--line);background:var(--btn);color:var(--text);
+      padding:14px 14px;border-radius:14px;font-weight:900;font-size:14px;min-height:48px;cursor:pointer}
     .btn.primary{background:linear-gradient(180deg,#2a6dff,#2a50ff);border-color:rgba(77,163,255,.35)}
+    .btn.danger{background:linear-gradient(180deg,#ff3b30,#d92c24);border-color:rgba(255,59,48,.35)}
     .btn:disabled{opacity:.45;cursor:not-allowed}
     .pill{padding:6px 10px;border-radius:999px;background:#0f0f11;border:1px solid var(--line);color:var(--muted);font-size:12px}
     .pill.ok{color:#caffd8;border-color:rgba(53,199,89,.35)}
     .pill.bad{color:#ffd0d0;border-color:rgba(255,77,79,.35)}
-    .input{width:100%;padding:14px 14px;border-radius:14px;border:1px solid var(--line);background:#0f0f11;color:var(--text);font-size:18px;outline:none;min-height:54px;letter-spacing:1px}
+    .input{width:100%;padding:14px 14px;border-radius:14px;border:1px solid var(--line);background:#0f0f11;color:var(--text);
+      font-size:18px;outline:none;min-height:54px;letter-spacing:1px}
     .hint{font-size:12px;color:var(--muted);line-height:1.35}
-    .log{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-size:12px;background:#0f0f11;border:1px solid var(--line);border-radius:14px;padding:10px;max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-word}
-    canvas.preview{width:100%;border:1px solid var(--line);border-radius:14px;background:#000}
-    .toggleRow{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
-    .toggleRow label{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted)}
-    input[type="range"]{width:220px}
+    .log{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-size:12px;
+      background:#0f0f11;border:1px solid var(--line);border-radius:14px;padding:10px;max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+    .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;padding:2px 6px;border:1px solid var(--line);
+      border-radius:8px;background:#0f0f11;color:#cfd3d7}
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
-      <div class="title">発送スキャン（4K優先 + 二値化で細線救済 + 貼り付け）</div>
-      <div class="sub">読めない時は「他アプリで読んでコピー → 貼り付け確定」が最強</div>
+      <div class="title">発送通知（コピー → 貼り付け → 送信）</div>
+      <div class="sub">
+        追跡番号は<strong>12桁</strong>のみ受け付け。貼り付けるだけで自動整形＆確定。<br>
+        送信は「送信」ボタン（または自動送信ONなら確定後に自動）。
+      </div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">
-        <span id="camPill" class="pill">camera: idle</span>
-        <span id="detPill" class="pill">detector: -</span>
-        <span id="resPill" class="pill">res: -</span>
-        <span id="torchPill" class="pill">torch: -</span>
-        <span id="focusPill" class="pill">focus: -</span>
-        <span id="fpsPill" class="pill">fps: -</span>
-      </div>
-
-      <div class="toggleRow">
-        <label><input id="chkBinarize" type="checkbox" checked> 二値化ON（細線救済）</label>
-        <label>しきい値 <input id="thr" type="range" min="80" max="200" value="140"></label>
-        <span id="thrVal" class="pill">thr: 140</span>
-        <label>scale <input id="scale" type="range" min="40" max="90" value="60"></label>
-        <span id="scaleVal" class="pill">scale: 0.60</span>
+        <span id="statePill" class="pill">state: idle</span>
+        <span id="autoPill" class="pill">auto: off</span>
       </div>
     </div>
 
     <div class="card">
-      <div class="videoWrap" id="videoWrap">
-        <video id="video" playsinline muted></video>
-        <div class="reticle"><div id="reticleBox"></div></div>
-      </div>
-      <div style="height:10px"></div>
-      <div class="row">
-        <button id="btnStart" class="btn primary" type="button">カメラ開始</button>
-        <button id="btnStop"  class="btn" type="button" disabled>停止</button>
-      </div>
-      <div style="height:8px"></div>
+      <div style="font-weight:900;margin-bottom:6px">追跡番号（12桁）</div>
+      <input id="code" class="input" inputmode="numeric" placeholder="ここに貼り付け（12桁）" />
       <div class="hint">
-        ✅ 追跡番号は <strong>12桁</strong> だけ確定（8桁などは捨てる）<br>
-        ✅ コツ：近すぎNG（20〜30cm）＋0.5秒静止。反射は少し斜め。
+        例：他アプリでスキャン → コピー → ここを長押しで貼り付け / 下の「貼り付け」ボタン。<br>
+        PCなら <span class="kbd">Ctrl</span>+<span class="kbd">V</span>（Macは ⌘+V）
       </div>
-    </div>
-
-    <div class="card">
-      <div style="font-weight:800;margin-bottom:6px">結果（追跡番号 12桁）</div>
-      <input id="code" class="input" inputmode="numeric" placeholder="ここに貼る / 入力する（12桁のみ確定）" />
-      <div class="hint">ペースト/入力で自動整形。12桁になった瞬間に確定（成功時だけ長振動）。</div>
 
       <div class="row" style="margin-top:10px">
         <button id="btnPaste" class="btn" type="button">貼り付け（クリップボード）</button>
+        <button id="btnSend" class="btn primary" type="button" disabled>送信</button>
         <button id="btnClear" class="btn" type="button">クリア</button>
+        <button id="btnToggleAuto" class="btn" type="button">自動送信: OFF</button>
       </div>
-      <div class="hint">※ クリップボード読取りはHTTPS＋ボタン押下が必要。ダメなら入力欄に手動貼り付けOK。</div>
 
-      <div style="height:10px"></div>
-      <div style="font-weight:800;margin-bottom:6px">処理後プレビュー（二値化ONのとき）</div>
-      <canvas id="procPreview" class="preview"></canvas>
-      <div class="hint">ここでバーコードの黒線が “真っ黒/真っ白” に見えたら読み取りが伸びる。</div>
+      <div class="hint">
+        ※「貼り付け（クリップボード）」は<strong>HTTPS</strong>＋ボタン押下が必要。使えない場合は手動貼り付けでOK。<br>
+        ※ 送信先APIは下の <span class="kbd">API_URL</span> をあなたのエンドポイントに変更して使う。
+      </div>
+    </div>
 
-      <div style="height:10px"></div>
-      <div style="font-weight:800">ログ</div>
+    <div class="card">
+      <div style="font-weight:900;margin-bottom:6px">ログ</div>
       <div id="log" class="log"></div>
     </div>
   </div>
@@ -111,31 +89,24 @@
     });
 
     const $ = (id)=>document.getElementById(id);
-    const video = $("video");
-    const videoWrap = $("videoWrap");
-    const reticleBox = $("reticleBox");
-    const procPreview = $("procPreview");
-    const logEl = $("log");
     const codeEl = $("code");
-    const btnStart = $("btnStart");
-    const btnStop  = $("btnStop");
     const btnPaste = $("btnPaste");
+    const btnSend = $("btnSend");
     const btnClear = $("btnClear");
+    const btnToggleAuto = $("btnToggleAuto");
+    const logEl = $("log");
+    const statePill = $("statePill");
+    const autoPill = $("autoPill");
 
-    const camPill = $("camPill");
-    const detPill = $("detPill");
-    const resPill = $("resPill");
-    const torchPill = $("torchPill");
-    const focusPill = $("focusPill");
-    const fpsPill = $("fpsPill");
+    // ====== ★あなたの送信先APIに変更 ======
+    // 例）'/api/shipping/notify' など
+    const API_URL = '/api/shipped'; // ←ここを変更
+    const METHOD = 'POST';
 
-    const chkBinarize = $("chkBinarize");
-    const thr = $("thr");
-    const thrVal = $("thrVal");
-    const scale = $("scale");
-    const scaleVal = $("scaleVal");
-
-    const prevCtx = procPreview.getContext('2d', { willReadFrequently:true });
+    // payload はサーバ実装に合わせて変更
+    function buildPayload(tracking12){
+      return { tracking_no: tracking12 };
+    }
 
     function log(...args){
       const line = args.map(x => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ');
@@ -149,415 +120,138 @@
       if(ok===false) el.classList.add('bad');
     }
 
-    // ===== 12桁のみ =====
     const digits = (v)=>String(v||'').replace(/\D/g,'');
     const valid12 = (v)=>/^\d{12}$/.test(String(v||''));
-    const extract12 = (raw)=> (String(raw||'').match(/\d{12}/g) || [])[0] || '';
 
-    function vibrateSuccess(){
-      try{ navigator.vibrate && navigator.vibrate([120,60,220]); }catch{}
-    }
-    function vibrateFail(){
-      try{ navigator.vibrate && navigator.vibrate(25); }catch{}
-    }
+    function vibrateOK(){ try{ navigator.vibrate && navigator.vibrate([120,60,220]); }catch{} }
+    function vibrateNG(){ try{ navigator.vibrate && navigator.vibrate(25); }catch{} }
 
-    let lastCommit = 0;
-    function commitCode(raw, source){
+    let autoSend = false;
+    let lastSent = { code:'', at:0 };
+    const SENT_COOLDOWN_MS = 1200;
+
+    function setAuto(on){
+      autoSend = !!on;
+      btnToggleAuto.textContent = `自動送信: ${autoSend ? 'ON' : 'OFF'}`;
+      pill(autoPill, `auto: ${autoSend ? 'on' : 'off'}`, autoSend ? true : null);
+    }
+    setAuto(false);
+
+    function normalizeAndUpdate(raw, source){
       const s = digits(raw);
-      codeEl.value = s;
+      if(codeEl.value !== s) codeEl.value = s;
 
-      if(!valid12(s)){
-        log('NG', source, raw, '->', s);
-        vibrateFail();
-        return false;
+      if(valid12(s)){
+        pill(statePill, `state: ready (${source})`, true);
+        btnSend.disabled = false;
+        log('READY', source, s);
+        vibrateOK();
+
+        if(autoSend){
+          // 自動送信（連打防止）
+          const now = Date.now();
+          if(lastSent.code === s && (now - lastSent.at) < SENT_COOLDOWN_MS){
+            log('AUTO_SKIP cooldown', s);
+            return;
+          }
+          sendNow();
+        }
+      }else{
+        pill(statePill, s ? 'state: invalid (need 12 digits)' : 'state: idle', s ? false : null);
+        btnSend.disabled = true;
+        if(s) { log('INVALID', source, raw, '->', s); vibrateNG(); }
       }
-
-      const now = Date.now();
-      if(now - lastCommit < 600) return false;
-      lastCommit = now;
-
-      log('OK', source, s);
-      vibrateSuccess();
-      return true;
     }
 
-    // ===== 貼り付け =====
+    async function readClipboard(){
+      const t = await navigator.clipboard.readText();
+      return t || '';
+    }
+
     btnPaste.addEventListener('click', async ()=>{
       try{
-        const t = await navigator.clipboard.readText();
+        const t = await readClipboard();
         if(!t) throw new Error('clipboard empty');
-        commitCode(t, 'CLIP');
+        normalizeAndUpdate(t, 'CLIP');
       }catch(e){
         log('clipboard failed', e?.message || String(e));
         alert('クリップボードが読めません（HTTPS/権限/ブラウザ制限）。\n入力欄を長押し→貼り付け でOK。');
       }
     });
+
     btnClear.addEventListener('click', ()=>{
       codeEl.value = '';
+      btnSend.disabled = true;
+      pill(statePill, 'state: idle', null);
       log('clear');
       try{ navigator.vibrate && navigator.vibrate(15); }catch{}
       codeEl.focus();
     });
+
+    btnToggleAuto.addEventListener('click', ()=> setAuto(!autoSend));
+
+    // 手動ペースト/入力
     codeEl.addEventListener('paste', (ev)=>{
       const t = (ev.clipboardData || window.clipboardData).getData('text');
-      setTimeout(()=>commitCode(t, 'PASTE'), 0);
+      setTimeout(()=>normalizeAndUpdate(t, 'PASTE'), 0);
     });
     codeEl.addEventListener('input', ()=>{
-      const s = digits(codeEl.value);
-      if(codeEl.value !== s) codeEl.value = s;
-      if(s.length === 12) commitCode(s, 'INPUT');
+      normalizeAndUpdate(codeEl.value, 'INPUT');
     });
 
-    // ===== カメラ =====
-    let stream=null, track=null, scanning=false;
-    let detector=null;
-
-    // 処理用canvas（二値化してからdetectする）
-    const procCanvas = document.createElement('canvas');
-    const procCtx = procCanvas.getContext('2d', { willReadFrequently:true });
-
-    const TARGET_FPS = 10; // 二値化入れるので少し下げて安定優先
-    const FRAME_INTERVAL = Math.max(80, Math.round(1000 / TARGET_FPS));
-    let timerId=0;
-
-    let fpsCount=0, fpsTs=Date.now();
-
-    thr.addEventListener('input', ()=>{ thrVal.textContent = `thr: ${thr.value}`; });
-    scale.addEventListener('input', ()=>{
-      const v = (Number(scale.value)/100).toFixed(2);
-      scaleVal.textContent = `scale: ${v}`;
-    });
-    thrVal.textContent = `thr: ${thr.value}`;
-    scaleVal.textContent = `scale: ${(Number(scale.value)/100).toFixed(2)}`;
-
-    async function applyCameraTuning(){
-      if(!track) return;
-
-      const caps = track.getCapabilities?.() || {};
-
-      // focusMode（可能なら continuous）
-      try{
-        const adv = [];
-        if(caps.focusMode && Array.isArray(caps.focusMode)){
-          if(caps.focusMode.includes('continuous')) adv.push({focusMode:'continuous'});
-          else if(caps.focusMode.includes('auto'))  adv.push({focusMode:'auto'});
-        }
-        if(adv.length){
-          await track.applyConstraints({advanced: adv});
-          log('applied focus', adv);
-        }
-        if(caps.focusMode){
-          const fm = Array.isArray(caps.focusMode) ? caps.focusMode.join(',') : String(caps.focusMode);
-          pill(focusPill, `focus: ${fm}`, true);
-        }else{
-          pill(focusPill, 'focus: n/a', null);
-        }
-      }catch(e){
-        pill(focusPill, 'focus: failed', false);
-        log('focus failed', e?.message || String(e));
+    async function sendNow(){
+      const code = digits(codeEl.value);
+      if(!valid12(code)){
+        pill(statePill, 'state: invalid', false);
+        btnSend.disabled = true;
+        vibrateNG();
+        return;
       }
 
-      // torch（n/aでもOK）
-      try{
-        if(caps.torch){
-          await track.applyConstraints({advanced:[{torch:true}]});
-          pill(torchPill, 'torch: ON', true);
-          log('torch ON');
-        }else{
-          pill(torchPill, 'torch: n/a', null);
-        }
-      }catch(e){
-        pill(torchPill, 'torch: failed', false);
-        log('torch failed', e?.message || String(e));
-      }
-
-      // settings（実解像度）
-      try{
-        const st = track.getSettings?.() || {};
-        log('settings', st);
-        const w = st.width || '?', h = st.height || '?';
-        pill(resPill, `res: ${w}x${h}`, (Number(w)>=1920));
-      }catch{
-        pill(resPill, 'res: ?', null);
-      }
-    }
-
-    async function getStreamWithFallback(){
-      const tries = [
-        { w:3840, h:2160, label:'4K' },
-        { w:2560, h:1440, label:'1440p' },
-        { w:1920, h:1080, label:'1080p' },
-        { w:1280, h:720,  label:'720p' },
-      ];
-      let lastErr = null;
-      for(const t of tries){
-        try{
-          log('getUserMedia try', t.label, `${t.w}x${t.h}`);
-          const s = await navigator.mediaDevices.getUserMedia({
-            audio:false,
-            video:{
-              facingMode:{ideal:'environment'},
-              width:{ideal:t.w},
-              height:{ideal:t.h},
-              frameRate:{ideal:30, max:30},
-              resizeMode:'none'
-            }
-          });
-          return { stream:s, label:t.label };
-        }catch(e){
-          lastErr = e;
-          log('getUserMedia failed', t.label, e?.name || '', e?.message || String(e));
-        }
-      }
-      throw lastErr || new Error('getUserMedia failed');
-    }
-
-    function stopAll(){
-      scanning=false;
-      if(timerId) clearInterval(timerId);
-      timerId=0;
-
-      if(stream){
-        stream.getTracks().forEach(t=>{ try{t.stop()}catch{} });
-      }
-      stream=null; track=null;
-
-      btnStart.disabled=false;
-      btnStop.disabled=true;
-
-      pill(camPill, 'camera: stopped', null);
-      log('stopped');
-    }
-
-    // reticle（画面座標）→ videoのピクセル座標へ変換（object-fit: cover 対応）
-    function getReticleRectOnVideo(){
-      const vw = video.videoWidth || 0;
-      const vh = video.videoHeight || 0;
-      if(!vw || !vh) return null;
-
-      const wrapRect = videoWrap.getBoundingClientRect();
-      const boxRect = reticleBox.getBoundingClientRect();
-
-      const relX = boxRect.left - wrapRect.left;
-      const relY = boxRect.top  - wrapRect.top;
-      const relW = boxRect.width;
-      const relH = boxRect.height;
-
-      const dispW = wrapRect.width;
-      const dispH = wrapRect.height;
-
-      const videoAR = vw / vh;
-      const dispAR = dispW / dispH;
-
-      let scaleFit, offsetX, offsetY;
-      if(videoAR > dispAR){
-        scaleFit = dispH / vh;
-        const scaledW = vw * scaleFit;
-        offsetX = (scaledW - dispW) / 2;
-        offsetY = 0;
-      }else{
-        scaleFit = dispW / vw;
-        const scaledH = vh * scaleFit;
-        offsetX = 0;
-        offsetY = (scaledH - dispH) / 2;
-      }
-
-      const xOnScaled = relX + offsetX;
-      const yOnScaled = relY + offsetY;
-
-      let sx = xOnScaled / scaleFit;
-      let sy = yOnScaled / scaleFit;
-      let sw = relW / scaleFit;
-      let sh = relH / scaleFit;
-
-      // 余白（欠け防止）
-      const pad = 0.10;
-      const px = sw * pad, py = sh * pad;
-      sx -= px; sy -= py; sw += px*2; sh += py*2;
-
-      // clamp
-      sx = Math.max(0, Math.min(vw-1, sx));
-      sy = Math.max(0, Math.min(vh-1, sy));
-      sw = Math.max(1, Math.min(vw - sx, sw));
-      sh = Math.max(1, Math.min(vh - sy, sh));
-
-      return {sx, sy, sw, sh, vw, vh};
-    }
-
-    function intersects(a, b){
-      const ax2 = a.x + a.w, ay2 = a.y + a.h;
-      const bx2 = b.x + b.w, by2 = b.y + b.h;
-      return (a.x < bx2 && ax2 > b.x && a.y < by2 && ay2 > b.y);
-    }
-
-    async function scanTick(){
-      if(!scanning) return;
-      if(video.readyState < 2) return;
-
-      // fps表示
-      fpsCount++;
+      // 連打防止
       const now = Date.now();
-      if(now - fpsTs >= 1000){
-        pill(fpsPill, `fps: ${fpsCount}`, true);
-        fpsCount=0; fpsTs=now;
-      }
-
-      if(!detector) return;
-
-      const rr = getReticleRectOnVideo();
-      if(!rr) return;
-
-      const useBin = !!chkBinarize.checked;
-      const sc = Number(scale.value)/100;   // 0.40〜0.90
-      const threshold = Number(thr.value);  // 80〜200
-
-      try{
-        let targetForDetect = video;
-
-        // ✅ 二値化してから detector.detect に食わせる
-        if(useBin){
-          // スケール後のサイズ
-          const outW = Math.max(640, Math.floor(rr.vw * sc));
-          const outH = Math.max(360, Math.floor(rr.vh * sc));
-
-          procCanvas.width = outW;
-          procCanvas.height = outH;
-
-          // video全体を縮小して描画
-          procCtx.drawImage(video, 0, 0, outW, outH);
-
-          // 二値化
-          const img = procCtx.getImageData(0, 0, outW, outH);
-          const d = img.data;
-          for(let i=0;i<d.length;i+=4){
-            const gray = (d[i]*0.3 + d[i+1]*0.59 + d[i+2]*0.11);
-            const v = (gray > threshold) ? 255 : 0;
-            d[i]=d[i+1]=d[i+2]=v;
-          }
-          procCtx.putImageData(img, 0, 0);
-
-          // プレビュー更新
-          procPreview.width = outW;
-          procPreview.height = outH;
-          prevCtx.drawImage(procCanvas, 0, 0);
-
-          targetForDetect = procCanvas;
-        }else{
-          // プレビュー消す
-          procPreview.width = 1; procPreview.height = 1;
-        }
-
-        const res = await detector.detect(targetForDetect);
-        if(!res || !res.length) return;
-
-        // ROI（reticle）に重なるものだけ採用（※二値化時は座標スケール補正）
-        const scaleX = useBin ? (procCanvas.width / rr.vw) : 1;
-        const scaleY = useBin ? (procCanvas.height / rr.vh) : 1;
-
-        const roi = {
-          x: rr.sx * scaleX,
-          y: rr.sy * scaleY,
-          w: rr.sw * scaleX,
-          h: rr.sh * scaleY
-        };
-
-        for(const r of res){
-          const bb = r.boundingBox
-            ? { x:r.boundingBox.x, y:r.boundingBox.y, w:r.boundingBox.width, h:r.boundingBox.height }
-            : null;
-
-          if(bb && !intersects(roi, bb)) continue;
-
-          const code = extract12(r.rawValue || '');
-          if(!code) continue;
-
-          log(useBin ? 'SEEN_BIN' : 'SEEN_RAW', r.format || '-', '->', code);
-
-          if(commitCode(code, useBin ? 'CAM_BIN' : 'CAM')){
-            return;
-          }
-        }
-      }catch(e){
-        // 黙殺（端末差）
-      }
-    }
-
-    async function start(){
-      if(scanning) return;
-
-      if(!navigator.mediaDevices?.getUserMedia){
-        pill(camPill, 'camera: unsupported', false);
-        log('getUserMedia unsupported');
+      if(lastSent.code === code && (now - lastSent.at) < SENT_COOLDOWN_MS){
+        log('SEND_SKIP cooldown', code);
         return;
       }
 
-      pill(camPill, 'camera: starting...', null);
-      log('startCamera');
+      btnSend.disabled = true;
+      pill(statePill, 'state: sending...', null);
+      log('SEND start', code, '->', API_URL);
 
       try{
-        const got = await getStreamWithFallback();
-        stream = got.stream;
-        log('getUserMedia OK', got.label);
-      }catch(e){
-        pill(camPill, 'camera: failed', false);
-        log('getUserMedia failed', e?.message || String(e));
-        return;
-      }
+        const payload = buildPayload(code);
+        const r = await fetch(API_URL, {
+          method: METHOD,
+          headers: { 'Content-Type':'application/json' },
+          body: JSON.stringify(payload),
+        });
 
-      video.srcObject = stream;
-
-      await new Promise((resolve)=>{
-        const t = setTimeout(resolve, 1200);
-        video.onloadedmetadata = ()=>{ clearTimeout(t); resolve(); };
-      });
-
-      await video.play().catch(()=>{});
-
-      track = stream.getVideoTracks()[0] || null;
-
-      scanning=true;
-      btnStart.disabled=true;
-      btnStop.disabled=false;
-      pill(camPill, 'camera: running', true);
-
-      // BarcodeDetector
-      detector = null;
-      if('BarcodeDetector' in window){
-        try{
-          detector = new BarcodeDetector({
-            formats: ['code_128','itf','ean_13','ean_8','code_39','qr_code']
-          });
-          pill(detPill, 'detector: BarcodeDetector', true);
-          log('BarcodeDetector enabled');
-        }catch(e){
-          pill(detPill, 'detector: failed', false);
-          log('BarcodeDetector init failed', e?.message || String(e));
+        const text = await r.text().catch(()=> '');
+        if(!r.ok){
+          pill(statePill, `state: failed (${r.status})`, false);
+          log('SEND failed', r.status, text);
+          vibrateNG();
+          btnSend.disabled = false;
+          return;
         }
-      }else{
-        pill(detPill, 'detector: not supported', false);
-        log('BarcodeDetector not supported');
+
+        lastSent = { code, at: Date.now() };
+        pill(statePill, 'state: sent ✅', true);
+        log('SEND ok', text || '(no body)');
+        vibrateOK();
+      }catch(e){
+        pill(statePill, 'state: error', false);
+        log('SEND error', e?.message || String(e));
+        vibrateNG();
+        btnSend.disabled = false;
       }
-
-      await applyCameraTuning();
-
-      fpsCount=0; fpsTs=Date.now();
-      pill(fpsPill, `fps: ${TARGET_FPS}(target)`, true);
-
-      if(timerId) clearInterval(timerId);
-      timerId = setInterval(() => { scanTick(); }, FRAME_INTERVAL);
-      log('scan loop started', { TARGET_FPS, FRAME_INTERVAL });
     }
 
-    btnStart.addEventListener('click', start);
-    btnStop.addEventListener('click', stopAll);
+    btnSend.addEventListener('click', sendNow);
 
-    log('ready');
-    pill(camPill, 'camera: idle', null);
-    pill(detPill, 'detector: -', null);
-    pill(resPill, 'res: -', null);
-    pill(torchPill, 'torch: -', null);
-    pill(focusPill, 'focus: -', null);
-    pill(fpsPill, 'fps: -', null);
+    log('ready', { API_URL, METHOD });
+    pill(statePill, 'state: idle', null);
   </script>
 </body>
 </html>

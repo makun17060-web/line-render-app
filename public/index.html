@@ -78,7 +78,7 @@
     .btnAkasha{ background:var(--akasha); color:#fff; }
     .btnStore{ background:var(--store); color:#fff; }
 
-    /* ✅ 最重要：初期は必ず非表示（チラ見え防止） */
+    /* ✅ 初期は必ず非表示（チラ見え防止） */
     #cardTrial{ display:none; }
   </style>
 </head>
@@ -87,9 +87,8 @@
   <div class="wrap">
     <h1>ご注文はこちら</h1>
 
-    <!-- 👇 ここにメッセージ出る -->
     <div class="muted" id="subtext">
-      ご希望の商品カテゴリを選択してください。
+      読み込み中…
     </div>
 
     <!-- 初めてセット -->
@@ -125,67 +124,100 @@
 (async function(){
   "use strict";
 
-  const LIFF_ID_MENU = window.LIFF_ID_MENU || "2008406620-8CWfgEKh";
-
-  const LINK_TRIAL    = window.LIFF_LINK_TRIAL;
-  const LINK_ORIGINAL = window.LIFF_LINK_ORIGINAL;
-  const LINK_AKASHA   = window.LIFF_LINK_AKASHA;
-  const LINK_STORE    = window.LIFF_LINK_STORE;
-
+  // ===== 要素（nullガード前提） =====
   const btnTrial    = document.getElementById("btnTrial");
   const btnOriginal = document.getElementById("btnOriginal");
   const btnAkasha   = document.getElementById("btnAkasha");
   const btnStore    = document.getElementById("btnStore");
+  const cardTrial   = document.getElementById("cardTrial");
+  const subtext     = document.getElementById("subtext");
 
-  const cardTrial = document.getElementById("cardTrial");
-  const subtext   = document.getElementById("subtext");
+  // どれか欠けてたら安全に止める（編集ミスでも落ちない）
+  if (!btnTrial || !btnOriginal || !btnAkasha || !btnStore || !cardTrial || !subtext) {
+    console.error("Missing DOM elements", { btnTrial, btnOriginal, btnAkasha, btnStore, cardTrial, subtext });
+    return;
+  }
+
+  // ===== LIFF/リンク設定 =====
+  const LIFF_ID_MENU = window.LIFF_ID_MENU || "2008406620-8CWfgEKh";
+
+  // ✅ configが無い/読めてない時でも死なないフォールバック
+  const LINK_TRIAL    = window.LIFF_LINK_TRIAL    || "https://liff.line.me/2008406620-yQFRswAu";
+  const LINK_ORIGINAL = window.LIFF_LINK_ORIGINAL || "https://liff.line.me/2008406620-Bd9Zo9od";
+  const LINK_AKASHA   = window.LIFF_LINK_AKASHA   || "https://liff.line.me/2008406620-G5j1gjzM";
+  const LINK_STORE    = window.LIFF_LINK_STORE    || "https://liff.line.me/2008406620-7tSkOcqd";
 
   btnTrial.href    = LINK_TRIAL;
   btnOriginal.href = LINK_ORIGINAL;
   btnAkasha.href   = LINK_AKASHA;
   btnStore.href    = LINK_STORE;
 
+  // ===== show_trial=1（検証用。購入者でもtrial表示）=====
+  const qs = new URLSearchParams(location.search);
+  const SHOW_TRIAL = qs.get("show_trial") === "1";
+
   const API_STATUS = location.origin + "/api/user/status";
 
-  await liff.init({ liffId: LIFF_ID_MENU });
+  // ===== LIFF init/login =====
+  try {
+    await liff.init({ liffId: LIFF_ID_MENU });
+  } catch (e) {
+    console.error("liff.init failed", e);
+    subtext.textContent = "読み込みに失敗しました（LIFF初期化）。";
+    return;
+  }
 
   if (!liff.isLoggedIn()) {
     liff.login({ redirectUri: location.href });
     return;
   }
 
-  let userId = liff.getDecodedIDToken()?.sub;
+  // ===== userId =====
+  let userId = null;
+  try { userId = liff.getDecodedIDToken()?.sub || null; } catch(e){}
   if (!userId) {
-    const profile = await liff.getProfile();
-    userId = profile.userId;
+    try { userId = (await liff.getProfile())?.userId || null; } catch(e){}
+  }
+  if (!userId) {
+    subtext.textContent = "読み込みに失敗しました（userId取得）。";
+    return;
   }
 
+  // ===== status =====
   let isBuyer = false;
   let showTrialAlways = false;
 
   try {
-    const res = await fetch(API_STATUS + "?userId=" + encodeURIComponent(userId));
-    const json = await res.json();
+    const res = await fetch(API_STATUS + "?userId=" + encodeURIComponent(userId), {
+      method: "GET",
+      headers: { "cache-control": "no-store" }
+    });
+    const json = await res.json().catch(()=>null);
 
-    isBuyer = !!json.isBuyer;
-    showTrialAlways = !!json.showTrialAlways;
-
-  } catch(e) {}
-
-  // ===== 表示制御 =====
-
-  if (isBuyer && !showTrialAlways) {
-    // 👇 購入者メッセージ
-    subtext.textContent = "いつもありがとうございます😊";
-
-  } else {
-    // 👇 初回だけ表示
-    cardTrial.style.display = "";
-    subtext.textContent = "ご希望の商品カテゴリを選択してください。";
+    if (res.ok && json && json.ok === true) {
+      isBuyer = !!json.isBuyer;
+      showTrialAlways = !!json.showTrialAlways;
+    } else {
+      console.warn("status failed", res.status, json);
+    }
+  } catch(e) {
+    console.warn("status error", e);
   }
 
-  // 事故防止
-  if (isBuyer && !showTrialAlways) {
+  // ===== 表示制御（チラ見え防止済み）=====
+  // 初期CSSで trial は display:none。必要な場合だけここで出す。
+  const canShowTrial = (!isBuyer) || SHOW_TRIAL || showTrialAlways;
+
+  if (canShowTrial) {
+    cardTrial.style.display = "";
+    subtext.textContent = "ご希望の商品カテゴリを選択してください。";
+  } else {
+    cardTrial.style.display = "none";
+    subtext.textContent = "いつもありがとうございます😊";
+  }
+
+  // ===== 事故防止（購入者がtrialを押した時）=====
+  if (!canShowTrial) {
     btnTrial.addEventListener("click", (e)=>{
       e.preventDefault();
       alert("初めてセットは初回限定です。");

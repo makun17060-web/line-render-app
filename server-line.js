@@ -2622,6 +2622,38 @@ app.get("/api/ping", (req, res) => {
   try{ console.log("[ping]", new Date().toISOString(), req.query); }catch(e){}
   res.json({ok:true});
 });
+app.get("/api/ping", (_req, res) => res.json({ ok:true, time:new Date().toISOString() }));
+
+/* =========================
+ * ✅ User status（購入者判定）
+ * ========================= */
+app.get("/api/user/status", async (req, res) => {
+  try {
+    const userId = String(req.query.userId || "").trim();
+    if (!userId) return res.status(400).json({ ok: false, error: "userId required" });
+
+    const r = await pool.query(
+      `
+      SELECT EXISTS(
+        SELECT 1
+        FROM orders
+        WHERE user_id = $1
+          AND status IN ('confirmed','paid','completed','shipped','delivered','pickup')
+          AND COALESCE(status,'') <> 'canceled'
+      ) AS is_buyer
+      `,
+      [userId]
+    );
+
+    const isBuyer = !!r.rows?.[0]?.is_buyer;
+
+    res.setHeader("Cache-Control", "no-store");
+    return res.json({ ok: true, userId, isBuyer });
+  } catch (e) {
+    console.error("GET /api/user/status error:", e?.stack || e);
+    return res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
 app.post("/api/liff/open", async (req, res) => {
   try {
     const userId = String(req.body?.userId || "").trim();

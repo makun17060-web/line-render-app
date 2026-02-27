@@ -2647,11 +2647,19 @@ app.get("/api/user/status", async (req, res) => {
 
     const isBuyer = !!r.rows?.[0]?.is_buyer;
 
-    res.setHeader("Cache-Control", "no-store");
-    return res.json({ ok: true, userId, isBuyer });
+    // 👇 ENVから取得
+    const showTrialAlways = process.env.FEATURE_SHOW_TRIAL_ALWAYS === "1";
+
+    res.json({
+      ok: true,
+      userId,
+      isBuyer,
+      showTrialAlways   // 👈 追加
+    });
+
   } catch (e) {
     console.error("GET /api/user/status error:", e?.stack || e);
-    return res.status(500).json({ ok: false, error: "server_error" });
+    res.status(500).json({ ok: false, error: "server_error" });
   }
 });
 app.post("/api/liff/open", async (req, res) => {

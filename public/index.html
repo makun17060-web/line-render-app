@@ -7,7 +7,7 @@
 
   <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <!-- ✅ LIFF_ID を1か所に集約した設定（public/liff-config.js） -->
+  <!-- ✅ LIFF_ID / LINK を1か所に集約した設定（public/liff-config.js） -->
   <script src="/liff-config.js"></script>
 
   <style>
@@ -45,6 +45,7 @@
     h1{
       margin:0 0 6px;
       font-size:20px;
+      line-height:1.3;
     }
 
     .muted{
@@ -73,27 +74,50 @@
       text-decoration:none;
       border:none;
       cursor:pointer;
+      user-select:none;
     }
 
     .btnTrial{ background:var(--trial); color:#fff; }
     .btnOriginal{ background:var(--original); color:#fff; }
     .btnAkasha{ background:var(--akasha); color:#fff; }
     .btnStore{ background:var(--store); color:#fff; }
+
+    /* ✅ 購入者には初めてセットを「非表示」できる */
+    .hidden{ display:none !important; }
+
+    .badge{
+      display:inline-block;
+      font-size:12px;
+      padding:4px 8px;
+      border-radius:999px;
+      border:1px solid var(--line);
+      background:#fff;
+      margin-left:8px;
+      color:var(--muted);
+      vertical-align:middle;
+      white-space:nowrap;
+    }
   </style>
 </head>
 
 <body>
   <div class="wrap">
-    <h1>ご注文はこちら</h1>
-    <div class="muted">
+    <h1>
+      ご注文はこちら
+      <span class="badge" id="badge">判定中…</span>
+    </h1>
+    <div class="muted" id="subtext">
       ご希望の商品カテゴリを選択してください。
     </div>
 
     <!-- 🆕 初めてセット -->
-    <div class="card">
+    <div class="card" id="cardTrial">
       <a class="btn btnTrial" id="btnTrial" href="#">
         🆕 初めての方限定セット
       </a>
+      <div class="muted" style="margin-top:8px;">
+        ※初回限定（購入済みの方には表示されません）
+      </div>
     </div>
 
     <!-- オリジナルセット -->
@@ -122,29 +146,26 @@
 (async function(){
   "use strict";
 
-  // ✅ LIFF設定は public/liff-config.js に集約
-  // 例（liff-config.js）:
-  // window.LIFF_ID_MENU = "2008406620-8CWfgEKh";
-  // window.LIFF_LINK_TRIAL = "https://liff.line.me/2008406620-yQFRswAu";
-  // window.LIFF_LINK_ORIGINAL = "https://liff.line.me/2008406620-Bd9Zo9od";
-  // window.LIFF_LINK_AKASHA = "https://liff.line.me/2008406620-G5j1gjzM";
-  // window.LIFF_LINK_STORE = "https://liff.line.me/2008406620-7tSkOcqd";
-
+  // ===== 設定 =====
   const LIFF_ID_MENU = window.LIFF_ID_MENU || "2008406620-8CWfgEKh"; // フォールバック
-  const VERSION = "index_v_20260206_liff_config";
+  const VERSION = "index_v_20260227_env_switch";
 
-  // リンクも config から
+  // リンクは config から（無ければフォールバック）
   const LINK_TRIAL    = window.LIFF_LINK_TRIAL    || "https://liff.line.me/2008406620-yQFRswAu";
   const LINK_ORIGINAL = window.LIFF_LINK_ORIGINAL || "https://liff.line.me/2008406620-Bd9Zo9od";
   const LINK_AKASHA   = window.LIFF_LINK_AKASHA   || "https://liff.line.me/2008406620-G5j1gjzM";
   const LINK_STORE    = window.LIFF_LINK_STORE    || "https://liff.line.me/2008406620-7tSkOcqd";
 
-  // ボタンに反映（HTMLに直書きしない＝ズレ防止）
+  // 要素
   const btnTrial    = document.getElementById("btnTrial");
   const btnOriginal = document.getElementById("btnOriginal");
   const btnAkasha   = document.getElementById("btnAkasha");
   const btnStore    = document.getElementById("btnStore");
+  const cardTrial   = document.getElementById("cardTrial");
+  const badge       = document.getElementById("badge");
+  const subtext     = document.getElementById("subtext");
 
+  // href反映（HTML直書きしない）
   if(btnTrial)    btnTrial.href    = LINK_TRIAL;
   if(btnOriginal) btnOriginal.href = LINK_ORIGINAL;
   if(btnAkasha)   btnAkasha.href   = LINK_AKASHA;
@@ -153,64 +174,105 @@
   // ===== デバッグ =====
   const qs = new URLSearchParams(location.search);
   const DEBUG = qs.get("debug") === "1";
-  const FORCE = qs.get("force") === "1";
+  const FORCE = qs.get("force") === "1"; // 起動ログ強制
   const d = (msg) => { if (DEBUG) alert(msg); };
 
-  const API_URL = location.origin + "/api/liff/opened";
+  const API_OPEN   = location.origin + "/api/liff/opened";
+  const API_STATUS = location.origin + "/api/user/status";
 
-  // 1) init
+  // ===== LIFF init =====
   try {
     await liff.init({ liffId: LIFF_ID_MENU });
   } catch (e) {
+    if (badge) badge.textContent = "LIFF初期化失敗";
     d("init FAILED: " + (e?.message || String(e)));
     return;
   }
 
-  // 2) login
+  // ===== login =====
   if (!liff.isLoggedIn()) {
     liff.login({ redirectUri: location.href });
     return;
   }
 
-  // 3) userId
+  // ===== userId =====
   let userId = null;
   try { userId = liff.getDecodedIDToken()?.sub || null; } catch(e){}
   if (!userId) {
     try { userId = (await liff.getProfile())?.userId || null; } catch(e){}
   }
   if (!userId) {
+    if (badge) badge.textContent = "userId不明";
     d("userId missing");
     return;
   }
 
-  // 4) 二重送信防止（LIFF_ID_MENU 固定）
-  const key = "liff_opened_sent:" + LIFF_ID_MENU + ":" + location.pathname;
-  if (!FORCE && sessionStorage.getItem(key)) {
-    return;
+  // ===== 起動ログ（重複防止）=====
+  const openKey = "liff_opened_sent:" + LIFF_ID_MENU + ":" + location.pathname;
+  if (FORCE || !sessionStorage.getItem(openKey)) {
+    sessionStorage.setItem(openKey, "1");
+    const payload = {
+      userId,
+      source: `index|menu|${VERSION}|origin=${location.origin}`,
+      ts: Date.now()
+    };
+    try {
+      const res = await fetch(API_OPEN, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (DEBUG) {
+        const text = await res.text().catch(()=> "");
+        d("OPEN LOG " + res.status + "\n" + text.slice(0,200));
+      }
+    } catch (e) {
+      if (DEBUG) d("OPEN LOG error: " + (e?.message || String(e)));
+    }
   }
-  sessionStorage.setItem(key, "1");
 
-  // 5) 起動ログ送信
-  const payload = {
-    userId,
-    source: `index|menu|${VERSION}|origin=${location.origin}`,
-    ts: Date.now()
-  };
+  // ===== 購入者判定 → 表示切替（ENVで制御）=====
+  if (badge) badge.textContent = "判定中…";
+
+  let isBuyer = false;
+  let showTrialAlways = false; // ← サーバのENVでON/OFF
 
   try {
-    const res = await fetch(API_URL, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload)
+    const res = await fetch(API_STATUS + "?userId=" + encodeURIComponent(userId), {
+      method: "GET",
+      headers: { "cache-control": "no-store" }
     });
+    const json = await res.json().catch(()=>null);
 
-    if (DEBUG) {
-      const text = await res.text().catch(()=> "");
-      d("POST " + res.status + "\n" + text.slice(0,200));
+    if (!res.ok || !json || json.ok !== true) {
+      if (badge) badge.textContent = "判定失敗";
+      if (DEBUG) d("STATUS failed: " + res.status + "\n" + JSON.stringify(json));
+    } else {
+      isBuyer = !!json.isBuyer;
+      showTrialAlways = !!json.showTrialAlways; // ★ここがENV連動
+      if (badge) badge.textContent = isBuyer ? "購入者" : "初回";
     }
   } catch (e) {
-    d("POST error: " + (e?.message || String(e)));
+    if (badge) badge.textContent = "判定エラー";
+    if (DEBUG) d("STATUS error: " + (e?.message || String(e)));
   }
+
+  // ✅ 購入者には初めてセットを見せない（ただしENVで強制表示できる）
+  if (isBuyer && !showTrialAlways) {
+    if (cardTrial) cardTrial.classList.add("hidden");
+    if (subtext) subtext.textContent = "いつもありがとうございます。商品カテゴリを選択してください。";
+  } else {
+    if (subtext) subtext.textContent = "ご希望の商品カテゴリを選択してください。";
+  }
+
+  // ✅ クリック事故対策（UI側）
+  if (isBuyer && !showTrialAlways && btnTrial) {
+    btnTrial.addEventListener("click", (e) => {
+      e.preventDefault();
+      alert("初めてセットは初回限定です。\n通常商品からご注文ください。");
+    });
+  }
+
 })();
 </script>
 </body>

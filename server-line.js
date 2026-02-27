@@ -362,9 +362,20 @@ const pool = new Pool({
 /* =========================
  * 送料＆サイズ（DB優先 + キャッシュ）
  * ========================= */
+function normalizeRegion(region) {
+  const r = String(region || "").trim().toLowerCase();
+  if (!r) return "";
+
+  // 🔥 ここが今回の核心
+  if (r === "kinki") return "kansai";
+
+  return r;
+}
+
 function detectRegionFromPref(prefecture) {
   const pref = (prefecture || "").trim();
-  return SHIPPING_REGION_BY_PREF[pref] || "chubu";
+  const raw = SHIPPING_REGION_BY_PREF[pref] || "chubu";
+  return normalizeRegion(raw);
 }
 function cacheKey(region, size) { return `${region}:${String(size)}`; }
 

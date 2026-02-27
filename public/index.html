@@ -5,9 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>ご注文方法選択</title>
 
-  <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <!-- ✅ LIFF_ID を1か所に集約した設定（public/liff-config.js） -->
   <script src="/liff-config.js"></script>
 
   <style>
@@ -18,10 +16,10 @@
       --muted:#6b7280;
       --line:#e5e7eb;
 
-      --trial:#c2410c;     /* 初めてセット */
-      --original:#7a1f1f;  /* オリジナル */
-      --akasha:#0b3a53;    /* あかしゃ */
-      --store:#0a7b19;     /* 店頭 */
+      --trial:#c2410c;
+      --original:#7a1f1f;
+      --akasha:#0b3a53;
+      --store:#0a7b19;
 
       --shadow:0 1px 4px rgba(0,0,0,.08);
       --radius:16px;
@@ -80,61 +78,42 @@
     .btnAkasha{ background:var(--akasha); color:#fff; }
     .btnStore{ background:var(--store); color:#fff; }
 
-    /* ✅ 購入者には初めてセットを「非表示」または「無効化」できる */
-    .hidden{ display:none !important; }
-
-    .badge{
-      display:inline-block;
-      font-size:12px;
-      padding:4px 8px;
-      border-radius:999px;
-      border:1px solid var(--line);
-      background:#fff;
-      margin-left:8px;
-      color:var(--muted);
-      vertical-align:middle;
-    }
-
-    /* ✅ 最強：初期状態では trial を必ず隠す（チラ見え防止） */
+    /* ✅ 最重要：初期は必ず非表示（チラ見え防止） */
     #cardTrial{ display:none; }
   </style>
 </head>
 
 <body>
   <div class="wrap">
-    <h1>
-      ご注文はこちら
-      <span class="badge" id="badge">判定中…</span>
-    </h1>
+    <h1>ご注文はこちら</h1>
+
+    <!-- 👇 ここにメッセージ出る -->
     <div class="muted" id="subtext">
       ご希望の商品カテゴリを選択してください。
     </div>
 
-    <!-- 🆕 初めてセット（初期はCSSで非表示 → 判定後に初回だけ表示） -->
+    <!-- 初めてセット -->
     <div class="card" id="cardTrial">
       <a class="btn btnTrial" id="btnTrial" href="#">
         🆕 初めての方限定セット
       </a>
-      <div class="muted" style="margin-top:8px;" id="trialNote">
-        ※初回限定（購入済みの方には表示されません）
+      <div class="muted" style="margin-top:8px;">
+        ※初回限定
       </div>
     </div>
 
-    <!-- オリジナルセット -->
     <div class="card">
       <a class="btn btnOriginal" id="btnOriginal" href="#">
         🎁 オリジナルセット
       </a>
     </div>
 
-    <!-- あかしゃシリーズ -->
     <div class="card">
       <a class="btn btnAkasha" id="btnAkasha" href="#">
         🍘 あかしゃシリーズ
       </a>
     </div>
 
-    <!-- 店頭受取 -->
     <div class="card">
       <a class="btn btnStore" id="btnStore" href="#">
         🏠 店頭受取（現金）
@@ -146,138 +125,70 @@
 (async function(){
   "use strict";
 
-  // ===== 設定 =====
-  const LIFF_ID_MENU = window.LIFF_ID_MENU || "2008406620-8CWfgEKh"; // フォールバック
-  const VERSION = "index_v_20260227_auto_switch";
+  const LIFF_ID_MENU = window.LIFF_ID_MENU || "2008406620-8CWfgEKh";
 
-  // リンクは config から（無ければフォールバック）
-  const LINK_TRIAL    = window.LIFF_LINK_TRIAL    || "https://liff.line.me/2008406620-yQFRswAu";
-  const LINK_ORIGINAL = window.LIFF_LINK_ORIGINAL || "https://liff.line.me/2008406620-Bd9Zo9od";
-  const LINK_AKASHA   = window.LIFF_LINK_AKASHA   || "https://liff.line.me/2008406620-G5j1gjzM";
-  const LINK_STORE    = window.LIFF_LINK_STORE    || "https://liff.line.me/2008406620-7tSkOcqd";
+  const LINK_TRIAL    = window.LIFF_LINK_TRIAL;
+  const LINK_ORIGINAL = window.LIFF_LINK_ORIGINAL;
+  const LINK_AKASHA   = window.LIFF_LINK_AKASHA;
+  const LINK_STORE    = window.LIFF_LINK_STORE;
 
-  // 要素
   const btnTrial    = document.getElementById("btnTrial");
   const btnOriginal = document.getElementById("btnOriginal");
   const btnAkasha   = document.getElementById("btnAkasha");
   const btnStore    = document.getElementById("btnStore");
-  const cardTrial   = document.getElementById("cardTrial");
-  const badge       = document.getElementById("badge");
-  const subtext     = document.getElementById("subtext");
 
-  // href反映（HTML直書きしない）
-  if(btnTrial)    btnTrial.href    = LINK_TRIAL;
-  if(btnOriginal) btnOriginal.href = LINK_ORIGINAL;
-  if(btnAkasha)   btnAkasha.href   = LINK_AKASHA;
-  if(btnStore)    btnStore.href    = LINK_STORE;
+  const cardTrial = document.getElementById("cardTrial");
+  const subtext   = document.getElementById("subtext");
 
-  // ===== デバッグ =====
-  const qs = new URLSearchParams(location.search);
-  const DEBUG = qs.get("debug") === "1";
-  const FORCE = qs.get("force") === "1";           // 起動ログ強制
-  const SHOW_TRIAL_QS = qs.get("show_trial") === "1"; // 購入者でも trial を強制表示（検証用）
-  const d = (msg) => { if (DEBUG) alert(msg); };
+  btnTrial.href    = LINK_TRIAL;
+  btnOriginal.href = LINK_ORIGINAL;
+  btnAkasha.href   = LINK_AKASHA;
+  btnStore.href    = LINK_STORE;
 
-  const API_OPEN   = location.origin + "/api/liff/opened";
-  const API_STATUS = location.origin + "/api/user/status"; // ※サーバ側で用意している前提
+  const API_STATUS = location.origin + "/api/user/status";
 
-  // ===== LIFF init =====
-  try {
-    await liff.init({ liffId: LIFF_ID_MENU });
-  } catch (e) {
-    badge.textContent = "LIFF初期化失敗";
-    d("init FAILED: " + (e?.message || String(e)));
-    return;
-  }
+  await liff.init({ liffId: LIFF_ID_MENU });
 
-  // ===== login =====
   if (!liff.isLoggedIn()) {
     liff.login({ redirectUri: location.href });
     return;
   }
 
-  // ===== userId =====
-  let userId = null;
-  try { userId = liff.getDecodedIDToken()?.sub || null; } catch(e){}
+  let userId = liff.getDecodedIDToken()?.sub;
   if (!userId) {
-    try { userId = (await liff.getProfile())?.userId || null; } catch(e){}
-  }
-  if (!userId) {
-    badge.textContent = "userId不明";
-    d("userId missing");
-    return;
+    const profile = await liff.getProfile();
+    userId = profile.userId;
   }
 
-  // ===== 起動ログ（重複防止）=====
-  const openKey = "liff_opened_sent:" + LIFF_ID_MENU + ":" + location.pathname;
-  if (FORCE || !sessionStorage.getItem(openKey)) {
-    sessionStorage.setItem(openKey, "1");
-    const payload = {
-      userId,
-      source: `index|menu|${VERSION}|origin=${location.origin}`,
-      ts: Date.now()
-    };
-    try {
-      const res = await fetch(API_OPEN, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      if (DEBUG) {
-        const text = await res.text().catch(()=> "");
-        d("OPEN LOG " + res.status + "\n" + text.slice(0,200));
-      }
-    } catch (e) {
-      if (DEBUG) d("OPEN LOG error: " + (e?.message || String(e)));
-    }
-  }
-
-  // ===== 購入者判定 → 表示切替 =====
-  badge.textContent = "判定中…";
-
-  // ✅ ここ重要：json を後段でも参照するので、外側に宣言しておく
-  let json = null;
   let isBuyer = false;
+  let showTrialAlways = false;
 
   try {
-    const res = await fetch(API_STATUS + "?userId=" + encodeURIComponent(userId), {
-      method: "GET",
-      headers: { "cache-control": "no-store" }
-    });
-    json = await res.json().catch(()=>null);
+    const res = await fetch(API_STATUS + "?userId=" + encodeURIComponent(userId));
+    const json = await res.json();
 
-    if (!res.ok || !json || json.ok !== true) {
-      badge.textContent = "判定失敗";
-      if (DEBUG) d("STATUS failed: " + res.status + "\n" + JSON.stringify(json));
-    } else {
-      isBuyer = !!json.isBuyer;
-      badge.textContent = isBuyer ? "購入者" : "初回";
-    }
-  } catch (e) {
-    badge.textContent = "判定エラー";
-    if (DEBUG) d("STATUS error: " + (e?.message || String(e)));
-  }
+    isBuyer = !!json.isBuyer;
+    showTrialAlways = !!json.showTrialAlways;
 
-  // ===== ✅ ENV/サーバ返却で trial 表示を切替（＋クエリで上書き）=====
-  // サーバが { showTrialAlways: true/false } を返す想定（ENVで切替）
-  const showTrialAlways = !!(json && json.showTrialAlways);
-  const showTrial = SHOW_TRIAL_QS || showTrialAlways;
+  } catch(e) {}
 
-  // ✅ 最強：初期はCSSで trial 非表示 → 初回だけ display を戻して表示
-  if (isBuyer && !showTrial) {
-    // 購入者：trial は出さない（初期display:noneのまま）
-    if (subtext) subtext.textContent = "いつもありがとうございます。商品カテゴリを選択してください。";
+  // ===== 表示制御 =====
+
+  if (isBuyer && !showTrialAlways) {
+    // 👇 購入者メッセージ
+    subtext.textContent = "いつもありがとうございます😊";
+
   } else {
-    // 初回 or 強制表示：ここで初めて出す
-    if (cardTrial) cardTrial.style.display = "";
-    if (subtext) subtext.textContent = "ご希望の商品カテゴリを選択してください。";
+    // 👇 初回だけ表示
+    cardTrial.style.display = "";
+    subtext.textContent = "ご希望の商品カテゴリを選択してください。";
   }
 
-  // おまけ：購入者が trial を押した時に止める（showTrialの時は止めない）
-  if (isBuyer && !showTrial && btnTrial) {
-    btnTrial.addEventListener("click", (e) => {
+  // 事故防止
+  if (isBuyer && !showTrialAlways) {
+    btnTrial.addEventListener("click", (e)=>{
       e.preventDefault();
-      alert("初めてセットは初回限定です。\n通常商品からご注文ください。");
+      alert("初めてセットは初回限定です。");
     });
   }
 

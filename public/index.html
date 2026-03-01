@@ -40,9 +40,16 @@
       padding:16px 14px 30px;
     }
 
-    h1{ margin:0 0 6px; font-size:20px; }
+    h1{
+      margin:0 0 6px;
+      font-size:20px;
+    }
 
-    .muted{ color:var(--muted); font-size:13px; line-height:1.6; }
+    .muted{
+      color:var(--muted);
+      font-size:13px;
+      line-height:1.6;
+    }
 
     .card{
       background:var(--card);
@@ -71,22 +78,8 @@
     .btnAkasha{ background:var(--akasha); color:#fff; }
     .btnStore{ background:var(--store); color:#fff; }
 
-    /* ✅ 初期は必ず非表示（チラ見え防止） */
-    #cardTrial{ display:none; }
-
-    /* デバッグ表示（必要時だけ使う） */
-    #debugBox{
-      display:none;
-      white-space:pre-wrap;
-      font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      font-size:12px;
-      color:#111827;
-      background:#fff;
-      border:1px dashed #cbd5e1;
-      border-radius:12px;
-      padding:10px;
-      margin-top:10px;
-    }
+    /* ✅ もう隠さない */
+    #cardTrial{ display:block; }
   </style>
 </head>
 
@@ -94,25 +87,36 @@
   <div class="wrap">
     <h1>ご注文はこちら</h1>
 
-    <div class="muted" id="subtext">読み込み中…</div>
-    <div id="debugBox"></div>
+    <div class="muted" id="subtext">
+      読み込み中…
+    </div>
 
-    <!-- 初めてセット -->
+    <!-- 初めてセット（常に表示） -->
     <div class="card" id="cardTrial">
-      <a class="btn btnTrial" id="btnTrial" href="#">🆕 初めての方限定セット</a>
-      <div class="muted" style="margin-top:8px;">※初回限定</div>
+      <a class="btn btnTrial" id="btnTrial" href="#">
+        🆕 初めての方限定セット
+      </a>
+      <div class="muted" style="margin-top:8px;">
+        ※初回限定
+      </div>
     </div>
 
     <div class="card">
-      <a class="btn btnOriginal" id="btnOriginal" href="#">🎁 オリジナルセット</a>
+      <a class="btn btnOriginal" id="btnOriginal" href="#">
+        🎁 オリジナルセット
+      </a>
     </div>
 
     <div class="card">
-      <a class="btn btnAkasha" id="btnAkasha" href="#">🍘 あかしゃシリーズ</a>
+      <a class="btn btnAkasha" id="btnAkasha" href="#">
+        🍘 あかしゃシリーズ
+      </a>
     </div>
 
     <div class="card">
-      <a class="btn btnStore" id="btnStore" href="#">🏠 店頭受取（現金）</a>
+      <a class="btn btnStore" id="btnStore" href="#">
+        🏠 店頭受取（現金）
+      </a>
     </div>
   </div>
 
@@ -124,13 +128,13 @@
   const btnOriginal = document.getElementById("btnOriginal");
   const btnAkasha   = document.getElementById("btnAkasha");
   const btnStore    = document.getElementById("btnStore");
-  const cardTrial   = document.getElementById("cardTrial");
   const subtext     = document.getElementById("subtext");
-  const debugBox    = document.getElementById("debugBox");
 
-  if (!btnTrial || !btnOriginal || !btnAkasha || !btnStore || !cardTrial || !subtext || !debugBox) return;
+  if (!btnTrial || !btnOriginal || !btnAkasha || !btnStore || !subtext) {
+    console.error("Missing DOM elements", { btnTrial, btnOriginal, btnAkasha, btnStore, subtext });
+    return;
+  }
 
-  // ===== LIFF/リンク設定（フォールバックあり）=====
   const LIFF_ID_MENU = window.LIFF_ID_MENU || "2008406620-8CWfgEKh";
 
   const LINK_TRIAL    = window.LIFF_LINK_TRIAL    || "https://liff.line.me/2008406620-yQFRswAu";
@@ -143,60 +147,6 @@
   btnAkasha.href   = LINK_AKASHA;
   btnStore.href    = LINK_STORE;
 
-  // ===== クエリ取得（通常 + liff.state + state の両対応）=====
-  function pickParam(name) {
-    const qs = new URLSearchParams(location.search);
-
-    // 通常
-    const v1 = qs.get(name);
-    if (v1 != null) return v1;
-
-    // LIFF: liff.state
-    const ls = qs.get("liff.state");
-    if (ls) {
-      const s = ls.startsWith("?") ? ls.slice(1) : ls;
-      const q2 = new URLSearchParams(s);
-      const v2 = q2.get(name);
-      if (v2 != null) return v2;
-    }
-
-    // たまに state に入るパターンも拾う
-    const st = qs.get("state");
-    if (st) {
-      const s = st.startsWith("?") ? st.slice(1) : st;
-      const q3 = new URLSearchParams(s);
-      const v3 = q3.get(name);
-      if (v3 != null) return v3;
-    }
-
-    return null;
-  }
-
-  const showTrialRaw = pickParam("show_trial");
-  const SHOW_TRIAL = (showTrialRaw === "1");
-
-  // ===== デバッグ表示（show_trial=1 の時だけ出す）=====
-  function showDebug(obj){
-    debugBox.style.display = "block";
-    debugBox.textContent = JSON.stringify(obj, null, 2);
-  }
-
-  // ✅ show_trial=1 が来たら「絶対に表示」して終了（最強の検証モード）
-  if (SHOW_TRIAL) {
-    cardTrial.style.display = "";
-    subtext.textContent = "（検証モード）初めてセットを強制表示中です。";
-
-    showDebug({
-      mode: "SHOW_TRIAL_FORCE",
-      location_search: location.search,
-      show_trial_raw: showTrialRaw,
-      note: "ここで表示されないなら DOM/CSS かファイル反映の問題です"
-    });
-
-    return; // ←ここが超重要：以降で消されない
-  }
-
-  // ===== LIFF init/login =====
   try {
     await liff.init({ liffId: LIFF_ID_MENU });
   } catch (e) {
@@ -210,49 +160,7 @@
     return;
   }
 
-  // ===== userId（profile優先）=====
-  let userId = null;
-  try { userId = (await liff.getProfile())?.userId || null; } catch(e){}
-  if (!userId) {
-    subtext.textContent = "読み込みに失敗しました（userId取得）。";
-    return;
-  }
-
-  // ===== status =====
-  const API_STATUS = location.origin + "/api/user/status";
-  let statusOk = false;
-  let isBuyer = false;
-  let showTrialAlways = false;
-
-  try {
-    const res = await fetch(API_STATUS + "?userId=" + encodeURIComponent(userId), {
-      method: "GET",
-      headers: { "cache-control": "no-store" }
-    });
-    const json = await res.json().catch(()=>null);
-    if (res.ok && json && json.ok === true) {
-      statusOk = true;
-      isBuyer = !!json.isBuyer;
-      showTrialAlways = !!json.showTrialAlways;
-    }
-  } catch(e) {
-    console.warn("status error", e);
-  }
-
-  const canShowTrial = (!statusOk) || (!isBuyer) || showTrialAlways;
-
-  if (canShowTrial) {
-    cardTrial.style.display = "";
-    subtext.textContent = statusOk ? "ご希望の商品カテゴリを選択してください。" : "（通信が不安定です）ボタンからお進みください。";
-  } else {
-    cardTrial.style.display = "none";
-    subtext.textContent = "いつもありがとうございます😊";
-    btnTrial.addEventListener("click", (e)=>{
-      e.preventDefault();
-      alert("初めてセットは初回限定です。");
-    });
-  }
-
+  subtext.textContent = "ご希望の商品カテゴリを選択してください。";
 })();
 </script>
 </body>

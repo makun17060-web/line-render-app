@@ -358,7 +358,24 @@ const pool = new Pool({
     ? false
     : { rejectUnauthorized: false },
 });
+/* =========================
+ * App settings (DB)
+ * ========================= */
+async function getSetting(key, fallback = null) {
+  try {
+    const r = await pool.query(
+      `SELECT value FROM app_settings WHERE key=$1`,
+      [String(key)]
+    );
+    if (r.rowCount > 0) return String(r.rows[0].value ?? "");
+  } catch (e) {}
+  return fallback;
+}
 
+async function isTrialEnabled() {
+  const v = await getSetting("FEATURE_TRIAL_ENABLED", "1");
+  return String(v).trim() === "1";
+}
 /* =========================
  * 送料＆サイズ（DB優先 + キャッシュ）
  * ========================= */
@@ -568,6 +585,13 @@ async function hasEverOrderedFukubako(userId) {
 }
 
 async function enforceFukubakoRulesOrThrow({ userId, items }) {
+  // ✅ 初めてセット（福箱）ON/OFF制御
+const trialEnabled = await isTrialEnabled();
+if (!trialEnabled) {
+  const err = new Error("TRIAL_DISABLED");
+  err.code = "TRIAL_DISABLED";
+  throw err;
+}
   const fid = String(FUKUBAKO_PRODUCT_ID || "").trim();
   if (!fid) return;
 
@@ -2862,6 +2886,7 @@ app.post("/api/admin/upload-image", requireAdmin, async (req, res) => {
  * Payment / Orders
  * ========================= */
 function respondFukubakoErrors(res, code) {
+  if (code === "TRIAL_DISABLED") return res.status(403).json({ ok:false, error:"TRIAL_DISABLED" });
   if (code === "FUKUBAKO_MIX_NOT_ALLOWED") return res.status(409).json({ ok:false, error:"FUKUBAKO_MIX_NOT_ALLOWED" });
   if (code === "FUKUBAKO_QTY_MUST_BE_ONE") return res.status(409).json({ ok:false, error:"FUKUBAKO_QTY_MUST_BE_ONE" });
   if (code === "FUKUBAKO_ALREADY_ORDERED") return res.status(409).json({ ok:false, error:"FUKUBAKO_ALREADY_ORDERED" });

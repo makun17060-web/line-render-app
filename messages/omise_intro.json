@@ -1,0 +1,60 @@
+[
+  {
+    "type": "flex",
+    "altText": "磯屋のこと、少しだけ",
+    "contents": {
+      "type": "bubble",
+      "hero": {
+        "type": "image",
+        "url": "https://line-render-app-1.onrender.com/uploads/omise_hero.jpg",
+        "size": "full",
+        "aspectRatio": "1:1",
+        "aspectMode": "cover"
+      },
+      "body": {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "sm",
+        "contents": [
+          {
+            "type": "text",
+            "text": "手造りえびせんべい 磯屋",
+            "weight": "bold",
+            "size": "lg",
+            "wrap": true
+          },
+          {
+            "type": "text",
+            "text": "どんなお店か、少しだけまとめました。",
+            "size": "sm",
+            "wrap": true,
+            "color": "#555555"
+          }
+        ]
+      },
+      "footer": {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "sm",
+        "contents": [
+          {
+            "type": "button",
+            "style": "primary",
+            "action": {
+              "type": "uri",
+              "label": "お店紹介を見る",
+              "uri": "https://line-render-app-1.onrender.com/omise.html"
+            }
+          },
+          {
+            "type": "text",
+            "text": "※ 見るだけで大丈夫です",
+            "size": "xs",
+            "color": "#6b7280",
+            "wrap": true
+          }
+        ]
+      }
+    }
+  }
+]

@@ -3,165 +3,290 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>ご注文方法選択</title>
+  <meta name="theme-color" content="#0b3a53" />
+  <title>磯屋｜ご注文</title>
 
+  <!-- LIFF（index.html を LIFF で開くならON） -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script src="/liff-config.js"></script>
 
   <style>
     :root{
       --bg:#f6f7f9;
-      --card:#fff;
+      --card:#ffffff;
       --text:#111827;
       --muted:#6b7280;
       --line:#e5e7eb;
 
-      --trial:#c2410c;
-      --original:#7a1f1f;
-      --akasha:#0b3a53;
-      --store:#0a7b19;
+      --pri:#0b3a53;     /* 磯屋ブルー */
+      --accent:#b45309;  /* えび系 */
+      --warnBg:#fff7ed;
+      --warnBd:#fdba74;
+      --warnTx:#7c2d12;
 
-      --shadow:0 1px 4px rgba(0,0,0,.08);
+      --shadow:0 2px 10px rgba(17,24,39,.08);
       --radius:16px;
     }
-
     *{ box-sizing:border-box; }
-
     body{
       margin:0;
-      font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
       background:var(--bg);
       color:var(--text);
     }
-
     .wrap{
-      max-width:760px;
-      margin:0 auto;
-      padding:16px 14px 30px;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 14px 14px 28px;
     }
-
-    h1{
-      margin:0 0 6px;
-      font-size:20px;
+    header{
+      padding: 8px 2px 10px;
     }
-
-    .muted{
+    .brand{
+      display:flex; align-items:center; justify-content:space-between;
+      gap:10px;
+    }
+    .title{
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing:.02em;
+      margin:0;
+    }
+    .sub{
+      margin:6px 0 0;
       color:var(--muted);
-      font-size:13px;
-      line-height:1.6;
+      font-size: 13px;
+      line-height:1.4;
+    }
+
+    .slot{ margin: 10px 0 14px; }
+
+    .grid{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      margin-top: 10px;
     }
 
     .card{
       background:var(--card);
       border:1px solid var(--line);
-      border-radius:var(--radius);
-      box-shadow:var(--shadow);
-      padding:16px;
-      margin-top:14px;
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    .cardInner{ padding: 14px; }
+    .badgeRow{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+    .badge{
+      font-size: 12px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      border:1px solid var(--line);
+      color: var(--muted);
+      background:#fff;
+      font-weight:700;
+    }
+    .badgePri{ border-color: rgba(11,58,83,.25); color: var(--pri); background: rgba(11,58,83,.06); }
+    .badgeAcc{ border-color: rgba(180,83,9,.25); color: var(--accent); background: rgba(180,83,9,.08); }
+
+    .h{
+      margin:0;
+      font-size: 16px;
+      font-weight: 900;
+    }
+    .p{
+      margin:8px 0 0;
+      color:var(--muted);
+      font-size: 13px;
+      line-height:1.5;
     }
 
+    .btnRow{
+      display:flex;
+      gap:10px;
+      margin-top: 12px;
+      flex-wrap:wrap;
+    }
     .btn{
-      display:block;
       width:100%;
-      padding:16px 14px;
-      border-radius:14px;
-      font-weight:900;
-      font-size:16px;
-      text-align:center;
-      text-decoration:none;
       border:none;
+      border-radius: 14px;
+      padding: 12px 14px;
+      font-weight: 900;
       cursor:pointer;
+      background: var(--pri);
+      color: #fff;
+      box-shadow: 0 6px 16px rgba(11,58,83,.18);
+    }
+    .btnSub{
+      width:100%;
+      border:1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px 14px;
+      font-weight: 900;
+      cursor:pointer;
+      background:#fff;
+      color: var(--text);
     }
 
-    .btnTrial{ background:var(--trial); color:#fff; }
-    .btnOriginal{ background:var(--original); color:#fff; }
-    .btnAkasha{ background:var(--akasha); color:#fff; }
-    .btnStore{ background:var(--store); color:#fff; }
+    .footer{
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height:1.5;
+      text-align:center;
+    }
 
-    /* ✅ もう隠さない */
-    #cardTrial{ display:block; }
+    /* promo banner */
+    .promo{
+      background: var(--warnBg);
+      border: 1px solid var(--warnBd);
+      color: var(--warnTx);
+      padding: 12px 14px;
+      border-radius: 14px;
+      line-height: 1.45;
+      font-weight: 700;
+    }
+    .promo .btn{
+      margin-top:10px;
+      background: var(--pri);
+    }
   </style>
 </head>
 
 <body>
   <div class="wrap">
-    <h1>ご注文はこちら</h1>
-
-    <div class="muted" id="subtext">
-      読み込み中…
-    </div>
-
-    <!-- 初めてセット（常に表示） -->
-    <div class="card" id="cardTrial">
-      <a class="btn btnTrial" id="btnTrial" href="#">
-        🆕 初めての方限定セット
-      </a>
-      <div class="muted" style="margin-top:8px;">
-        ※初回限定
+    <header>
+      <div class="brand">
+        <h1 class="title">手造りえびせんべい 磯屋</h1>
       </div>
+      <p class="sub">ご注文メニューです。商品を選んで進んでください。</p>
+    </header>
+
+    <!-- ✅ OFF時に「オリジナル誘導バナー」がここに出る -->
+    <div id="promoSlot" class="slot"></div>
+
+    <div class="grid">
+
+      <!-- ✅ 初めてセット（OFFで非表示にする対象） -->
+      <section class="card" id="trialCard">
+        <div class="cardInner">
+          <div class="badgeRow">
+            <span class="badge badgeAcc">初めての方向け</span>
+            <span class="badge">お試し</span>
+          </div>
+          <h2 class="h">初めてセット（まずはこれ）</h2>
+          <p class="p">
+            初回向けのお得セット。迷ったらこちら。
+          </p>
+          <div class="btnRow">
+            <!-- ここはあなたの導線に合わせてURL変更OK -->
+            <button class="btn" id="goTrialBtn">初めてセットを見る</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ✅ オリジナル（誘導先） -->
+      <section class="card" id="originalCard">
+        <div class="cardInner">
+          <div class="badgeRow">
+            <span class="badge badgePri">人気No.1</span>
+            <span class="badge">詰め合わせ</span>
+          </div>
+          <h2 class="h">磯屋オリジナルセット</h2>
+          <p class="p">
+            いちばんバランスが良い詰め合わせ。昨日の初売れもこれなら、伸びしろ大。
+          </p>
+          <div class="btnRow">
+            <!-- ここもURL変更OK -->
+            <button class="btn" id="goOriginalBtnMain">オリジナルセットを見る</button>
+            <button class="btnSub" id="goAllBtn">商品一覧を見る</button>
+          </div>
+        </div>
+      </section>
+
     </div>
 
-    <div class="card">
-      <a class="btn btnOriginal" id="btnOriginal" href="#">
-        🎁 オリジナルセット
-      </a>
-    </div>
-
-    <div class="card">
-      <a class="btn btnAkasha" id="btnAkasha" href="#">
-        🍘 あかしゃシリーズ
-      </a>
-    </div>
-
-    <div class="card">
-      <a class="btn btnStore" id="btnStore" href="#">
-        🏠 店頭受取（現金）
-      </a>
+    <div class="footer">
+      ※「初めてセット」の表示は管理者設定（ENV）で切り替えできます。
     </div>
   </div>
 
-<script>
-(async function(){
-  "use strict";
+  <script>
+    // =========================
+    // 基本：リンク先（あなたの構成に合わせて変えてOK）
+    // =========================
+    const URL_TRIAL = "/fukubako.html";      // 初めてセットのページ
+    const URL_ORIGINAL = "/original-set.html"; // オリジナルのページ
+    const URL_ALL = "/products.html";       // 商品一覧（もしあるなら）
 
-  const btnTrial    = document.getElementById("btnTrial");
-  const btnOriginal = document.getElementById("btnOriginal");
-  const btnAkasha   = document.getElementById("btnAkasha");
-  const btnStore    = document.getElementById("btnStore");
-  const subtext     = document.getElementById("subtext");
+    // =========================
+    // ボタン遷移
+    // =========================
+    function go(url){ location.href = url; }
 
-  if (!btnTrial || !btnOriginal || !btnAkasha || !btnStore || !subtext) {
-    console.error("Missing DOM elements", { btnTrial, btnOriginal, btnAkasha, btnStore, subtext });
-    return;
-  }
+    document.getElementById("goTrialBtn")?.addEventListener("click", () => go(URL_TRIAL));
+    document.getElementById("goOriginalBtnMain")?.addEventListener("click", () => go(URL_ORIGINAL));
+    document.getElementById("goAllBtn")?.addEventListener("click", () => go(URL_ALL));
 
-  const LIFF_ID_MENU = window.LIFF_ID_MENU || "2008406620-8CWfgEKh";
+    // =========================
+    // LIFF（必要な人だけ）
+    // - index をLIFFで開かないなら、このブロックはあっても害はない（失敗しても無視）
+    // =========================
+    async function tryInitLiff(){
+      try{
+        if (!window.liff || !window.LIFF_ID_DEFAULT) return;
+        await liff.init({ liffId: window.LIFF_ID_DEFAULT });
+        // ログ取りたいならここで /api/liff/open 叩く等も可
+      }catch(e){
+        // 無視
+      }
+    }
 
-  const LINK_TRIAL    = window.LIFF_LINK_TRIAL    || "https://liff.line.me/2008406620-yQFRswAu";
-  const LINK_ORIGINAL = window.LIFF_LINK_ORIGINAL || "https://liff.line.me/2008406620-Bd9Zo9od";
-  const LINK_AKASHA   = window.LIFF_LINK_AKASHA   || "https://liff.line.me/2008406620-G5j1gjzM";
-  const LINK_STORE    = window.LIFF_LINK_STORE    || "https://liff.line.me/2008406620-7tSkOcqd";
+    // =========================
+    // ✅ ここが本体：初めてセットOFFなら
+    // 1) trialCard を非表示
+    // 2) promoSlot に「オリジナル誘導バナー」
+    // =========================
+    async function applyTrialVisibility(){
+      try{
+        const r = await fetch("/api/public/settings", { cache: "no-store" });
+        const s = await r.json();
 
-  btnTrial.href    = LINK_TRIAL;
-  btnOriginal.href = LINK_ORIGINAL;
-  btnAkasha.href   = LINK_AKASHA;
-  btnStore.href    = LINK_STORE;
+        const trialEnabled = (s && s.trial_enabled === true);
 
-  try {
-    await liff.init({ liffId: LIFF_ID_MENU });
-  } catch (e) {
-    console.error("liff.init failed", e);
-    subtext.textContent = "読み込みに失敗しました（LIFF初期化）。";
-    return;
-  }
+        if (!trialEnabled) {
+          // 1) 非表示
+          const trial = document.getElementById("trialCard");
+          if (trial) trial.style.display = "none";
 
-  if (!liff.isLoggedIn()) {
-    liff.login({ redirectUri: location.href });
-    return;
-  }
+          // 2) 誘導バナー
+          const slot = document.getElementById("promoSlot");
+          if (slot) {
+            slot.innerHTML = `
+              <div class="promo">
+                ただいま「初めてセット」は一時停止中です。<br>
+                代わりに <span style="text-decoration:underline;">オリジナルセット</span> が人気です👇
+                <button class="btn" id="goOriginalBtnPromo">オリジナルセットを見る</button>
+              </div>
+            `;
+            document.getElementById("goOriginalBtnPromo")?.addEventListener("click", () => {
+              // ページ遷移 or スクロール（どっちでもOK）
+              // go(URL_ORIGINAL);
+              const el = document.getElementById("originalCard");
+              if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+            });
+          }
+        }
+      } catch(e){
+        // 失敗したら何もしない（=表示そのまま）
+      }
+    }
 
-  subtext.textContent = "ご希望の商品カテゴリを選択してください。";
-})();
-</script>
+    (async () => {
+      await tryInitLiff();
+      await applyTrialVisibility();
+    })();
+  </script>
 </body>
 </html>

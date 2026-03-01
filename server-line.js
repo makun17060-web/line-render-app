@@ -3263,7 +3263,18 @@ app.get("/api/order/status", async (req, res) => {
     res.status(500).json({ ok:false, error:"server_error" });
   }
 });
-
+/* =========================
+ * Public settings API
+ * ========================= */
+app.get("/api/public/settings", async (req, res) => {
+  try {
+    const enabled = (await getSetting("FEATURE_TRIAL_ENABLED", "1")) === "1";
+    res.json({ trial_enabled: enabled });
+  } catch (e) {
+    console.error("settings error", e);
+    res.json({ trial_enabled: true }); // fallback（とりあえず表示）
+  }
+});
 /* =========================
  * Reorder reminder APIs
  * ========================= */

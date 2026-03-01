@@ -124,7 +124,7 @@
 (async function(){
   "use strict";
 
-  // ===== 要素（nullガード前提） =====
+  // ===== 要素 =====
   const btnTrial    = document.getElementById("btnTrial");
   const btnOriginal = document.getElementById("btnOriginal");
   const btnAkasha   = document.getElementById("btnAkasha");
@@ -132,10 +132,26 @@
   const cardTrial   = document.getElementById("cardTrial");
   const subtext     = document.getElementById("subtext");
 
-  // どれか欠けてたら安全に止める（編集ミスでも落ちない）
   if (!btnTrial || !btnOriginal || !btnAkasha || !btnStore || !cardTrial || !subtext) {
     console.error("Missing DOM elements", { btnTrial, btnOriginal, btnAkasha, btnStore, cardTrial, subtext });
     return;
+  }
+
+  // ===== クエリ取得（通常 + liff.state 両対応）=====
+  function getQueryParam(name) {
+    const qs = new URLSearchParams(location.search);
+    const v1 = qs.get(name);
+    if (v1 != null) return v1;
+
+    // LIFF: liff.state の中に "?a=1&b=2" の形で入ることがある
+    const st = qs.get("liff.state");
+    if (st) {
+      const s = st.startsWith("?") ? st.slice(1) : st;
+      const qs2 = new URLSearchParams(s);
+      const v2 = qs2.get(name);
+      if (v2 != null) return v2;
+    }
+    return null;
   }
 
   // ===== LIFF/リンク設定 =====
@@ -153,8 +169,13 @@
   btnStore.href    = LINK_STORE;
 
   // ===== show_trial=1（検証用。購入者でもtrial表示）=====
-  const qs = new URLSearchParams(location.search);
-  const SHOW_TRIAL = qs.get("show_trial") === "1";
+  const SHOW_TRIAL = getQueryParam("show_trial") === "1";
+
+  // ✅ 検証は必ず効かせる：APIが落ちても先に表示する
+  if (SHOW_TRIAL) {
+    cardTrial.style.display = "";
+    subtext.textContent = "（検証）初めてセットを表示しています。";
+  }
 
   const API_STATUS = location.origin + "/api/user/status";
 
@@ -163,6 +184,7 @@
     await liff.init({ liffId: LIFF_ID_MENU });
   } catch (e) {
     console.error("liff.init failed", e);
+    // LIFFで開いてる前提なので、ここで止まるのは異常
     subtext.textContent = "読み込みに失敗しました（LIFF初期化）。";
     return;
   }
@@ -172,20 +194,27 @@
     return;
   }
 
-  // ===== userId =====
+  // ===== userId（profile優先。subはU形式の時だけ）=====
   let userId = null;
-  try { userId = liff.getDecodedIDToken()?.sub || null; } catch(e){}
+  try { userId = (await liff.getProfile())?.userId || null; } catch(e){}
+
   if (!userId) {
-    try { userId = (await liff.getProfile())?.userId || null; } catch(e){}
+    try {
+      const sub = liff.getDecodedIDToken()?.sub || null;
+      if (sub && /^U[0-9a-f]{32}$/i.test(sub)) userId = sub;
+    } catch(e){}
   }
+
   if (!userId) {
     subtext.textContent = "読み込みに失敗しました（userId取得）。";
     return;
   }
 
   // ===== status =====
+  // ✅ 失敗時は「未購入扱い」で trial を出す（回収優先）
   let isBuyer = false;
   let showTrialAlways = false;
+  let statusOk = false;
 
   try {
     const res = await fetch(API_STATUS + "?userId=" + encodeURIComponent(userId), {
@@ -195,6 +224,7 @@
     const json = await res.json().catch(()=>null);
 
     if (res.ok && json && json.ok === true) {
+      statusOk = true;
       isBuyer = !!json.isBuyer;
       showTrialAlways = !!json.showTrialAlways;
     } else {
@@ -204,25 +234,35 @@
     console.warn("status error", e);
   }
 
-  // ===== 表示制御（チラ見え防止済み）=====
-  // 初期CSSで trial は display:none。必要な場合だけここで出す。
-  const canShowTrial = (!isBuyer) || SHOW_TRIAL || showTrialAlways;
+  // ===== 表示制御 =====
+  // canShowTrial:
+  // - まだ買ってない → 出す
+  // - show_trial=1 → 出す（検証用）
+  // - showTrialAlways → 出す（例外運用）
+  // - status取得失敗 → 出す（回収優先）
+  const canShowTrial = (!statusOk) || (!isBuyer) || SHOW_TRIAL || showTrialAlways;
 
   if (canShowTrial) {
     cardTrial.style.display = "";
-    subtext.textContent = "ご希望の商品カテゴリを選択してください。";
+    subtext.textContent = statusOk
+      ? "ご希望の商品カテゴリを選択してください。"
+      : "（通信が不安定です）ボタンからお進みください。";
   } else {
     cardTrial.style.display = "none";
     subtext.textContent = "いつもありがとうございます😊";
   }
 
   // ===== 事故防止（購入者がtrialを押した時）=====
-  if (!canShowTrial) {
+  // ※ show_trial=1 / showTrialAlways のときは検証・例外運用なので止めない
+  if (statusOk && isBuyer && !SHOW_TRIAL && !showTrialAlways) {
     btnTrial.addEventListener("click", (e)=>{
       e.preventDefault();
       alert("初めてセットは初回限定です。");
     });
   }
+
+  // デバッグ（必要ならコメント外す）
+  // console.log({ userId, statusOk, isBuyer, showTrialAlways, SHOW_TRIAL, canShowTrial });
 
 })();
 </script>

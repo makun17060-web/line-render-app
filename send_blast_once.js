@@ -29,6 +29,11 @@
 //   FORCE_ORDER_ID=284
 //   ※ FORCE_USER_ID も同時に指定された場合は一致チェック。不一致なら停止。
 //
+// ✅【追加】50人ずつテスト送信（最終ターゲット配列をスライス）
+//   BLAST_LIMIT=50
+//   BLAST_OFFSET=0   (次の50なら 50, 100 ...)
+//   ※ segment_blast の名簿自体はそのまま、送る直前に 50 人に絞るだけ
+//
 // Requires: DATABASE_URL, LINE_CHANNEL_ACCESS_TOKEN
 //
 // MESSAGE_FILE の形式：
@@ -79,6 +84,10 @@ const FORCE_ORDER_ID = (process.env.FORCE_ORDER_ID || "").trim();
 // ✅【追加】sh から動的に切り替えるスイッチ
 const SKIP_GLOBAL_EVER_SENT = String(process.env.SKIP_GLOBAL_EVER_SENT || "").trim() === "1";
 const INCLUDE_BOUGHT        = String(process.env.INCLUDE_BOUGHT || "").trim() === "1";
+
+// ✅【追加】送信対象を最後に 50 人などに絞る（テスト用）
+const BLAST_LIMIT  = Number(process.env.BLAST_LIMIT || 0);   // 0なら無制限
+const BLAST_OFFSET = Number(process.env.BLAST_OFFSET || 0);  // 0なら先頭から
 
 // ✅【従来互換】KEYごとに「global除外(ever_sent all keys)」をスキップしたい場合
 const SKIP_GLOBAL_EVER_SENT_KEYS = new Set([
@@ -391,6 +400,11 @@ async function resolveUserIdFromOrderId(orderId) {
   console.log(`SKIP_GLOBAL_EVER_SENT=${skipGlobalEverSent ? "1" : "0"} (keys=${[...SKIP_GLOBAL_EVER_SENT_KEYS].join(",")})`);
   console.log(`INCLUDE_BOUGHT=${INCLUDE_BOUGHT ? "1" : "0"}`);
 
+  // ✅ 追加：BLAST_LIMIT/OFFSET ログ
+  const blastLimit = (Number.isFinite(BLAST_LIMIT) && BLAST_LIMIT > 0) ? BLAST_LIMIT : 0;
+  const blastOffset = (Number.isFinite(BLAST_OFFSET) && BLAST_OFFSET > 0) ? BLAST_OFFSET : 0;
+  console.log(`BLAST_LIMIT=${blastLimit || "(none)"} BLAST_OFFSET=${blastOffset || 0}`);
+
   console.log(`messages_count=${messages.length}, first_type=${messages[0]?.type}`);
 
   // ============================================================
@@ -568,12 +582,22 @@ async function resolveUserIdFromOrderId(orderId) {
 
   // 6) 不正userId除外
   const invalid = ids.filter(uid => !isValidLineUserId(String(uid).trim()));
-  const valid = ids.filter(uid => isValidLineUserId(String(uid).trim()));
+  let valid = ids.filter(uid => isValidLineUserId(String(uid).trim()));
 
   console.log(
     `eligible_targets (${BUYER_KIND ? "buyer_mode" : (INCLUDE_BOUGHT ? "include bought" : "exclude bought")}${slotParam ? ` + slot(${slotParam})` : ""}${EXCLUDE_SENT_KEYS.length ? " + sent(keys)" : ""}${ONCE_ONLY ? (skipGlobalEverSent ? " + ever_sent(global skipped)" : " + ever_sent(global)") : ""})=${ids.length}`
   );
   console.log(`valid_targets=${valid.length} invalid_targets=${invalid.length}`);
+
+  // ✅ 追加：ここで 50 人などに絞る（送る直前の valid をスライス）
+  if (blastLimit > 0 || blastOffset > 0) {
+    const before = valid.length;
+    const start = Math.max(0, blastOffset);
+    const end = blastLimit > 0 ? (start + blastLimit) : undefined; // limitなしなら末尾まで
+    valid = valid.slice(start, end);
+    console.log(`BLAST_SLICE applied: before=${before}, offset=${start}, limit=${blastLimit || "(none)"}, after=${valid.length}`);
+  }
+
   console.log("would_send_batches=" + Math.ceil(valid.length / 500) + " (batch_size=500)");
   console.log();
   console.log();

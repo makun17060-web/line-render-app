@@ -29,10 +29,10 @@ export SEGMENT_KEY=inactive_30d
 export MESSAGE_FILE=./messages/omise_intro.json
 
 # ✅ 送信済み除外を有効化（=スキップしない）
-export SKIP_GLOBAL_EVER_SENT=0
+export SKIP_GLOBAL_EVER_SENT=1
 
 # ✅ 送ったら二度送らない（inactive_30dを記録して除外）
-export ONCE_ONLY=1
+export ONCE_ONLY=0
 
 # ✅ 任意：外からDRY_RUN=1でテストできる（未指定なら0扱いでOK）
 export DRY_RUN="${DRY_RUN:-0}"

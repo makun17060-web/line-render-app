@@ -1,34 +1,111 @@
 [
   {
     "type": "flex",
-    "altText": "磯屋のこと、少しだけ",
+    "altText": "磯屋｜久しぶりのご案内",
     "contents": {
       "type": "bubble",
-      "hero": {
-        "type": "image",
-        "url": "https://line-render-app-1.onrender.com/uploads/omise_hero.jpg",
-        "size": "full",
-        "aspectRatio": "1:1",
-        "aspectMode": "cover"
-      },
+      "size": "giga",
       "body": {
         "type": "box",
         "layout": "vertical",
-        "spacing": "sm",
+        "spacing": "md",
         "contents": [
           {
             "type": "text",
             "text": "手造りえびせんべい 磯屋",
             "weight": "bold",
-            "size": "lg",
+            "size": "sm",
+            "color": "#0b3a53"
+          },
+          {
+            "type": "text",
+            "text": "久しぶりにご案内です",
+            "weight": "bold",
+            "size": "xl",
             "wrap": true
           },
           {
             "type": "text",
-            "text": "どんなお店か、少しだけまとめました。",
+            "text": "このLINEから1分でご注文できます。",
             "size": "sm",
-            "wrap": true,
-            "color": "#555555"
+            "color": "#6b7280",
+            "wrap": true
+          },
+          {
+            "type": "separator",
+            "margin": "md"
+          },
+          {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "margin": "md",
+            "contents": [
+              {
+                "type": "text",
+                "text": "迷ったらこれ",
+                "weight": "bold",
+                "size": "md",
+                "wrap": true
+              },
+              {
+                "type": "text",
+                "text": "人気の詰め合わせから選べます。まずは見てみてください😊",
+                "size": "sm",
+                "color": "#374151",
+                "wrap": true
+              }
+            ]
+          },
+          {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "margin": "md",
+            "contents": [
+              {
+                "type": "box",
+                "layout": "baseline",
+                "spacing": "sm",
+                "contents": [
+                  { "type": "text", "text": "✔", "size": "sm", "flex": 0, "color": "#0a7b19" },
+                  { "type": "text", "text": "スマホで完結（住所登録もOK）", "size": "sm", "color": "#111827", "wrap": true }
+                ]
+              },
+              {
+                "type": "box",
+                "layout": "baseline",
+                "spacing": "sm",
+                "contents": [
+                  { "type": "text", "text": "✔", "size": "sm", "flex": 0, "color": "#0a7b19" },
+                  { "type": "text", "text": "店頭受取（現金）にも対応", "size": "sm", "color": "#111827", "wrap": true }
+                ]
+              },
+              {
+                "type": "box",
+                "layout": "baseline",
+                "spacing": "sm",
+                "contents": [
+                  { "type": "text", "text": "✔", "size": "sm", "flex": 0, "color": "#0a7b19" },
+                  { "type": "text", "text": "在庫がある分だけご案内しています", "size": "sm", "color": "#111827", "wrap": true }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "box",
+            "layout": "vertical",
+            "margin": "lg",
+            "spacing": "sm",
+            "contents": [
+              {
+                "type": "text",
+                "text": "※不要ならこのメッセージはスルーで大丈夫です。",
+                "size": "xs",
+                "color": "#9ca3af",
+                "wrap": true
+              }
+            ]
           }
         ]
       },
@@ -40,18 +117,29 @@
           {
             "type": "button",
             "style": "primary",
+            "height": "md",
             "action": {
               "type": "uri",
-              "label": "お店紹介を見る",
-              "uri": "https://line-render-app-1.onrender.com/omise.html"
+              "label": "今すぐ注文を見る",
+              "uri": "https://line-render-app-1.onrender.com/index.html"
+            }
+          },
+          {
+            "type": "button",
+            "style": "secondary",
+            "height": "md",
+            "action": {
+              "type": "uri",
+              "label": "店頭受取で注文する",
+              "uri": "https://line-render-app-1.onrender.com/index.html"
             }
           },
           {
             "type": "text",
-            "text": "※ 見るだけで大丈夫です",
+            "text": "タップするとミニアプリが開きます",
             "size": "xs",
-            "color": "#6b7280",
-            "wrap": true
+            "color": "#9ca3af",
+            "align": "center"
           }
         ]
       }

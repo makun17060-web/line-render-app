@@ -13,10 +13,15 @@ select
   now()
 from segment_users u
 where
-  (
-    u.last_liff_open_at is null
-    or u.last_liff_open_at < now() - interval '30 days'
-  )
+(
+  -- ① 一度も起動していない + 友だち追加30日以上
+  (u.last_liff_open_at is null and u.first_seen < now() - interval '30 days')
+
+  OR
+
+  -- ② 一度起動したが30日以上開いていない
+  (u.last_liff_open_at < now() - interval '30 days')
+)
 on conflict (segment_key, user_id) do nothing;
 SQL
 

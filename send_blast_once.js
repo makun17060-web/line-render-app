@@ -1,5 +1,5 @@
 // send_blast_once.js —（名簿自動追加 + 未送信 + 未購入 + キー指定除外 + FORCE_USER_ID +
-// ✅ 注文ID指定(FORCE_ORDER_ID) + ✅購入者直抽出(BUYER_KIND)）Text/Flex 切替版
+// ✅ 注文ID指定(FORCE_ORDER_ID) + ✅購入者直抽出(BUYER_KIND) + ✅同じメッセージ二重送信防止）Text/Flex 切替版
 //
 // Run:
 //   SEGMENT_KEY=... MESSAGE_FILE=... FUKUBAKO_ID=fukubako-2026 node send_blast_once.js
@@ -236,6 +236,22 @@ async function loadSentSetForKeys(keys) {
   return new Set(rows.map(r => r.user_id).filter(Boolean));
 }
 
+// ✅ 同じSEGMENT_KEYで送信済み（sent_at not null）の user を除外
+async function loadSentSetForCurrentKey(segmentKey) {
+  const { rows } = await pool.query(
+    `
+    SELECT DISTINCT user_id
+      FROM segment_blast
+     WHERE segment_key = $1
+       AND user_id IS NOT NULL
+       AND user_id <> ''
+       AND sent_at IS NOT NULL
+    `,
+    [segmentKey]
+  );
+  return new Set(rows.map(r => r.user_id).filter(Boolean));
+}
+
 // ✅ 友だち追加（follow_events.followed_at）からN日経過した人を名簿に入れる（送信は別）
 async function autoRosterByFirstSeen(days) {
   const d = Number(days);
@@ -400,7 +416,6 @@ async function resolveUserIdFromOrderId(orderId) {
   console.log(`SKIP_GLOBAL_EVER_SENT=${skipGlobalEverSent ? "1" : "0"} (keys=${[...SKIP_GLOBAL_EVER_SENT_KEYS].join(",")})`);
   console.log(`INCLUDE_BOUGHT=${INCLUDE_BOUGHT ? "1" : "0"}`);
 
-  // ✅ 追加：BLAST_LIMIT/OFFSET ログ
   const blastLimit = (Number.isFinite(BLAST_LIMIT) && BLAST_LIMIT > 0) ? BLAST_LIMIT : 0;
   const blastOffset = (Number.isFinite(BLAST_OFFSET) && BLAST_OFFSET > 0) ? BLAST_OFFSET : 0;
   console.log(`BLAST_LIMIT=${blastLimit || "(none)"} BLAST_OFFSET=${blastOffset || 0}`);
@@ -462,7 +477,7 @@ async function resolveUserIdFromOrderId(orderId) {
   }
 
   // ============================================================
-  // 通常モード（既存のまま）
+  // 通常モード
   // ============================================================
 
   // 0) AUTO_ROSTER（N日経過を名簿へ）※ BUYER_KIND 時でも動かしてOK
@@ -515,6 +530,10 @@ async function resolveUserIdFromOrderId(orderId) {
     excludeByKeysSet = await loadSentSetForKeys(EXCLUDE_SENT_KEYS);
     console.log(`excluded_by_keys_users=${excludeByKeysSet.size} (sent_at not null)`);
   }
+
+  // 2.5) 同じメッセージ送信済みを除外
+  const sentSameKeySet = await loadSentSetForCurrentKey(SEGMENT_KEY);
+  console.log(`sent_same_key_users=${sentSameKeySet.size} (segment_key=${SEGMENT_KEY}, sent_at not null)`);
 
   // 3) 一生1回のみ：過去に “どのキーでも” 送った user を取得（永久除外）
   let everSentSet = new Set();
@@ -577,7 +596,13 @@ async function resolveUserIdFromOrderId(orderId) {
     ids = ids.filter(uid => !boughtSet.has(uid));
   }
 
+  // ✅ 同じメッセージの二重送信防止
+  if (sentSameKeySet.size) ids = ids.filter(uid => !sentSameKeySet.has(uid));
+
+  // 任意キー除外
   if (excludeByKeysSet.size) ids = ids.filter(uid => !excludeByKeysSet.has(uid));
+
+  // 全キー横断除外
   if (ONCE_ONLY) ids = ids.filter(uid => !everSentSet.has(uid));
 
   // 6) 不正userId除外
@@ -585,7 +610,7 @@ async function resolveUserIdFromOrderId(orderId) {
   let valid = ids.filter(uid => isValidLineUserId(String(uid).trim()));
 
   console.log(
-    `eligible_targets (${BUYER_KIND ? "buyer_mode" : (INCLUDE_BOUGHT ? "include bought" : "exclude bought")}${slotParam ? ` + slot(${slotParam})` : ""}${EXCLUDE_SENT_KEYS.length ? " + sent(keys)" : ""}${ONCE_ONLY ? (skipGlobalEverSent ? " + ever_sent(global skipped)" : " + ever_sent(global)") : ""})=${ids.length}`
+    `eligible_targets (${BUYER_KIND ? "buyer_mode" : (INCLUDE_BOUGHT ? "include bought" : "exclude bought")}${slotParam ? ` + slot(${slotParam})` : ""} + same_key(sent_at)${EXCLUDE_SENT_KEYS.length ? " + sent(keys)" : ""}${ONCE_ONLY ? (skipGlobalEverSent ? " + ever_sent(global skipped)" : " + ever_sent(global)") : ""})=${ids.length}`
   );
   console.log(`valid_targets=${valid.length} invalid_targets=${invalid.length}`);
 
@@ -593,7 +618,7 @@ async function resolveUserIdFromOrderId(orderId) {
   if (blastLimit > 0 || blastOffset > 0) {
     const before = valid.length;
     const start = Math.max(0, blastOffset);
-    const end = blastLimit > 0 ? (start + blastLimit) : undefined; // limitなしなら末尾まで
+    const end = blastLimit > 0 ? (start + blastLimit) : undefined;
     valid = valid.slice(start, end);
     console.log(`BLAST_SLICE applied: before=${before}, offset=${start}, limit=${blastLimit || "(none)"}, after=${valid.length}`);
   }

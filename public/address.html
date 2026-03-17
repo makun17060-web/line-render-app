@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>住所登録</title>
 
-  <!-- LIFF SDK -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 
   <style>
@@ -111,7 +110,6 @@
       <input id="prefecture" placeholder="例）愛知県" />
     </div>
 
-    <!-- ✅ city を追加（DBの city に入る） -->
     <div class="field">
       <label>市区町村</label>
       <input id="city" placeholder="例）豊橋市" />
@@ -139,9 +137,17 @@
   const statusEl = $("status");
   const saveBtn = $("saveBtn");
 
+  const qs = new URLSearchParams(location.search);
+  const DEBUG = qs.get("debug") === "1";
+  const FORCE = qs.get("force") === "1";
+  const mode = (qs.get("mode") || "").trim();
+
+  const KEY_LIFF_OPENED = "liff_opened_sent:cod-register:" + location.pathname + ":" + mode;
+
   let userId = "";
 
   function setStatus(msg){ statusEl.textContent = msg || ""; }
+  function d(msg){ if (DEBUG) alert(msg); }
 
   async function getLiffIdForAdd(){
     const res = await fetch("/api/liff/config?kind=add", { cache:"no-store" });
@@ -150,14 +156,46 @@
     return cfg.liffId;
   }
 
-  // ✅ 保存済み住所の自動読み込み（GET→ダメならPOST）
+  async function sendLiffOpened(uid){
+    const id = String(uid || "").trim();
+    if(!id) return;
+
+    if(!FORCE && sessionStorage.getItem(KEY_LIFF_OPENED)){
+      console.log("[cod-register] liff_opened skipped", KEY_LIFF_OPENED);
+      d("skipped by sessionStorage");
+      return;
+    }
+
+    const payload = {
+      userId: id,
+      source: `cod-register|mode=${mode || "default"}|origin=${location.origin}`,
+      ts: Date.now()
+    };
+
+    console.log("[cod-register] sendLiffOpened called", payload);
+
+    const res = await fetch("/api/liff/opened", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    const text = await res.text().catch(() => "");
+    console.log("[cod-register] /api/liff/opened", res.status, text);
+
+    if(!res.ok){
+      throw new Error(text || ("HTTP " + res.status));
+    }
+
+    sessionStorage.setItem(KEY_LIFF_OPENED, "1");
+    d("POST " + res.status + "\n" + text.slice(0, 200));
+  }
+
   async function loadExistingAddress(){
     try{
-      // 1) GET /api/address/get?userId=...
       let r = await fetch(`/api/address/get?userId=${encodeURIComponent(userId)}`, { cache:"no-store" });
       let d = await r.json().catch(()=> ({}));
 
-      // 2) サーバー実装が POST の場合もあるのでフォールバック
       if(!r.ok || !d.ok){
         r = await fetch("/api/address/get",{
           method:"POST",
@@ -170,55 +208,59 @@
       if(!r.ok || !d.ok || !d.address) return;
 
       const a = d.address;
-
-      // 互換（pref / prefecture、zip / postal、address / address1 等）
       $("name").value       = a.name || "";
       $("phone").value      = a.phone || "";
       $("postal").value     = a.postal || a.zip || "";
       $("prefecture").value = a.prefecture || a.pref || "";
-
-      // ✅ city を反映（重要）
       $("city").value       = a.city || "";
-
-      // address1 の互換（古いデータが address に入ってる場合）
       $("address1").value   = a.address1 || a.address || "";
       $("address2").value   = a.address2 || "";
 
-    }catch{
-      // 読み出し失敗は無視（保存はできるようにする）
+    }catch(e){
+      console.log("[cod-register] loadExistingAddress skipped", e);
     }
   }
 
   try{
     const liffId = await getLiffIdForAdd();
+    console.log("[cod-register] liffId", liffId);
+
     await liff.init({ liffId });
+    console.log("[cod-register] liff.init ok");
 
     if(!liff.isLoggedIn()){
+      console.log("[cod-register] not logged in -> login");
       liff.login({ redirectUri: location.href });
       return;
     }
 
     const profile = await liff.getProfile();
     userId = profile.userId || "";
+    console.log("[cod-register] userId", userId);
+
     if(!userId) throw new Error("userId取得失敗");
 
-    // ✅ 初期化が終わったらボタン有効化（ログ表示なし）
-    saveBtn.disabled = false;
+    try{
+      await sendLiffOpened(userId);
+    }catch(e){
+      console.error("[cod-register] sendLiffOpened failed", e);
+    }
 
-    // ✅ ここで保存済み住所を自動表示
+    saveBtn.disabled = false;
     await loadExistingAddress();
 
   }catch(e){
+    console.error("[cod-register] init failed", e);
     setStatus(
       "初期化に失敗しました。\n" +
       "・LINEアプリ内（LIFF）で開いているか\n" +
       "・LIFF_ID_ADD が正しいか\n" +
       "を確認してください。"
     );
+    d("init FAILED: " + (e?.message || String(e)));
     return;
   }
 
-  // 郵便番号 → 住所補完（pref/city/address1 を分離して入れる）
   $("postal").addEventListener("blur", async ()=>{
     const zip = $("postal").value.trim();
     if(!/^\d{7}$/.test(zip)) return;
@@ -227,11 +269,13 @@
       const d = await r.json();
       if(d.results && d.results[0]){
         const z = d.results[0];
-        $("prefecture").value = z.address1 || ""; // 都道府県
-        $("city").value       = z.address2 || ""; // 市区町村
-        $("address1").value   = z.address3 || ""; // 町名（番地はユーザーが追記）
+        $("prefecture").value = z.address1 || "";
+        $("city").value       = z.address2 || "";
+        $("address1").value   = z.address3 || "";
       }
-    }catch{}
+    }catch(e){
+      console.log("[cod-register] zip lookup failed", e);
+    }
   });
 
   saveBtn.addEventListener("click", async ()=>{
@@ -241,15 +285,11 @@
       phone: $("phone").value.trim(),
       postal: $("postal").value.trim(),
       prefecture: $("prefecture").value.trim(),
-
-      // ✅ DBの city に送る（重要）
       city: $("city").value.trim(),
-
       address1: $("address1").value.trim(),
       address2: $("address2").value.trim(),
     };
 
-    // ✅ city も必須にする（DBに必須ならここ必須）
     if(!payload.name || !payload.phone || !payload.postal || !payload.prefecture || !payload.city || !payload.address1){
       setStatus("すべて入力してください");
       return;
@@ -267,13 +307,13 @@
       const d = await r.json().catch(()=> ({}));
       if(!r.ok || !d.ok) throw new Error("save failed");
 
-      // ✅ 保存後に即反映
       await loadExistingAddress();
 
       setStatus("保存しました。画面を閉じます…");
-      setTimeout(()=>{ try{ liff.closeWindow(); }catch{} }, 800);
+      setTimeout(()=>{ try{ liff.closeWindow(); }catch(e){} }, 800);
 
-    }catch{
+    }catch(e){
+      console.error("[cod-register] save failed", e);
       setStatus("保存に失敗しました。もう一度お試しください。");
       saveBtn.disabled = false;
     }

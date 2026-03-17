@@ -6,7 +6,6 @@
   <title>お届け先住所の登録</title>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <!-- ✅ LIFF_ID を1か所に集約（public/liff-config.js） -->
   <script src="/liff-config.js"></script>
 
   <style>
@@ -58,7 +57,6 @@
     <h1>お届け先住所の登録</h1>
     <div class="muted" id="status">読み込み中…</div>
 
-    <!-- 住所表示（登録済みの場合） -->
     <div class="card" id="viewCard" style="display:none">
       <div class="muted">登録済みのお届け先住所</div>
       <div class="addrBox" id="viewAddr" style="margin-top:10px"></div>
@@ -73,7 +71,6 @@
       </div>
     </div>
 
-    <!-- 住所フォーム（未登録 or 編集時） -->
     <div class="card" id="formCard" style="display:none">
       <div class="muted" id="formTitle">お届け先住所を入力</div>
 
@@ -142,7 +139,7 @@
   const DEBUG = qs.get("debug") === "1";
   const FORCE = qs.get("force") === "1";
 
-  const KEY_LIFF_OPENED = "liff_opened_sent:" + location.pathname + ":" + mode;
+  const KEY_LIFF_OPENED = "liff_opened_sent:cod-register:" + location.pathname + ":" + mode;
 
   function d(msg){
     if (DEBUG) alert(msg);
@@ -222,7 +219,6 @@
     return d;
   }
 
-  // ✅ token expired 対策：失敗したら logout→login
   function isTokenExpiredError(e){
     const msg = (e?.message || String(e||"")).toLowerCase();
     return msg.includes("access token expired") || msg.includes("token expired");
@@ -240,14 +236,14 @@
     if(!userId) return;
 
     if(!FORCE && sessionStorage.getItem(KEY_LIFF_OPENED)){
-      console.log("[address] liff_opened skipped", KEY_LIFF_OPENED);
+      console.log("[cod-register] liff_opened skipped", KEY_LIFF_OPENED);
       d("skipped by sessionStorage");
       return;
     }
 
     const payload = {
       userId,
-      source: `address|mode=${mode || "default"}|origin=${location.origin}`,
+      source: `cod-register|mode=${mode || "default"}|origin=${location.origin}`,
       ts: Date.now()
     };
 
@@ -258,7 +254,7 @@
     });
 
     const text = await res.text().catch(() => "");
-    console.log("[address] /api/liff/opened", res.status, text);
+    console.log("[cod-register] /api/liff/opened", res.status, text);
 
     if(!res.ok){
       throw new Error(text || ("HTTP " + res.status));
@@ -268,14 +264,13 @@
     d("POST " + res.status + "\n" + text.slice(0, 200));
   }
 
-  // ✅ 住所画面は “確実にログイン” させる
   async function ensureUserHard(){
     const cached = (localStorage.getItem(KEY_UID) || "").trim();
     if(cached){
       try{
         await sendLiffOpened(cached);
       }catch(e){
-        console.error("[address] sendLiffOpened(cached) failed", e);
+        console.error("[cod-register] sendLiffOpened(cached) failed", e);
       }
       return cached;
     }
@@ -300,7 +295,7 @@
         try{
           await sendLiffOpened(uid);
         }catch(e){
-          console.error("[address] sendLiffOpened(uid) failed", e);
+          console.error("[cod-register] sendLiffOpened(uid) failed", e);
         }
       }
       return uid || null;
@@ -380,8 +375,6 @@
       address1: (el("address1").value || "").trim(),
       address2: (el("address2").value || "").trim(),
       label: (el("label").value || "").trim(),
-
-      // 互換用
       full_name: name,
       recipient_name: name,
       customer_name: name,
@@ -390,7 +383,6 @@
     };
   }
 
-  // ✅ returnTo 復元 → confirmへ戻るURLを生成
   function getReturnToUrl(){
     const raw = (returnToRaw || "").trim();
     let decoded = "";
@@ -426,7 +418,6 @@
   }
 
   async function loadAddress(uid){
-    // 1) list：default優先
     try{
       const d = await getJson(`/api/address/list?userId=${encodeURIComponent(uid)}`);
       const rows = Array.isArray(d?.addresses) ? d.addresses : (Array.isArray(d?.list) ? d.list : []);
@@ -437,7 +428,6 @@
       }
     }catch(e){}
 
-    // 2) get：単一
     try{
       const d = await getJson(`/api/address/get?userId=${encodeURIComponent(uid)}`);
       const raw = d?.address || d?.addr || d?.data?.address || null;

@@ -1,4 +1,3 @@
-// send_address_registered.js
 require("dotenv").config();
 
 const fs = require("fs");
@@ -31,12 +30,9 @@ async function pushLineMessage(to, messages) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`,
+      Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`,
     },
-    body: JSON.stringify({
-      to,
-      messages,
-    }),
+    body: JSON.stringify({ to, messages }),
   });
 
   if (!res.ok) {
@@ -55,6 +51,7 @@ async function main() {
 
   try {
     const messages = loadMessages(MESSAGE_FILE);
+
     console.log(`SEGMENT_KEY=${SEGMENT_KEY}`);
     console.log(`MESSAGE_FILE=${MESSAGE_FILE}`);
     console.log(`DRY_RUN=${DRY_RUN ? 1 : 0}`);
@@ -73,75 +70,6 @@ async function main() {
     `);
     console.log(`already_bought_users=${boughtUsersRes.rows[0].cnt}`);
 
-    const sameKeySentRes = await db.query(
-      `
-      select count(*) as cnt
-      from segment_users
-      where segment_key = $1
-        and sent_at is not null
-      `,
-      [SEGMENT_KEY]
-    );
-    console.log(`sent_same_key_users=${sameKeySentRes.rows[0].cnt} (segment_key=${SEGMENT_KEY}, sent_at not null)`);
-
-    let everSentExcludedUsers = 0;
-    if (!SKIP_GLOBAL_EVER_SENT) {
-      const everSentRes = await db.query(`
-        select count(distinct user_id) as cnt
-        from segment_users
-        where sent_at is not null
-      `);
-      everSentExcludedUsers = Number(everSentRes.rows[0].cnt || 0);
-    }
-    console.log(`ever_sent_excluded_users=${everSentExcludedUsers} (global all keys)`);
-
-    const rosterRes = await db.query(
-      `
-      with roster as (
-        select distinct su.user_id
-        from segment_users su
-        where su.segment_key = $1
-      ),
-      filtered as (
-        select r.user_id
-        from roster r
-        where r.user_id is not null
-          and r.user_id <> ''
-          and (
-            $2::boolean = true
-            or not exists (
-              select 1
-              from orders o
-              where o.user_id = r.user_id
-                and o.status in ('confirmed','paid','pickup','shipped','delivered')
-            )
-          )
-          and not exists (
-            select 1
-            from segment_users s2
-            where s2.segment_key = $1
-              and s2.user_id = r.user_id
-              and s2.sent_at is not null
-          )
-          and (
-            $3::boolean = true
-            or not exists (
-              select 1
-              from segment_users s3
-              where s3.user_id = r.user_id
-                and s3.sent_at is not null
-            )
-          )
-      )
-      select user_id
-      from filtered
-      order by user_id
-      offset $4
-      limit $5
-      `,
-      [SEGMENT_KEY, INCLUDE_BOUGHT, SKIP_GLOBAL_EVER_SENT, BLAST_OFFSET, BLAST_LIMIT]
-    );
-
     const rosterTotalRes = await db.query(
       `
       select count(distinct user_id) as cnt
@@ -152,8 +80,38 @@ async function main() {
     );
     console.log(`roster_total=${rosterTotalRes.rows[0].cnt}`);
 
+    const rosterRes = await db.query(
+      `
+      with roster as (
+        select distinct su.user_id
+        from segment_users su
+        where su.segment_key = $1
+      )
+      select r.user_id
+      from roster r
+      where r.user_id is not null
+        and r.user_id <> ''
+        and (
+          $2::boolean = true
+          or not exists (
+            select 1
+            from orders o
+            where o.user_id = r.user_id
+              and o.status in ('confirmed','paid','pickup','shipped','delivered')
+          )
+        )
+      order by r.user_id
+      offset $3
+      limit $4
+      `,
+      [SEGMENT_KEY, INCLUDE_BOUGHT, BLAST_OFFSET, BLAST_LIMIT]
+    );
+
     const eligibleTargets = rosterRes.rows.map(r => r.user_id);
     console.log(`eligible_targets=${eligibleTargets.length}`);
+    console.log(`valid_targets=${eligibleTargets.length}`);
+    console.log(`invalid_targets=0`);
+    console.log(`would_send_batches=${Math.ceil(eligibleTargets.length / 500)} (batch_size=500)`);
 
     let sent = 0;
     let failed = 0;
@@ -166,18 +124,6 @@ async function main() {
         }
 
         await pushLineMessage(userId, messages);
-
-        await db.query(
-          `
-          update segment_users
-          set sent_at = now(),
-              updated_at = now()
-          where segment_key = $1
-            and user_id = $2
-          `,
-          [SEGMENT_KEY, userId]
-        );
-
         sent += 1;
         console.log(`[OK] sent to ${userId}`);
       } catch (err) {
@@ -186,8 +132,6 @@ async function main() {
       }
     }
 
-    console.log(`valid_targets=${eligibleTargets.length}`);
-    console.log(`would_send_batches=${Math.ceil(eligibleTargets.length / 500)} (batch_size=500)`);
     console.log(`sent=${sent} failed=${failed}`);
   } finally {
     await db.end();

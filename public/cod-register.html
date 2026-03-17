@@ -139,6 +139,14 @@
   const qs = new URLSearchParams(location.search);
   const mode = (qs.get("mode") || "").trim();
   const returnToRaw = (qs.get("returnTo") || "/confirm.html").trim();
+  const DEBUG = qs.get("debug") === "1";
+  const FORCE = qs.get("force") === "1";
+
+  const KEY_LIFF_OPENED = "liff_opened_sent:" + location.pathname + ":" + mode;
+
+  function d(msg){
+    if (DEBUG) alert(msg);
+  }
 
   function pickLiffIdByMode(m){
     if(m === "original") return window.LIFF_ID_ORDER_ORIGINAL || window.LIFF_ID_COD || "2008406620-G5j1gjzM";
@@ -203,14 +211,14 @@
       body: JSON.stringify(body)
     });
     const d = await r.json().catch(()=>({}));
-    if(!r.ok) throw new Error(d?.error || ("HTTP "+r.status));
+    if(!r.ok) throw new Error(d?.error || ("HTTP " + r.status));
     return d;
   }
 
   async function getJson(url){
     const r = await fetch(url, { cache:"no-store" });
     const d = await r.json().catch(()=>({}));
-    if(!r.ok) throw new Error(d?.error || ("HTTP "+r.status));
+    if(!r.ok) throw new Error(d?.error || ("HTTP " + r.status));
     return d;
   }
 
@@ -227,10 +235,50 @@
     }, 250);
   }
 
+  async function sendLiffOpened(uid){
+    const userId = String(uid || "").trim();
+    if(!userId) return;
+
+    if(!FORCE && sessionStorage.getItem(KEY_LIFF_OPENED)){
+      console.log("[address] liff_opened skipped", KEY_LIFF_OPENED);
+      d("skipped by sessionStorage");
+      return;
+    }
+
+    const payload = {
+      userId,
+      source: `address|mode=${mode || "default"}|origin=${location.origin}`,
+      ts: Date.now()
+    };
+
+    const res = await fetch("/api/liff/opened", {
+      method: "POST",
+      headers: { "Content-Type":"application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    const text = await res.text().catch(() => "");
+    console.log("[address] /api/liff/opened", res.status, text);
+
+    if(!res.ok){
+      throw new Error(text || ("HTTP " + res.status));
+    }
+
+    sessionStorage.setItem(KEY_LIFF_OPENED, "1");
+    d("POST " + res.status + "\n" + text.slice(0, 200));
+  }
+
   // ✅ 住所画面は “確実にログイン” させる
   async function ensureUserHard(){
     const cached = (localStorage.getItem(KEY_UID) || "").trim();
-    if(cached) return cached;
+    if(cached){
+      try{
+        await sendLiffOpened(cached);
+      }catch(e){
+        console.error("[address] sendLiffOpened(cached) failed", e);
+      }
+      return cached;
+    }
 
     await liff.init({ liffId: LIFF_ID_THIS });
 
@@ -247,7 +295,14 @@
       }
 
       uid = (uid || "").trim();
-      if(uid) localStorage.setItem(KEY_UID, uid);
+      if(uid){
+        localStorage.setItem(KEY_UID, uid);
+        try{
+          await sendLiffOpened(uid);
+        }catch(e){
+          console.error("[address] sendLiffOpened(uid) failed", e);
+        }
+      }
       return uid || null;
     }catch(e){
       if(isTokenExpiredError(e)){
@@ -326,7 +381,7 @@
       address2: (el("address2").value || "").trim(),
       label: (el("label").value || "").trim(),
 
-      // 互換用：どのカラムでも入るように別名も同梱
+      // 互換用
       full_name: name,
       recipient_name: name,
       customer_name: name,
@@ -335,7 +390,7 @@
     };
   }
 
-  // ✅ returnTo 復元 → confirmへ戻るURLを生成（画面には出さない）
+  // ✅ returnTo 復元 → confirmへ戻るURLを生成
   function getReturnToUrl(){
     const raw = (returnToRaw || "").trim();
     let decoded = "";

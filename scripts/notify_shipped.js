@@ -1,7 +1,11 @@
 /**
  * scripts/notify_shipped.js
  * orders.tracking_no が入った注文に「発送通知」を一括送信し、
- * 送信できたら orders.notified_kind='shipped' / notified_user_at を更新する。
+ * 送信できたら orders.shipped_notified_at を更新する。
+ *
+ * 重要:
+ * - notified_kind / notified_user_at は再送判定に使わない
+ * - 発送通知は shipped_notified_at だけで管理する
  *
  * Env:
  *  - DATABASE_URL (required)
@@ -27,22 +31,32 @@ const LIMIT = parseInt(process.env.LIMIT || "50", 10);
 
 const STATUS_LIST = (process.env.STATUS_LIST || "confirmed,paid,pickup")
   .split(",")
-  .map(s => s.trim())
+  .map((s) => s.trim())
   .filter(Boolean);
 
-const ONLY_ORDER_ID = process.env.ONLY_ORDER_ID ? parseInt(process.env.ONLY_ORDER_ID, 10) : null;
+const ONLY_ORDER_ID = process.env.ONLY_ORDER_ID
+  ? String(process.env.ONLY_ORDER_ID).trim()
+  : null;
+
 const SAFE_USER_ID = process.env.SAFE_USER_ID || null;
 
 function buildTrackingUrl(trackingNo) {
-  // ヤマトの追跡（番号を埋めてお客さんがすぐ見れるように）
-  // ※仕様変更される可能性あるので、あなたの運用URLがあれば差し替え推奨
   return `https://toi.kuronekoyamato.co.jp/cgi-bin/tneko?number00=${encodeURIComponent(trackingNo)}`;
 }
 
 function buildTextMessage({ name, trackingNo }) {
   const url = buildTrackingUrl(trackingNo);
-  const n = (name && name.trim()) ? `${name}さん` : "お客さま";
-  return `${n}\n\n📦 ご注文商品を発送しました！\n伝票番号：${trackingNo}\n\n配送状況はこちら👇\n${url}\n\n到着まで少々お待ちください🙏\n（磯屋）`;
+  const n = name && String(name).trim() ? `${String(name).trim()}さん` : "お客さま";
+  return `${n}
+
+📦 ご注文商品を発送しました！
+伝票番号：${trackingNo}
+
+配送状況はこちら👇
+${url}
+
+到着まで少々お待ちください🙏
+（磯屋）`;
 }
 
 async function linePush(to, messages) {
@@ -50,7 +64,7 @@ async function linePush(to, messages) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${TOKEN}`,
+      Authorization: `Bearer ${TOKEN}`,
     },
     body: JSON.stringify({ to, messages }),
   });
@@ -61,11 +75,23 @@ async function linePush(to, messages) {
   }
 }
 
+async function markShippedNotified(client, orderId) {
+  await client.query(
+    `
+    UPDATE orders
+    SET shipped_notified_at = NOW()
+    WHERE id = $1
+    `,
+    [orderId]
+  );
+}
+
 async function main() {
   const client = new Client({
     connectionString: DATABASE_URL,
     ssl: { rejectUnauthorized: false },
   });
+
   await client.connect();
 
   try {
@@ -73,10 +99,11 @@ async function main() {
     const params = [];
 
     // tracking_no が入ってる
-    where.push(`tracking_no IS NOT NULL AND tracking_no <> ''`);
+    where.push(`tracking_no IS NOT NULL`);
+    where.push(`BTRIM(tracking_no) <> ''`);
 
-    // 未通知（shippedとして送ってない）
-    where.push(`(notified_kind IS DISTINCT FROM 'shipped' OR notified_user_at IS NULL)`);
+    // 発送通知未送信
+    where.push(`shipped_notified_at IS NULL`);
 
     // 対象ステータス
     if (STATUS_LIST.length > 0) {
@@ -87,7 +114,7 @@ async function main() {
     // 1件だけ
     if (ONLY_ORDER_ID) {
       params.push(ONLY_ORDER_ID);
-      where.push(`id = $${params.length}`);
+      where.push(`CAST(id AS text) = $${params.length}`);
     }
 
     // SAFE_USER_ID
@@ -96,21 +123,21 @@ async function main() {
       where.push(`user_id = $${params.length}`);
     }
 
-    // LIMIT
     params.push(LIMIT);
 
-const sql = `
-  SELECT
-    id,
-    user_id,
-    tracking_no,
-    status,
-    COALESCE(name, '') AS name
-  FROM orders
-  WHERE ${where.join(" AND ")}
-  ORDER BY id ASC
-  LIMIT $${params.length}
-`;
+    const sql = `
+      SELECT
+        id,
+        user_id,
+        tracking_no,
+        status,
+        COALESCE(name, '') AS name,
+        shipped_notified_at
+      FROM orders
+      WHERE ${where.join(" AND ")}
+      ORDER BY created_at ASC, id ASC
+      LIMIT $${params.length}
+    `;
 
     const { rows } = await client.query(sql, params);
 
@@ -118,41 +145,46 @@ const sql = `
     if (rows.length === 0) return;
 
     let sent = 0;
+    let failed = 0;
+    let skipped = 0;
+
     for (const r of rows) {
       const orderId = r.id;
-      const userId = r.user_id;
+      const userId = String(r.user_id || "").trim();
       const trackingNo = String(r.tracking_no || "").trim();
       const name = r.name || "";
 
       if (!userId || !trackingNo) {
-        console.log(`[skip] order_id=${orderId} user_id=${userId} tracking_no=${trackingNo}`);
+        skipped += 1;
+        console.log(`[SKIP_INVALID] order_id=${orderId} user_id=${userId || "(null)"} tracking_no=${trackingNo || "(null)"}`);
         continue;
       }
 
       const text = buildTextMessage({ name, trackingNo });
-      console.log(`[WILL_SEND] order_id=${orderId} user_id=${userId} tracking_no=${trackingNo}`);
+      console.log(`[TARGET_SHIPPED] order_id=${orderId} user_id=${userId} tracking_no=${trackingNo}`);
 
-      if (!DRY_RUN) {
-        try {
-          await linePush(userId, [{ type: "text", text }]);
+      if (DRY_RUN) {
+        console.log(`[DRY_RUN_SHIPPED] order_id=${orderId}`);
+        continue;
+      }
 
-          await client.query(
-            `UPDATE orders
-             SET notified_kind='shipped',
-                 notified_user_at=NOW()
-             WHERE id=$1`,
-            [orderId]
-          );
+      try {
+        await linePush(userId, [{ type: "text", text }]);
+        console.log(`[SENT_SHIPPED_OK] order_id=${orderId}`);
 
-          sent += 1;
-          console.log(`[SENT] order_id=${orderId}`);
-        } catch (e) {
-          console.error(`[FAILED] order_id=${orderId} ${e.message}`);
-        }
+        await markShippedNotified(client, orderId);
+        console.log(`[DB_UPDATED_SHIPPED] order_id=${orderId}`);
+
+        sent += 1;
+      } catch (e) {
+        failed += 1;
+        console.error(`[SENT_SHIPPED_NG] order_id=${orderId} ${e.message}`);
       }
     }
 
-    console.log(`[notify_shipped] done sent=${sent}/${rows.length}`);
+    console.log(
+      `[notify_shipped] done sent=${sent} failed=${failed} skipped=${skipped} total=${rows.length}`
+    );
   } finally {
     await client.end();
   }

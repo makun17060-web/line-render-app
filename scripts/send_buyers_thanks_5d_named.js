@@ -1,23 +1,25 @@
 /**
  * scripts/send_buyers_thanks_5d_named.js
- * 購入後5日「名前付き」サンクス（最終購入日基準 / push送信 / ✅横断除外なし / 最終版）
+ * 購入後5日「名前付き」サンクス（最終購入日基準 / push送信）
  *
- * ✅ 仕様
- * - user_idごとに最新購入を1件だけ（最終購入日基準）
- * - X〜Y日前（既定: 6〜5日）
- * - orders.notified_user_at / orders.notified_kind で二重送信防止（このキーのみ）
+ * 重要:
+ * - notified_kind / notified_user_at は再送判定に使わない
+ * - buyers_thanks_5d_named_at だけで二重送信防止する
+ * - 発送通知(shipped_notified_at)とは完全分離
  *
- * ✅ 追加（今回）
- * - FORCE_USER_ID 対応（自分の user_id を固定できる）
- * - 安全ロック：SAFE_USER_ID を設定したら「その user_id にしか送らない」
- *   - DRY_RUN=0 でも SAFE_USER_ID 以外は絶対送らない（事故防止）
- *
- * ✅ 運用メモ（おすすめ）
- * - force専用サービスには ENV でこれだけ固定：
- *     DRY_RUN=1
- *     FORCE_USER_ID=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx（自分）
- *     SAFE_USER_ID=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx（自分）  ←最重要
- * - 送信したい瞬間だけ DRY_RUN=0 にして実行→終わったら戻す
+ * Env:
+ *  - LINE_CHANNEL_ACCESS_TOKEN (required)
+ *  - DATABASE_URL (required)
+ *  - MESSAGE_FILE=./messages/buyers_thanks_5d_named.json
+ *  - DRY_RUN=1
+ *  - DEDUP_BY_USER=1
+ *  - WINDOW_START_DAYS=6
+ *  - WINDOW_END_DAYS=5
+ *  - LIMIT=2000
+ *  - SLEEP_MS=200
+ *  - FORCE_ORDER_ID=123
+ *  - FORCE_USER_ID=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+ *  - SAFE_USER_ID=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
  */
 
 "use strict";
@@ -29,8 +31,6 @@ const { Pool } = require("pg");
 const TOKEN = (process.env.LINE_CHANNEL_ACCESS_TOKEN || "").trim();
 const DBURL = (process.env.DATABASE_URL || "").trim();
 
-const NOTIFIED_KIND =
-  (process.env.NOTIFIED_KIND || "buyers_thanks_5d_named").trim();
 const MESSAGE_FILE =
   (process.env.MESSAGE_FILE || "./messages/buyers_thanks_5d_named.json").trim();
 
@@ -42,12 +42,9 @@ const WINDOW_END_DAYS = Number(process.env.WINDOW_END_DAYS || 5);
 const LIMIT = Number(process.env.LIMIT || 2000);
 const SLEEP_MS = Number(process.env.SLEEP_MS || 200);
 
-// force
-const FORCE_ORDER_ID = (process.env.FORCE_ORDER_ID || "").trim(); // orders.id（数値）
-const FORCE_USER_ID = (process.env.FORCE_USER_ID || "").trim();   // LINE user_id（U...）
-
-// safety lock（これを入れたら、その user_id にしか送らない）
-const SAFE_USER_ID = (process.env.SAFE_USER_ID || "").trim();     // LINE user_id（U...）
+const FORCE_ORDER_ID = (process.env.FORCE_ORDER_ID || "").trim();
+const FORCE_USER_ID = (process.env.FORCE_USER_ID || "").trim();
+const SAFE_USER_ID = (process.env.SAFE_USER_ID || "").trim();
 
 if (!TOKEN) throw new Error("LINE_CHANNEL_ACCESS_TOKEN is required");
 if (!DBURL) throw new Error("DATABASE_URL is required");
@@ -62,7 +59,7 @@ function isValidLineUserId(uid) {
 }
 
 function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function linePush(to, messages) {
@@ -74,37 +71,56 @@ async function linePush(to, messages) {
     },
     body: JSON.stringify({ to, messages }),
   });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`LINE push failed: ${res.status} ${text}`);
+
+  const text = await res.text().catch(() => "");
+  if (!res.ok) {
+    throw new Error(`LINE push failed: ${res.status} ${text}`.slice(0, 500));
+  }
 }
 
 function loadMessageTemplate() {
   const fp = path.resolve(process.cwd(), MESSAGE_FILE);
-  if (!fs.existsSync(fp)) throw new Error(`MESSAGE_FILE not found: ${fp}`);
+  if (!fs.existsSync(fp)) {
+    throw new Error(`MESSAGE_FILE not found: ${fp}`);
+  }
   const raw = fs.readFileSync(fp, "utf8");
   const json = JSON.parse(raw);
   return Array.isArray(json) ? json : json.messages;
 }
 
 function deepReplaceName(obj, name) {
-  const rep = name && name.trim() ? name.trim() : "お客様";
+  const rep = name && String(name).trim() ? String(name).trim() : "お客様";
+
   if (obj == null) return obj;
   if (typeof obj === "string") return obj.replace(/\{\{NAME\}\}/g, rep);
   if (Array.isArray(obj)) return obj.map((v) => deepReplaceName(v, rep));
   if (typeof obj === "object") {
     const out = {};
-    for (const [k, v] of Object.entries(obj)) out[k] = deepReplaceName(v, rep);
+    for (const [k, v] of Object.entries(obj)) {
+      out[k] = deepReplaceName(v, rep);
+    }
     return out;
   }
   return obj;
 }
 
-/** 最終購入日基準：userごと最新注文1件のみ */
+function isAllowedBySafetyLock(targetUserId) {
+  if (!SAFE_USER_ID) return true;
+  return String(targetUserId || "").trim() === SAFE_USER_ID;
+}
+
+/**
+ * 通常モード:
+ * user_idごとに最新注文1件だけ
+ * 5〜6日前ウィンドウ
+ * まだ buyers_thanks_5d_named_at が入っていないものだけ
+ */
 async function loadTargetOrders({ startDays, endDays, limit }) {
   const sql = `
     WITH latest_addr AS (
       SELECT DISTINCT ON (user_id)
-        user_id, name
+        user_id,
+        name
       FROM addresses
       ORDER BY user_id, created_at DESC
     ),
@@ -114,12 +130,11 @@ async function loadTargetOrders({ startDays, endDays, limit }) {
         o.id AS order_id,
         o.name,
         o.created_at,
-        o.notified_user_at,
-        o.notified_kind
+        o.buyers_thanks_5d_named_at
       FROM orders o
       WHERE o.user_id IS NOT NULL
-        AND o.user_id <> ''
-        AND o.status IN ('paid','confirmed','pickup')
+        AND BTRIM(o.user_id) <> ''
+        AND o.status IN ('paid', 'confirmed', 'pickup')
       ORDER BY o.user_id, o.created_at DESC
     )
     SELECT
@@ -131,60 +146,37 @@ async function loadTargetOrders({ startDays, endDays, limit }) {
         NULLIF(u.display_name, ''),
         'お客様'
       ) AS resolved_name,
-      lo.created_at
+      lo.created_at,
+      lo.buyers_thanks_5d_named_at
     FROM latest_order lo
     LEFT JOIN latest_addr a ON a.user_id = lo.user_id
     LEFT JOIN users u ON u.user_id = lo.user_id
     WHERE lo.created_at >= NOW() - ($1 || ' days')::interval
       AND lo.created_at <  NOW() - ($2 || ' days')::interval
-      AND (lo.notified_user_at IS NULL OR lo.notified_kind IS DISTINCT FROM $3)
+      AND lo.buyers_thanks_5d_named_at IS NULL
     ORDER BY lo.created_at DESC
-    LIMIT $4
+    LIMIT $3
   `;
+
   const { rows } = await pool.query(sql, [
     String(startDays),
     String(endDays),
-    NOTIFIED_KIND,
     limit,
   ]);
+
   return rows;
 }
 
-/** 注文ID（orders.id）で1件 */
+/**
+ * 注文IDで1件
+ * force用なので通知済みでも取れる
+ */
 async function loadSingleOrder(orderId) {
   const sql = `
     WITH latest_addr AS (
       SELECT DISTINCT ON (user_id)
-        user_id, name
-      FROM addresses
-      ORDER BY user_id, created_at DESC
-    )
-    SELECT
-      o.id AS order_id,
-      o.user_id,
-      COALESCE(
-        NULLIF(o.name, ''),
-        NULLIF(a.name, ''),
-        NULLIF(u.display_name, ''),
-        'お客様'
-      ) AS resolved_name,
-      o.created_at
-    FROM orders o
-    LEFT JOIN latest_addr a ON a.user_id=o.user_id
-    LEFT JOIN users u ON u.user_id=o.user_id
-    WHERE o.id=$1
-    LIMIT 1
-  `;
-  const { rows } = await pool.query(sql, [Number(orderId)]);
-  return rows;
-}
-
-/** user_id（LINEのU...）で「その人の最新注文1件」 */
-async function loadLatestOrderByUser(userId) {
-  const sql = `
-    WITH latest_addr AS (
-      SELECT DISTINCT ON (user_id)
-        user_id, name
+        user_id,
+        name
       FROM addresses
       ORDER BY user_id, created_at DESC
     )
@@ -198,14 +190,47 @@ async function loadLatestOrderByUser(userId) {
         'お客様'
       ) AS resolved_name,
       o.created_at,
-      o.notified_user_at,
-      o.notified_kind
+      o.buyers_thanks_5d_named_at
     FROM orders o
-    LEFT JOIN latest_addr a ON a.user_id=o.user_id
-    LEFT JOIN users u ON u.user_id=o.user_id
+    LEFT JOIN latest_addr a ON a.user_id = o.user_id
+    LEFT JOIN users u ON u.user_id = o.user_id
+    WHERE CAST(o.id AS text) = $1
+    LIMIT 1
+  `;
+  const { rows } = await pool.query(sql, [String(orderId)]);
+  return rows;
+}
+
+/**
+ * user_idでその人の最新注文1件
+ * force用なので通知済みでも取れる
+ */
+async function loadLatestOrderByUser(userId) {
+  const sql = `
+    WITH latest_addr AS (
+      SELECT DISTINCT ON (user_id)
+        user_id,
+        name
+      FROM addresses
+      ORDER BY user_id, created_at DESC
+    )
+    SELECT
+      o.id AS order_id,
+      o.user_id,
+      COALESCE(
+        NULLIF(o.name, ''),
+        NULLIF(a.name, ''),
+        NULLIF(u.display_name, ''),
+        'お客様'
+      ) AS resolved_name,
+      o.created_at,
+      o.buyers_thanks_5d_named_at
+    FROM orders o
+    LEFT JOIN latest_addr a ON a.user_id = o.user_id
+    LEFT JOIN users u ON u.user_id = o.user_id
     WHERE o.user_id = $1
-      AND o.user_id <> ''
-      AND o.status IN ('paid','confirmed','pickup')
+      AND BTRIM(o.user_id) <> ''
+      AND o.status IN ('paid', 'confirmed', 'pickup')
     ORDER BY o.created_at DESC
     LIMIT 1
   `;
@@ -213,26 +238,18 @@ async function loadLatestOrderByUser(userId) {
   return rows;
 }
 
-async function markOrderSent(orderId) {
+async function markBuyersThanksSent(orderId) {
   await pool.query(
     `
     UPDATE orders
-       SET notified_user_at = NOW(),
-           notified_kind = $2
+       SET buyers_thanks_5d_named_at = NOW()
      WHERE id = $1
     `,
-    [orderId, NOTIFIED_KIND]
+    [orderId]
   );
 }
 
-/** 安全ロック：SAFE_USER_ID が設定されていたら、その user_id 以外は「絶対送らない」 */
-function isAllowedBySafetyLock(targetUserId) {
-  if (!SAFE_USER_ID) return true; // ロック無し
-  return String(targetUserId || "").trim() === SAFE_USER_ID;
-}
-
 (async () => {
-  console.log("NOTIFIED_KIND=", NOTIFIED_KIND);
   console.log("DRY_RUN=", DRY_RUN ? "1" : "0");
   console.log("DEDUP_BY_USER=", DEDUP_BY_USER ? "1" : "0");
   console.log(
@@ -241,19 +258,15 @@ function isAllowedBySafetyLock(targetUserId) {
     "WINDOW_END_DAYS=",
     WINDOW_END_DAYS
   );
-  console.log(
-    "MESSAGE_FILE(resolved)=",
-    path.resolve(process.cwd(), MESSAGE_FILE)
-  );
-
-  console.log("FORCE_ORDER_ID=", FORCE_ORDER_ID ? FORCE_ORDER_ID : "(none)");
-  console.log("FORCE_USER_ID=", FORCE_USER_ID ? FORCE_USER_ID : "(none)");
-  console.log("SAFE_USER_ID=", SAFE_USER_ID ? SAFE_USER_ID : "(none)");
+  console.log("MESSAGE_FILE(resolved)=", path.resolve(process.cwd(), MESSAGE_FILE));
+  console.log("FORCE_ORDER_ID=", FORCE_ORDER_ID || "(none)");
+  console.log("FORCE_USER_ID=", FORCE_USER_ID || "(none)");
+  console.log("SAFE_USER_ID=", SAFE_USER_ID || "(none)");
 
   const template = loadMessageTemplate();
 
-  // ---- force 判定（優先順位：ORDER_ID > USER_ID > 通常） ----
   let targets = [];
+
   if (FORCE_ORDER_ID) {
     console.log("=== FORCE MODE (ORDER) ===");
     targets = await loadSingleOrder(FORCE_ORDER_ID);
@@ -280,11 +293,13 @@ function isAllowedBySafetyLock(targetUserId) {
         user_id: o.user_id,
         name: o.resolved_name,
         created_at: o.created_at,
+        buyers_thanks_5d_named_at: o.buyers_thanks_5d_named_at,
       }))
     );
   }
 
   let sent = 0;
+  let failed = 0;
   const sentOrderIds = new Set();
   const sentUserIds = new Set();
 
@@ -294,12 +309,9 @@ function isAllowedBySafetyLock(targetUserId) {
     if (sentOrderIds.has(o.order_id)) continue;
     sentOrderIds.add(o.order_id);
 
-    // 保険
     if (DEDUP_BY_USER) {
       if (sentUserIds.has(o.user_id)) {
-        console.log(
-          `SKIP duplicate user_id=${o.user_id} (order_id=${o.order_id})`
-        );
+        console.log(`SKIP duplicate user_id=${o.user_id} (order_id=${o.order_id})`);
         continue;
       }
       sentUserIds.add(o.user_id);
@@ -310,7 +322,6 @@ function isAllowedBySafetyLock(targetUserId) {
       continue;
     }
 
-    // ✅ 安全ロック：SAFE_USER_ID があるなら自分以外は送らない
     if (!isAllowedBySafetyLock(o.user_id)) {
       console.log(
         `[SAFETY_LOCK] BLOCKED user_id=${o.user_id} order_id=${o.order_id} (allowed only SAFE_USER_ID=${SAFE_USER_ID})`
@@ -318,21 +329,35 @@ function isAllowedBySafetyLock(targetUserId) {
       continue;
     }
 
-    console.log(`[WILL_SEND] user_id=${o.user_id} order_id=${o.order_id}`);
+    console.log(`[TARGET_THANKS_5D] user_id=${o.user_id} order_id=${o.order_id}`);
 
-    if (DRY_RUN) continue;
+    if (DRY_RUN) {
+      console.log(`[DRY_RUN_THANKS_5D] order_id=${o.order_id}`);
+      continue;
+    }
 
-    const messages = deepReplaceName(template, o.resolved_name);
-    await linePush(o.user_id, messages);
-    await markOrderSent(o.order_id);
+    try {
+      const messages = deepReplaceName(template, o.resolved_name);
+      await linePush(o.user_id, messages);
+      console.log(`[SENT_THANKS_5D_OK] order_id=${o.order_id}`);
 
-    sent++;
-    await sleep(SLEEP_MS);
+      await markBuyersThanksSent(o.order_id);
+      console.log(`[DB_UPDATED_THANKS_5D] order_id=${o.order_id}`);
+
+      sent++;
+      await sleep(SLEEP_MS);
+    } catch (e) {
+      failed++;
+      console.error(`[SENT_THANKS_5D_NG] order_id=${o.order_id} ${e.message}`);
+    }
   }
 
-  console.log(`DONE sent_orders=${sent}`);
+  console.log(`DONE sent_orders=${sent} failed=${failed}`);
   await pool.end();
-})().catch((e) => {
+})().catch(async (e) => {
   console.error(e);
+  try {
+    await pool.end();
+  } catch {}
   process.exit(1);
 });

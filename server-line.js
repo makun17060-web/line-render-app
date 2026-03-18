@@ -2142,7 +2142,7 @@ FROM orders
         address1: row.address || "",
         address2: "",
         phone: "",
-      };
+      };あ
 
       const pref = addrObj.prefecture || row.pref || "";
       const regionKey = detectRegionFromPref(pref);
@@ -3105,15 +3105,15 @@ app.post("/api/pay/stripe/intent", async (req, res) => {
       logErr("update orders.payment_intent_id failed", orderId, pi?.id, e?.message || e);
     }
 
-    // 仮受付通知（任意）
-    await notifyCardPending({
-      orderId,
-      userId: built.userId,
-      items: built.items,
-      shippingFee: built.shippingFee,
-      total: amountYen,
-      size: built.size,
-    }).catch(()=>{});
+   // 仮受付通知は送らない
+// await notifyCardPending({
+//   orderId,
+//   userId: built.userId,
+//   items: built.items,
+//   shippingFee: built.shippingFee,
+//   total: amountYen,
+//   size: built.size,
+// }).catch(()=>{});
 
     return res.json({
       ok: true,

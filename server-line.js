@@ -2097,35 +2097,36 @@ app.get("/api/admin/orders", requireAdmin, async (req, res) => {
   try {
     let sql = `
       SELECT
-  id, user_id, items, total, shipping_fee, payment_method, status,
-  name, zip, pref, address, created_at,
-  tracking_no,
-  shipped_notified_at,
-  notified_kind,
-  notified_user_at
-FROM orders
-
+        id, user_id, items, total, shipping_fee, payment_method, status,
+        name, zip, pref, address, created_at,
+        tracking_no,
+        shipped_notified_at,
+        notified_kind,
+        notified_user_at
+      FROM orders
+      WHERE status IN ('confirmed', 'paid', 'pickup', 'shipped')
       ORDER BY created_at DESC
       LIMIT 500
     `;
     let params = [];
 
-  if (date && /^\d{8}$/.test(date)) {
-  sql = `
-    SELECT
-      id, user_id, items, total, shipping_fee, payment_method, status,
-      name, zip, pref, address, created_at,
-      tracking_no,
-      shipped_notified_at,
-      notified_kind,
-      notified_user_at
-    FROM orders
-    WHERE to_char((created_at AT TIME ZONE 'Asia/Tokyo'), 'YYYYMMDD') = $1
-    ORDER BY created_at DESC
-    LIMIT 500
-  `;
-  params = [date];
-}
+    if (date && /^\d{8}$/.test(date)) {
+      sql = `
+        SELECT
+          id, user_id, items, total, shipping_fee, payment_method, status,
+          name, zip, pref, address, created_at,
+          tracking_no,
+          shipped_notified_at,
+          notified_kind,
+          notified_user_at
+        FROM orders
+        WHERE to_char((created_at AT TIME ZONE 'Asia/Tokyo'), 'YYYYMMDD') = $1
+          AND status IN ('confirmed', 'paid', 'pickup', 'shipped')
+        ORDER BY created_at DESC
+        LIMIT 500
+      `;
+      params = [date];
+    }
 
     const r = await pool.query(sql, params);
 
@@ -2142,7 +2143,7 @@ FROM orders
         address1: row.address || "",
         address2: "",
         phone: "",
-      };あ
+      };
 
       const pref = addrObj.prefecture || row.pref || "";
       const regionKey = detectRegionFromPref(pref);
@@ -2151,6 +2152,7 @@ FROM orders
       const subtotal = (Number(row.total || 0) - Number(row.shipping_fee || 0) - Number(codFee || 0));
 
       return {
+        id: row.id,
         ts: row.created_at,
         orderNumber: row.id,
         userId: row.user_id,
@@ -2162,15 +2164,15 @@ FROM orders
         shipping: Number(row.shipping_fee || 0),
         codFee,
         tracking_no: row.tracking_no || "",
-shipped_notified_at: row.shipped_notified_at || null,
-notified_kind: row.notified_kind || "",
-notified_user_at: row.notified_user_at || null,
-
+        shipped_notified_at: row.shipped_notified_at || null,
+        notified_kind: row.notified_kind || "",
+        notified_user_at: row.notified_user_at || null,
         finalTotal: Number(row.total || 0),
         payment: row.payment_method || "",
         method: (row.status === "pickup" ? "pickup" : "delivery"),
         region: regionToLabel(regionKey),
         address: addrObj,
+        status: row.status || "",
       };
     });
 

@@ -8,10 +8,9 @@ cd "$APP_DIR"
 
 SEGMENT_KEY="${SEGMENT_KEY:-buyers_repeat_offer}"
 
-if [ -f ./.env ]; then
-  set -a
-  . ./.env
-  set +a
+if [ -z "${DATABASE_URL:-}" ]; then
+  echo "[ERROR] DATABASE_URL is not set"
+  exit 1
 fi
 
 psql "$DATABASE_URL" <<SQL
@@ -33,12 +32,11 @@ WITH order_counts AS (
   WHERE o.user_id IS NOT NULL
     AND o.user_id <> ''
     AND o.user_id NOT LIKE 'TEST_%'
-    AND COALESCE(o.status, '') NOT IN ('cancelled', 'canceled')
+    AND o.user_id <> 'Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
   GROUP BY o.user_id
 ),
 target_users AS (
-  SELECT
-    oc.user_id
+  SELECT oc.user_id
   FROM order_counts oc
   WHERE oc.order_count >= 2
 ),

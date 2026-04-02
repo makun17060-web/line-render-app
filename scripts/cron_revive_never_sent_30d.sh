@@ -4,6 +4,7 @@ set -euo pipefail
 APP_DIR="/opt/render/project/src"
 cd "$APP_DIR"
 
+mkdir -p "$APP_DIR/logs"
 LOG_FILE="$APP_DIR/logs/revive_never_sent_30d.log"
 
 log() {
@@ -16,6 +17,7 @@ log "START"
 bash ./scripts/build_revive_never_sent_30d.sh >> "$LOG_FILE" 2>&1
 
 # ② 配信
+DRY_RUN="${DRY_RUN:-1}" \
 SEGMENT_KEY=revive_never_sent_30d \
 MESSAGE_FILE=./messages/omise_intro.json \
 SKIP_GLOBAL_EVER_SENT=1 \

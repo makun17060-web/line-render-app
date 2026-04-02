@@ -21,6 +21,6 @@ MESSAGE_FILE=./messages/omise_intro.json \
 SKIP_GLOBAL_EVER_SENT=1 \
 INCLUDE_BOUGHT=0 \
 BLAST_LIMIT=50 \
-node scripts/send_blast_once.js >> "$LOG_FILE" 2>&1
+node send_blast_once.js >> "$LOG_FILE" 2>&1
 
 log "END"

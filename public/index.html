@@ -27,31 +27,36 @@
       --shadow:0 2px 10px rgba(17,24,39,.08);
       --radius:16px;
     }
+
     *{ box-sizing:border-box; }
+
     body{
       margin:0;
       font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
       background:var(--bg);
       color:var(--text);
     }
+
     .wrap{
-      max-width: 720px;
-      margin: 0 auto;
-      padding: 14px 14px 28px;
+      max-width:720px;
+      margin:0 auto;
+      padding:14px 14px 28px;
     }
-    header{ padding: 8px 2px 10px; }
+
+    header{ padding:8px 2px 10px; }
+
     .title{ font-size:18px; font-weight:900; margin:0; }
     .sub{ margin:6px 0 0; color:var(--muted); font-size:13px; }
 
-    .slot{ margin: 10px 0 14px; }
+    .slot{ margin:10px 0 14px; }
 
     .grid{ display:grid; gap:12px; }
 
     .card{
       background:var(--card);
       border:1px solid var(--line);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
       padding:14px;
     }
 
@@ -62,8 +67,9 @@
       font-weight:700;
       margin-right:6px;
     }
-    .badgePri{ background: rgba(11,58,83,.08); color:var(--pri); }
-    .badgeAcc{ background: rgba(180,83,9,.1); color:var(--accent); }
+
+    .badgePri{ background:rgba(11,58,83,.08); color:var(--pri); }
+    .badgeAcc{ background:rgba(180,83,9,.1); color:var(--accent); }
 
     .h{ margin:8px 0 0; font-size:16px; font-weight:900; }
     .p{ margin:8px 0 0; color:var(--muted); font-size:13px; }
@@ -74,25 +80,14 @@
       padding:12px;
       border:none;
       border-radius:14px;
-      background: var(--pri);
+      background:var(--pri);
       color:#fff;
       font-weight:900;
       cursor:pointer;
     }
 
-    .btnSub{
-      width:100%;
-      margin-top:10px;
-      padding:12px;
-      border-radius:14px;
-      border:1px solid var(--line);
-      background:#fff;
-      font-weight:900;
-      cursor:pointer;
-    }
-
     .promo{
-      background: var(--warnBg);
+      background:var(--warnBg);
       border:1px solid var(--warnBd);
       color:var(--warnTx);
       padding:10px 14px;
@@ -129,127 +124,17 @@
         <span class="badge badgePri">人気No.1</span>
         <h2 class="h">磯屋オリジナルセット</h2>
         <p class="p">迷ったらこれ（バランス最強）</p>
+
         <button class="btn" onclick="location.href='/original-set.html'">
           オリジナルセットを見る
         </button>
-        <button class="btnSub" onclick="location.href='/products.html'">
+
+        <button class="btn" onclick="location.href='/products.html'">
           商品一覧を見る
         </button>
       </div>
 
     </div>
   </div>
-
-  <script>
-    const URL_ORIGINAL = "/original-set.html";
-
-    (async () => {
-      try {
-        // ===== LIFF 起動ログ =====
-        const qs = new URLSearchParams(location.search);
-        const DEBUG = qs.get("debug") === "1";
-        const FORCE = qs.get("force") === "1";
-        const d = (msg) => { if (DEBUG) alert(msg); };
-
-        const LIFF_ID_MENU =
-          (window.LIFF_ID_MENU || "").trim() ||
-          (window.LIFF_ID_ORDER_AKASHA || "").trim() ||
-          (window.LIFF_ID_ORDER || "").trim();
-
-        if (window.liff && LIFF_ID_MENU) {
-          try {
-            await liff.init({ liffId: LIFF_ID_MENU });
-          } catch (e) {
-            console.error("[index] liff.init failed", e);
-            d("init FAILED: " + (e?.message || String(e)));
-          }
-
-          if (liff.isLoggedIn && !liff.isLoggedIn()) {
-            d("not logged in -> login");
-            liff.login({ redirectUri: location.href });
-            return;
-          }
-
-          let userId = null;
-          try {
-            userId = liff.getDecodedIDToken?.()?.sub || null;
-          } catch (e) {}
-
-          if (!userId) {
-            try {
-              userId = (await liff.getProfile())?.userId || null;
-            } catch (e) {}
-          }
-
-          if (!userId) {
-            console.warn("[index] userId missing");
-            d("userId missing");
-          } else {
-            const key = "liff_opened_sent:" + LIFF_ID_MENU + ":" + location.pathname;
-
-            if (FORCE || !sessionStorage.getItem(key)) {
-              const payload = {
-                userId,
-                source: `index|menu|origin=${location.origin}`,
-                ts: Date.now()
-              };
-
-              try {
-                const res = await fetch("/api/liff/opened", {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify(payload)
-                });
-
-                const text = await res.text().catch(() => "");
-                console.log("[index] /api/liff/opened", res.status, text);
-
-                if (res.ok) {
-                  sessionStorage.setItem(key, "1");
-                }
-
-                d("POST " + res.status + "\n" + text.slice(0, 200));
-              } catch (e) {
-                console.error("[index] liff_opened failed", e);
-                d("POST FAILED: " + (e?.message || String(e)));
-              }
-            } else {
-              console.log("[index] liff_opened skipped by sessionStorage", key);
-              d("skipped by sessionStorage");
-            }
-          }
-        } else {
-          console.warn("[index] LIFF_ID_MENU missing");
-          d("LIFF_ID missing");
-        }
-
-        // ===== 公開設定 =====
-        const res = await fetch("/api/public/settings", { cache: "no-store" });
-        const data = await res.json();
-
-        if (data && data.trial_enabled === false) {
-          const trial = document.getElementById("trialCard");
-          if (trial) trial.style.display = "none";
-
-          const slot = document.getElementById("promoSlot");
-          if (slot) {
-            slot.innerHTML = `
-              <div class="promo" id="promoBox">
-                今は <span style="text-decoration:underline;">オリジナルセット</span> を中心にご案内しています👇
-              </div>
-            `;
-          }
-
-          document.getElementById("promoBox")?.addEventListener("click", () => {
-            const el = document.getElementById("originalCard");
-            if (el) el.scrollIntoView({ behavior: "smooth" });
-          });
-        }
-
-      } catch (e) {
-        console.error("[index] fatal", e);
-      }
-    })();
-  </script>
 </body>
 </html>

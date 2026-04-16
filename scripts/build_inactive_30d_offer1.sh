@@ -1,4 +1,5 @@
-﻿#!/usr/bin/env bash
+﻿cat > ./scripts/build_inactive_30d_offer1.sh <<'EOF'
+#!/usr/bin/env bash
 set -euo pipefail
 
 cd /opt/render/project/src
@@ -51,17 +52,15 @@ targets as (
         and sb.sent_at is not null
     )
 )
-insert into segment_users (segment_key, user_id, created_at, updated_at)
+insert into segment_blast (segment_key, user_id, created_at)
 select
   '${SEGMENT_KEY}' as segment_key,
   t.user_id,
-  now() as created_at,
-  now() as updated_at
+  now() as created_at
 from targets t
-on conflict (user_id) do update
-set
-  segment_key = excluded.segment_key,
-  updated_at = now();
+on conflict (segment_key, user_id) do nothing;
 SQL
 
 echo "[END] build_${SEGMENT_KEY} $(date -Is)"
+EOF
+chmod +x ./scripts/build_inactive_30d_offer1.sh

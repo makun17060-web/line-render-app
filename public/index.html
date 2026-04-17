@@ -1,78 +1,55 @@
-<!doctype html>
-<html lang="ja">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <meta name="theme-color" content="#0b3a53" />
-  <title>磯屋｜ご注文｜INDEX-LOG-OK</title>
+<script>
+(async () => {
+  try {
+    alert("① script start");
 
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <script src="/liff-config.js"></script>
+    const liffId =
+      window.LIFF_ID_DEFAULT ||
+      window.LIFF_ID_ORDER ||
+      window.LIFF_ID ||
+      "";
 
-  <style>
-    body{ margin:0; font-family:sans-serif; background:#f6f7f9; }
-    .wrap{ max-width:720px; margin:0 auto; padding:16px; }
-    .btn{ display:block; width:100%; padding:12px; margin-top:10px; background:#0b3a53; color:#fff; border:none; border-radius:10px; }
-  </style>
-</head>
+    alert("② liffId=" + liffId);
 
-<body>
-  <div class="wrap">
-    <h1>手造りえびせんべい 磯屋</h1>
-    <p>INDEX-LOG-TEST</p>
+    if (!liffId) {
+      alert("❌ liffId なし");
+      return;
+    }
 
-    <button class="btn" onclick="location.href='/fukubako.html'">初めてセット</button>
-    <button class="btn" onclick="location.href='/original-set.html'">オリジナルセット</button>
-    <button class="btn" onclick="location.href='/products.html'">商品一覧</button>
-  </div>
+    try {
+      await liff.init({ liffId });
+      alert("③ liff init OK");
+    } catch (e) {
+      alert("❌ liff.init失敗: " + (e && e.message ? e.message : e));
+      console.error("liff.init failed", e);
+      return;
+    }
 
-  <script>
-    (async () => {
-      try {
-        alert("① script start");
+    const loggedIn = liff.isLoggedIn();
+    alert("④ isLoggedIn=" + loggedIn);
 
-        const liffId =
-          window.LIFF_ID_ORDER ||
-          window.LIFF_ID_DEFAULT ||
-          window.LIFF_ID ||
-          "";
+    if (!loggedIn) {
+      alert("⑤ loginへ");
+      liff.login();
+      return;
+    }
 
-        alert("② liffId=" + liffId);
+    const profile = await liff.getProfile();
+    alert("⑥ userId=" + profile.userId);
 
-        if (!liffId) {
-          alert("❌ liffId なし");
-          return;
-        }
+    const res = await fetch("/api/liff/opened", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId: profile.userId,
+        source: "index"
+      })
+    });
 
-        await liff.init({ liffId });
-        alert("③ liff init OK");
-
-        if (!liff.isLoggedIn()) {
-          alert("④ loginへ");
-          liff.login();
-          return;
-        }
-
-        const profile = await liff.getProfile();
-        alert("⑤ userId=" + profile.userId);
-
-        const res = await fetch("/api/liff/opened", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userId: profile.userId,
-            source: "index"
-          })
-        });
-
-        const text = await res.text();
-        alert("⑥ status=" + res.status + " / " + text);
-
-      } catch (err) {
-        alert("❌ error=" + err.message);
-        console.error(err);
-      }
-    })();
-  </script>
-</body>
-</html>
+    alert("⑦ status=" + res.status);
+  } catch (err) {
+    alert("❌ 全体error: " + (err && err.message ? err.message : err));
+    console.error(err);
+  }
+})();
+</script>

@@ -14,6 +14,7 @@
   window.LIFF_ID_ORDER_AKASHA   = "2008406620-G5j1gjzM"; // 通常（あかしゃ）
   window.LIFF_ID_ORDER_ORIGINAL = "2008406620-Bd9Zo9od"; // オリジナルセット
   window.LIFF_ID_ORDER_STORE    = "2008406620-7tSkOcqd"; // 店頭
+  window.LIFF_ID_DEFAULT        = "2008406620-8CWfgEKh";
 
   // 互換用（あなたのコードの fallback が参照する）
   window.LIFF_ID_COD = TRIAL;

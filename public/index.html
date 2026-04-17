@@ -109,6 +109,7 @@
 
     <div class="grid">
 
+      <!-- 初めてセット -->
       <div class="card" id="trialCard">
         <span class="badge badgeAcc">初めての方</span>
         <h2 class="h">初めてセット</h2>
@@ -118,6 +119,7 @@
         </button>
       </div>
 
+      <!-- オリジナル -->
       <div class="card" id="originalCard">
         <span class="badge badgePri">人気No.1</span>
         <h2 class="h">磯屋オリジナルセット</h2>
@@ -134,51 +136,5 @@
 
     </div>
   </div>
-
-  <script>
-    (async () => {
-      try {
-        const liffId =
-          window.LIFF_ID_ORDER ||
-          window.LIFF_ID_DEFAULT ||
-          window.LIFF_ID ||
-          "";
-
-        if (!liffId) {
-          console.error("[liff] liffId not found in /liff-config.js");
-          return;
-        }
-
-        await liff.init({ liffId });
-        console.log("[liff] init ok", { liffId });
-
-        if (!liff.isLoggedIn()) {
-          console.log("[liff] not logged in -> login");
-          liff.login();
-          return;
-        }
-
-        const profile = await liff.getProfile();
-        console.log("[liff] profile ok", profile);
-
-        const payload = {
-          userId: profile.userId,
-          kind: "liff_opened",
-          source: "index"
-        };
-
-        const res = await fetch("/api/liff/opened", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-
-        const text = await res.text();
-        console.log("[liff/opened] status=", res.status, "body=", text);
-      } catch (err) {
-        console.error("[liff/opened] failed:", err);
-      }
-    })();
-  </script>
 </body>
 </html>

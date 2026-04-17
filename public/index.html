@@ -4,176 +4,74 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="theme-color" content="#0b3a53" />
-  <title>磯屋｜ご注文</title>
+  <title>磯屋｜ご注文｜INDEX-FIX</title>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <script src="/liff-config.js"></script>
+  <!-- cache対策 -->
+  <script src="/liff-config.js?v=20260417a"></script>
 
   <style>
-    :root{
-      --bg:#f6f7f9;
-      --card:#ffffff;
-      --text:#111827;
-      --muted:#6b7280;
-      --line:#e5e7eb;
-
-      --pri:#0b3a53;
-      --accent:#b45309;
-
-      --warnBg:#fff7ed;
-      --warnBd:#fdba74;
-      --warnTx:#7c2d12;
-
-      --shadow:0 2px 10px rgba(17,24,39,.08);
-      --radius:16px;
-    }
-
-    *{ box-sizing:border-box; }
-
-    body{
-      margin:0;
-      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-      background:var(--bg);
-      color:var(--text);
-    }
-
-    .wrap{
-      max-width:720px;
-      margin:0 auto;
-      padding:14px 14px 28px;
-    }
-
-    header{ padding:8px 2px 10px; }
-
-    .title{ font-size:18px; font-weight:900; margin:0; }
-    .sub{ margin:6px 0 0; color:var(--muted); font-size:13px; }
-
-    .slot{ margin:10px 0 14px; }
-
-    .grid{ display:grid; gap:12px; }
-
-    .card{
-      background:var(--card);
-      border:1px solid var(--line);
-      border-radius:var(--radius);
-      box-shadow:var(--shadow);
-      padding:14px;
-    }
-
-    .badge{
-      font-size:12px;
-      padding:5px 10px;
-      border-radius:999px;
-      font-weight:700;
-      margin-right:6px;
-    }
-
-    .badgePri{ background:rgba(11,58,83,.08); color:var(--pri); }
-    .badgeAcc{ background:rgba(180,83,9,.1); color:var(--accent); }
-
-    .h{ margin:8px 0 0; font-size:16px; font-weight:900; }
-    .p{ margin:8px 0 0; color:var(--muted); font-size:13px; }
-
-    .btn{
-      width:100%;
-      margin-top:12px;
-      padding:12px;
-      border:none;
-      border-radius:14px;
-      background:var(--pri);
-      color:#fff;
-      font-weight:900;
-      cursor:pointer;
-    }
-
-    .promo{
-      background:var(--warnBg);
-      border:1px solid var(--warnBd);
-      color:var(--warnTx);
-      padding:10px 14px;
-      border-radius:14px;
-      font-weight:700;
-      cursor:pointer;
-    }
+    body{ margin:0; font-family:sans-serif; background:#f6f7f9; }
+    .wrap{ max-width:720px; margin:0 auto; padding:16px; }
+    .btn{ display:block; width:100%; padding:12px; margin-top:10px; background:#0b3a53; color:#fff; border:none; border-radius:10px; }
   </style>
 </head>
 
 <body>
   <div class="wrap">
-    <header>
-      <h1 class="title">手造りえびせんべい 磯屋</h1>
-      <p class="sub">ご注文はこちらから</p>
-    </header>
+    <h1>手造りえびせんべい 磯屋</h1>
+    <p style="color:red;font-weight:bold">INDEX-FIX-0417</p>
 
-    <div id="promoSlot" class="slot"></div>
-
-    <div class="grid">
-
-      <div class="card" id="trialCard">
-        <span class="badge badgeAcc">初めての方</span>
-        <h2 class="h">初めてセット</h2>
-        <p class="p">まずはお試しで</p>
-        <button class="btn" onclick="location.href='/fukubako.html'">
-          見る
-        </button>
-      </div>
-
-      <div class="card" id="originalCard">
-        <span class="badge badgePri">人気No.1</span>
-        <h2 class="h">磯屋オリジナルセット</h2>
-        <p class="p">迷ったらこれ（バランス最強）</p>
-
-        <button class="btn" onclick="location.href='/original-set.html'">
-          オリジナルセットを見る
-        </button>
-
-        <button class="btn" onclick="location.href='/products.html'">
-          商品一覧を見る
-        </button>
-      </div>
-
-    </div>
+    <button class="btn" onclick="location.href='/fukubako.html'">初めてセット</button>
+    <button class="btn" onclick="location.href='/original-set.html'">オリジナルセット</button>
+    <button class="btn" onclick="location.href='/products.html'">商品一覧</button>
   </div>
 
   <script>
     (async () => {
       try {
-        const liffId = window.LIFF_ID_ORDER_TRIAL
-         
+        alert("① script start");
+
+        // ★ ここを固定（今回のキモ）
+        const liffId = window.LIFF_ID_ORDER_TRIAL;
+        alert("② liffId=" + liffId);
 
         if (!liffId) {
-          console.error("[liff] liffId not found in /liff-config.js");
+          alert("❌ LIFF_ID_ORDER_TRIAL が無い（liff-config.js未反映 or 読み込み失敗）");
           return;
         }
 
+        // init
         await liff.init({ liffId });
-        console.log("[liff] init ok", { liffId });
+        alert("③ liff init OK");
 
+        // login
         if (!liff.isLoggedIn()) {
-          console.log("[liff] not logged in -> login");
+          alert("④ loginへ");
           liff.login();
           return;
         }
 
+        // profile
         const profile = await liff.getProfile();
-        console.log("[liff] profile ok", profile);
+        alert("⑤ userId=" + profile.userId);
 
-        const payload = {
-          userId: profile.userId,
-          kind: "liff_opened",
-          source: "index"
-        };
-
+        // 起動ログ送信
         const res = await fetch("/api/liff/opened", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
+          body: JSON.stringify({
+            userId: profile.userId,
+            source: "index"
+          })
         });
 
         const text = await res.text();
-        console.log("[liff/opened] status=", res.status, "body=", text);
-      } catch (err) {
-        console.error("[liff/opened] failed:", err);
+        alert("⑥ status=" + res.status + " / " + text);
+
+      } catch (e) {
+        alert("❌ error=" + (e && e.message ? e.message : e));
+        console.error(e);
       }
     })();
   </script>

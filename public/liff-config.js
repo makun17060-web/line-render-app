@@ -3,7 +3,7 @@
 */
 (function(){
   window.__LIFF_CONFIG_LOADED__ = true;
-
+　window.LIFF_ID_INDEX          =2008406620-8CWfgEKh
   var TRIAL = "2008406620-yQFRswAu";
 
   window.LIFF_ID_ORDER_TRIAL    = "2008406620-yQFRswAu";

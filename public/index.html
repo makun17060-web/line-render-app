@@ -138,11 +138,8 @@
   <script>
     (async () => {
       try {
-        const liffId =
-          window.LIFF_ID_ORDER ||
-          window.LIFF_ID_DEFAULT ||
-          window.LIFF_ID ||
-          "";
+        const liffId = window.LIFF_ID_ORDER_TRIAL
+         
 
         if (!liffId) {
           console.error("[liff] liffId not found in /liff-config.js");

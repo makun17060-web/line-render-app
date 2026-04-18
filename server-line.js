@@ -3721,7 +3721,9 @@ async function main() {
 
   logInfo("boot completed");
 }
-
+app.get("/__whoami", (req, res) => {
+  res.status(200).send("SERVER-LINE CONFIRMED 2026-04-18");
+});
 main().catch((e) => {
   logErr("boot failed", e?.stack || e);
   process.exit(1);

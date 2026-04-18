@@ -1763,11 +1763,27 @@ async function notifyAdminFriendBlocked({ userId, displayName, day }) {
  * Stripe webhook（raw必須）
  * ========================= */
 app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  console.log("🔥 STRIPE WEBHOOK HIT 🔥", req.method, req.originalUrl);
+  console.log("content-type:", req.headers["content-type"] || "");
+  console.log("stripe-signature exists:", !!req.headers["stripe-signature"]);
+
   try {
-    if (!stripe || !STRIPE_WEBHOOK_SECRET) return res.status(400).send("stripe not configured");
+    if (!stripe || !STRIPE_WEBHOOK_SECRET) {
+      console.log("stripe or webhook secret missing");
+      return res.status(400).send("stripe not configured");
+    }
 
     const sig = req.headers["stripe-signature"];
     let event;
+    try {
+      event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
+      console.log("stripe event type:", event.type);
+    } catch (err) {
+      console.error("Stripe webhook signature verify failed:", err?.message || err);
+      return res.status(400).send("Bad signature");
+    }
+
+    // ここから先は今の既存処理そのまま
     try {
       event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
     } catch (err) {
